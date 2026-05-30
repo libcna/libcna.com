@@ -1,4 +1,4 @@
-/* CNA Website — Shared JS */
+/* CNA Website - Shared JS */
 (function () {
   'use strict';
 
