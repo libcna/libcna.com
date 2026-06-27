@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 73: Performance Profiling and Optimization - CNA Tutorials</title>
+  <meta name="description" content="Profile and optimise CNA games: FPS counters, draw call counting, texture atlases, SpriteBatch batching rules, RenderDoc, and Vulkan validation layers.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/73-profiling.html">
+  <meta property="og:title"       content="Tutorial 73: Performance Profiling and Optimization - CNA Tutorials">
+  <meta property="og:description" content="Profile and optimise CNA games: FPS counters, draw call counting, texture atlases, SpriteBatch batching rules, RenderDoc, and Vulkan validation layers.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="66-bloom.html" class="docs-nav-link">Tutorial 66: Bloom</a></li>
+        <li><a href="67-deferred-rendering.html" class="docs-nav-link">Tutorial 67: Deferred Rendering</a></li>
+        <li><a href="68-terrain.html" class="docs-nav-link">Tutorial 68: Terrain</a></li>
+        <li><a href="69-water.html" class="docs-nav-link">Tutorial 69: Water</a></li>
+        <li><a href="70-procedural-geometry.html" class="docs-nav-link">Tutorial 70: Procedural Geometry</a></li>
+        <li><a href="71-memory-management.html" class="docs-nav-link">Tutorial 71: Memory Management</a></li>
+        <li><a href="72-backend-selection.html" class="docs-nav-link">Tutorial 72: Backend Selection</a></li>
+        <li><a href="73-profiling.html" class="docs-nav-link active">Tutorial 73: Profiling</a></li>
+        <li><a href="74-frustum-culling.html" class="docs-nav-link">Tutorial 74: Frustum Culling</a></li>
+        <li><a href="75-lod.html" class="docs-nav-link">Tutorial 75: LOD</a></li>
+        <li><a href="76-spatial-partitioning.html" class="docs-nav-link">Tutorial 76: Spatial Partitioning</a></li>
+        <li><a href="77-async-loading.html" class="docs-nav-link">Tutorial 77: Async Loading</a></li>
+        <li><a href="78-multithreading.html" class="docs-nav-link">Tutorial 78: Multi-threading</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 73</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 73: Performance Profiling and Optimization</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Performance</p>
+
+      <h2>GameTime for frame timing</h2>
+      <p>Every <code>Update</code> and <code>Draw</code> call receives a <code>GameTime</code> reference. Its fields are your primary source of frame-timing information:</p>
+      <ul>
+        <li><code>gameTime.ElapsedGameTime.TotalSeconds()</code> — seconds since the last frame (typically ~0.0167 at 60 Hz).</li>
+        <li><code>gameTime.TotalGameTime.TotalSeconds()</code> — total time elapsed since <code>Game::Run()</code>.</li>
+        <li><code>gameTime.IsRunningSlowly</code> — set to <code>true</code> by the framework when the frame time exceeded the target and a fixed-timestep Update was skipped.</li>
+      </ul>
+      <p>Use <code>IsRunningSlowly</code> as an early warning: if it is <code>true</code> on most frames your game is CPU-bound in Update.</p>
+
+      <h2>FPS counter and draw call counter</h2>
+      <p>A minimal performance overlay can be rendered with SpriteBatch over the game scene. Track frames per second using a rolling average and maintain a per-frame draw call counter that you reset at the start of each Draw:</p>
+      <pre><code class="language-cpp">// PerformanceOverlay.hpp
+#pragma once
+#include "Microsoft/Xna/Framework/GameTime.hpp"
+#include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
+#include "Microsoft/Xna/Framework/Graphics/SpriteFont.hpp"
+#include &lt;string&gt;
+#include &lt;deque&gt;
+
+class PerformanceOverlay {
+public:
+    explicit PerformanceOverlay(SpriteFont& font) : font_(font) {}
+
+    void BeginFrame() {
+        drawCallCount_ = 0;
+    }
+
+    void CountDraw(int primitives = 1) {
+        ++drawCallCount_;
+        totalPrimitives_ += primitives;
+    }
+
+    void EndFrame(const GameTime& gt) {
+        float dt = static_cast&lt;float&gt;(gt.ElapsedGameTime.TotalSeconds());
+        frameTimes_.push_back(dt);
+        if (frameTimes_.size() &gt; SAMPLE_COUNT) frameTimes_.pop_front();
+
+        float avg = 0.0f;
+        for (float t : frameTimes_) avg += t;
+        avg /= static_cast&lt;float&gt;(frameTimes_.size());
+        fps_ = (avg &gt; 0.0f) ? 1.0f / avg : 0.0f;
+    }
+
+    void Draw(SpriteBatch& sb, const Vector2& pos) {
+        std::string text =
+            "FPS: "        + std::to_string(static_cast&lt;int&gt;(fps_)) +
+            "  Draws: "    + std::to_string(drawCallCount_) +
+            "  Prims: "    + std::to_string(totalPrimitives_);
+        sb.DrawString(font_, text, pos, Color::Yellow);
+        totalPrimitives_ = 0;
+    }
+
+private:
+    static constexpr size_t SAMPLE_COUNT = 60;
+    SpriteFont&        font_;
+    std::deque&lt;float&gt; frameTimes_;
+    float              fps_             = 0.0f;
+    int                drawCallCount_   = 0;
+    int                totalPrimitives_ = 0;
+};</code></pre>
+
+      <p>Wrap every <code>DrawPrimitives</code> / <code>DrawIndexedPrimitives</code> call with <code>overlay.CountDraw(primitiveCount)</code> to track the GPU workload across frames.</p>
+
+      <h2>Texture atlas to reduce binds</h2>
+      <p>Every time SpriteBatch encounters a different <code>Texture2D</code> than the previous sprite it must flush the current batch and issue a draw call. For a scene with 500 sprites across 100 different textures, this produces up to 100 draw calls. Packing all sprites into a single texture atlas reduces this to one draw call regardless of sprite count.</p>
+      <p>Build a texture atlas offline with a tool such as TexturePacker or at startup with a custom packer. Store a <code>Rectangle</code> for each sprite's region within the atlas. Pass that rectangle as the <code>sourceRectangle</code> argument to <code>SpriteBatch::Draw</code>:</p>
+      <pre><code class="language-cpp">// Atlas sprites drawn in a single batch (one draw call)
+spriteBatch_-&gt;Begin();
+for (auto& sprite : sprites_) {
+    spriteBatch_-&gt;Draw(
+        *atlas_,             // single shared texture
+        sprite.position,
+        sprite.atlasRegion,  // Rectangle within the atlas
+        Color::White,
+        sprite.rotation,
+        sprite.origin,
+        sprite.scale,
+        SpriteEffects::None,
+        sprite.depth);
+}
+spriteBatch_-&gt;End();  // one GPU draw call</code></pre>
+
+      <h2>SpriteBatch batching rules</h2>
+      <p>SpriteBatch accumulates sprites and flushes them to the GPU in as few draw calls as possible. A flush is triggered by any of the following:</p>
+      <ul>
+        <li>A different texture than the previous sprite (in <code>SpriteSortMode::Texture</code> mode, SpriteBatch sorts by texture first to minimise this).</li>
+        <li>A different sampler state, blend state, or rasterizer state.</li>
+        <li>Calling <code>SpriteBatch::End()</code>.</li>
+        <li>The internal vertex buffer reaching its capacity (default 2048 sprites per batch).</li>
+      </ul>
+      <p>Sort mode summary:</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>SpriteSortMode</th><th>Batching</th><th>Draw order</th></tr></thead>
+        <tbody>
+          <tr><td>Deferred (default)</td><td>Batches by order of <code>Draw</code> calls</td><td>Submission order</td></tr>
+          <tr><td>Texture</td><td>Sorts by texture — fewest draw calls</td><td>Texture-grouped</td></tr>
+          <tr><td>BackToFront</td><td>Sorts by depth descending — correct for transparency</td><td>Back to front</td></tr>
+          <tr><td>FrontToBack</td><td>Sorts by depth ascending — early-Z efficiency</td><td>Front to back</td></tr>
+          <tr><td>Immediate</td><td>No batching — one draw call per <code>Draw</code></td><td>Submission order</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2>Buffer orphaning for dynamic geometry</h2>
+      <p>When uploading new vertex data to a <code>VertexBuffer</code> that was created with <code>BufferUsage::WriteOnly</code>, the GPU may still be reading from it for the previous frame. Naively overwriting it stalls the CPU until the GPU finishes. Buffer orphaning avoids the stall by allocating a new backing buffer and immediately returning, leaving the GPU to finish reading the old one in parallel:</p>
+      <pre><code class="language-cpp">// Orphan: SetData with Discard option
+// This allocates a new GPU buffer under the hood without waiting for the GPU.
+dynamicVB_-&gt;SetData(
+    0,
+    newVertices.data(),
+    static_cast&lt;int&gt;(newVertices.size()),
+    SetDataOptions::Discard);  // key: avoids GPU stall</code></pre>
+      <p>Use <code>SetDataOptions::NoOverwrite</code> if you are appending to a region of the buffer that the GPU is not currently reading (e.g. double-buffered regions).</p>
+
+      <h2>CPU vs GPU bottleneck identification</h2>
+      <p>Before optimising, determine whether your frame time is CPU-bound or GPU-bound:</p>
+      <ul>
+        <li><strong>CPU-bound</strong>: Removing all <code>DrawPrimitives</code> calls (comment out the Draw method body) still leaves a high frame time. The bottleneck is in Update logic, physics, or AI.</li>
+        <li><strong>GPU-bound</strong>: Frame time is proportional to viewport size. Halving the resolution halves the frame time. The bottleneck is pixel throughput, texture bandwidth, or geometry throughput.</li>
+        <li><strong>Driver-bound</strong>: Frame time is proportional to draw call count but not geometry count. Reducing draw calls (batching) helps more than reducing polygon count.</li>
+      </ul>
+
+      <h2>RenderDoc integration</h2>
+      <p>RenderDoc is an open-source GPU frame debugger that works with CNA's EASYGL (OpenGL) and VULKAN backends on Linux and Windows. To capture a frame:</p>
+      <ol>
+        <li>Launch your CNA binary through RenderDoc (<em>File &gt; Launch Application</em>).</li>
+        <li>Press F12 (or the configured hotkey) in-game to capture a frame.</li>
+        <li>Open the captured frame and inspect each draw call, shader inputs, and render targets.</li>
+      </ol>
+      <p>RenderDoc shows the contents of each RenderTarget2D after each draw call, which is invaluable for debugging post-processing pipelines (bloom, deferred rendering). No source changes are needed — RenderDoc injects into the process via the driver.</p>
+
+      <h2>Vulkan validation layers</h2>
+      <p>When using the VULKAN backend, enable validation layers during development to catch API misuse that would be silent errors in release:</p>
+      <pre><code class="language-cpp">// CMakeLists.txt — add a dev build type with validation
+target_compile_definitions(MyGame PRIVATE
+    $&lt;$&lt;CONFIG:Debug&gt;:CNA_ENABLE_VULKAN_VALIDATION=1&gt;)
+
+// In your game's startup (before Game::Run())
+#if defined(CNA_ENABLE_VULKAN_VALIDATION)
+    CnaVulkanConfig::SetEnableValidationLayers(true);
+    CnaVulkanConfig::SetValidationCallback(
+        [](VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+           const char* message) {
+            if (severity &gt;= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+                fprintf(stderr, "[Vulkan] %s\n", message);
+        });
+#endif</code></pre>
+      <p>Validation layers typically add 10–30% CPU overhead. Always disable them in release builds.</p>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="72-backend-selection.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 72: Backend Selection</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="74-frustum-culling.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 74: Frustum Culling</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

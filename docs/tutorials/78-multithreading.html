@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 78: Multi-threading Considerations - CNA Tutorials</title>
+  <meta name="description" content="Safely use worker threads in CNA games: job queue with std::jthread, lockless ring buffer, game logic on workers, GPU calls on main, and SDL3_mixer audio threading.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/78-multithreading.html">
+  <meta property="og:title"       content="Tutorial 78: Multi-threading Considerations - CNA Tutorials">
+  <meta property="og:description" content="Safely use worker threads in CNA games: job queue with std::jthread, lockless ring buffer, game logic on workers, GPU calls on main, and SDL3_mixer audio threading.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="66-bloom.html" class="docs-nav-link">Tutorial 66: Bloom</a></li>
+        <li><a href="67-deferred-rendering.html" class="docs-nav-link">Tutorial 67: Deferred Rendering</a></li>
+        <li><a href="68-terrain.html" class="docs-nav-link">Tutorial 68: Terrain</a></li>
+        <li><a href="69-water.html" class="docs-nav-link">Tutorial 69: Water</a></li>
+        <li><a href="70-procedural-geometry.html" class="docs-nav-link">Tutorial 70: Procedural Geometry</a></li>
+        <li><a href="71-memory-management.html" class="docs-nav-link">Tutorial 71: Memory Management</a></li>
+        <li><a href="72-backend-selection.html" class="docs-nav-link">Tutorial 72: Backend Selection</a></li>
+        <li><a href="73-profiling.html" class="docs-nav-link">Tutorial 73: Profiling</a></li>
+        <li><a href="74-frustum-culling.html" class="docs-nav-link">Tutorial 74: Frustum Culling</a></li>
+        <li><a href="75-lod.html" class="docs-nav-link">Tutorial 75: LOD</a></li>
+        <li><a href="76-spatial-partitioning.html" class="docs-nav-link">Tutorial 76: Spatial Partitioning</a></li>
+        <li><a href="77-async-loading.html" class="docs-nav-link">Tutorial 77: Async Loading</a></li>
+        <li><a href="78-multithreading.html" class="docs-nav-link active">Tutorial 78: Multi-threading</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 78</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 78: Multi-threading Considerations</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Architecture</p>
+
+      <h2>What is thread-safe in CNA?</h2>
+      <p>Almost nothing in CNA is thread-safe by default. The following are the rules:</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>API / Object</th><th>Thread-safe?</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>GraphicsDevice</code></td><td>No</td><td>Must only be called from the main (GL context) thread</td></tr>
+          <tr><td><code>SpriteBatch</code></td><td>No</td><td>Uses GraphicsDevice internally</td></tr>
+          <tr><td><code>Effect</code>, <code>BasicEffect</code></td><td>No</td><td>Issues GPU state commands</td></tr>
+          <tr><td><code>Texture2D::GetData</code></td><td>No</td><td>Reads GPU memory — main thread only</td></tr>
+          <tr><td><code>ContentManager::Load</code></td><td>No</td><td>Creates GPU resources</td></tr>
+          <tr><td><code>SoundEffectInstance::Play/Stop</code></td><td>Yes</td><td>SDL3_mixer is thread-safe; see below</td></tr>
+          <tr><td><code>Vector3</code>, <code>Matrix</code>, etc.</td><td>Yes</td><td>Value types, no shared state</td></tr>
+          <tr><td><code>std::vector</code> of game objects</td><td>No (by default)</td><td>Wrap in a mutex or use separate read/write buffers</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>The fundamental constraint is that OpenGL and Vulkan (via CNA's backends) require all GPU operations to occur on a single thread that owns the context. Never call any CNA rendering API from a worker thread.</p>
+
+      <h2>Worker threads for logic</h2>
+      <p>Safe candidates for worker thread offloading:</p>
+      <ul>
+        <li>Physics simulation (position integration, broad-phase collision)</li>
+        <li>AI pathfinding (A* graph search, behaviour tree evaluation)</li>
+        <li>Procedural mesh generation (marching cubes, noise terrain)</li>
+        <li>Asset decompression and decoding (PNG pixel extraction, OGG decode)</li>
+        <li>Frustum culling / visibility determination (read-only scene data)</li>
+        <li>Animation blending (matrix palette computation)</li>
+      </ul>
+      <p>All of these produce plain C++ data (positions, matrices, vertex arrays) that the main thread can consume safely if you use double-buffering or a mutex-protected queue.</p>
+
+      <h2>Job queue with std::jthread (C++23)</h2>
+      <p><code>std::jthread</code> (C++23) is a thread that automatically joins on destruction, eliminating the need to call <code>join()</code> manually and preventing join-on-destroyed-thread undefined behaviour.</p>
+      <pre><code class="language-cpp">// JobQueue.hpp
+#pragma once
+#include &lt;thread&gt;
+#include &lt;queue&gt;
+#include &lt;mutex&gt;
+#include &lt;condition_variable&gt;
+#include &lt;functional&gt;
+#include &lt;vector&gt;
+#include &lt;atomic&gt;
+
+class JobQueue {
+public:
+    using Job = std::function&lt;void()&gt;;
+
+    explicit JobQueue(int threadCount = 0) {
+        if (threadCount &lt;= 0)
+            threadCount = static_cast&lt;int&gt;(
+                std::thread::hardware_concurrency()) - 1;
+        threadCount = std::max(1, threadCount);
+
+        for (int i = 0; i &lt; threadCount; ++i) {
+            workers_.emplace_back([this](std::stop_token st) {
+                while (!st.stop_requested()) {
+                    Job job;
+                    {
+                        std::unique_lock&lt;std::mutex&gt; lock(mutex_);
+                        cv_.wait(lock, [&] {
+                            return !queue_.empty() || st.stop_requested();
+                        });
+                        if (st.stop_requested() &amp;&amp; queue_.empty()) return;
+                        job = std::move(queue_.front());
+                        queue_.pop();
+                    }
+                    job();
+                    --pending_;
+                }
+            });
+        }
+    }
+
+    // JobQueue destructor automatically joins all jthreads
+    ~JobQueue() = default;
+
+    // Submit a job. Thread-safe.
+    void Submit(Job job) {
+        ++pending_;
+        std::lock_guard&lt;std::mutex&gt; lock(mutex_);
+        queue_.push(std::move(job));
+        cv_.notify_one();
+    }
+
+    // Wait until all submitted jobs have completed.
+    void WaitAll() {
+        while (pending_.load() &gt; 0)
+            std::this_thread::yield();
+    }
+
+    int Pending() const { return pending_.load(); }
+
+private:
+    std::vector&lt;std::jthread&gt;   workers_;
+    std::queue&lt;Job&gt;              queue_;
+    std::mutex                   mutex_;
+    std::condition_variable_any  cv_;
+    std::atomic&lt;int&gt;             pending_{0};
+};</code></pre>
+
+      <h2>Game logic on workers, draw on main</h2>
+      <p>The standard pattern is to run expensive Update work on the job queue, then collect results on the main thread and draw:</p>
+      <pre><code class="language-cpp">// In Game::Update — dispatch expensive logic to workers
+void Update(const GameTime& gt) override {
+    float dt = static_cast&lt;float&gt;(gt.ElapsedGameTime.TotalSeconds());
+
+    // Submit independent AI jobs (each entity is independent)
+    for (auto& entity : entities_) {
+        jobQueue_-&gt;Submit([&entity, dt]() {
+            entity.UpdateAI(dt);        // read-only world, writes to entity only
+            entity.IntegratePhysics(dt);
+        });
+    }
+
+    // Meanwhile, do main-thread-only work:
+    ProcessInput();
+    UpdateCamera(dt);
+
+    // Wait for all worker jobs to complete before drawing
+    jobQueue_-&gt;WaitAll();
+
+    // Now safe to read all entity positions for culling/rendering
+    BuildRenderList();
+}
+
+void Draw(const GameTime&) override {
+    auto& gd = getGraphicsDeviceProperty();
+    gd.Clear(Color::CornflowerBlue);
+
+    for (auto& entry : renderList_) {
+        DrawObject(gd, entry);
+    }
+    gd.Present();
+}</code></pre>
+
+      <h2>Lockless ring buffer for frame data</h2>
+      <p>For high-frequency data exchange between a worker thread and the main thread (e.g. streaming audio sample positions, or particle positions), a single-producer single-consumer lock-free ring buffer avoids mutex overhead entirely:</p>
+      <pre><code class="language-cpp">// LocklessRingBuffer.hpp — SPSC, power-of-two capacity
+template &lt;typename T, size_t N&gt;
+class LocklessRingBuffer {
+    static_assert((N &amp; (N - 1)) == 0, "N must be a power of two");
+public:
+    // Called from producer thread only
+    bool TryPush(const T&amp; value) {
+        size_t head = head_.load(std::memory_order_relaxed);
+        size_t next = (head + 1) &amp; (N - 1);
+        if (next == tail_.load(std::memory_order_acquire)) return false; // full
+        buffer_[head] = value;
+        head_.store(next, std::memory_order_release);
+        return true;
+    }
+
+    // Called from consumer thread only
+    bool TryPop(T&amp; value) {
+        size_t tail = tail_.load(std::memory_order_relaxed);
+        if (tail == head_.load(std::memory_order_acquire)) return false; // empty
+        value = buffer_[tail];
+        tail_.store((tail + 1) &amp; (N - 1), std::memory_order_release);
+        return true;
+    }
+
+private:
+    std::array&lt;T, N&gt;        buffer_{};
+    std::atomic&lt;size_t&gt;     head_{0};
+    std::atomic&lt;size_t&gt;     tail_{0};
+};</code></pre>
+
+      <h2>Audio thread: SDL3_mixer is thread-safe</h2>
+      <p>CNA's audio system wraps SDL3_mixer. Unlike the rendering API, SDL3_mixer operations are internally thread-safe — you can call <code>SoundEffectInstance::Play()</code> or <code>SoundEffect::CreateInstance()</code> from a worker thread without a mutex. SDL3_mixer manages its own internal lock around the audio callback.</p>
+      <p>One exception: <code>SoundEffect</code> construction (which decodes the audio file and uploads it to SDL3_mixer) is not guaranteed to be thread-safe. Do this on the main thread in <code>LoadContent</code> or via the <code>BackgroundLoader</code> approach in Tutorial 77 (decode on worker, construct <code>SoundEffect</code> on main).</p>
+      <pre><code class="language-cpp">// Safe: triggering a sound from a physics worker thread
+class PhysicsSystem {
+public:
+    void OnCollision(const CollisionEvent& ev) {
+        // SoundEffectInstance::Play is thread-safe in SDL3_mixer
+        if (ev.impactSpeed &gt; 5.0f)
+            collisionSound_-&gt;Play();
+    }
+private:
+    SoundEffectInstance* collisionSound_;  // non-owning, loaded on main
+};</code></pre>
+
+      <h2>Avoiding data races: double-buffering game state</h2>
+      <p>If workers write entity positions while the main thread reads them for rendering, you have a data race. The cleanest solution is double-buffering: workers write to a "back" state buffer while the renderer reads the "front" buffer. At the end of each frame, swap the pointers:</p>
+      <pre><code class="language-cpp">struct EntityState { Vector3 position; float rotation; };
+
+// Two copies: front (renderer reads) and back (workers write)
+std::vector&lt;EntityState&gt; stateA_, stateB_;
+std::vector&lt;EntityState&gt;* frontState_ = &amp;stateA_;
+std::vector&lt;EntityState&gt;* backState_  = &amp;stateB_;
+
+void Update(const GameTime& gt) override {
+    float dt = static_cast&lt;float&gt;(gt.ElapsedGameTime.TotalSeconds());
+
+    // Workers write to backState_ — frontState_ is untouched
+    for (int i = 0; i &lt; static_cast&lt;int&gt;(entities_.size()); ++i) {
+        jobQueue_-&gt;Submit([this, i, dt]() {
+            (*backState_)[i] = SimulateEntity(entities_[i], dt);
+        });
+    }
+    jobQueue_-&gt;WaitAll();
+
+    // Swap: back becomes new front
+    std::swap(frontState_, backState_);
+}
+
+void Draw(const GameTime&) override {
+    // Read from frontState_ — safe, no workers are writing to it now
+    for (int i = 0; i &lt; static_cast&lt;int&gt;(entities_.size()); ++i) {
+        DrawEntityAt(entities_[i], (*frontState_)[i].position);
+    }
+}</code></pre>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="77-async-loading.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 77: Async Loading</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

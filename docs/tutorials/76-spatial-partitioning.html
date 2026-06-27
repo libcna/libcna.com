@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 76: Spatial Partitioning - CNA Tutorials</title>
+  <meta name="description" content="Implement uniform grids, quadtrees, and octrees in CNA for efficient range, ray, and frustum queries in large game worlds.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/76-spatial-partitioning.html">
+  <meta property="og:title"       content="Tutorial 76: Spatial Partitioning - CNA Tutorials">
+  <meta property="og:description" content="Implement uniform grids, quadtrees, and octrees in CNA for efficient range, ray, and frustum queries in large game worlds.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="66-bloom.html" class="docs-nav-link">Tutorial 66: Bloom</a></li>
+        <li><a href="67-deferred-rendering.html" class="docs-nav-link">Tutorial 67: Deferred Rendering</a></li>
+        <li><a href="68-terrain.html" class="docs-nav-link">Tutorial 68: Terrain</a></li>
+        <li><a href="69-water.html" class="docs-nav-link">Tutorial 69: Water</a></li>
+        <li><a href="70-procedural-geometry.html" class="docs-nav-link">Tutorial 70: Procedural Geometry</a></li>
+        <li><a href="71-memory-management.html" class="docs-nav-link">Tutorial 71: Memory Management</a></li>
+        <li><a href="72-backend-selection.html" class="docs-nav-link">Tutorial 72: Backend Selection</a></li>
+        <li><a href="73-profiling.html" class="docs-nav-link">Tutorial 73: Profiling</a></li>
+        <li><a href="74-frustum-culling.html" class="docs-nav-link">Tutorial 74: Frustum Culling</a></li>
+        <li><a href="75-lod.html" class="docs-nav-link">Tutorial 75: LOD</a></li>
+        <li><a href="76-spatial-partitioning.html" class="docs-nav-link active">Tutorial 76: Spatial Partitioning</a></li>
+        <li><a href="77-async-loading.html" class="docs-nav-link">Tutorial 77: Async Loading</a></li>
+        <li><a href="78-multithreading.html" class="docs-nav-link">Tutorial 78: Multi-threading</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 76</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 76: Spatial Partitioning</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Performance</p>
+
+      <h2>Why spatial partitioning?</h2>
+      <p>Without spatial partitioning, every query against the game world (collision detection, AI line-of-sight, frustum culling) is O(n) in the number of objects. With 10,000 objects and 60 queries per frame, that is 600,000 comparisons per second. Spatial partitioning reduces the per-query cost to O(log n) or better by organising objects into a structure that lets you skip large portions of the world based on spatial proximity.</p>
+
+      <h2>Uniform grid</h2>
+      <p>The simplest spatial data structure is a uniform grid: divide the world into a regular array of cells and keep a list of objects in each cell. Insertion is O(1) (compute the cell index, push to its list). Range query visits only the cells that overlap the query region.</p>
+      <pre><code class="language-cpp">// UniformGrid.hpp
+#pragma once
+#include "Microsoft/Xna/Framework/Vector2.hpp"
+#include "Microsoft/Xna/Framework/Vector3.hpp"
+#include &lt;vector&gt;
+#include &lt;cmath&gt;
+#include &lt;functional&gt;
+
+template &lt;typename T&gt;
+class UniformGrid {
+public:
+    // worldMin/Max: axis-aligned world bounds
+    // cellSize:     size of each grid cell in world units
+    UniformGrid(Vector2 worldMin, Vector2 worldMax, float cellSize)
+        : worldMin_(worldMin)
+        , cellSize_(cellSize)
+    {
+        cols_ = static_cast&lt;int&gt;(
+            std::ceil((worldMax.X - worldMin.X) / cellSize_));
+        rows_ = static_cast&lt;int&gt;(
+            std::ceil((worldMax.Y - worldMin.Y) / cellSize_));
+        cells_.resize(static_cast&lt;size_t&gt;(cols_ * rows_));
+    }
+
+    void Clear() {
+        for (auto& cell : cells_) cell.clear();
+    }
+
+    // Insert an item at position (x, z)
+    void Insert(float x, float z, const T& item) {
+        int ci = CellIndex(x, z);
+        if (ci &gt;= 0) cells_[ci].push_back(item);
+    }
+
+    // Query all items within radius of (x, z)
+    void QueryRadius(float x, float z, float radius,
+                     std::vector&lt;T&gt;& results) const {
+        int cx0 = ToCell(x - radius, worldMin_.X);
+        int cx1 = ToCell(x + radius, worldMin_.X);
+        int cy0 = ToCell(z - radius, worldMin_.Y);
+        int cy1 = ToCell(z + radius, worldMin_.Y);
+
+        cx0 = std::clamp(cx0, 0, cols_ - 1);
+        cx1 = std::clamp(cx1, 0, cols_ - 1);
+        cy0 = std::clamp(cy0, 0, rows_ - 1);
+        cy1 = std::clamp(cy1, 0, rows_ - 1);
+
+        float r2 = radius * radius;
+        for (int cy = cy0; cy &lt;= cy1; ++cy) {
+            for (int cx = cx0; cx &lt;= cx1; ++cx) {
+                for (const T& item : cells_[cy * cols_ + cx]) {
+                    results.push_back(item);
+                }
+            }
+        }
+    }
+
+private:
+    int ToCell(float v, float origin) const {
+        return static_cast&lt;int&gt;((v - origin) / cellSize_);
+    }
+
+    int CellIndex(float x, float z) const {
+        int cx = ToCell(x, worldMin_.X);
+        int cy = ToCell(z, worldMin_.Y);
+        if (cx &lt; 0 || cx &gt;= cols_ || cy &lt; 0 || cy &gt;= rows_) return -1;
+        return cy * cols_ + cx;
+    }
+
+    Vector2              worldMin_;
+    float                cellSize_;
+    int                  cols_ = 0;
+    int                  rows_ = 0;
+    std::vector&lt;std::vector&lt;T&gt;&gt; cells_;
+};</code></pre>
+
+      <h2>Using UniformGrid for collision neighbour queries</h2>
+      <pre><code class="language-cpp">// In Game::LoadContent or level load:
+// World spans (-500, -500) to (500, 500) with 10-metre cells
+grid_ = std::make_unique&lt;UniformGrid&lt;int&gt;&gt;(
+    Vector2(-500.0f, -500.0f),
+    Vector2( 500.0f,  500.0f),
+    10.0f);
+
+// In Game::Update — rebuild the grid every frame (or incrementally)
+grid_-&gt;Clear();
+for (int i = 0; i &lt; static_cast&lt;int&gt;(entities_.size()); ++i) {
+    grid_-&gt;Insert(entities_[i].position.X,
+                  entities_[i].position.Z, i);
+}
+
+// Per-entity narrow-phase: only check entities in nearby cells
+std::vector&lt;int&gt; neighbours;
+for (auto& e : entities_) {
+    neighbours.clear();
+    grid_-&gt;QueryRadius(e.position.X, e.position.Z,
+                       e.collisionRadius * 2.0f, neighbours);
+    for (int ni : neighbours) {
+        if (&entities_[ni] == &e) continue;
+        CheckCollision(e, entities_[ni]);
+    }
+}</code></pre>
+
+      <h2>Quadtree (2D)</h2>
+      <p>A quadtree recursively subdivides a 2D area into four equal quadrants when a cell contains more objects than a threshold. It adapts better to non-uniform object distributions than a uniform grid:</p>
+      <ul>
+        <li>Cells with many objects are subdivided further (fine granularity where needed).</li>
+        <li>Empty areas use a single large cell (no wasted memory).</li>
+      </ul>
+      <p>The tradeoff is higher insertion/deletion cost compared to a uniform grid, and a more complex implementation. Use a quadtree when your world has highly variable object density (e.g. dense city centre surrounded by sparse countryside).</p>
+
+      <h2>Octree (3D)</h2>
+      <p>An octree is the 3D equivalent of a quadtree — each node subdivides into eight child octants instead of four. Use an octree when objects occupy a significant 3D volume (e.g. flying enemies, 3D asteroids). For mostly flat worlds (terrain-based games), a quadtree over the XZ plane is cheaper and sufficient.</p>
+      <p>A minimal recursive octree node:</p>
+      <pre><code class="language-cpp">struct OctreeNode {
+    BoundingBox       bounds;
+    std::vector&lt;int&gt;  objectIndices;  // indices into scene object array
+    std::unique_ptr&lt;OctreeNode&gt; children[8];
+    bool isLeaf = true;
+
+    static constexpr int MAX_OBJECTS = 8;
+    static constexpr int MAX_DEPTH   = 6;
+
+    void Insert(int idx, const Vector3& pos, int depth = 0) {
+        if (!bounds.Contains(pos)) return;
+        if (isLeaf) {
+            objectIndices.push_back(idx);
+            if (static_cast&lt;int&gt;(objectIndices.size()) &gt; MAX_OBJECTS
+                &amp;&amp; depth &lt; MAX_DEPTH) {
+                Subdivide();
+            }
+        } else {
+            for (auto& child : children)
+                if (child) child-&gt;Insert(idx, pos, depth + 1);
+        }
+    }
+
+    void FrustumQuery(const BoundingFrustum& frustum,
+                      std::vector&lt;int&gt;& results) const {
+        if (frustum.Contains(bounds) == ContainmentType::Disjoint)
+            return;
+        if (isLeaf) {
+            for (int i : objectIndices) results.push_back(i);
+        } else {
+            for (auto& child : children)
+                if (child) child-&gt;FrustumQuery(frustum, results);
+        }
+    }
+
+    void Subdivide();  // splits bounds into 8 children
+};</code></pre>
+
+      <h2>BVH overview</h2>
+      <p>A Bounding Volume Hierarchy (BVH) is a tree where each internal node stores a bounding volume that encloses all objects in its subtree. Unlike an octree (fixed spatial subdivision), a BVH subdivides based on the actual object geometry, giving tighter bounds. BVHs are the standard acceleration structure for ray tracing and are used in Vulkan's ray tracing extension. For real-time game collision they are more expensive to build but give fewer false positives than a uniform grid.</p>
+
+      <h2>Query types: range, ray, frustum</h2>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Query type</th><th>Use case</th><th>CNA type</th></tr></thead>
+        <tbody>
+          <tr><td>Range (sphere/circle)</td><td>AOE damage, proximity AI</td><td><code>BoundingSphere::Intersects</code></td></tr>
+          <tr><td>Ray cast</td><td>Mouse picking, bullet hit, line-of-sight</td><td><code>Ray::Intersects(BoundingBox)</code></td></tr>
+          <tr><td>Frustum</td><td>Visibility culling for rendering</td><td><code>BoundingFrustum::Contains</code></td></tr>
+          <tr><td>AABB overlap</td><td>Collision detection</td><td><code>BoundingBox::Intersects</code></td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2>CNA BoundingFrustum integration</h2>
+      <p>The octree's <code>FrustumQuery</code> method integrates directly with CNA's <code>BoundingFrustum</code> — the same object you construct from your view-projection matrix in Tutorial 74. Pass it to the tree and receive back only the object indices that might be visible, skipping the rest entirely:</p>
+      <pre><code class="language-cpp">BoundingFrustum frustum(view_ * proj_);
+std::vector&lt;int&gt; visibleObjects;
+octree_-&gt;FrustumQuery(frustum, visibleObjects);
+
+for (int idx : visibleObjects) {
+    DrawObject(sceneObjects_[idx]);
+}</code></pre>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="75-lod.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 75: Level of Detail (LOD)</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="77-async-loading.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 77: Async Loading</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 57: SkinnedEffect and Skeletal Animation - CNA Tutorials</title>
+  <meta name="description" content="Drive GPU skeletal animation in CNA with SkinnedEffect. Learn bone matrix palettes, SetBoneTransforms, vertex blend weights, animation clip playback, and the bone hierarchy update loop.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/57-skinned-effect.html">
+  <meta property="og:title"       content="Tutorial 57: SkinnedEffect and Skeletal Animation - CNA Tutorials">
+  <meta property="og:description" content="Drive GPU skeletal animation in CNA with SkinnedEffect. Learn bone matrix palettes, SetBoneTransforms, vertex blend weights, animation clip playback, and the bone hierarchy update loop.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="53-effect-parameter.html" class="docs-nav-link">Tutorial 53: GLSL Uniforms and EffectParameter</a></li>
+        <li><a href="54-alpha-test.html"        class="docs-nav-link">Tutorial 54: AlphaTestEffect and Alpha Masking</a></li>
+        <li><a href="55-dual-texture.html"      class="docs-nav-link">Tutorial 55: DualTextureEffect for Lightmaps</a></li>
+        <li><a href="56-environment-map.html"   class="docs-nav-link">Tutorial 56: EnvironmentMapEffect for Reflections</a></li>
+        <li><a href="57-skinned-effect.html"    class="docs-nav-link active">Tutorial 57: SkinnedEffect and Skeletal Animation</a></li>
+        <li><a href="58-normal-mapping.html"    class="docs-nav-link">Tutorial 58: Normal Mapping</a></li>
+        <li><a href="59-shadow-mapping.html"    class="docs-nav-link">Tutorial 59: Shadow Mapping</a></li>
+        <li><a href="60-instancing.html"        class="docs-nav-link">Tutorial 60: Instanced Rendering</a></li>
+        <li><a href="61-occlusion-query.html"   class="docs-nav-link">Tutorial 61: Occlusion Queries</a></li>
+        <li><a href="62-mrt.html"               class="docs-nav-link">Tutorial 62: Multiple Render Targets (MRT)</a></li>
+        <li><a href="63-stencil-buffer.html"    class="docs-nav-link">Tutorial 63: Stencil Buffer Effects</a></li>
+        <li><a href="64-cubemaps.html"          class="docs-nav-link">Tutorial 64: Cubemaps and Skyboxes</a></li>
+        <li><a href="65-msaa.html"              class="docs-nav-link">Tutorial 65: MSAA Anti-Aliasing</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 57: SkinnedEffect and Skeletal Animation</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 57: SkinnedEffect and Skeletal Animation</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Built-in Effects</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Backend support:</strong> <code>SkinnedEffect</code> is pixel-tested and confirmed working on the <strong>EASYGL</strong> backend. Vulkan backend support is in progress. The SDL_RENDERER backend does not support programmable shaders and cannot run <code>SkinnedEffect</code>.</p>
+      </div>
+
+      <p>Skeletal animation (also called skinning) is the standard technique for animating character meshes. A skeleton of hierarchical bones drives the mesh: each vertex is bound to one or more bones with influence weights that sum to 1. At runtime, a matrix for each bone is computed and uploaded to the GPU, which transforms each vertex in the vertex shader using the weighted sum of its bound bone matrices. CNA's <code>SkinnedEffect</code> provides an XNA 4.0-compatible interface to this pipeline.</p>
+
+      <h2>SkinnedEffect Overview</h2>
+      <p><code>SkinnedEffect</code> is a built-in effect that extends the basic per-vertex lighting model of <code>BasicEffect</code> with a skinning pass. The vertex shader accepts a palette of up to 72 bone matrices and, for each vertex, computes a weighted blend of the bone transforms:</p>
+      <pre><code class="language-glsl">// Simplified skinning in the vertex shader
+vec4 skinnedPos = vec4(0.0);
+for (int i = 0; i &lt; WEIGHTS_PER_VERTEX; ++i) {
+    int   boneIdx = int(a_blendIndices[i]);
+    float weight  = a_blendWeights[i];
+    skinnedPos   += u_bones[boneIdx] * vec4(a_position, 1.0) * weight;
+}
+gl_Position = u_viewProj * skinnedPos;</code></pre>
+      <p>The effect supports the same lighting properties as <code>BasicEffect</code>: up to three directional lights, per-vertex ambient, and optional fog. Texturing is single-texture with optional per-vertex colour.</p>
+
+      <h2>SetBoneTransforms</h2>
+      <p><code>SetBoneTransforms(const Matrix* matrices, int count)</code> uploads the bone matrix palette to the GPU. The matrices should be in object space, incorporating the full chain of transforms from the root bone to each individual bone. CNA uploads them to a GLSL uniform array <code>u_bones[72]</code> via a UBO on EASYGL or a descriptor set on Vulkan:</p>
+      <pre><code class="language-cpp">// Upload bone palette (typically called each frame in Update or Draw)
+skinEffect_-&gt;SetBoneTransforms(boneXforms_.data(), (int)boneXforms_.size());</code></pre>
+      <p>The <code>count</code> parameter must be in the range [1, 72]. Uploading more than 72 matrices is a runtime error. The 72-bone limit matches XNA 4.0 and is sufficient for humanoid characters; complex creatures with more bones require splitting the mesh into multiple draw calls with separate palettes.</p>
+      <p>The bone matrices represent the <em>skinning matrix</em> for each bone, defined as:</p>
+      <pre><code class="language-cpp">// skinningMatrix[i] = inverseBindPose[i] * currentPoseWorldTransform[i]
+// where inverseBindPose[i] transforms from model space to the bone's local space
+// at the bind pose, and currentPoseWorldTransform[i] is the current animation pose
+Matrix skinMatrix = model_-&gt;getInverseBindPose(i) * boneWorldTransform[i];</code></pre>
+
+      <h2>Weights Per Vertex</h2>
+      <p>The <code>WeightsPerVertex</code> property controls how many bone influences each vertex receives. Valid values are 1, 2, or 4 (the XNA 4.0 standard). More weights produce smoother deformation at joints (elbows, knees) at the cost of more GPU computation per vertex:</p>
+      <ul>
+        <li><strong>1</strong> — "Rigid skinning". Each vertex is 100% controlled by a single bone. No blending, fastest. Suitable for robotic characters with hard joints.</li>
+        <li><strong>2</strong> — Two-bone blend. Good compromise for simple humanoids and most game characters.</li>
+        <li><strong>4</strong> — Four-bone blend. The standard for high-quality character animation. Required for smooth shoulder, wrist, and ankle deformation.</li>
+      </ul>
+      <pre><code class="language-cpp">skinEffect_-&gt;setWeightsPerVertex(4);  // highest quality, typical for hero characters
+skinEffect_-&gt;setWeightsPerVertex(1);  // fastest, use for distant crowd NPCs</code></pre>
+      <p>The vertex buffer must use a matching vertex declaration. CNA provides <code>VertexPositionNormalTextureSkin</code> which carries position, normal, texture coordinates, a <code>BlendIndices</code> (packed four 8-bit bone indices as a <code>Vector4</code>), and a <code>BlendWeights</code> (<code>Vector4</code> of normalised float weights).</p>
+
+      <h2>AnimationClip Loading</h2>
+      <p>CNA's nova-3d model pipeline extracts animation data from FBX and glTF files. After loading, animation clips are accessible via the <code>Model</code> object:</p>
+      <pre><code class="language-cpp">model_ = Content.Load&lt;Model&gt;("models/character");
+
+// List available clips
+for (const auto&amp; clip : model_-&gt;getAnimationClips()) {
+    std::cout &lt;&lt; clip.getName() &lt;&lt; "  duration=" &lt;&lt; clip.Duration &lt;&lt; "s\n";
+}
+
+// Retrieve a specific clip by name
+AnimationClip* walkClip = model_-&gt;getAnimationClip("Walk");
+AnimationClip* runClip  = model_-&gt;getAnimationClip("Run");
+AnimationClip* idleClip = model_-&gt;getAnimationClip("Idle");</code></pre>
+      <p>Each <code>AnimationClip</code> contains a sequence of keyframes per bone. Keyframes store a time value and a transform (position, rotation as quaternion, scale). At playback time, CNA interpolates between the nearest two keyframes using linear interpolation for position and scale, and spherical linear interpolation (SLERP) for rotations to ensure smooth joint rotation.</p>
+
+      <h2>Bone Hierarchy and Matrix Palette</h2>
+      <p>Characters are animated by walking the bone tree each frame and accumulating the full world-space transform for each bone. The process is:</p>
+      <ol>
+        <li>Sample each bone's local transform at the current clip time (interpolate between keyframes).</li>
+        <li>Walk the bone tree from root to leaves, multiplying each bone's local transform by its parent's accumulated world transform.</li>
+        <li>Multiply each resulting world transform by the bone's inverse bind-pose matrix to produce the final skinning matrix.</li>
+        <li>Upload all skinning matrices to <code>SkinnedEffect</code> via <code>SetBoneTransforms()</code>.</li>
+      </ol>
+      <p>CNA's <code>Model::computeBoneTransforms()</code> helper performs steps 1–3 automatically given a clip and a time value. For custom animation blending (e.g., lerping between Walk and Run), you can sample two clips at their respective weights and blend the resulting matrices directly:</p>
+      <pre><code class="language-cpp">std::vector&lt;Matrix&gt; poseA(boneCount), poseB(boneCount), poseBlend(boneCount);
+model_-&gt;computeBoneTransforms(walkClip_, walkTime_, poseA);
+model_-&gt;computeBoneTransforms(runClip_,  runTime_,  poseB);
+float blend = walkToRunFactor_;  // 0 = walk, 1 = run
+for (int i = 0; i &lt; boneCount; ++i) {
+    poseBlend[i] = Matrix::Lerp(poseA[i], poseB[i], blend);
+}
+skinEffect_-&gt;SetBoneTransforms(poseBlend.data(), boneCount);</code></pre>
+
+      <h2>SkinnedEffect on the EasyGL Backend</h2>
+      <p>As of the current CNA milestone, <code>SkinnedEffect</code> is pixel-tested and confirmed correct on the EASYGL backend. The UBO holding the 72 bone matrices is approximately 4.6 KB, which fits within the minimum UBO size guaranteed by the OpenGL ES 3.0 specification. On most desktop OpenGL 4.x drivers this is uploaded via a <code>GL_UNIFORM_BUFFER</code> with streaming hint, re-uploaded each frame. The Vulkan backend is expected to use a storage buffer or large push constant block; this work is tracked in the CNA issue tracker.</p>
+
+      <h2>Complete Example: Animated Character</h2>
+      <pre><code class="language-cpp">class SkinnedGame final : public Game {
+    std::unique_ptr&lt;Model&gt;         model_;
+    std::unique_ptr&lt;SkinnedEffect&gt; skinEffect_;
+    AnimationClip*                 walkClip_  = nullptr;
+    AnimationClip*                 idleClip_  = nullptr;
+    float                          clipTime_  = 0.0f;
+    bool                           isWalking_ = false;
+    std::vector&lt;Matrix&gt;            boneXforms_;
+    Camera                         camera_;
+
+    void LoadContent() override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+        model_   = Content.Load&lt;Model&gt;("models/character");
+
+        skinEffect_ = std::make_unique&lt;SkinnedEffect&gt;(gd);
+        skinEffect_-&gt;setWeightsPerVertex(4);
+
+        // Lighting setup
+        skinEffect_-&gt;setAmbientLightColor(Vector3(0.3f, 0.3f, 0.35f));
+        skinEffect_-&gt;DirectionalLight0.setEnabled(true);
+        skinEffect_-&gt;DirectionalLight0.setDirection(
+            Vector3::Normalize(Vector3(0.5f, -1.0f, -0.7f)));
+        skinEffect_-&gt;DirectionalLight0.setDiffuseColor(Vector3(1.0f, 0.9f, 0.8f));
+
+        // Texture (shared across all meshes)
+        auto charTex = Content.Load&lt;Texture2D&gt;("textures/character_atlas");
+        skinEffect_-&gt;setTexture(charTex.get());
+
+        // Animation clips
+        walkClip_ = model_-&gt;getAnimationClip("Walk");
+        idleClip_ = model_-&gt;getAnimationClip("Idle");
+        boneXforms_.resize(model_-&gt;getBoneCount(), Matrix::Identity);
+    }
+
+    void Update(const GameTime&amp; gt) override {
+        float dt = (float)gt.getElapsedGameTime().TotalSeconds();
+        AnimationClip* activeClip = isWalking_ ? walkClip_ : idleClip_;
+
+        clipTime_ += dt;
+        if (clipTime_ &gt; activeClip-&gt;Duration) {
+            clipTime_ = fmodf(clipTime_, activeClip-&gt;Duration);
+        }
+
+        // Compute bone transforms from active clip at current time
+        model_-&gt;computeBoneTransforms(activeClip, clipTime_, boneXforms_);
+
+        // Upload to GPU (before Draw)
+        skinEffect_-&gt;SetBoneTransforms(
+            boneXforms_.data(), (int)boneXforms_.size());
+
+        // Toggle walk/idle on key press
+        if (getKeyboardState().IsKeyDown(Keys::W)) isWalking_ = true;
+        if (getKeyboardState().IsKeyDown(Keys::S)) isWalking_ = false;
+    }
+
+    void Draw(const GameTime&amp;) override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+        gd.Clear(Color::CornflowerBlue);
+
+        skinEffect_-&gt;setWorld(Matrix::Identity);
+        skinEffect_-&gt;setView(camera_.View());
+        skinEffect_-&gt;setProjection(camera_.Projection());
+
+        // Draw each mesh in the model with the skinned effect
+        model_-&gt;draw(gd, *skinEffect_);
+
+        gd.Present();
+    }
+};</code></pre>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="56-environment-map.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 56: EnvironmentMapEffect for Reflections</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="58-normal-mapping.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 58: Normal Mapping</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 69: Water and Reflections - CNA Tutorials</title>
+  <meta name="description" content="Implement planar reflections, animated normal-map water, clip planes, and Fresnel blending in CNA.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/69-water.html">
+  <meta property="og:title"       content="Tutorial 69: Water and Reflections - CNA Tutorials">
+  <meta property="og:description" content="Implement planar reflections, animated normal-map water, clip planes, and Fresnel blending in CNA.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="66-bloom.html" class="docs-nav-link">Tutorial 66: Bloom</a></li>
+        <li><a href="67-deferred-rendering.html" class="docs-nav-link">Tutorial 67: Deferred Rendering</a></li>
+        <li><a href="68-terrain.html" class="docs-nav-link">Tutorial 68: Terrain</a></li>
+        <li><a href="69-water.html" class="docs-nav-link active">Tutorial 69: Water</a></li>
+        <li><a href="70-procedural-geometry.html" class="docs-nav-link">Tutorial 70: Procedural Geometry</a></li>
+        <li><a href="71-memory-management.html" class="docs-nav-link">Tutorial 71: Memory Management</a></li>
+        <li><a href="72-backend-selection.html" class="docs-nav-link">Tutorial 72: Backend Selection</a></li>
+        <li><a href="73-profiling.html" class="docs-nav-link">Tutorial 73: Profiling</a></li>
+        <li><a href="74-frustum-culling.html" class="docs-nav-link">Tutorial 74: Frustum Culling</a></li>
+        <li><a href="75-lod.html" class="docs-nav-link">Tutorial 75: LOD</a></li>
+        <li><a href="76-spatial-partitioning.html" class="docs-nav-link">Tutorial 76: Spatial Partitioning</a></li>
+        <li><a href="77-async-loading.html" class="docs-nav-link">Tutorial 77: Async Loading</a></li>
+        <li><a href="78-multithreading.html" class="docs-nav-link">Tutorial 78: Multi-threading</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 69</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 69: Water and Reflections</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; 3D Rendering</p>
+
+      <h2>Planar reflections overview</h2>
+      <p>The most common real-time water reflection technique is <em>planar reflection</em>: render the scene a second time from a camera that is mirrored across the water plane, store the result in a RenderTarget, and then sample it from the water surface shader. The effect is physically correct for flat water and costs exactly one extra scene render per water plane.</p>
+      <p>The reflection camera is constructed by reflecting the main camera's position and orientation across the plane y = waterLevel:</p>
+      <pre><code class="language-cpp">// Build the reflection view matrix
+float waterY = 0.0f;  // world-space water level
+
+// Flip the camera position across y = waterY
+Vector3 reflPos = cameraPos_;
+reflPos.Y = 2.0f * waterY - reflPos.Y;
+
+// Flip the look-at target as well
+Vector3 reflTarget = cameraTarget_;
+reflTarget.Y = 2.0f * waterY - reflTarget.Y;
+
+// Invert Up to maintain winding order (negate Y)
+Matrix reflView = Matrix::CreateLookAt(reflPos, reflTarget,
+                                       Vector3(0.0f, -1.0f, 0.0f));</code></pre>
+
+      <h2>RenderTarget for reflection</h2>
+      <p>Allocate a RenderTarget at half resolution to save bandwidth; the distortion from the normal map will hide the reduction in sharpness:</p>
+      <pre><code class="language-cpp">// LoadContent
+auto& gd = getGraphicsDeviceProperty();
+reflectionRT_ = std::make_unique&lt;RenderTarget2D&gt;(
+    gd,
+    gd.getBackBufferWidth()  / 2,
+    gd.getBackBufferHeight() / 2,
+    false,
+    SurfaceFormat::Color,
+    DepthFormat::Depth24);</code></pre>
+
+      <h2>Clip plane in the reflection pass</h2>
+      <p>When rendering the reflection, geometry <em>below</em> the water plane must be clipped away or it will appear in the reflection texture incorrectly. Pass a clip plane as a shader uniform and use <code>gl_ClipDistance[0]</code> in the vertex shader:</p>
+      <pre><code class="language-glsl">// reflect_scene.vert — add clip plane support
+uniform vec4 ClipPlane;  // (0, 1, 0, -waterY) for above-water clip
+
+out float gl_ClipDistance[1];
+
+void main() {
+    vec4 worldPos = World * vec4(aPosition, 1.0);
+    gl_Position   = Projection * View * worldPos;
+    gl_ClipDistance[0] = dot(worldPos, ClipPlane);
+    // ... pass normals, texcoords
+}</code></pre>
+      <p>Set <code>ClipPlane = Vector4(0, 1, 0, -waterY)</code> for the reflection pass (keep only above-plane geometry). OpenGL must have <code>GL_CLIP_DISTANCE0</code> enabled; in CNA's EASYGL backend call the underlying GL function once at startup. For the main scene pass set <code>ClipPlane = Vector4(0, 0, 0, 0)</code> to effectively disable clipping.</p>
+
+      <h2>Reflection render pass</h2>
+      <pre><code class="language-cpp">void DrawReflectionPass() {
+    auto& gd = getGraphicsDeviceProperty();
+    gd.SetRenderTarget(reflectionRT_.get());
+    gd.Clear(Color::CornflowerBlue);
+
+    // Set clip plane: keep pixels above water
+    sceneEffect_-&gt;Parameters()["ClipPlane"].SetValue(
+        Vector4(0.0f, 1.0f, 0.0f, -waterY_));
+    sceneEffect_-&gt;Parameters()["View"].SetValue(reflView_);
+    sceneEffect_-&gt;Parameters()["Projection"].SetValue(proj_);
+
+    DrawSceneGeometry();
+
+    // Disable clip plane for main pass
+    sceneEffect_-&gt;Parameters()["ClipPlane"].SetValue(
+        Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+    gd.SetRenderTarget(nullptr);
+}</code></pre>
+
+      <h2>Wave displacement in the vertex shader</h2>
+      <p>Move water vertices up and down using a sum of sine waves. Two waves at different frequencies and angles give a more natural appearance than a single wave:</p>
+      <pre><code class="language-glsl">// water.vert
+uniform float Time;
+uniform float WaveAmplitude;  // e.g. 0.15
+uniform float WaveSpeed;      // e.g. 0.8
+
+void main() {
+    vec3 pos = aPosition;
+
+    // Wave 1: diagonal direction
+    float w1 = sin(pos.x * 0.4 + pos.z * 0.3 + Time * WaveSpeed)
+             * WaveAmplitude;
+    // Wave 2: opposite diagonal, higher frequency
+    float w2 = sin(pos.x * 0.7 - pos.z * 0.5 + Time * WaveSpeed * 1.3)
+             * WaveAmplitude * 0.5;
+    pos.y += w1 + w2;
+
+    vWorldPos   = (World * vec4(pos, 1.0)).xyz;
+    gl_Position = Projection * View * World * vec4(pos, 1.0);
+    vTexCoord   = aTexCoord;
+}</code></pre>
+
+      <h2>Water normal map animation</h2>
+      <p>A scrolling normal map provides per-pixel wave detail without per-vertex cost. Use two normal map samples at different scales and scroll speeds, then combine them:</p>
+      <pre><code class="language-glsl">// water.frag
+uniform sampler2D ReflectionTexture;
+uniform sampler2D NormalMap;
+uniform float     Time;
+uniform vec3      CameraPos;
+
+in vec3 vWorldPos;
+in vec2 vTexCoord;
+out vec4 fragColor;
+
+void main() {
+    // Scroll two normal map samples in different directions
+    vec2 uv1 = vTexCoord + vec2( 0.02,  0.01) * Time;
+    vec2 uv2 = vTexCoord + vec2(-0.01,  0.03) * Time;
+
+    vec3 n1 = texture(NormalMap, uv1).xyz * 2.0 - 1.0;
+    vec3 n2 = texture(NormalMap, uv2 * 0.7).xyz * 2.0 - 1.0;
+    vec3 normal = normalize(n1 + n2);
+
+    // Perturb reflection UV using normal XZ for distortion
+    vec2 distort = normal.xz * 0.04;
+
+    // Project world position to clip space for reflection UV
+    // (simplified — use gl_FragCoord in screenspace for accuracy)
+    vec2 screenUV = gl_FragCoord.xy /
+                    vec2(textureSize(ReflectionTexture, 0));
+    vec2 reflUV   = screenUV + distort;
+
+    vec4 reflColor = texture(ReflectionTexture, reflUV);
+
+    // Deep water colour
+    vec3 waterColor = vec3(0.05, 0.15, 0.25);
+
+    // Fresnel term
+    vec3  V       = normalize(CameraPos - vWorldPos);
+    float fresnel = pow(1.0 - max(0.0, dot(V, normal)), 4.0);
+    fresnel       = mix(0.05, 1.0, fresnel);  // clamp base reflectivity
+
+    vec3 result = mix(waterColor, reflColor.rgb, fresnel);
+    fragColor   = vec4(result, 0.85);  // slight transparency
+}</code></pre>
+
+      <h2>Fresnel term</h2>
+      <p>The Fresnel effect describes how reflectivity of a surface increases as the viewing angle grazes the surface. At normal incidence (looking straight down at water) you see mostly the water colour and refraction. At grazing angles (looking across the water surface) you see almost pure reflection. The Schlick approximation is cheap and accurate enough:</p>
+      <pre><code class="language-glsl">// Schlick Fresnel approximation
+// R0 = base reflectivity at 0 degrees (for water ~0.02)
+float R0      = 0.02;
+float cosTheta = max(0.0, dot(viewDir, surfaceNormal));
+float fresnel  = R0 + (1.0 - R0) * pow(1.0 - cosTheta, 5.0);</code></pre>
+      <p>In the water shader, use the Fresnel value to blend between the underwater/deep-water colour (or refraction texture) and the reflection texture.</p>
+
+      <h2>Full per-frame sequence</h2>
+      <pre><code class="language-cpp">void Draw(const GameTime& gt) override {
+    auto& gd = getGraphicsDeviceProperty();
+    float t = static_cast&lt;float&gt;(gt.TotalGameTime.TotalSeconds());
+
+    // 1. Build reflection camera
+    BuildReflectionView();
+
+    // 2. Render scene from reflection camera (with clip plane)
+    DrawReflectionPass();
+
+    // 3. Render main scene to back buffer
+    gd.SetRenderTarget(nullptr);
+    gd.Clear(Color::CornflowerBlue);
+    sceneEffect_-&gt;Parameters()["View"].SetValue(view_);
+    DrawSceneGeometry();
+
+    // 4. Draw water surface on top
+    waterEffect_-&gt;Parameters()["Time"].SetValue(t);
+    waterEffect_-&gt;Parameters()["ReflectionTexture"].SetValue(*reflectionRT_);
+    waterEffect_-&gt;Parameters()["View"].SetValue(view_);
+    waterEffect_-&gt;Parameters()["Projection"].SetValue(proj_);
+    waterEffect_-&gt;Parameters()["World"].SetValue(
+        Matrix::CreateTranslation(0.0f, waterY_, 0.0f));
+    waterEffect_-&gt;Parameters()["CameraPos"].SetValue(cameraPos_);
+
+    gd.BlendState = BlendState::AlphaBlend;
+    for (auto& pass : waterEffect_-&gt;CurrentTechnique().Passes) {
+        pass.Apply();
+        gd.SetVertexBuffer(*waterVB_);
+        gd.SetIndexBuffer(*waterIB_);
+        gd.DrawIndexedPrimitives(PrimitiveType::TriangleList,
+                                 0, 0, waterVerts_, 0, waterPrims_);
+    }
+    gd.BlendState = BlendState::Opaque;
+
+    gd.Present();
+}</code></pre>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="68-terrain.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 68: Terrain Rendering</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="70-procedural-geometry.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 70: Procedural Geometry</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

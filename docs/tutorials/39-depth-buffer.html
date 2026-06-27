@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 39: Depth Buffer and Z-Fighting - CNA Tutorials</title>
+  <meta name="description" content="Understand depth buffers, DepthStencilState, z-fighting causes and fixes, transparent object sorting, and the skybox depth trick in CNA.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/39-depth-buffer.html">
+  <meta property="og:title"       content="Tutorial 39: Depth Buffer and Z-Fighting - CNA Tutorials">
+  <meta property="og:description" content="Understand depth buffers, DepthStencilState, z-fighting causes and fixes, transparent object sorting, and the skybox depth trick in CNA.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="27-parallax.html"          class="docs-nav-link">Tutorial 27: Parallax Backgrounds</a></li>
+        <li><a href="28-particles-2d.html"       class="docs-nav-link">Tutorial 28: Particle Systems 2D</a></li>
+        <li><a href="29-ui-elements.html"        class="docs-nav-link">Tutorial 29: UI Elements</a></li>
+        <li><a href="30-gamepad.html"            class="docs-nav-link">Tutorial 30: GamePad Input</a></li>
+        <li><a href="31-first-3d-triangle.html"  class="docs-nav-link">Tutorial 31: First 3D Triangle</a></li>
+        <li><a href="32-basiceffect.html"        class="docs-nav-link">Tutorial 32: BasicEffect &amp; Lighting</a></li>
+        <li><a href="33-matrices.html"           class="docs-nav-link">Tutorial 33: Matrices &amp; Transforms</a></li>
+        <li><a href="34-camera-3d.html"          class="docs-nav-link">Tutorial 34: 3D Camera</a></li>
+        <li><a href="35-model-loading.html"      class="docs-nav-link">Tutorial 35: Loading 3D Models</a></li>
+        <li><a href="36-model-texturing.html"    class="docs-nav-link">Tutorial 36: Texturing 3D Models</a></li>
+        <li><a href="37-multiple-lights.html"    class="docs-nav-link">Tutorial 37: Multiple Light Sources</a></li>
+        <li><a href="38-vertex-buffers.html"     class="docs-nav-link">Tutorial 38: Vertex &amp; Index Buffers</a></li>
+        <li><a href="39-depth-buffer.html"       class="docs-nav-link active">Tutorial 39: Depth Buffer &amp; Z-Fighting</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 39: Depth Buffer and Z-Fighting</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 39: Depth Buffer and Z-Fighting</h1>
+      <p class="doc-meta">3D Rendering &nbsp;·&nbsp; Intermediate</p>
+
+      <p>The depth buffer is the invisible safety net that makes 3D rendering work correctly — it ensures that closer objects always obscure farther ones without you having to sort geometry by hand. This tutorial explains how it works, how to control it with <code>DepthStencilState</code>, and how to deal with its two most common failure modes: z-fighting and transparent objects.</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#9432;</span>
+        <p>Always clear the depth buffer at the start of each frame: <code>gd.Clear(ClearOptions::DepthBuffer | ClearOptions::Target, color, 1.0f, 0)</code>. Skipping the depth clear causes ghost geometry from the previous frame to block current-frame pixels.</p>
+      </div>
+
+      <h2>How the Depth Buffer Works</h2>
+      <p>The depth buffer is a full-resolution 2D buffer that stores one floating-point value per screen pixel. The value represents normalised depth in clip space: <code>0.0</code> at the near plane, <code>1.0</code> at the far plane.</p>
+      <p>For every fragment the GPU rasterises:</p>
+      <ol>
+        <li>Compute the fragment's depth value <em>d</em>.</li>
+        <li>Read the stored depth for that pixel.</li>
+        <li>If <em>d &lt; stored</em> (fragment is closer), write the fragment's colour to the colour buffer and update the depth buffer with <em>d</em>.</li>
+        <li>Otherwise, discard the fragment.</li>
+      </ol>
+      <p>This means draw order does not matter for opaque geometry — the GPU automatically keeps only the closest fragment for each pixel.</p>
+
+      <h2>DepthFormat Enum</h2>
+      <p>The depth buffer format is set in <code>PresentationParameters</code> before the graphics device is created:</p>
+      <pre><code class="language-cpp">PresentationParameters pp;
+pp.DepthStencilFormat = DepthFormat::Depth24;        // 24-bit depth (recommended)
+pp.DepthStencilFormat = DepthFormat::Depth24Stencil8; // 24-bit depth + 8-bit stencil
+pp.DepthStencilFormat = DepthFormat::Depth16;         // 16-bit, lower precision
+pp.DepthStencilFormat = DepthFormat::None;            // no depth buffer at all (2D only)</code></pre>
+      <p><code>Depth24</code> is the standard choice. <code>Depth24Stencil8</code> adds a stencil channel used for effects like outlines, shadow volumes, and portals. Avoid <code>Depth16</code> for 3D scenes — the reduced precision increases z-fighting.</p>
+
+      <h2>DepthStencilState.Default</h2>
+      <p><code>DepthStencilState::Default</code> enables both depth testing and depth writing. It is the correct state for rendering opaque 3D geometry:</p>
+      <pre><code class="language-cpp">// Applied automatically on GraphicsDevice reset, but set it explicitly
+// after any state change to be safe
+gd.setDepthStencilState(DepthStencilState::Default);</code></pre>
+      <p>Common built-in states:</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>State</th><th>Depth test</th><th>Depth write</th><th>Use case</th></tr></thead>
+        <tbody>
+          <tr><td><code>Default</code></td><td>On (Less)</td><td>On</td><td>Opaque 3D geometry</td></tr>
+          <tr><td><code>None</code></td><td>Off</td><td>Off</td><td>2D UI / HUD over 3D</td></tr>
+          <tr><td><code>Read</code></td><td>On (Less)</td><td>Off</td><td>Transparent objects, particles</td></tr>
+          <tr><td><code>DepthRead</code></td><td>On</td><td>Off</td><td>Alias for Read in some XNA versions</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2>Disabling Depth Test for UI</h2>
+      <p>2D UI elements (health bars, menus, subtitles) should always draw on top of the 3D world regardless of the depth values their polygons happen to produce. Use <code>DepthStencilState::None</code> before your UI pass:</p>
+      <pre><code class="language-cpp">// Draw 3D world
+gd.setDepthStencilState(DepthStencilState::Default);
+Draw3DScene();
+
+// Draw 2D UI on top — disable depth entirely
+gd.setDepthStencilState(DepthStencilState::None);
+spriteBatch-&gt;Begin();
+DrawHUD();
+spriteBatch-&gt;End();
+
+// Restore for next frame's 3D pass
+gd.setDepthStencilState(DepthStencilState::Default);</code></pre>
+
+      <h2>Z-Fighting Causes and Fixes</h2>
+      <p>Z-fighting is the flickering you see when two coplanar (or nearly coplanar) surfaces compete for the same depth value. Common scenarios: a decal placed exactly on a wall, a road drawn exactly on top of terrain.</p>
+      <p>Root cause: depth values are stored at finite precision. Two surfaces at nearly identical depth round to the same integer, so which one "wins" flips frame to frame depending on floating-point evaluation order.</p>
+
+      <p><strong>Fix 1 — Small translation bias:</strong> Push the foreground surface slightly toward the camera:</p>
+      <pre><code class="language-cpp">// Decal world matrix — offset 1mm toward camera
+Matrix decalWorld = Matrix::CreateTranslation(0, 0.001f, 0) * baseWorld;</code></pre>
+
+      <p><strong>Fix 2 — Increase the near plane:</strong> Depth precision is non-linear and concentrates near the camera. Bringing the near plane from 0.01 to 0.1 dramatically improves precision at typical play distances:</p>
+      <pre><code class="language-cpp">Matrix proj = Matrix::CreatePerspectiveFieldOfView(
+    MathHelper::PiOver4, aspect,
+    0.1f,    // near — don't go lower than you need
+    1000.0f  // far
+);</code></pre>
+
+      <p><strong>Fix 3 — Use Depth24 not Depth16:</strong> 16-bit depth gives only 65536 distinct values across the entire depth range. 24-bit gives 16 million. For any 3D scene, always request <code>DepthFormat::Depth24</code>.</p>
+
+      <h2>Sorting Transparent Objects</h2>
+      <p>Transparent objects (alpha-blended geometry) <em>cannot</em> use the depth buffer to composite correctly because blending requires the background colour to already be in the colour buffer when the fragment is written. If you write depth for transparent fragments, closer transparent objects will silently block farther ones that should be visible through them.</p>
+      <p>The solution is the <strong>painter's algorithm</strong>: sort transparent objects back-to-front by distance to the camera, then draw them in that order with depth testing on (so they respect opaque geometry) but depth writing off (so they don't block each other):</p>
+      <pre><code class="language-cpp">// Custom DepthStencilState: test depth but don't write it
+DepthStencilState depthReadOnly;
+depthReadOnly.DepthBufferEnable      = true;
+depthReadOnly.DepthBufferWriteEnable = false;
+depthReadOnly.DepthBufferFunction    = CompareFunction::Less;
+
+// Sort transparent objects back-to-front
+std::sort(transparentObjects.begin(), transparentObjects.end(),
+    [&amp;cameraPos](const TransparentObject&amp; a, const TransparentObject&amp; b) {
+        float da = Vector3::DistanceSquared(a.position, cameraPos);
+        float db = Vector3::DistanceSquared(b.position, cameraPos);
+        return da &gt; db;  // farther objects first
+    });
+
+gd.setDepthStencilState(depthReadOnly);
+gd.setBlendState(BlendState::AlphaBlend);
+for (auto&amp; obj : transparentObjects)
+    DrawTransparentObject(obj);</code></pre>
+
+      <h2>Full Example: Transparent Quads + Skybox Depth Trick</h2>
+      <p>The demo renders three coloured transparent quads sorted back-to-front, then a skybox drawn <em>last</em> using a special <code>DepthStencilState</code> that passes all depth tests but writes nothing — filling only pixels not yet drawn by any opaque or transparent geometry:</p>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Game.hpp"
+#include "Microsoft/Xna/Framework/Graphics/GraphicsDeviceManager.hpp"
+#include "Microsoft/Xna/Framework/Graphics/BasicEffect.hpp"
+#include "Microsoft/Xna/Framework/Graphics/VertexBuffer.hpp"
+#include "Microsoft/Xna/Framework/Graphics/VertexPositionColor.hpp"
+#include "Microsoft/Xna/Framework/Graphics/BlendState.hpp"
+#include "Microsoft/Xna/Framework/Graphics/DepthStencilState.hpp"
+#include "Microsoft/Xna/Framework/Input/Keyboard.hpp"
+#include &lt;algorithm&gt;
+#include &lt;vector&gt;
+
+using namespace Microsoft::Xna::Framework;
+using namespace Microsoft::Xna::Framework::Graphics;
+using namespace Microsoft::Xna::Framework::Input;
+
+struct TransparentQuad {
+    Vector3 position;
+    Color   color;
+};
+
+class DepthDemoGame final : public Game {
+public:
+    DepthDemoGame() : graphics_(this) {
+        graphics_.setPreferredBackBufferWidth(800);
+        graphics_.setPreferredBackBufferHeight(600);
+    }
+
+protected:
+    void LoadContent() override {
+        effect_ = std::make_unique&lt;BasicEffect&gt;(getGraphicsDeviceProperty());
+        effect_-&gt;setVertexColorEnabled(true);
+
+        // Three transparent quads at different depths
+        quads_ = {
+            { { 0,  0, -1}, Color(255,   0,   0, 160) },  // red, closest
+            { { 0,  0, -2}, Color(  0, 255,   0, 160) },  // green, middle
+            { { 0,  0, -3}, Color(  0,   0, 255, 160) },  // blue, farthest
+        };
+
+        BuildQuadBuffer();
+
+        // Custom DSS: depth test always passes, no writes — for skybox
+        skyboxDSS_.DepthBufferEnable      = true;
+        skyboxDSS_.DepthBufferWriteEnable = false;
+        skyboxDSS_.DepthBufferFunction    = CompareFunction::Always;
+
+        // DSS for transparent objects: test (less), no write
+        transparentDSS_.DepthBufferEnable      = true;
+        transparentDSS_.DepthBufferWriteEnable = false;
+        transparentDSS_.DepthBufferFunction    = CompareFunction::Less;
+    }
+
+    void Update(GameTime&amp; gt) override {
+        if (Keyboard::GetState().IsKeyDown(Keys::Escape)) Exit();
+        time_ += static_cast&lt;float&gt;(gt.ElapsedGameTime.TotalSeconds());
+    }
+
+    void Draw(const GameTime&amp;) override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+
+        // Always clear both colour and depth at the start of the frame
+        gd.Clear(ClearOptions::Target | ClearOptions::DepthBuffer,
+                 Color(10, 10, 20, 255), 1.0f, 0);
+
+        Vector3 camPos = {0, 0, 2};
+        Matrix view = Matrix::CreateLookAt(camPos, Vector3::Zero, Vector3::Up);
+        Matrix proj = Matrix::CreatePerspectiveFieldOfView(
+            MathHelper::PiOver4, 800.0f / 600.0f, 0.1f, 100.0f);
+
+        // --- 1. Draw opaque geometry (if any) with default DSS ---
+        gd.setDepthStencilState(DepthStencilState::Default);
+        gd.setBlendState(BlendState::Opaque);
+        DrawFloor(view, proj);
+
+        // --- 2. Sort and draw transparent quads ---
+        std::sort(quads_.begin(), quads_.end(),
+            [&amp;camPos](const TransparentQuad&amp; a, const TransparentQuad&amp; b) {
+                return Vector3::DistanceSquared(a.position, camPos) &gt;
+                       Vector3::DistanceSquared(b.position, camPos);
+            });
+
+        gd.setDepthStencilState(transparentDSS_);
+        gd.setBlendState(BlendState::AlphaBlend);
+
+        for (auto&amp; q : quads_) {
+            Matrix world = Matrix::CreateTranslation(q.position);
+            DrawColoredQuad(q.color, world, view, proj);
+        }
+
+        // --- 3. Draw skybox LAST with always-pass depth, no write ---
+        // The skybox fills pixels not touched by any earlier draw call.
+        gd.setDepthStencilState(skyboxDSS_);
+        gd.setBlendState(BlendState::Opaque);
+        DrawSkybox(view, proj);
+
+        gd.Present();
+    }
+
+private:
+    void BuildQuadBuffer() {
+        // Unit quad centred at origin in XY plane
+        VertexPositionColor verts[4] = {
+            { {-0.4f,  0.4f, 0}, Color::White },
+            { { 0.4f,  0.4f, 0}, Color::White },
+            { { 0.4f, -0.4f, 0}, Color::White },
+            { {-0.4f, -0.4f, 0}, Color::White },
+        };
+        uint16_t idx[6] = {0,1,2, 0,2,3};
+
+        auto&amp; gd = getGraphicsDeviceProperty();
+        quadVB_ = std::make_unique&lt;VertexBuffer&gt;(gd,
+            VertexPositionColor::VertexDeclaration, 4, BufferUsage::WriteOnly);
+        quadVB_-&gt;SetData(verts, 4);
+        quadIB_ = std::make_unique&lt;IndexBuffer&gt;(gd,
+            IndexElementSize::SixteenBits, 6, BufferUsage::WriteOnly);
+        quadIB_-&gt;SetData(idx, 6);
+    }
+
+    void DrawColoredQuad(Color c, Matrix world, Matrix view, Matrix proj) {
+        auto&amp; gd = getGraphicsDeviceProperty();
+        effect_-&gt;setWorld(world);
+        effect_-&gt;setView(view);
+        effect_-&gt;setProjection(proj);
+        // Tint the white quad with the desired colour via DiffuseColor
+        effect_-&gt;setDiffuseColor(c.ToVector3());
+        gd.setVertexBuffer(*quadVB_);
+        gd.setIndexBuffer(*quadIB_);
+        for (auto&amp; pass : effect_-&gt;getCurrentTechnique().Passes) {
+            pass.Apply();
+            gd.DrawIndexedPrimitives(PrimitiveType::TriangleList, 0, 0, 4, 0, 2);
+        }
+    }
+
+    void DrawFloor(Matrix view, Matrix proj) {
+        Matrix world = Matrix::CreateRotationX(MathHelper::PiOver2) *
+                       Matrix::CreateTranslation(0, -0.6f, -2);
+        effect_-&gt;setDiffuseColor({0.4f, 0.4f, 0.4f});
+        DrawColoredQuad(Color::Gray, world, view, proj);
+    }
+
+    void DrawSkybox(Matrix view, Matrix proj) {
+        // A large quad behind everything — represents the sky
+        Matrix world = Matrix::CreateScale(10) *
+                       Matrix::CreateTranslation(0, 0, -5);
+        effect_-&gt;setDiffuseColor({0.1f, 0.2f, 0.5f});  // dark blue sky
+        DrawColoredQuad(Color::White, world, view, proj);
+    }
+
+    GraphicsDeviceManager graphics_;
+    std::unique_ptr&lt;BasicEffect&gt;  effect_;
+    std::unique_ptr&lt;VertexBuffer&gt; quadVB_;
+    std::unique_ptr&lt;IndexBuffer&gt;  quadIB_;
+    std::vector&lt;TransparentQuad&gt;  quads_;
+    DepthStencilState skyboxDSS_;
+    DepthStencilState transparentDSS_;
+    float time_ = 0.0f;
+};
+
+int main() { DepthDemoGame g; g.Run(); }</code></pre>
+
+      <h2>Key Points</h2>
+      <ul>
+        <li>Clear both colour and depth buffers at the start of every frame.</li>
+        <li>Use <code>DepthFormat::Depth24</code> for all 3D scenes — never <code>Depth16</code>.</li>
+        <li>Draw opaque geometry with <code>DepthStencilState::Default</code> (test + write).</li>
+        <li>Draw transparent geometry with depth test on, depth write off, sorted back-to-front.</li>
+        <li>Draw UI with <code>DepthStencilState::None</code> so it always appears on top.</li>
+        <li>Fix z-fighting with a small translation bias on the foreground surface, or by increasing the near plane distance.</li>
+        <li>The skybox trick: render last with <code>CompareFunction::Always</code> and no depth write, so it fills only undrawn pixels.</li>
+      </ul>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="38-vertex-buffers.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">← Previous</span>
+            <span class="pagination-title">Tutorial 38: Vertex &amp; Index Buffers</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

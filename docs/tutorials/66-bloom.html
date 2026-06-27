@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 66: Post-Processing: Blur and Bloom - CNA Tutorials</title>
+  <meta name="description" content="Implement Gaussian blur and bloom post-processing in CNA using RenderTarget chains, bright-pass thresholding, and additive composite blending.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/66-bloom.html">
+  <meta property="og:title"       content="Tutorial 66: Post-Processing: Blur and Bloom - CNA Tutorials">
+  <meta property="og:description" content="Implement Gaussian blur and bloom post-processing in CNA using RenderTarget chains, bright-pass thresholding, and additive composite blending.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="66-bloom.html" class="docs-nav-link active">Tutorial 66: Bloom</a></li>
+        <li><a href="67-deferred-rendering.html" class="docs-nav-link">Tutorial 67: Deferred Rendering</a></li>
+        <li><a href="68-terrain.html" class="docs-nav-link">Tutorial 68: Terrain</a></li>
+        <li><a href="69-water.html" class="docs-nav-link">Tutorial 69: Water</a></li>
+        <li><a href="70-procedural-geometry.html" class="docs-nav-link">Tutorial 70: Procedural Geometry</a></li>
+        <li><a href="71-memory-management.html" class="docs-nav-link">Tutorial 71: Memory Management</a></li>
+        <li><a href="72-backend-selection.html" class="docs-nav-link">Tutorial 72: Backend Selection</a></li>
+        <li><a href="73-profiling.html" class="docs-nav-link">Tutorial 73: Profiling</a></li>
+        <li><a href="74-frustum-culling.html" class="docs-nav-link">Tutorial 74: Frustum Culling</a></li>
+        <li><a href="75-lod.html" class="docs-nav-link">Tutorial 75: LOD</a></li>
+        <li><a href="76-spatial-partitioning.html" class="docs-nav-link">Tutorial 76: Spatial Partitioning</a></li>
+        <li><a href="77-async-loading.html" class="docs-nav-link">Tutorial 77: Async Loading</a></li>
+        <li><a href="78-multithreading.html" class="docs-nav-link">Tutorial 78: Multi-threading</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 66</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 66: Post-Processing: Blur and Bloom</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Advanced Rendering</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>This tutorial requires the <strong>EASYGL</strong> or <strong>VULKAN</strong> backend. Custom Effect shaders and multiple RenderTarget2D objects are not available on the SDL_RENDERER backend.</p>
+      </div>
+
+      <h2>Bloom pipeline overview</h2>
+      <p>Bloom is a post-processing effect that makes bright areas of the scene appear to glow and bleed into surrounding pixels, simulating the way camera lenses handle very bright light sources. The standard real-time bloom pipeline has three stages:</p>
+      <ol>
+        <li><strong>Bright-pass filter</strong> — render the scene to a RenderTarget, then extract only pixels above a luminance threshold into a second RenderTarget.</li>
+        <li><strong>Gaussian blur</strong> — blur the bright-pass result using a separable two-pass filter (horizontal, then vertical). Each pass reads one RenderTarget and writes to another.</li>
+        <li><strong>Additive composite</strong> — combine the blurred result additively on top of the original scene colour.</li>
+      </ol>
+      <p>The key insight is <em>separability</em>: a 2D Gaussian blur of radius <em>r</em> can be decomposed into a 1D horizontal blur followed by a 1D vertical blur. This reduces the per-pixel sample count from O(r²) to O(r), which is essential for real-time performance.</p>
+
+      <h2>Gaussian blur with two-pass (H + V)</h2>
+      <p>A Gaussian kernel of radius 5 uses 11 samples (centre ±5). Because the kernel is symmetric we only need 6 unique weight values. The weights are pre-computed from the Gaussian formula and normalised so they sum to 1.</p>
+      <p>In the horizontal pass the sample offsets are along the X axis in texture-space: <code>vec2(offset * texelSize.x, 0.0)</code>. In the vertical pass the same shader runs again with offsets along the Y axis. CNA's Effect system allows you to set a uniform controlling the blur direction, so a single GLSL source covers both passes.</p>
+
+      <h2>RenderTarget chain</h2>
+      <p>Bloom requires a chain of off-screen surfaces:</p>
+      <ul>
+        <li><code>sceneRT</code> — full-resolution scene colour (SurfaceFormat::Color).</li>
+        <li><code>brightRT</code> — same resolution, holds only the bright-pass output.</li>
+        <li><code>blurHRT</code> — half-resolution (or same), holds the horizontally blurred bright pixels.</li>
+        <li><code>blurVRT</code> — half-resolution, holds the final blurred bloom texture.</li>
+      </ul>
+      <p>Using half-resolution for the blur targets is an important optimisation: it halves the number of texture fetches per pass and the blurred result will be upsampled back to full resolution during the composite step anyway, so there is no visible quality loss.</p>
+      <pre><code class="language-cpp">// LoadContent — allocate the RenderTarget chain
+auto& gd = getGraphicsDeviceProperty();
+int w = gd.getBackBufferWidth();
+int h = gd.getBackBufferHeight();
+
+sceneRT_   = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h,
+               false, SurfaceFormat::Color,
+               DepthFormat::Depth24Stencil8);
+brightRT_  = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h,
+               false, SurfaceFormat::Color, DepthFormat::None);
+blurHRT_   = std::make_unique&lt;RenderTarget2D&gt;(gd, w/2, h/2,
+               false, SurfaceFormat::Color, DepthFormat::None);
+blurVRT_   = std::make_unique&lt;RenderTarget2D&gt;(gd, w/2, h/2,
+               false, SurfaceFormat::Color, DepthFormat::None);</code></pre>
+
+      <h2>Bright-pass threshold shader</h2>
+      <p>The bright-pass fragment shader computes the luminance of each pixel and discards those below a threshold. A smooth knee function (instead of a hard cut) avoids aliasing at the boundary:</p>
+      <pre><code class="language-glsl">// brightpass.frag
+uniform sampler2D Texture;
+uniform float     Threshold;   // e.g. 0.7
+uniform float     Knee;        // soft knee width, e.g. 0.1
+in  vec2 vTexCoord;
+out vec4 fragColor;
+
+void main() {
+    vec4 color = texture(Texture, vTexCoord);
+    // Perceptual luminance
+    float lum = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
+    // Soft knee: remap luminance around threshold
+    float rq    = clamp(lum - Threshold + Knee, 0.0, 2.0 * Knee);
+    float weight = (Knee > 0.0)
+                 ? (rq * rq) / (4.0 * Knee + 0.00001)
+                 : step(Threshold, lum);
+    fragColor = color * weight;
+}</code></pre>
+
+      <h2>Two-pass Gaussian blur shader</h2>
+      <p>The separable blur shader is parameterised by a <code>BlurDirection</code> uniform so the same GLSL covers both the horizontal and vertical passes:</p>
+      <pre><code class="language-glsl">// gaussblur.frag
+uniform sampler2D Texture;
+uniform vec2      TexelSize;    // 1.0 / vec2(width, height)
+uniform vec2      BlurDirection; // (1,0) horizontal, (0,1) vertical
+
+in  vec2 vTexCoord;
+out vec4 fragColor;
+
+// Pre-computed Gaussian weights for radius-5 kernel (normalised)
+const float WEIGHT[6] = float[](
+    0.227027, 0.194595, 0.121622, 0.054054, 0.016216, 0.002703
+);
+
+void main() {
+    vec4 result = texture(Texture, vTexCoord) * WEIGHT[0];
+    for (int i = 1; i &lt; 6; ++i) {
+        vec2 offset = float(i) * BlurDirection * TexelSize;
+        result += texture(Texture, vTexCoord + offset) * WEIGHT[i];
+        result += texture(Texture, vTexCoord - offset) * WEIGHT[i];
+    }
+    fragColor = result;
+}</code></pre>
+
+      <p>In the C++ Draw loop, apply the blur in two passes:</p>
+      <pre><code class="language-cpp">// Horizontal blur: brightRT -> blurHRT
+gd.setRenderTarget(blurHRT_.get());
+gd.Clear(Color::Black);
+blurEffect_-&gt;Parameters()["BlurDirection"].SetValue(Vector2(1.0f, 0.0f));
+blurEffect_-&gt;Parameters()["TexelSize"].SetValue(
+    Vector2(2.0f / gd.getBackBufferWidth(), 2.0f / gd.getBackBufferHeight()));
+blurEffect_-&gt;Parameters()["Texture"].SetValue(*brightRT_);
+blurEffect_-&gt;CurrentTechnique().Passes[0].Apply();
+DrawFullscreenQuad(gd);
+
+// Vertical blur: blurHRT -> blurVRT
+gd.setRenderTarget(blurVRT_.get());
+gd.Clear(Color::Black);
+blurEffect_-&gt;Parameters()["BlurDirection"].SetValue(Vector2(0.0f, 1.0f));
+blurEffect_-&gt;Parameters()["Texture"].SetValue(*blurHRT_);
+blurEffect_-&gt;CurrentTechnique().Passes[0].Apply();
+DrawFullscreenQuad(gd);</code></pre>
+
+      <h2>Additive blending composite</h2>
+      <p>The final composite step draws the blurred bloom texture over the original scene using additive blending. CNA's <code>BlendState::Additive</code> sets <code>SourceBlend = One</code> and <code>DestinationBlend = One</code>, which simply adds the RGB values:</p>
+      <pre><code class="language-cpp">// Composite: draw scene, then add bloom on top
+gd.setRenderTarget(nullptr);  // back buffer
+gd.Clear(Color::Black);
+
+// Draw original scene
+spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, BlendState::Opaque);
+spriteBatch_-&gt;Draw(*sceneRT_, Vector2::Zero, Color::White);
+spriteBatch_-&gt;End();
+
+// Add bloom additively
+spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, BlendState::Additive);
+spriteBatch_-&gt;Draw(*blurVRT_,
+    Rectangle(0, 0,
+              gd.getBackBufferWidth(),
+              gd.getBackBufferHeight()),
+    Color::White);
+spriteBatch_-&gt;End();</code></pre>
+
+      <h2>Tone mapping note</h2>
+      <p>If your scene renders in HDR (values above 1.0), apply a tone mapping operator <em>after</em> the bloom composite but before the final blit to the swap chain. A simple Reinhard tone map is:</p>
+      <pre><code class="language-glsl">// In the composite/tonemapping shader
+vec3 hdr = sceneColor.rgb + bloomColor.rgb;
+// Reinhard
+vec3 ldr = hdr / (hdr + vec3(1.0));
+// Optional: gamma correction
+fragColor = vec4(pow(ldr, vec3(1.0 / 2.2)), 1.0);</code></pre>
+      <p>Without tone mapping, additively blended bloom will clip to white in LDR targets. For LDR pipelines keep the bloom intensity low (multiply the bloom texture by a factor of 0.3–0.8) to avoid over-brightening. A dedicated HDR RenderTarget (<code>SurfaceFormat::HdrBlendable</code> or <code>SurfaceFormat::Rgba64</code>) is recommended when accurate HDR bloom is needed.</p>
+
+      <h2>Putting it all together</h2>
+      <p>A complete per-frame bloom Draw sequence looks like this:</p>
+      <pre><code class="language-cpp">void Draw(const GameTime& gameTime) override {
+    auto& gd = getGraphicsDeviceProperty();
+
+    // 1. Render scene to off-screen target
+    gd.SetRenderTarget(sceneRT_.get());
+    gd.Clear(Color::CornflowerBlue);
+    DrawScene(gd);
+
+    // 2. Bright-pass filter
+    gd.SetRenderTarget(brightRT_.get());
+    gd.Clear(Color::Black);
+    brightEffect_-&gt;Parameters()["Threshold"].SetValue(0.7f);
+    brightEffect_-&gt;Parameters()["Knee"].SetValue(0.1f);
+    brightEffect_-&gt;Parameters()["Texture"].SetValue(*sceneRT_);
+    brightEffect_-&gt;CurrentTechnique().Passes[0].Apply();
+    DrawFullscreenQuad(gd);
+
+    // 3. Horizontal Gaussian blur
+    gd.SetRenderTarget(blurHRT_.get());
+    gd.Clear(Color::Black);
+    ApplyBlur(gd, *brightRT_, Vector2(1.0f, 0.0f));
+
+    // 4. Vertical Gaussian blur
+    gd.SetRenderTarget(blurVRT_.get());
+    gd.Clear(Color::Black);
+    ApplyBlur(gd, *blurHRT_, Vector2(0.0f, 1.0f));
+
+    // 5. Composite to back buffer
+    gd.SetRenderTarget(nullptr);
+    gd.Clear(Color::Black);
+    spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, BlendState::Opaque);
+    spriteBatch_-&gt;Draw(*sceneRT_, Vector2::Zero, Color::White);
+    spriteBatch_-&gt;End();
+    spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, BlendState::Additive);
+    spriteBatch_-&gt;Draw(*blurVRT_,
+        Rectangle(0, 0, gd.getBackBufferWidth(), gd.getBackBufferHeight()),
+        Color::White * bloomIntensity_);
+    spriteBatch_-&gt;End();
+
+    gd.Present();
+}</code></pre>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+        </div>
+        <div class="docs-pagination-next">
+          <a href="67-deferred-rendering.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 67: Deferred Rendering</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

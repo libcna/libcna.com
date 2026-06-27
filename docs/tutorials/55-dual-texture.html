@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 55: DualTextureEffect for Lightmaps - CNA Tutorials</title>
+  <meta name="description" content="Combine a diffuse albedo texture with a precomputed lightmap using DualTextureEffect in CNA. Learn VertexPositionDualTexture, the baked lightmap workflow, and performance characteristics.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/55-dual-texture.html">
+  <meta property="og:title"       content="Tutorial 55: DualTextureEffect for Lightmaps - CNA Tutorials">
+  <meta property="og:description" content="Combine a diffuse albedo texture with a precomputed lightmap using DualTextureEffect in CNA. Learn VertexPositionDualTexture, the baked lightmap workflow, and performance characteristics.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="53-effect-parameter.html" class="docs-nav-link">Tutorial 53: GLSL Uniforms and EffectParameter</a></li>
+        <li><a href="54-alpha-test.html"        class="docs-nav-link">Tutorial 54: AlphaTestEffect and Alpha Masking</a></li>
+        <li><a href="55-dual-texture.html"      class="docs-nav-link active">Tutorial 55: DualTextureEffect for Lightmaps</a></li>
+        <li><a href="56-environment-map.html"   class="docs-nav-link">Tutorial 56: EnvironmentMapEffect for Reflections</a></li>
+        <li><a href="57-skinned-effect.html"    class="docs-nav-link">Tutorial 57: SkinnedEffect and Skeletal Animation</a></li>
+        <li><a href="58-normal-mapping.html"    class="docs-nav-link">Tutorial 58: Normal Mapping</a></li>
+        <li><a href="59-shadow-mapping.html"    class="docs-nav-link">Tutorial 59: Shadow Mapping</a></li>
+        <li><a href="60-instancing.html"        class="docs-nav-link">Tutorial 60: Instanced Rendering</a></li>
+        <li><a href="61-occlusion-query.html"   class="docs-nav-link">Tutorial 61: Occlusion Queries</a></li>
+        <li><a href="62-mrt.html"               class="docs-nav-link">Tutorial 62: Multiple Render Targets (MRT)</a></li>
+        <li><a href="63-stencil-buffer.html"    class="docs-nav-link">Tutorial 63: Stencil Buffer Effects</a></li>
+        <li><a href="64-cubemaps.html"          class="docs-nav-link">Tutorial 64: Cubemaps and Skyboxes</a></li>
+        <li><a href="65-msaa.html"              class="docs-nav-link">Tutorial 65: MSAA Anti-Aliasing</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 55: DualTextureEffect for Lightmaps</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 55: DualTextureEffect for Lightmaps</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Built-in Effects</p>
+
+      <p>Lightmapping is one of the oldest and most effective techniques for delivering high-quality static lighting at minimal runtime cost. The idea is to precompute all indirect illumination, soft shadows, and ambient occlusion offline, bake the result into a second texture (the lightmap), and then multiply it into the diffuse albedo during rendering. CNA's built-in <code>DualTextureEffect</code> implements exactly this pipeline in a single shader pass, supporting two independent UV channels, optional per-vertex colour modulation, and fog.</p>
+
+      <h2>DualTextureEffect Overview</h2>
+      <p><code>DualTextureEffect</code> combines two <code>Texture2D</code> objects in a single fragment shader pass. The first texture is the surface's diffuse albedo — the colour of the material under white light. The second texture is the precomputed lightmap. The fragment shader multiplies them together:</p>
+      <pre><code class="language-glsl">// Core of DualTextureEffect fragment shader (simplified)
+vec4 albedo   = texture(u_texture,  v_texcoord1);
+vec4 lightmap = texture(u_texture2, v_texcoord2);
+fragColor     = albedo * lightmap * u_diffuseColor;</code></pre>
+      <p>This multiplication is physically motivated: a surface that reflects a fraction of incoming light, when lit by a certain intensity, outputs the product of the two. Because the lightmap stores pre-integrated radiance (often encoded in a gamma-compressed format), the multiplication should happen in linear colour space for physical correctness — CNA applies gamma decoding automatically when the textures are created with <code>SurfaceFormat::Color</code> and the effect's linear-space flag is enabled.</p>
+      <p>The key performance advantage of <code>DualTextureEffect</code> over a per-pixel lighting effect is that there are <em>no light direction calculations at runtime</em>. The GPU simply samples two textures and multiplies — this is an extremely fast path even on low-end mobile GPUs.</p>
+
+      <h2>Texture and Texture2 Properties</h2>
+      <p>The two textures are set via separate setter methods:</p>
+      <ul>
+        <li><strong><code>setTexture(Texture2D*)</code></strong> — the primary (albedo) texture. Sampled using the first UV channel (<code>v_texcoord1</code> from <code>TextureCoordinate</code> in the vertex struct). This should be a tiling, detail-rich albedo map.</li>
+        <li><strong><code>setTexture2(Texture2D*)</code></strong> — the secondary (lightmap) texture. Sampled using the second UV channel (<code>v_texcoord2</code> from <code>TextureCoordinate2</code>). This is a unique (non-tiling) atlas per mesh or per room, produced by an offline lightmapper.</li>
+      </ul>
+      <p>Both textures use their own independent UV sets stored in the vertex buffer. The albedo UV typically tiles across the surface (a brick texture repeated many times), while the lightmap UV covers the [0, 1] range exactly once across the entire mesh, ensuring each texel in the lightmap corresponds to a unique surface point.</p>
+      <pre><code class="language-cpp">dualEffect_-&gt;setTexture(diffuseTex_.get());    // albedo (tiling)
+dualEffect_-&gt;setTexture2(lightmapTex_.get());  // lightmap (unique UV)</code></pre>
+
+      <h2>VertexPositionDualTexture</h2>
+      <p><code>VertexPositionDualTexture</code> is the vertex struct required by <code>DualTextureEffect</code>. It carries three fields:</p>
+      <ul>
+        <li><code>Position</code> — <code>Vector3</code>, world-space (or object-space) vertex position.</li>
+        <li><code>TextureCoordinate</code> — <code>Vector2</code>, UV coordinates for the albedo texture (first UV channel).</li>
+        <li><code>TextureCoordinate2</code> — <code>Vector2</code>, UV coordinates for the lightmap (second UV channel).</li>
+      </ul>
+      <p>The stride is 28 bytes: 12 bytes for position + 8 bytes for UV1 + 8 bytes for UV2. The vertex declaration is registered with the GraphicsDevice automatically when you use <code>VertexPositionDualTexture::VertexDeclaration</code>:</p>
+      <pre><code class="language-cpp">VertexPositionDualTexture verts[] = {
+    // { Position,           UV1 (albedo),  UV2 (lightmap) }
+    { Vector3(-5, 0, -5),  Vector2(0, 4),  Vector2(0, 0) },
+    { Vector3( 5, 0, -5),  Vector2(4, 4),  Vector2(1, 0) },
+    { Vector3( 5, 0,  5),  Vector2(4, 0),  Vector2(1, 1) },
+    { Vector3(-5, 0,  5),  Vector2(0, 0),  Vector2(0, 1) },
+};
+// Note: albedo UV uses scale 4 for a 4x repeat; lightmap UV is [0,1]
+auto vb = std::make_unique&lt;VertexBuffer&gt;(
+    gd,
+    VertexPositionDualTexture::VertexDeclaration,
+    4,
+    BufferUsage::WriteOnly
+);
+vb-&gt;SetData(verts, 4);</code></pre>
+      <p>When <code>VertexColorEnabled</code> is true, use <code>VertexPositionColorDualTexture</code> instead, which adds a <code>Color</code> field between <code>Position</code> and <code>TextureCoordinate</code>.</p>
+
+      <h2>Baked Lightmap Workflow</h2>
+      <p>Creating a lightmap involves an offline rendering step. The typical workflow for a CNA project:</p>
+      <ol>
+        <li><strong>Model your scene</strong> in Blender (or any DCC tool). Ensure all static geometry has a second UV channel (<em>UV2</em>) that is "unwrapped for lightmapping" — no overlapping faces, each polygon occupies a unique region of [0,1] texture space.</li>
+        <li><strong>Bake the lightmap</strong> using Blender's Cycles bake system (or a dedicated lightmapper such as The Lightmapper, Bakery, or xatlas + custom ray tracer). Bake to an RGBA image at 1024×1024 or 2048×2048 depending on scene scale. Save as PNG.</li>
+        <li><strong>Export assets</strong> — export the mesh with both UV channels to OBJ or FBX. Export the baked lightmap PNG.</li>
+        <li><strong>Import into CNA</strong> — the nova-3d pipeline ingests the mesh and preserves the second UV channel as <code>TextureCoordinate2</code> in the vertex data. Load the lightmap texture normally via <code>Content.Load&lt;Texture2D&gt;</code>.</li>
+      </ol>
+      <p>A common mistake is to use overlapping UVs in the lightmap channel (the same UV layout as the albedo, which tiles). This causes every surface that shares the same albedo UV region to also share the same lightmap texel, producing incorrect lighting where every face appears to have identical shadow patterns. Always create a dedicated non-overlapping UV unwrap for the lightmap channel.</p>
+
+      <h2>Combining Diffuse and Lightmap</h2>
+      <p>The fragment-level combination used by <code>DualTextureEffect</code> is a simple multiply. In mathematical terms:</p>
+      <pre><code class="language-glsl">// Inside DualTextureEffect — both textures sampled and multiplied
+vec4 c1 = texture(u_texture,  v_texcoord1);
+vec4 c2 = texture(u_texture2, v_texcoord2);
+vec4 result = c1 * c2 * u_diffuseColor;
+
+// Optional vertex colour modulation
+#ifdef VERTEX_COLOR_ENABLED
+result *= v_vertexColor;
+#endif
+
+fragColor = result;</code></pre>
+      <p>The lightmap values are typically in the range [0, 1], where 0 represents full shadow and 1 represents maximum direct illumination. Values can exceed 1 if the lightmap is encoded in HDR format (<code>SurfaceFormat::HdrBlendable</code>), which requires tone mapping before display. For LDR pipelines, clamp the lightmap to [0, 1] during export from the baking tool.</p>
+      <p>A common refinement is to store ambient occlusion in the lightmap's alpha channel and multiply it separately, giving you AO as a distinct scalar at no additional texture cost.</p>
+
+      <h2>Limitations</h2>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>DualTextureEffect provides static lighting only.</strong> The lightmap is baked once offline. Dynamic objects (characters, moving platforms, projectiles) cannot participate in lightmapped lighting — they require a separate dynamic lighting effect. Moving static geometry invalidates the bake.</p>
+      </div>
+      <ul>
+        <li><strong>No dynamic lights:</strong> Point lights, spotlights, and other dynamic light sources are not reflected by the lightmap unless you re-bake. For mixed static + dynamic lighting use a combination of lightmaps (for static light) and a custom effect with runtime light evaluation (for dynamic light).</li>
+        <li><strong>Re-bake on geometry change:</strong> If a wall moves by even one unit, the lightmap shadows become incorrect. Lightmaps are appropriate for fully static environments.</li>
+        <li><strong>Memory overhead:</strong> A 2048×2048 RGBA lightmap consumes 16 MB of VRAM. Large open worlds require lightmap atlasing across multiple textures.</li>
+        <li><strong>No animated lightmaps:</strong> You cannot smoothly interpolate between two baked lightmaps at runtime within <code>DualTextureEffect</code> — that requires a custom effect with two samplers and a lerp uniform.</li>
+      </ul>
+
+      <h2>Complete Example: Lightmapped Room</h2>
+      <pre><code class="language-cpp">class LightmapGame final : public Game {
+    std::unique_ptr&lt;DualTextureEffect&gt; dualEffect_;
+    std::unique_ptr&lt;Texture2D&gt;         diffuseTex_;
+    std::unique_ptr&lt;Texture2D&gt;         lightmapTex_;
+    std::unique_ptr&lt;VertexBuffer&gt;      roomVB_;
+    std::unique_ptr&lt;IndexBuffer&gt;       roomIB_;
+    int                                indexCount_ = 0;
+    Camera                             camera_;
+
+    void LoadContent() override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+
+        diffuseTex_  = Content.Load&lt;Texture2D&gt;("textures/brick_albedo");
+        lightmapTex_ = Content.Load&lt;Texture2D&gt;("textures/room_lightmap");
+
+        dualEffect_ = std::make_unique&lt;DualTextureEffect&gt;(gd);
+        dualEffect_-&gt;setTexture(diffuseTex_.get());
+        dualEffect_-&gt;setTexture2(lightmapTex_.get());
+        dualEffect_-&gt;setVertexColorEnabled(false);
+        dualEffect_-&gt;setDiffuseColor(Vector3(1.0f, 1.0f, 1.0f));
+
+        // Enable fog for depth cueing
+        dualEffect_-&gt;setFogEnabled(true);
+        dualEffect_-&gt;setFogColor(Vector3(0.1f, 0.1f, 0.12f));
+        dualEffect_-&gt;setFogStart(15.0f);
+        dualEffect_-&gt;setFogEnd(50.0f);
+
+        BuildRoomGeometry(gd);
+    }
+
+    void BuildRoomGeometry(GraphicsDevice&amp; gd) {
+        // Six-sided room: floor, ceiling, four walls
+        // Each face has albedo UVs tiling 4x and unique lightmap UVs
+        std::vector&lt;VertexPositionDualTexture&gt; verts;
+        std::vector&lt;uint16_t&gt;                  indices;
+
+        auto addQuad = [&amp;](Vector3 a, Vector3 b, Vector3 c, Vector3 d,
+                            float uvScale, Vector2 lm0, Vector2 lm1,
+                            Vector2 lm2, Vector2 lm3) {
+            uint16_t base = (uint16_t)verts.size();
+            verts.push_back({ a, Vector2(0,      uvScale), lm0 });
+            verts.push_back({ b, Vector2(uvScale,uvScale), lm1 });
+            verts.push_back({ c, Vector2(uvScale,0      ), lm2 });
+            verts.push_back({ d, Vector2(0,      0      ), lm3 });
+            indices.insert(indices.end(),
+                { base, (uint16_t)(base+1), (uint16_t)(base+2),
+                  base, (uint16_t)(base+2), (uint16_t)(base+3) });
+        };
+
+        // Floor (y=0), lightmap occupies top-left quarter of the atlas
+        addQuad(
+            {-5,0,-5}, { 5,0,-5}, { 5,0, 5}, {-5,0, 5}, 4.0f,
+            {0,0},     {0.5f,0},  {0.5f,0.5f},{0,0.5f}
+        );
+        // ... add remaining faces similarly ...
+
+        indexCount_ = (int)indices.size();
+
+        roomVB_ = std::make_unique&lt;VertexBuffer&gt;(
+            gd, VertexPositionDualTexture::VertexDeclaration,
+            (int)verts.size(), BufferUsage::WriteOnly);
+        roomVB_-&gt;SetData(verts.data(), (int)verts.size());
+
+        roomIB_ = std::make_unique&lt;IndexBuffer&gt;(
+            gd, IndexElementSize::SixteenBits,
+            (int)indices.size(), BufferUsage::WriteOnly);
+        roomIB_-&gt;SetData(indices.data(), (int)indices.size());
+    }
+
+    void Draw(const GameTime&amp;) override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+        gd.Clear(Color::Black);
+
+        dualEffect_-&gt;setWorld(Matrix::Identity);
+        dualEffect_-&gt;setView(camera_.View());
+        dualEffect_-&gt;setProjection(camera_.Projection());
+
+        gd.setVertexBuffer(*roomVB_);
+        gd.setIndexBuffer(*roomIB_);
+        for (auto&amp; pass : dualEffect_-&gt;getCurrentTechnique().Passes) {
+            pass.Apply();
+            gd.DrawIndexedPrimitives(
+                PrimitiveType::TriangleList, 0, 0,
+                indexCount_ / 3);
+        }
+        gd.Present();
+    }
+};</code></pre>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="54-alpha-test.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 54: AlphaTestEffect and Alpha Masking</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="56-environment-map.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 56: EnvironmentMapEffect for Reflections</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

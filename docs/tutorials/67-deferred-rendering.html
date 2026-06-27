@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 67: Deferred Rendering - CNA Tutorials</title>
+  <meta name="description" content="Implement deferred rendering in CNA with a G-Buffer geometry pass and a full-screen lighting pass supporting many dynamic lights.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/67-deferred-rendering.html">
+  <meta property="og:title"       content="Tutorial 67: Deferred Rendering - CNA Tutorials">
+  <meta property="og:description" content="Implement deferred rendering in CNA with a G-Buffer geometry pass and a full-screen lighting pass supporting many dynamic lights.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="66-bloom.html" class="docs-nav-link">Tutorial 66: Bloom</a></li>
+        <li><a href="67-deferred-rendering.html" class="docs-nav-link active">Tutorial 67: Deferred Rendering</a></li>
+        <li><a href="68-terrain.html" class="docs-nav-link">Tutorial 68: Terrain</a></li>
+        <li><a href="69-water.html" class="docs-nav-link">Tutorial 69: Water</a></li>
+        <li><a href="70-procedural-geometry.html" class="docs-nav-link">Tutorial 70: Procedural Geometry</a></li>
+        <li><a href="71-memory-management.html" class="docs-nav-link">Tutorial 71: Memory Management</a></li>
+        <li><a href="72-backend-selection.html" class="docs-nav-link">Tutorial 72: Backend Selection</a></li>
+        <li><a href="73-profiling.html" class="docs-nav-link">Tutorial 73: Profiling</a></li>
+        <li><a href="74-frustum-culling.html" class="docs-nav-link">Tutorial 74: Frustum Culling</a></li>
+        <li><a href="75-lod.html" class="docs-nav-link">Tutorial 75: LOD</a></li>
+        <li><a href="76-spatial-partitioning.html" class="docs-nav-link">Tutorial 76: Spatial Partitioning</a></li>
+        <li><a href="77-async-loading.html" class="docs-nav-link">Tutorial 77: Async Loading</a></li>
+        <li><a href="78-multithreading.html" class="docs-nav-link">Tutorial 78: Multi-threading</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 67</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 67: Deferred Rendering</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Advanced Rendering</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>Deferred rendering requires Multiple Render Targets (MRT) and custom Effect shaders. This is only available on the <strong>EASYGL</strong> and <strong>VULKAN</strong> backends. The SDL_RENDERER backend does not support MRT.</p>
+      </div>
+
+      <h2>Forward vs deferred rendering</h2>
+      <p>In <em>forward rendering</em> each object is drawn once per light that affects it, or lights are accumulated in a single pass with a fixed array of lights packed into shader uniforms. The cost scales as O(objects × lights) and becomes prohibitive when both counts are large.</p>
+      <p><em>Deferred rendering</em> separates geometry processing from lighting. The geometry pass runs once per object and outputs surface properties (albedo, normal, position) into a set of off-screen textures called the <em>G-buffer</em> (geometry buffer). The lighting pass then iterates over all lights and reads the G-buffer, computing lighting in screen space without touching the geometry again. The cost is O(objects) + O(lights × screen pixels covered by each light volume).</p>
+
+      <h2>G-Buffer layout</h2>
+      <p>A minimal G-buffer for Blinn-Phong lighting needs four channels of data per pixel:</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Target</th><th>Format</th><th>Contents</th></tr></thead>
+        <tbody>
+          <tr><td>RT0 — Albedo</td><td>Color (RGBA8)</td><td>Diffuse colour RGB, specular power A</td></tr>
+          <tr><td>RT1 — Normal</td><td>Rgba1010102 or HalfVector4</td><td>World-space normal XYZ (A unused)</td></tr>
+          <tr><td>RT2 — Position (optional)</td><td>Vector4 / HdrBlendable</td><td>World-space position XYZ (can be reconstructed from depth)</td></tr>
+          <tr><td>Depth buffer</td><td>Depth24Stencil8</td><td>Hardware depth + stencil for light volume masking</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>Storing world-space position is the simplest approach. In production, position is typically reconstructed from depth using the inverse view-projection matrix to save bandwidth.</p>
+
+      <h2>Geometry pass</h2>
+      <p>The geometry pass draws every opaque object exactly once. The fragment shader writes to all three colour targets simultaneously using GLSL's <code>layout(location = N) out</code> syntax:</p>
+      <pre><code class="language-glsl">// gbuffer.frag — Geometry pass output
+layout(location = 0) out vec4 gAlbedo;    // RT0
+layout(location = 1) out vec4 gNormal;    // RT1
+layout(location = 2) out vec4 gPosition;  // RT2
+
+uniform sampler2D DiffuseTexture;
+uniform float     SpecularPower;
+
+in vec3 vWorldPos;
+in vec3 vWorldNormal;
+in vec2 vTexCoord;
+
+void main() {
+    gAlbedo   = vec4(texture(DiffuseTexture, vTexCoord).rgb,
+                     SpecularPower / 255.0);
+    gNormal   = vec4(normalize(vWorldNormal) * 0.5 + 0.5, 1.0);
+    gPosition = vec4(vWorldPos, 1.0);
+}</code></pre>
+
+      <h2>CNA MRT support</h2>
+      <p>CNA exposes Multiple Render Targets through the <code>RenderTargetBinding</code> array overload of <code>GraphicsDevice::SetRenderTargets</code>:</p>
+      <pre><code class="language-cpp">// LoadContent — create the G-buffer targets
+auto& gd = getGraphicsDeviceProperty();
+int w = gd.getBackBufferWidth();
+int h = gd.getBackBufferHeight();
+
+albedoRT_   = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h, false,
+                SurfaceFormat::Color, DepthFormat::Depth24Stencil8);
+normalRT_   = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h, false,
+                SurfaceFormat::Rgba1010102, DepthFormat::None);
+positionRT_ = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h, false,
+                SurfaceFormat::Vector4, DepthFormat::None);
+
+// Bind all three as MRT — albedoRT_ owns the shared depth buffer
+RenderTargetBinding bindings[] = {
+    RenderTargetBinding(*albedoRT_),
+    RenderTargetBinding(*normalRT_),
+    RenderTargetBinding(*positionRT_)
+};
+// Store for use in Draw:
+gBufferBindings_ = std::vector&lt;RenderTargetBinding&gt;(
+    std::begin(bindings), std::end(bindings));</code></pre>
+
+      <h2>Lighting pass</h2>
+      <p>After the geometry pass, restore the back buffer as the render target and draw a full-screen quad. The lighting shader reads the G-buffer textures and accumulates contributions from each light. For many lights, iterate in a loop inside the shader or call the quad draw once per light with additive blending:</p>
+      <pre><code class="language-glsl">// lighting.frag — single point light contribution
+uniform sampler2D GAlbedo;
+uniform sampler2D GNormal;
+uniform sampler2D GPosition;
+uniform vec3      LightPos;
+uniform vec3      LightColor;
+uniform float     LightRadius;
+uniform vec3      CameraPos;
+
+in vec2 vTexCoord;
+out vec4 fragColor;
+
+void main() {
+    vec4 albedoSpec = texture(GAlbedo,   vTexCoord);
+    vec3 normal     = texture(GNormal,   vTexCoord).xyz * 2.0 - 1.0;
+    vec3 worldPos   = texture(GPosition, vTexCoord).xyz;
+
+    vec3 albedo    = albedoSpec.rgb;
+    float specPow  = albedoSpec.a * 255.0;
+
+    vec3  L        = LightPos - worldPos;
+    float dist     = length(L);
+    L              = normalize(L);
+    float attenuation = max(0.0, 1.0 - dist / LightRadius);
+    attenuation   *= attenuation; // quadratic falloff
+
+    // Diffuse
+    float NdotL = max(0.0, dot(normal, L));
+    vec3  diff  = albedo * LightColor * NdotL * attenuation;
+
+    // Specular (Blinn-Phong)
+    vec3  V     = normalize(CameraPos - worldPos);
+    vec3  H     = normalize(L + V);
+    float spec  = pow(max(0.0, dot(normal, H)), specPow) * attenuation;
+
+    fragColor = vec4(diff + LightColor * spec, 1.0);
+}</code></pre>
+
+      <p>In C++, the full Draw sequence looks like this:</p>
+      <pre><code class="language-cpp">void Draw(const GameTime&) override {
+    auto& gd = getGraphicsDeviceProperty();
+
+    // ── Geometry pass ──────────────────────────────────────
+    gd.SetRenderTargets(gBufferBindings_.data(),
+                        static_cast&lt;int&gt;(gBufferBindings_.size()));
+    gd.Clear(ClearOptions::Target | ClearOptions::DepthBuffer,
+             Color::Black, 1.0f, 0);
+    gBufferEffect_-&gt;CurrentTechnique().Passes[0].Apply();
+    for (auto& obj : scene_) {
+        gd.SetVertexBuffer(obj.vertexBuffer);
+        gd.SetIndexBuffer(obj.indexBuffer);
+        gBufferEffect_-&gt;Parameters()["World"].SetValue(obj.world);
+        gBufferEffect_-&gt;Parameters()["View"].SetValue(view_);
+        gBufferEffect_-&gt;Parameters()["Projection"].SetValue(proj_);
+        gBufferEffect_-&gt;Parameters()["DiffuseTexture"].SetValue(obj.texture);
+        gBufferEffect_-&gt;CurrentTechnique().Passes[0].Apply();
+        gd.DrawIndexedPrimitives(PrimitiveType::TriangleList,
+                                 0, 0, obj.vertexCount,
+                                 0, obj.primitiveCount);
+    }
+
+    // ── Lighting pass ──────────────────────────────────────
+    gd.SetRenderTarget(nullptr);
+    gd.Clear(Color::Black);
+
+    // Bind G-buffer textures
+    lightEffect_-&gt;Parameters()["GAlbedo"].SetValue(*albedoRT_);
+    lightEffect_-&gt;Parameters()["GNormal"].SetValue(*normalRT_);
+    lightEffect_-&gt;Parameters()["GPosition"].SetValue(*positionRT_);
+    lightEffect_-&gt;Parameters()["CameraPos"].SetValue(cameraPos_);
+
+    gd.BlendState = BlendState::Additive;
+    for (auto& light : lights_) {
+        lightEffect_-&gt;Parameters()["LightPos"].SetValue(light.position);
+        lightEffect_-&gt;Parameters()["LightColor"].SetValue(light.color.ToVector3());
+        lightEffect_-&gt;Parameters()["LightRadius"].SetValue(light.radius);
+        lightEffect_-&gt;CurrentTechnique().Passes[0].Apply();
+        DrawFullscreenQuad(gd);
+    }
+    gd.BlendState = BlendState::Opaque;
+
+    gd.Present();
+}</code></pre>
+
+      <h2>Screen-space light volumes</h2>
+      <p>Drawing a full-screen quad per light is wasteful when a light only illuminates a small region of the screen. A better approach is to draw a sphere mesh (for point lights) or cone mesh (for spot lights) that covers exactly the light's screen-space footprint. The stencil buffer can be used to avoid lighting pixels that the camera is inside the light volume from the wrong side.</p>
+      <p>For a basic implementation the full-screen quad approach is sufficient and easier to reason about. Optimise to light volumes once the correctness is established.</p>
+
+      <h2>Advantages: handling many lights</h2>
+      <p>With forward rendering, 100 dynamic point lights typically requires 100 draw calls per object or a large shader loop. With deferred rendering the geometry pass is always one draw call per object regardless of light count. Adding 100 more lights costs 100 more full-screen quad draws in the lighting pass — an additive cost independent of scene complexity.</p>
+
+      <h2>Disadvantages</h2>
+      <ul>
+        <li><strong>Transparency</strong> — transparent objects cannot be stored in the G-buffer correctly because their fragments must blend with what is behind them. The standard workaround is to render all opaque geometry through the deferred pipeline, then render transparent objects in a separate forward pass on top.</li>
+        <li><strong>MSAA</strong> — hardware MSAA does not work with MRT without extensions (requires per-sample evaluation). Use FXAA or TAA as a post-process antialiasing alternative.</li>
+        <li><strong>Memory bandwidth</strong> — reading and writing several G-buffer textures per pixel has a significant bandwidth cost. On mobile GPUs with tile-based architectures this can be mitigated using render pass subpasses (Vulkan) or framebuffer fetch extensions (OpenGL ES).</li>
+        <li><strong>Single material model</strong> — the G-buffer layout bakes in the shading model. Mixed material types (PBR + toon) require storing a material ID and branching in the lighting shader.</li>
+      </ul>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="66-bloom.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 66: Bloom</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="68-terrain.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 68: Terrain Rendering</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

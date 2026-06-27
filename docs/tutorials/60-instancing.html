@@ -1,0 +1,435 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 60: Instanced Rendering - CNA Tutorials</title>
+  <meta name="description" content="Draw thousands of identical meshes in a single GPU draw call using DrawInstancedPrimitives, a second per-instance VertexBuffer, and GLSL instanced vertex shaders in CNA.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/60-instancing.html">
+  <meta property="og:title"       content="Tutorial 60: Instanced Rendering - CNA Tutorials">
+  <meta property="og:description" content="Draw thousands of identical meshes in a single GPU draw call using DrawInstancedPrimitives, a second per-instance VertexBuffer, and GLSL instanced vertex shaders in CNA.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="53-effect-parameter.html" class="docs-nav-link">Tutorial 53: GLSL Uniforms and EffectParameter</a></li>
+        <li><a href="54-alpha-test.html"        class="docs-nav-link">Tutorial 54: AlphaTestEffect and Alpha Masking</a></li>
+        <li><a href="55-dual-texture.html"      class="docs-nav-link">Tutorial 55: DualTextureEffect for Lightmaps</a></li>
+        <li><a href="56-environment-map.html"   class="docs-nav-link">Tutorial 56: EnvironmentMapEffect for Reflections</a></li>
+        <li><a href="57-skinned-effect.html"    class="docs-nav-link">Tutorial 57: SkinnedEffect and Skeletal Animation</a></li>
+        <li><a href="58-normal-mapping.html"    class="docs-nav-link">Tutorial 58: Normal Mapping</a></li>
+        <li><a href="59-shadow-mapping.html"    class="docs-nav-link">Tutorial 59: Shadow Mapping</a></li>
+        <li><a href="60-instancing.html"        class="docs-nav-link active">Tutorial 60: Instanced Rendering</a></li>
+        <li><a href="61-occlusion-query.html"   class="docs-nav-link">Tutorial 61: Occlusion Queries</a></li>
+        <li><a href="62-mrt.html"               class="docs-nav-link">Tutorial 62: Multiple Render Targets (MRT)</a></li>
+        <li><a href="63-stencil-buffer.html"    class="docs-nav-link">Tutorial 63: Stencil Buffer Effects</a></li>
+        <li><a href="64-cubemaps.html"          class="docs-nav-link">Tutorial 64: Cubemaps and Skyboxes</a></li>
+        <li><a href="65-msaa.html"              class="docs-nav-link">Tutorial 65: MSAA Anti-Aliasing</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 60: Instanced Rendering</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 60: Instanced Rendering</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Advanced Rendering</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>EasyGL and Vulkan backends only.</strong> <code>DrawInstancedPrimitives</code> requires OpenGL instanced draw call support (OpenGL 3.3+ or ES 3.0+) or a Vulkan pipeline. It is not available on the SDL_RENDERER backend, which falls back to single-draw-call per-object rendering.</p>
+      </div>
+
+      <h2>What is Instanced Rendering?</h2>
+      <p>Instanced rendering is a GPU technique that draws the same mesh geometry many times in a single draw call, with each copy reading its own per-instance data (world transform, colour tint, animation frame, etc.) from a separate GPU buffer. Without instancing you must loop over every object in C++ and issue one draw call per object — each draw call carries significant CPU and driver overhead, and hundreds of draw calls per frame can easily become the rendering bottleneck even on fast hardware.</p>
+      <p>With instancing the GPU itself handles the repetition. The driver submits one command to the GPU and the hardware replicates the mesh, fetching per-vertex data from the mesh vertex buffer and per-instance data from a second vertex buffer. The result is that drawing 10,000 identical grass blades costs only marginally more GPU time than drawing a single blade, and the CPU cost of the draw submission becomes almost negligible.</p>
+      <p>Typical use cases include:</p>
+      <ul>
+        <li><strong>Vegetation</strong> — grass, flowers, shrubs, trees with the same mesh but different positions and scales.</li>
+        <li><strong>Particle systems</strong> — thousands of small quads or sprites with per-particle transforms.</li>
+        <li><strong>Crowd rendering</strong> — many characters using the same skeleton and mesh but different positions and animation states.</li>
+        <li><strong>Rocks, debris, coins</strong> — any repeated world decoration object.</li>
+        <li><strong>Voxel chunks</strong> — large numbers of cube-shaped blocks with per-block transforms and colours.</li>
+      </ul>
+      <p>Instancing is one of the most impactful GPU optimisations available in a real-time 3D engine. It is strongly recommended any time you need to draw more than a few dozen copies of the same mesh per frame.</p>
+
+      <h2>DrawInstancedPrimitives</h2>
+      <p>CNA exposes instanced rendering through <code>GraphicsDevice::DrawInstancedPrimitives</code>, which directly maps to <code>glDrawElementsInstanced</code> on OpenGL ES 3.0 / OpenGL 3.3 and to the equivalent Vulkan instanced draw command.</p>
+      <p>The full signature is:</p>
+      <pre><code class="language-cpp">void GraphicsDevice::DrawInstancedPrimitives(
+    PrimitiveType primitiveType,
+    int           baseVertex,
+    int           minVertexIndex,
+    int           numVertices,
+    int           startIndex,
+    int           primitiveCount,
+    int           instanceCount);</code></pre>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Parameter</th><th>Meaning</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>primitiveType</code></td><td>Topology: <code>TriangleList</code>, <code>TriangleStrip</code>, <code>LineList</code>, etc.</td></tr>
+            <tr><td><code>baseVertex</code></td><td>Offset added to each index value when fetching vertices.</td></tr>
+            <tr><td><code>minVertexIndex</code></td><td>Lowest index in the index buffer range (for driver range hints).</td></tr>
+            <tr><td><code>numVertices</code></td><td>Number of vertices in the range.</td></tr>
+            <tr><td><code>startIndex</code></td><td>First index to read from the index buffer.</td></tr>
+            <tr><td><code>primitiveCount</code></td><td>Number of primitives per instance (e.g. triangle count).</td></tr>
+            <tr><td><code>instanceCount</code></td><td>How many instances to draw.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>This call must be issued after binding both the per-vertex and per-instance vertex buffers via <code>setVertexBuffers</code>, as described below.</p>
+
+      <h2>Instance Data via a Second VertexBuffer</h2>
+      <p>The per-instance data lives in a second <code>VertexBuffer</code> — one element per instance. You define a C++ struct for the per-instance data and register a <code>VertexDeclaration</code> that describes its layout to the GPU driver.</p>
+      <p>A typical per-instance struct contains:</p>
+      <ul>
+        <li>The world transform for this instance, stored as <strong>four <code>Vector4</code> rows</strong> of a 4x4 matrix (a full <code>Matrix</code> is 64 bytes; storing it as four <code>Vector4</code>s means four vertex attribute slots of 16 bytes each, matching GLSL <code>layout(location = N) in vec4</code>).</li>
+        <li>An optional per-instance colour or tint as a <code>Vector4</code>.</li>
+        <li>Any other per-instance scalars: animation blend factor, roughness scale, wind phase offset, etc.</li>
+      </ul>
+      <p>The instance buffer is typically created with <code>BufferUsage::None</code> (allowing CPU updates each frame for dynamic instances) or <code>BufferUsage::WriteOnly</code> for static instance data that never changes.</p>
+
+      <h2>VertexBufferBinding Array</h2>
+      <p>To tell CNA that two vertex buffers are active simultaneously — one per-vertex and one per-instance — use the overload of <code>setVertexBuffers</code> that takes an array of <code>VertexBufferBinding</code> structs:</p>
+      <pre><code class="language-cpp">void GraphicsDevice::setVertexBuffers(
+    VertexBufferBinding* bindings,
+    int                  count);</code></pre>
+      <p>Each <code>VertexBufferBinding</code> has three fields:</p>
+      <ul>
+        <li><strong>VertexBuffer pointer</strong> — the buffer to bind.</li>
+        <li><strong>vertexOffset</strong> — byte offset within the buffer (usually 0).</li>
+        <li><strong>instanceFrequency</strong> — <code>0</code> for per-vertex data, <code>1</code> for per-instance data. A value of <code>2</code> would advance one element every 2 instances, but per-instance (<code>1</code>) is by far the most common.</li>
+      </ul>
+      <p>Under OpenGL ES 3.0 this translates to <code>glVertexAttribDivisor(attrib, instanceFrequency)</code> calls for each attribute from that binding.</p>
+
+      <h2>Per-Instance Data: World Matrix and Colour</h2>
+      <p>The GLSL vertex shader must declare one input attribute for each field in the per-instance struct. A 4x4 world matrix occupies four <code>vec4</code> attribute slots (locations 4 through 7 in the example below, leaving 0–3 for per-vertex attributes). An additional <code>vec4</code> at location 8 carries the per-instance tint colour.</p>
+      <p>Inside <code>main()</code> the four rows are assembled back into a <code>mat4</code>. The column-major convention used by OpenGL means passing <em>row</em> vectors and transposing in the shader, or alternatively pre-transposing the matrix on the CPU before uploading. The example below uses row-vector storage matching CNA's <code>Matrix</code> layout:</p>
+      <pre><code class="language-glsl">#version 300 es
+precision highp float;
+
+// Per-vertex attributes (binding 0)
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec2 a_texcoord;
+
+// Per-instance attributes (binding 1, instanceFrequency = 1)
+layout(location = 4) in vec4 i_row0;
+layout(location = 5) in vec4 i_row1;
+layout(location = 6) in vec4 i_row2;
+layout(location = 7) in vec4 i_row3;
+layout(location = 8) in vec4 i_color;
+
+uniform mat4 u_view;
+uniform mat4 u_projection;
+
+out vec2 v_texcoord;
+out vec4 v_color;
+out vec3 v_normal;
+
+void main() {
+    // Reconstruct the per-instance world matrix from four row vectors.
+    // XNA/CNA matrices are row-major; transpose gives the column-major
+    // form required by GLSL mat4 constructor (first arg = column 0).
+    mat4 world = transpose(mat4(i_row0, i_row1, i_row2, i_row3));
+
+    vec4 worldPos = world * vec4(a_position, 1.0);
+    gl_Position   = u_projection * u_view * worldPos;
+
+    // Transform normal by the inverse-transpose of the upper 3x3.
+    // For uniform scale, the world matrix upper 3x3 works directly.
+    mat3 normalMat = mat3(transpose(inverse(world)));
+    v_normal   = normalize(normalMat * a_normal);
+    v_texcoord = a_texcoord;
+    v_color    = i_color;
+}</code></pre>
+
+      <h2>Complete Example: 10,000 Grass Blades</h2>
+      <p>The following example places 10,000 grass blade instances randomly across a 100 x 100 metre field. Each instance gets a random world translation and a slightly varied green tint. The mesh vertex buffer contains a single grass blade geometry (a few triangles), and the instance buffer holds the per-blade data. The entire field is rendered with one <code>DrawInstancedPrimitives</code> call.</p>
+
+      <pre><code class="language-cpp">struct GrassInstance {
+    // 4 rows of the world matrix (row-major, matches CNA Matrix layout)
+    Vector4 row0, row1, row2, row3;
+    // Per-blade colour tint
+    Vector4 color;
+
+    // Register the vertex declaration so CNA knows the memory layout.
+    static const VertexDeclaration VertexDeclaration;
+};
+
+// Register: 5 x Vector4 = 5 x 4 floats = 80 bytes per instance.
+// Attribute indices 4-8 are used (0-3 are reserved for per-vertex data).
+const VertexDeclaration GrassInstance::VertexDeclaration = VertexDeclaration({
+    VertexElement(0,  VertexElementFormat::Vector4, VertexElementUsage::TextureCoordinate, 4),
+    VertexElement(16, VertexElementFormat::Vector4, VertexElementUsage::TextureCoordinate, 5),
+    VertexElement(32, VertexElementFormat::Vector4, VertexElementUsage::TextureCoordinate, 6),
+    VertexElement(48, VertexElementFormat::Vector4, VertexElementUsage::TextureCoordinate, 7),
+    VertexElement(64, VertexElementFormat::Vector4, VertexElementUsage::Color,             8),
+});
+
+class GrassGame final : public Game {
+    std::unique_ptr&lt;VertexBuffer&gt; meshVB_;       // grass blade geometry
+    std::unique_ptr&lt;VertexBuffer&gt; instanceVB_;   // per-instance transforms
+    std::unique_ptr&lt;IndexBuffer&gt;  meshIB_;
+    std::unique_ptr&lt;Effect&gt;       grassEffect_;
+    Camera                        camera_;
+    int instanceCount_ = 10000;
+    int triCount_      = 4; // triangles per grass blade
+
+    void LoadContent() override {
+        auto& gd = getGraphicsDeviceProperty();
+
+        // Build the grass blade mesh (positions + normals + UVs).
+        // A simple cross-quad: two intersecting quads in world space.
+        buildGrassMesh(gd, meshVB_, meshIB_, triCount_);
+
+        // Build the per-instance data.
+        std::vector&lt;GrassInstance&gt; instances(instanceCount_);
+        std::mt19937 rng(42);
+        std::uniform_real_distribution&lt;float&gt; posDist(-50.0f, 50.0f);
+        std::uniform_real_distribution&lt;float&gt; colDist(-0.05f, 0.05f);
+
+        for (auto& inst : instances) {
+            float x = posDist(rng);
+            float z = posDist(rng);
+            float angle = posDist(rng) * 0.062f; // random Y rotation
+            Matrix world = Matrix::CreateRotationY(angle)
+                         * Matrix::CreateTranslation(x, 0.0f, z);
+            // Store rows of the CNA row-major Matrix.
+            inst.row0 = Vector4(world.M11, world.M12, world.M13, world.M14);
+            inst.row1 = Vector4(world.M21, world.M22, world.M23, world.M24);
+            inst.row2 = Vector4(world.M31, world.M32, world.M33, world.M34);
+            inst.row3 = Vector4(world.M41, world.M42, world.M43, world.M44);
+            inst.color = Vector4(0.20f + colDist(rng),
+                                 0.60f + colDist(rng),
+                                 0.10f + colDist(rng),
+                                 1.0f);
+        }
+
+        instanceVB_ = std::make_unique&lt;VertexBuffer&gt;(
+            gd,
+            GrassInstance::VertexDeclaration,
+            instanceCount_,
+            BufferUsage::None);
+        instanceVB_-&gt;SetData(instances.data(), instanceCount_);
+
+        grassEffect_ = Content.Load&lt;Effect&gt;("effects/grass_instanced");
+    }
+
+    void Draw(const GameTime&) override {
+        auto& gd = getGraphicsDeviceProperty();
+        gd.Clear(Color::SkyBlue);
+
+        // Bind mesh buffer (per-vertex, frequency 0) and
+        // instance buffer (per-instance, frequency 1) together.
+        VertexBufferBinding bindings[2] = {
+            VertexBufferBinding(meshVB_.get(),     0, 0), // per-vertex
+            VertexBufferBinding(instanceVB_.get(), 0, 1), // per-instance
+        };
+        gd.setVertexBuffers(bindings, 2);
+        gd.setIndexBuffer(*meshIB_);
+
+        // Set shared uniforms (view and projection; world comes from instance data).
+        grassEffect_-&gt;Parameters["u_view"].SetValue(camera_.View());
+        grassEffect_-&gt;Parameters["u_projection"].SetValue(camera_.Projection());
+        grassEffect_-&gt;Parameters["u_time"].SetValue(totalTime_);
+
+        for (auto& pass : grassEffect_-&gt;getCurrentTechnique().Passes) {
+            pass.Apply();
+            gd.DrawInstancedPrimitives(
+                PrimitiveType::TriangleList,
+                /*baseVertex*/    0,
+                /*minVertexIdx*/  0,
+                /*numVertices*/   meshVB_-&gt;getVertexCount(),
+                /*startIndex*/    0,
+                /*primitiveCount*/triCount_,
+                /*instanceCount*/ instanceCount_);
+        }
+
+        gd.Present();
+    }
+
+    float totalTime_ = 0.0f;
+    void Update(const GameTime& gt) override {
+        totalTime_ += (float)gt.getElapsedGameTime().TotalSeconds();
+        camera_.Update(gt);
+    }
+};</code></pre>
+
+      <h2>GLSL Instanced Vertex Shader</h2>
+      <p>The following is the full vertex shader for the instanced grass. It reconstructs the per-blade world matrix from the four row-vector attributes and applies a simple wind animation by displacing the top vertices along the X axis using a sine wave keyed to <code>u_time</code> and the blade's world X position (so adjacent blades are not in phase).</p>
+
+      <pre><code class="language-glsl">#version 300 es
+precision highp float;
+
+// Per-vertex (binding 0)
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec2 a_texcoord;
+
+// Per-instance (binding 1)
+layout(location = 4) in vec4 i_row0;
+layout(location = 5) in vec4 i_row1;
+layout(location = 6) in vec4 i_row2;
+layout(location = 7) in vec4 i_row3;
+layout(location = 8) in vec4 i_color;
+
+uniform mat4  u_view;
+uniform mat4  u_projection;
+uniform float u_time;
+
+out vec2 v_texcoord;
+out vec4 v_color;
+out vec3 v_normal;
+
+void main() {
+    mat4 world = transpose(mat4(i_row0, i_row1, i_row2, i_row3));
+
+    // Wind: displace upper part of blade (a_texcoord.y = 0 at root, 1 at tip)
+    vec3 pos = a_position;
+    float windStrength = a_texcoord.y * a_texcoord.y; // stronger at tip
+    float phase = world[3][0] * 0.3 + world[3][2] * 0.2; // unique per blade
+    pos.x += sin(u_time * 2.0 + phase) * windStrength * 0.15;
+
+    vec4 worldPos = world * vec4(pos, 1.0);
+    gl_Position   = u_projection * u_view * worldPos;
+
+    mat3 normalMat = mat3(transpose(inverse(world)));
+    v_normal   = normalize(normalMat * a_normal);
+    v_texcoord = a_texcoord;
+    v_color    = i_color;
+}</code></pre>
+
+      <h2>Performance Benefit</h2>
+      <p>The performance advantage of instancing grows dramatically with instance count. Here is a rough comparison for 10,000 grass blades on a mid-range integrated GPU:</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Approach</th><th>Draw calls / frame</th><th>Approx. CPU time / frame</th><th>Approx. GPU time / frame</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>One draw call per blade</td><td>10,000</td><td>~15 ms</td><td>~3 ms</td></tr>
+            <tr><td>Instanced (this tutorial)</td><td>1</td><td>~0.1 ms</td><td>~3 ms</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The GPU time is roughly the same in both cases — the GPU still processes the same number of vertices and fragments. The enormous saving is entirely on the <strong>CPU side</strong>: no loop over 10,000 objects, no 10,000 uniform uploads, no 10,000 driver state validations. On integrated GPUs and mobile targets the driver overhead per draw call can be even higher, making instancing even more valuable.</p>
+      <p>On modern dedicated desktop GPUs, a single draw call for one million simple instances (e.g., a quad billboard) running at 60 fps is entirely feasible. Practical limits are usually set by vertex throughput and fill rate rather than draw call overhead.</p>
+
+      <h2>Dynamic vs. Static Instance Data</h2>
+      <p>If instance transforms change every frame (e.g., moving particles), recreate or map the instance buffer each frame:</p>
+      <pre><code class="language-cpp">// Update instance buffer each frame for dynamic instances
+void UpdateInstanceBuffer(std::vector&lt;GrassInstance&gt;& instances) {
+    instanceVB_-&gt;SetData(
+        instances.data(),
+        static_cast&lt;int&gt;(instances.size()));
+}</code></pre>
+      <p>For completely static environments (a forest that never changes) prefer <code>BufferUsage::WriteOnly</code> and upload once in <code>LoadContent</code>. For partially dynamic scenes (most grass static, some animated) consider splitting into a static instance buffer and a smaller dynamic one, and issuing two instanced draw calls.</p>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="59-shadow-mapping.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 59: Shadow Mapping</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="61-occlusion-query.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 61: Occlusion Queries</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

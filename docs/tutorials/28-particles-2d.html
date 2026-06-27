@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 28: Particle Systems in 2D - CNA Tutorials</title>
+  <meta name="description" content="Build a 2D particle system in CNA: particle pools, emitter patterns, additive blending, and fire/explosion effects.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/28-particles-2d.html">
+  <meta property="og:title"       content="Tutorial 28: Particle Systems in 2D - CNA Tutorials">
+  <meta property="og:description" content="Build a 2D particle system in CNA: particle pools, emitter patterns, additive blending, and fire/explosion effects.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="27-parallax.html"          class="docs-nav-link">Tutorial 27: Parallax Backgrounds</a></li>
+        <li><a href="28-particles-2d.html"       class="docs-nav-link active">Tutorial 28: Particle Systems 2D</a></li>
+        <li><a href="29-ui-elements.html"        class="docs-nav-link">Tutorial 29: UI Elements</a></li>
+        <li><a href="30-gamepad.html"            class="docs-nav-link">Tutorial 30: GamePad Input</a></li>
+        <li><a href="31-first-3d-triangle.html"  class="docs-nav-link">Tutorial 31: First 3D Triangle</a></li>
+        <li><a href="32-basiceffect.html"        class="docs-nav-link">Tutorial 32: BasicEffect &amp; Lighting</a></li>
+        <li><a href="33-matrices.html"           class="docs-nav-link">Tutorial 33: Matrices &amp; Transforms</a></li>
+        <li><a href="34-camera-3d.html"          class="docs-nav-link">Tutorial 34: 3D Camera</a></li>
+        <li><a href="35-model-loading.html"      class="docs-nav-link">Tutorial 35: Loading 3D Models</a></li>
+        <li><a href="36-model-texturing.html"    class="docs-nav-link">Tutorial 36: Texturing 3D Models</a></li>
+        <li><a href="37-multiple-lights.html"    class="docs-nav-link">Tutorial 37: Multiple Light Sources</a></li>
+        <li><a href="38-vertex-buffers.html"     class="docs-nav-link">Tutorial 38: Vertex &amp; Index Buffers</a></li>
+        <li><a href="39-depth-buffer.html"       class="docs-nav-link">Tutorial 39: Depth Buffer &amp; Z-Fighting</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 28: Particle Systems in 2D</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 28: Particle Systems in 2D</h1>
+      <p class="doc-meta">2D Techniques &nbsp;·&nbsp; Intermediate</p>
+
+      <h2>Particle Struct</h2>
+      <p>A particle is a lightweight value type. Keep it small — you will have hundreds of them alive simultaneously:</p>
+      <pre><code class="language-cpp">struct Particle {
+    Vector2 position;   // world-space centre of the particle
+    Vector2 velocity;   // pixels per second
+    float   life;       // remaining life in seconds
+    float   maxLife;    // initial life (used to compute fade ratio)
+    Color   color;      // base tint (alpha fades over lifetime)
+    float   scale;      // draw size multiplier (can shrink over time)
+    bool    active;     // false = slot is free in the pool
+};</code></pre>
+      <ul>
+        <li><strong>life / maxLife</strong> — <code>life / maxLife</code> gives a 0→1 normalised age you can use for colour or scale curves.</li>
+        <li><strong>color</strong> — set alpha to 255 on spawn; in Update fade it toward 0 as <code>life</code> decreases.</li>
+        <li><strong>scale</strong> — start at 1.0, shrink to 0 for a &quot;burn out&quot; look.</li>
+        <li><strong>active</strong> — the pool flag. Never delete or move particles; just flip this bit.</li>
+      </ul>
+
+      <h2>Emitter Patterns</h2>
+      <p>Three common emission strategies:</p>
+      <p><strong>Burst</strong> — spawn a fixed count all at once, triggered by an event (explosion, hit):</p>
+      <pre><code class="language-cpp">void Burst(Vector2 origin, int count) {
+    for (int i = 0; i &lt; count; ++i) {
+        float angle = RandomFloat(0.0f, MathHelper::TwoPi);
+        float speed = RandomFloat(50.0f, 200.0f);
+        Vector2 vel{ std::cos(angle) * speed, std::sin(angle) * speed };
+        SpawnParticle(origin, vel, Color::OrangeRed);
+    }
+}</code></pre>
+      <p><strong>Continuous</strong> — spawn N particles per second by accumulating fractional counts:</p>
+      <pre><code class="language-cpp">float spawnAccum = 0.0f;
+const float spawnRate = 60.0f; // particles/sec
+
+void UpdateEmitter(float dt, Vector2 origin) {
+    spawnAccum += spawnRate * dt;
+    while (spawnAccum &gt;= 1.0f) {
+        SpawnParticle(origin, RandomVelocity(), Color::Yellow);
+        spawnAccum -= 1.0f;
+    }
+}</code></pre>
+      <p><strong>Directional</strong> — constrain the spawn direction to a cone:</p>
+      <pre><code class="language-cpp">void SpawnDirectional(Vector2 origin, float dirAngle, float spread) {
+    float angle = dirAngle + RandomFloat(-spread * 0.5f, spread * 0.5f);
+    float speed = RandomFloat(100.0f, 300.0f);
+    Vector2 vel{ std::cos(angle) * speed, std::sin(angle) * speed };
+    SpawnParticle(origin, vel, Color::LightBlue);
+}</code></pre>
+
+      <h2>Particle Pool</h2>
+      <p>Pre-allocate all particles at startup. Heap allocation inside the game loop creates GC pressure (on platforms with allocators) and cache misses. A flat array is cache-friendly and trivially bounded:</p>
+      <pre><code class="language-cpp">static constexpr int MAX_PARTICLES = 200;
+std::array&lt;Particle, MAX_PARTICLES&gt; pool_;
+int nextFree_ = 0; // hint to speed up searching
+
+bool SpawnParticle(Vector2 pos, Vector2 vel, Color col) {
+    // Search from the hint position, wrapping once
+    for (int i = 0; i &lt; MAX_PARTICLES; ++i) {
+        int idx = (nextFree_ + i) % MAX_PARTICLES;
+        if (!pool_[idx].active) {
+            Particle&amp; p = pool_[idx];
+            p.position = pos;
+            p.velocity = vel;
+            p.color    = col;
+            p.life     = 1.0f;  // seconds
+            p.maxLife  = 1.0f;
+            p.scale    = 1.0f;
+            p.active   = true;
+            nextFree_  = (idx + 1) % MAX_PARTICLES;
+            return true;
+        }
+    }
+    return false; // pool full, silently drop
+}</code></pre>
+      <p>With 200 particles and a search that starts from where the last spawn happened, finding a free slot is typically O(1) because particles die in roughly the same order they were born.</p>
+
+      <h2>Blending with AdditiveBlend</h2>
+      <p>Additive blending makes particles <em>add</em> their colour to whatever is behind them instead of replacing it. This gives fire, plasma, and magic effects their characteristic glow: overlapping particles brighten rather than occlude each other.</p>
+      <pre><code class="language-cpp">// In Draw():
+spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::Additive);
+for (auto&amp; p : pool_) {
+    if (!p.active) continue;
+    spriteBatch_-&gt;Draw(*pixelTexture_,
+                       p.position,
+                       nullptr,          // source rect (null = whole texture)
+                       p.color,
+                       0.0f,             // rotation
+                       Vector2(0.5f, 0.5f), // origin (centre)
+                       p.scale,
+                       SpriteEffects::None,
+                       0.0f);            // depth
+}
+spriteBatch_-&gt;End();</code></pre>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Sort mode and additive blending:</strong> <code>SpriteSortMode::BackToFront</code> or <code>FrontToBack</code> change draw order within the batch. With additive blending, order doesn't matter visually (addition is commutative), so <code>Deferred</code> (submission order) is fine and avoids the sorting overhead. Never mix additive and alpha-blended sprites in the same <code>Begin/End</code> block — open a second batch for UI drawn on top.</p>
+      </div>
+
+      <h2>Performance Tips</h2>
+      <ul>
+        <li><strong>Single pixel texture</strong> — create a 1×1 white <code>Texture2D</code> once and tint it per particle with the <code>color</code> parameter. Avoids texture switches entirely.</li>
+        <li><strong>Fixed pool size</strong> — never allocate in the hot path. If the pool is full, silently discard the new particle rather than resizing.</li>
+        <li><strong>Skip inactive early</strong> — the inner draw loop checks <code>p.active</code> first, so dead slots cost only a branch.</li>
+        <li><strong>Spatial culling</strong> — if particles can move off-screen, add a bounds check before drawing: <code>if (p.position.X &lt; -64 || p.position.X &gt; screenW + 64) continue;</code></li>
+        <li><strong>Gravity as a constant</strong> — add a fixed downward acceleration in Update rather than storing it per particle: <code>p.velocity.Y += 200.0f * dt;</code></li>
+      </ul>
+
+      <h2>Full Example</h2>
+      <p>A fire/explosion emitter: hold <strong>Space</strong> for continuous flame, tap <strong>Enter</strong> for a burst explosion.</p>
+      <pre><code class="language-cpp">#include &lt;array&gt;
+#include &lt;cmath&gt;
+#include &lt;memory&gt;
+#include &lt;random&gt;
+
+#include "Microsoft/Xna/Framework/Game.hpp"
+#include "Microsoft/Xna/Framework/Color.hpp"
+#include "Microsoft/Xna/Framework/GameTime.hpp"
+#include "Microsoft/Xna/Framework/Input/Keyboard.hpp"
+#include "Microsoft/Xna/Framework/Input/Keys.hpp"
+#include "Microsoft/Xna/Framework/Graphics/GraphicsDeviceManager.hpp"
+#include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
+#include "Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
+#include "Microsoft/Xna/Framework/Graphics/BlendState.hpp"
+
+using namespace Microsoft::Xna::Framework;
+using namespace Microsoft::Xna::Framework::Graphics;
+using namespace Microsoft::Xna::Framework::Input;
+
+// -------------------------------------------------------
+static std::mt19937 rng{ std::random_device{}() };
+
+static float RandomFloat(float lo, float hi) {
+    return std::uniform_real_distribution&lt;float&gt;(lo, hi)(rng);
+}
+
+// -------------------------------------------------------
+struct Particle {
+    Vector2 position;
+    Vector2 velocity;
+    float   life;
+    float   maxLife;
+    Color   color;
+    float   scale;
+    bool    active{ false };
+};
+
+// -------------------------------------------------------
+class ParticleSystem {
+public:
+    static constexpr int MAX_PARTICLES = 200;
+
+    bool SpawnParticle(Vector2 pos, Vector2 vel, Color col,
+                       float lifetime = 1.2f, float scale = 6.0f) {
+        for (int i = 0; i &lt; MAX_PARTICLES; ++i) {
+            int idx = (nextFree_ + i) % MAX_PARTICLES;
+            if (!pool_[idx].active) {
+                auto&amp; p   = pool_[idx];
+                p.position = pos;
+                p.velocity = vel;
+                p.color    = col;
+                p.life     = lifetime;
+                p.maxLife  = lifetime;
+                p.scale    = scale;
+                p.active   = true;
+                nextFree_  = (idx + 1) % MAX_PARTICLES;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void SpawnBurst(Vector2 origin, int count = 40) {
+        for (int i = 0; i &lt; count; ++i) {
+            float angle = RandomFloat(0.0f, 6.2832f);
+            float speed = RandomFloat(60.0f, 260.0f);
+            Vector2 vel{ std::cos(angle) * speed, std::sin(angle) * speed };
+            Color col{ 255,
+                       static_cast&lt;uint8_t&gt;(RandomFloat(80.0f, 200.0f)),
+                       0, 255 };
+            SpawnParticle(origin, vel, col, RandomFloat(0.6f, 1.4f),
+                          RandomFloat(4.0f, 10.0f));
+        }
+    }
+
+    void SpawnFlame(Vector2 origin) {
+        float angle = RandomFloat(-0.4f, 0.4f) - 1.5708f; // upward cone
+        float speed = RandomFloat(40.0f, 120.0f);
+        Vector2 vel{ std::cos(angle) * speed + RandomFloat(-20.0f, 20.0f),
+                     std::sin(angle) * speed };
+        Color col{ 255,
+                   static_cast&lt;uint8_t&gt;(RandomFloat(60.0f, 180.0f)),
+                   0, 200 };
+        SpawnParticle(origin, vel, col, RandomFloat(0.3f, 0.8f),
+                      RandomFloat(5.0f, 14.0f));
+    }
+
+    void Update(float dt) {
+        for (auto&amp; p : pool_) {
+            if (!p.active) continue;
+            p.life -= dt;
+            if (p.life &lt;= 0.0f) { p.active = false; continue; }
+            p.position += p.velocity * dt;
+            p.velocity.Y += 40.0f * dt; // gentle gravity on embers
+            float ratio = p.life / p.maxLife;  // 1→0
+            p.color.A   = static_cast&lt;uint8_t&gt;(ratio * 255.0f);
+            p.scale     = p.scale * (0.5f + ratio * 0.5f);
+        }
+    }
+
+    void Draw(SpriteBatch&amp; sb, Texture2D&amp; pixel) {
+        sb.Begin(SpriteSortMode::Deferred, BlendState::Additive);
+        for (auto&amp; p : pool_) {
+            if (!p.active) continue;
+            sb.Draw(pixel, p.position, nullptr, p.color,
+                    0.0f, Vector2(0.5f, 0.5f), p.scale,
+                    SpriteEffects::None, 0.0f);
+        }
+        sb.End();
+    }
+
+private:
+    std::array&lt;Particle, MAX_PARTICLES&gt; pool_;
+    int nextFree_{ 0 };
+};
+
+// -------------------------------------------------------
+class ParticleGame final : public Game {
+public:
+    ParticleGame() : graphics_(this) {
+        graphics_.setPreferredBackBufferWidth(800);
+        graphics_.setPreferredBackBufferHeight(600);
+    }
+
+protected:
+    void LoadContent() override {
+        spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(getGraphicsDeviceProperty());
+
+        // 1x1 white pixel texture used for all particles
+        pixel_ = std::make_unique&lt;Texture2D&gt;(getGraphicsDeviceProperty(), 1, 1);
+        Color white{ 255, 255, 255, 255 };
+        pixel_-&gt;SetData(&amp;white, 1);
+    }
+
+    void Update(GameTime&amp; gameTime) override {
+        float dt  = static_cast&lt;float&gt;(gameTime.getElapsedGameTime().TotalSeconds());
+        auto  kb  = Keyboard::GetState();
+        Vector2 emitterPos{ 400.0f, 400.0f };
+
+        // Continuous flame while Space held
+        if (kb.IsKeyDown(Keys::Space)) {
+            flameAccum_ += 80.0f * dt; // 80 particles/sec
+            while (flameAccum_ &gt;= 1.0f) {
+                particles_.SpawnFlame(emitterPos);
+                flameAccum_ -= 1.0f;
+            }
+        }
+
+        // Burst on Enter (rising edge)
+        bool enterNow = kb.IsKeyDown(Keys::Enter);
+        if (enterNow &amp;&amp; !prevEnter_)
+            particles_.SpawnBurst(emitterPos);
+        prevEnter_ = enterNow;
+
+        particles_.Update(dt);
+    }
+
+    void Draw(const GameTime&amp;) override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+        gd.Clear(Color(10, 10, 20, 255)); // dark background
+        particles_.Draw(*spriteBatch_, *pixel_);
+        gd.Present();
+    }
+
+private:
+    GraphicsDeviceManager        graphics_;
+    std::unique_ptr&lt;SpriteBatch&gt; spriteBatch_;
+    std::unique_ptr&lt;Texture2D&gt;   pixel_;
+    ParticleSystem               particles_;
+    float                        flameAccum_{ 0.0f };
+    bool                         prevEnter_{ false };
+};
+
+int main() {
+    ParticleGame game;
+    game.Run();
+    return 0;
+}</code></pre>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="27-parallax.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">← Previous</span>
+            <span class="pagination-title">Tutorial 27: Parallax Backgrounds</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="29-ui-elements.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next →</span>
+            <span class="pagination-title">Tutorial 29: UI Elements</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 75: Level of Detail (LOD) - CNA Tutorials</title>
+  <meta name="description" content="Implement distance-based LOD in CNA with multiple mesh variants, impostor sprites, hysteresis to prevent popping, and an OcclusionQuery overview.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/75-lod.html">
+  <meta property="og:title"       content="Tutorial 75: Level of Detail (LOD) - CNA Tutorials">
+  <meta property="og:description" content="Implement distance-based LOD in CNA with multiple mesh variants, impostor sprites, hysteresis to prevent popping, and an OcclusionQuery overview.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="66-bloom.html" class="docs-nav-link">Tutorial 66: Bloom</a></li>
+        <li><a href="67-deferred-rendering.html" class="docs-nav-link">Tutorial 67: Deferred Rendering</a></li>
+        <li><a href="68-terrain.html" class="docs-nav-link">Tutorial 68: Terrain</a></li>
+        <li><a href="69-water.html" class="docs-nav-link">Tutorial 69: Water</a></li>
+        <li><a href="70-procedural-geometry.html" class="docs-nav-link">Tutorial 70: Procedural Geometry</a></li>
+        <li><a href="71-memory-management.html" class="docs-nav-link">Tutorial 71: Memory Management</a></li>
+        <li><a href="72-backend-selection.html" class="docs-nav-link">Tutorial 72: Backend Selection</a></li>
+        <li><a href="73-profiling.html" class="docs-nav-link">Tutorial 73: Profiling</a></li>
+        <li><a href="74-frustum-culling.html" class="docs-nav-link">Tutorial 74: Frustum Culling</a></li>
+        <li><a href="75-lod.html" class="docs-nav-link active">Tutorial 75: LOD</a></li>
+        <li><a href="76-spatial-partitioning.html" class="docs-nav-link">Tutorial 76: Spatial Partitioning</a></li>
+        <li><a href="77-async-loading.html" class="docs-nav-link">Tutorial 77: Async Loading</a></li>
+        <li><a href="78-multithreading.html" class="docs-nav-link">Tutorial 78: Multi-threading</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 75</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 75: Level of Detail (LOD)</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Performance</p>
+
+      <h2>What is LOD?</h2>
+      <p>Level of Detail (LOD) is the technique of substituting a simpler representation of an object when it is far from the camera. A tree 500 metres away occupies perhaps 4 pixels on screen — rendering it with 50,000 triangles is a waste. Switching to a 50-triangle proxy at that distance has no visible quality loss and cuts the vertex throughput for that object by 1000×.</p>
+      <p>LOD is a geometry bandwidth optimisation. It reduces the work the vertex shader must do without changing the number of pixels drawn (that is a fillrate concern addressed by frustum culling and occlusion queries).</p>
+
+      <h2>LODModel class: 3 mesh variants</h2>
+      <pre><code class="language-cpp">// LODModel.hpp
+#pragma once
+#include "Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp"
+#include "Microsoft/Xna/Framework/Graphics/VertexBuffer.hpp"
+#include "Microsoft/Xna/Framework/Graphics/IndexBuffer.hpp"
+#include "Microsoft/Xna/Framework/Graphics/BasicEffect.hpp"
+#include &lt;array&gt;
+#include &lt;memory&gt;
+#include &lt;string&gt;
+
+struct LODVariant {
+    std::unique_ptr&lt;VertexBuffer&gt; vb;
+    std::unique_ptr&lt;IndexBuffer&gt;  ib;
+    int  primitiveCount = 0;
+    float maxDistance   = 0.0f;  // Switch away from this LOD at this distance
+};
+
+class LODModel {
+public:
+    static constexpr int LOD_COUNT = 3;
+
+    // Load three mesh files and their transition distances
+    LODModel(GraphicsDevice& gd,
+             const std::string& lod0Path,  // high   — up to  50 m
+             const std::string& lod1Path,  // medium — up to 150 m
+             const std::string& lod2Path,  // low    — up to 400 m
+             float d0 = 50.0f,
+             float d1 = 150.0f,
+             float d2 = 400.0f);
+
+    // Returns the index (0, 1, or 2) of the variant to render given
+    // distance from camera, with hysteresis to reduce popping.
+    int SelectLOD(float distance) const;
+
+    // Draw using a pre-selected LOD variant
+    void Draw(GraphicsDevice& gd, BasicEffect& fx, int lodIndex) const;
+
+    // Hysteresis state — per-instance in the scene object
+    mutable int currentLOD = 0;
+
+private:
+    std::array&lt;LODVariant, LOD_COUNT&gt; variants_;
+};</code></pre>
+
+      <h2>Distance-based LOD selection</h2>
+      <pre><code class="language-cpp">// LODModel.cpp
+int LODModel::SelectLOD(float distance) const {
+    // Find the target LOD from distance thresholds
+    int target = LOD_COUNT - 1;
+    for (int i = 0; i &lt; LOD_COUNT; ++i) {
+        if (distance &lt; variants_[i].maxDistance) {
+            target = i;
+            break;
+        }
+    }
+    return target;
+}
+
+void LODModel::Draw(GraphicsDevice& gd, BasicEffect& fx, int lodIndex) const {
+    const auto& v = variants_[lodIndex];
+    if (!v.vb || !v.ib) return;
+
+    gd.setVertexBuffer(*v.vb);
+    gd.setIndexBuffer(*v.ib);
+    for (auto& pass : fx.getCurrentTechnique().Passes) {
+        pass.Apply();
+        gd.DrawIndexedPrimitives(
+            PrimitiveType::TriangleList,
+            0, 0, v.vb-&gt;getVertexCount(),
+            0, v.primitiveCount);
+    }
+}</code></pre>
+
+      <h2>Hysteresis to prevent popping</h2>
+      <p>Without hysteresis, an object right at a threshold distance bounces between LOD0 and LOD1 every frame as the camera moves, causing visible popping. Add a hysteresis band — the threshold to switch <em>away</em> from a LOD is slightly larger than the threshold to switch <em>to</em> it:</p>
+      <pre><code class="language-cpp">// Per-instance hysteresis in the update loop
+void UpdateLOD(LODModel& model, float distanceToCamera) {
+    const float HYSTERESIS = 5.0f;  // metres of dead band
+    int target = model.SelectLOD(distanceToCamera);
+
+    // Only upgrade LOD (more detail) immediately
+    if (target &lt; model.currentLOD) {
+        model.currentLOD = target;
+    }
+    // Downgrade LOD (less detail) only if we exceed threshold + hysteresis
+    else if (target &gt; model.currentLOD) {
+        // Re-check with hysteresis offset
+        int hysteresisTarget = model.SelectLOD(distanceToCamera - HYSTERESIS);
+        if (hysteresisTarget &gt; model.currentLOD)
+            model.currentLOD = target;
+    }
+}</code></pre>
+
+      <h2>LOD bias</h2>
+      <p>A global LOD bias lets the player or platform config shift all thresholds up or down uniformly. A bias of 0.5 halves all distances (use higher LODs closer to the camera — better quality, more cost). A bias of 2.0 doubles them (use lower LODs, better performance, lower quality):</p>
+      <pre><code class="language-cpp">float lodBias = 1.0f;  // configurable per platform
+
+int SelectLODWithBias(const LODModel& model,
+                      float distance,
+                      float bias) {
+    return model.SelectLOD(distance / bias);
+}</code></pre>
+
+      <h2>Impostor sprites for distant objects</h2>
+      <p>Beyond the last 3D LOD threshold, replace the object entirely with a billboard sprite (an alpha-tested quad that always faces the camera). The sprite is a pre-rendered image of the object from several angles or a single averaged view. At distances where the object is only a few pixels tall, the difference is invisible.</p>
+      <pre><code class="language-cpp">void DrawImpostor(SpriteBatch& sb,
+                  const Texture2D& impostorTex,
+                  const Vector3& worldPos,
+                  const Matrix& view,
+                  const Matrix& proj,
+                  float screenWidth, float screenHeight,
+                  float size) {
+    // Project world position to screen space
+    Vector4 clipPos = Vector4::Transform(
+        Vector4(worldPos, 1.0f), view * proj);
+    if (clipPos.W &lt;= 0.0f) return;  // behind camera
+
+    float sx = (clipPos.X / clipPos.W * 0.5f + 0.5f) * screenWidth;
+    float sy = (1.0f - (clipPos.Y / clipPos.W * 0.5f + 0.5f)) * screenHeight;
+    float scale = size / clipPos.W;
+
+    sb.Draw(impostorTex,
+            Vector2(sx - scale * 0.5f, sy - scale * 0.5f),
+            nullptr,
+            Color::White,
+            0.0f,
+            Vector2::Zero,
+            Vector2(scale / impostorTex.getWidth(),
+                    scale / impostorTex.getHeight()),
+            SpriteEffects::None, 0.5f);
+}</code></pre>
+
+      <h2>OcclusionQuery-based LOD</h2>
+      <p>CNA exposes <code>OcclusionQuery</code> (wrapping <code>GL_SAMPLES_PASSED</code> / Vulkan timestamp query). You can use it to skip objects that are occluded by large foreground objects. The query result is available one or two frames later:</p>
+      <pre><code class="language-cpp">// Create query in LoadContent
+occlusionQuery_ = std::make_unique&lt;OcclusionQuery&gt;(gd);
+
+// In Draw — begin the query before the draw call
+occlusionQuery_-&gt;Begin();
+DrawBoundingBox(gd, obj.worldAABB);  // draw a proxy, not the real mesh
+occlusionQuery_-&gt;End();
+
+// Next frame — check result (non-blocking if one frame old)
+if (occlusionQuery_-&gt;IsComplete()) {
+    bool visible = (occlusionQuery_-&gt;PixelCount &gt; 0);
+    if (!visible) return;  // occluded — skip draw
+}</code></pre>
+      <p>OcclusionQuery adds its own GPU cost and complexity. It is most useful for large interior scenes with many potential occluders (rooms within a building). For outdoor scenes with few occluders, frustum culling alone is usually sufficient.</p>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="74-frustum-culling.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 74: Frustum Culling</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="76-spatial-partitioning.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 76: Spatial Partitioning</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

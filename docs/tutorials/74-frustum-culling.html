@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 74: Frustum Culling - CNA Tutorials</title>
+  <meta name="description" content="Use BoundingFrustum and BoundingSphere in CNA to cull invisible objects before submitting draw calls, reducing GPU load significantly.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/74-frustum-culling.html">
+  <meta property="og:title"       content="Tutorial 74: Frustum Culling - CNA Tutorials">
+  <meta property="og:description" content="Use BoundingFrustum and BoundingSphere in CNA to cull invisible objects before submitting draw calls, reducing GPU load significantly.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="66-bloom.html" class="docs-nav-link">Tutorial 66: Bloom</a></li>
+        <li><a href="67-deferred-rendering.html" class="docs-nav-link">Tutorial 67: Deferred Rendering</a></li>
+        <li><a href="68-terrain.html" class="docs-nav-link">Tutorial 68: Terrain</a></li>
+        <li><a href="69-water.html" class="docs-nav-link">Tutorial 69: Water</a></li>
+        <li><a href="70-procedural-geometry.html" class="docs-nav-link">Tutorial 70: Procedural Geometry</a></li>
+        <li><a href="71-memory-management.html" class="docs-nav-link">Tutorial 71: Memory Management</a></li>
+        <li><a href="72-backend-selection.html" class="docs-nav-link">Tutorial 72: Backend Selection</a></li>
+        <li><a href="73-profiling.html" class="docs-nav-link">Tutorial 73: Profiling</a></li>
+        <li><a href="74-frustum-culling.html" class="docs-nav-link active">Tutorial 74: Frustum Culling</a></li>
+        <li><a href="75-lod.html" class="docs-nav-link">Tutorial 75: LOD</a></li>
+        <li><a href="76-spatial-partitioning.html" class="docs-nav-link">Tutorial 76: Spatial Partitioning</a></li>
+        <li><a href="77-async-loading.html" class="docs-nav-link">Tutorial 77: Async Loading</a></li>
+        <li><a href="78-multithreading.html" class="docs-nav-link">Tutorial 78: Multi-threading</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 74</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 74: Frustum Culling</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Performance</p>
+
+      <h2>What is frustum culling?</h2>
+      <p>The view frustum is the pyramid-shaped region of 3D space that is visible to the camera — bounded by the near plane, far plane, and four side planes. Any object entirely outside the frustum cannot contribute pixels to the frame and should be skipped before submitting it to the GPU. This <em>CPU-side</em> rejection is frustum culling.</p>
+      <p>In a scene with 1000 objects where only 150 are visible, frustum culling reduces draw calls by ~85%. For GPU-bound workloads this is one of the highest-impact optimisations available and is nearly free on the CPU.</p>
+
+      <h2>BoundingFrustum from the ViewProjection matrix</h2>
+      <p>CNA provides <code>BoundingFrustum</code> in the <code>Microsoft::Xna::Framework</code> namespace. Construct it from the combined view-projection matrix each frame:</p>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/BoundingFrustum.hpp"
+#include "Microsoft/Xna/Framework/BoundingSphere.hpp"
+#include "Microsoft/Xna/Framework/BoundingBox.hpp"
+
+// Rebuild every frame (cheap — just 6 plane extractions)
+BoundingFrustum frustum(view_ * projection_);</code></pre>
+      <p>The constructor extracts the six frustum planes from the matrix in one pass. You can also update an existing <code>BoundingFrustum</code> via <code>frustum.setMatrix(view_ * projection_)</code> to avoid reallocating.</p>
+
+      <h2>BoundingSphere per object</h2>
+      <p>Each game object needs a bounding volume. A <code>BoundingSphere</code> (centre + radius) is the cheapest to test against a frustum (six dot products, one comparison each). Store the sphere in object-local space and transform it to world space before testing:</p>
+      <pre><code class="language-cpp">struct SceneObject {
+    Matrix        world;
+    BoundingSphere localBounds;  // pre-computed from mesh vertices
+    VertexBuffer* vb;
+    IndexBuffer*  ib;
+    int           primitiveCount;
+};
+
+// Transform the local bounding sphere to world space
+BoundingSphere WorldSphere(const SceneObject& obj) {
+    return obj.localBounds.Transform(obj.world);
+}</code></pre>
+      <p>To pre-compute <code>localBounds</code> from a mesh, use <code>BoundingSphere::CreateFromPoints</code>:</p>
+      <pre><code class="language-cpp">// After loading vertex data into a std::vector&lt;VertexPositionNormalTexture&gt;
+std::vector&lt;Vector3&gt; positions;
+positions.reserve(verts.size());
+for (auto& v : verts) positions.push_back(v.Position);
+
+BoundingSphere bounds = BoundingSphere::CreateFromPoints(
+    positions.data(), static_cast&lt;int&gt;(positions.size()));</code></pre>
+
+      <h2>BoundingFrustum.Intersects()</h2>
+      <p><code>BoundingFrustum::Intersects(const BoundingSphere&)</code> returns a <code>ContainmentType</code> enum:</p>
+      <ul>
+        <li><code>ContainmentType::Contains</code> — sphere is fully inside the frustum.</li>
+        <li><code>ContainmentType::Intersects</code> — sphere straddles a frustum plane.</li>
+        <li><code>ContainmentType::Disjoint</code> — sphere is entirely outside; cull this object.</li>
+      </ul>
+      <p>For culling purposes, treat <code>Contains</code> and <code>Intersects</code> identically (draw the object).</p>
+
+      <h2>Culling loop: 1000 objects</h2>
+      <pre><code class="language-cpp">void Draw(const GameTime&) override {
+    auto& gd = getGraphicsDeviceProperty();
+    gd.Clear(Color::CornflowerBlue);
+
+    // Rebuild frustum from current camera matrices
+    BoundingFrustum frustum(view_ * proj_);
+
+    int drawn   = 0;
+    int culled  = 0;
+
+    effect_-&gt;setView(view_);
+    effect_-&gt;setProjection(proj_);
+
+    for (auto& obj : sceneObjects_) {  // 1000 objects
+        BoundingSphere worldSphere = obj.localBounds.Transform(obj.world);
+
+        if (frustum.Contains(worldSphere) == ContainmentType::Disjoint) {
+            ++culled;
+            continue;  // skip — not visible
+        }
+
+        // Object is visible — submit draw call
+        ++drawn;
+        effect_-&gt;setWorld(obj.world);
+        for (auto& pass : effect_-&gt;getCurrentTechnique().Passes) {
+            pass.Apply();
+            gd.setVertexBuffer(*obj.vb);
+            gd.setIndexBuffer(*obj.ib);
+            gd.DrawIndexedPrimitives(
+                PrimitiveType::TriangleList,
+                0, 0, obj.vertexCount, 0, obj.primitiveCount);
+        }
+    }
+
+    // Display stats
+    std::string stats = "Drawn: " + std::to_string(drawn) +
+                        "  Culled: " + std::to_string(culled);
+    spriteBatch_-&gt;Begin();
+    spriteBatch_-&gt;DrawString(*font_, stats, Vector2(8, 8), Color::Yellow);
+    spriteBatch_-&gt;End();
+
+    gd.Present();
+}</code></pre>
+
+      <h2>AABB culling</h2>
+      <p>For objects that are not well approximated by a sphere (e.g. long buildings, terrain tiles), an axis-aligned bounding box (<code>BoundingBox</code>) gives a tighter fit and fewer false positives. The test is more expensive (up to 12 dot products vs 6 for a sphere) but still negligible compared to the GPU draw call it avoids:</p>
+      <pre><code class="language-cpp">// Per-object: test AABB in world space
+BoundingBox worldAABB = BoundingBox::Transform(obj.localAABB, obj.world);
+if (frustum.Contains(worldAABB) == ContainmentType::Disjoint)
+    continue;  // cull</code></pre>
+      <p>A common hybrid: use the <code>BoundingSphere</code> for a fast rejection test first, then the <code>BoundingBox</code> for a more precise accept/reject only on the small number of objects that pass the sphere test.</p>
+
+      <h2>Scene graph vs brute force</h2>
+      <p>Iterating all 1000 objects each frame to test them against the frustum is the brute-force approach. For scenes with tens of thousands of objects, organise objects into a spatial structure (see <a href="76-spatial-partitioning.html">Tutorial 76</a>) so the frustum query only visits objects near the camera. For most games up to ~2000 visible objects, the brute-force O(n) test is fast enough and simpler to maintain.</p>
+
+      <h2>Frame latency of culling</h2>
+      <p>Frustum culling is computed on the CPU using the camera matrices from the <em>current</em> frame's Update. Because the GPU renders the frame slightly later, there is theoretically a one-frame lag — but at 60 Hz this is 16 ms and the camera typically does not move far enough in one frame for a just-culled object to pop into view. The XNA original games used the same single-frame-delay approach without issue.</p>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="73-profiling.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 73: Performance Profiling</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="75-lod.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 75: Level of Detail (LOD)</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

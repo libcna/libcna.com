@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 58: Normal Mapping - CNA Tutorials</title>
+  <meta name="description" content="Implement per-pixel normal mapping in CNA using a custom GLSL shader with TBN matrix construction, tangent-space normal decoding, and EffectParameter texture binding.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/58-normal-mapping.html">
+  <meta property="og:title"       content="Tutorial 58: Normal Mapping - CNA Tutorials">
+  <meta property="og:description" content="Implement per-pixel normal mapping in CNA using a custom GLSL shader with TBN matrix construction, tangent-space normal decoding, and EffectParameter texture binding.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="53-effect-parameter.html" class="docs-nav-link">Tutorial 53: GLSL Uniforms and EffectParameter</a></li>
+        <li><a href="54-alpha-test.html"        class="docs-nav-link">Tutorial 54: AlphaTestEffect and Alpha Masking</a></li>
+        <li><a href="55-dual-texture.html"      class="docs-nav-link">Tutorial 55: DualTextureEffect for Lightmaps</a></li>
+        <li><a href="56-environment-map.html"   class="docs-nav-link">Tutorial 56: EnvironmentMapEffect for Reflections</a></li>
+        <li><a href="57-skinned-effect.html"    class="docs-nav-link">Tutorial 57: SkinnedEffect and Skeletal Animation</a></li>
+        <li><a href="58-normal-mapping.html"    class="docs-nav-link active">Tutorial 58: Normal Mapping</a></li>
+        <li><a href="59-shadow-mapping.html"    class="docs-nav-link">Tutorial 59: Shadow Mapping</a></li>
+        <li><a href="60-instancing.html"        class="docs-nav-link">Tutorial 60: Instanced Rendering</a></li>
+        <li><a href="61-occlusion-query.html"   class="docs-nav-link">Tutorial 61: Occlusion Queries</a></li>
+        <li><a href="62-mrt.html"               class="docs-nav-link">Tutorial 62: Multiple Render Targets (MRT)</a></li>
+        <li><a href="63-stencil-buffer.html"    class="docs-nav-link">Tutorial 63: Stencil Buffer Effects</a></li>
+        <li><a href="64-cubemaps.html"          class="docs-nav-link">Tutorial 64: Cubemaps and Skyboxes</a></li>
+        <li><a href="65-msaa.html"              class="docs-nav-link">Tutorial 65: MSAA Anti-Aliasing</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 58: Normal Mapping</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 58: Normal Mapping</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Advanced Shaders</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>CNA does not have a built-in <code>NormalMapEffect</code>. Normal mapping requires a <strong>custom GLSL shader</strong> loaded via a <code>.shader.json</code> descriptor and bound through <code>Effect</code> + <code>EffectParameter</code>. This tutorial requires the <strong>EASYGL</strong> or <strong>VULKAN</strong> backend.</p>
+      </div>
+
+      <p>Normal mapping is a per-pixel shading technique that replaces the interpolated geometric normal at each fragment with a normal sampled from a texture. Because the normal governs how the surface responds to lighting, a flat quad can appear to have bumps, grooves, and rivets without any additional geometry. The key to its visual richness is that it works at the full resolution of the screen — every pixel computes its own lighting response — while the geometry cost stays constant.</p>
+
+      <h2>What is Normal Mapping?</h2>
+      <p>A standard lighting calculation at a fragment uses the surface normal vector — perpendicular to the surface — to determine how strongly the light hits that point. A perfectly smooth surface has a constant normal across its face, producing flat, featureless shading. Normal mapping breaks this uniformity: a normal map texture stores a different normal direction for each texel, encoding high-frequency surface detail (the bumpiness of brick, the scratches in metal, the stitches in leather) without the polygon count that would otherwise be required to represent those details geometrically.</p>
+      <p>Visually, normal mapping does not change the silhouette of an object — it is purely a per-pixel lighting trick. From directly in front, a normal-mapped brick wall looks three-dimensional. From a shallow grazing angle, it still appears perfectly flat. This is the fundamental limitation of the technique: for parallax and silhouette effects you need parallax occlusion mapping or tessellation-based displacement mapping. Within its scope, however, normal mapping delivers an exceptional quality-to-performance ratio and is standard practice in every modern game engine.</p>
+
+      <h2>Normal Map Texture Format</h2>
+      <p>A tangent-space normal map encodes the surface normal as an RGB colour. The mapping is:</p>
+      <ul>
+        <li>R channel = X component of the normal (tangent direction)</li>
+        <li>G channel = Y component of the normal (bitangent direction)</li>
+        <li>B channel = Z component of the normal (surface-outward direction)</li>
+      </ul>
+      <p>Since RGB values are in [0, 1] and normal components span [-1, 1], the values are remapped: <code>normal = rgb * 2.0 - 1.0</code>. A perfectly flat surface (normal pointing straight outward) encodes as R=0.5, G=0.5, B=1.0, which appears as the characteristic "flat normal" blue-violet colour of normal maps in image editors. Deviations from this encode tilted normals.</p>
+      <p>Normal maps are typically authored in a tool like Substance Painter, Marmoset Toolbag, or generated from a high-poly mesh bake in Blender. Export them as PNG or DDS (BC5 / ATI2 compressed format, which stores only the RG channels and reconstructs B at runtime as <code>B = sqrt(1 - R*R - G*G)</code>, halving texture memory). The DDS/BC5 approach is recommended for shipping but requires a shader modification to reconstruct B:</p>
+      <pre><code class="language-glsl">// BC5/ATI2 normal map (RG only, reconstruct B)
+vec2 rg   = texture(u_normalMap, v_texcoord).rg * 2.0 - 1.0;
+vec3 tsNormal = vec3(rg, sqrt(max(0.0, 1.0 - dot(rg, rg))));</code></pre>
+
+      <h2>Tangent Space vs World Space</h2>
+      <p>Normal maps come in two flavours:</p>
+      <ul>
+        <li><strong>Tangent-space normal maps</strong> (by far the most common) — the encoded normals are relative to the surface's local coordinate frame. They are UV-dependent: the X direction aligns with the texture U axis and the Y direction aligns with the V axis. Because the map is relative to the surface, the same normal map can tile across repeated surfaces regardless of their world-space orientation. This is the format produced by Blender, Substance, and virtually all DCC tools by default.</li>
+        <li><strong>World-space (or object-space) normal maps</strong> — normals are encoded in world/object space. They look distinctly colourful (each face displays a different colour corresponding to its world-space facing direction). They are simpler to shade (no TBN matrix needed) but cannot be reused across surfaces that face different directions, and they break when the object rotates.</li>
+      </ul>
+      <p>This tutorial uses tangent-space maps, which require a TBN matrix in the shader to transform the sampled normal back into world space for lighting.</p>
+
+      <h2>Computing the TBN Matrix</h2>
+      <p>The TBN (Tangent, Bitangent, Normal) matrix is a 3×3 orthonormal basis that maps from tangent space to world space. Each column is a world-space axis:</p>
+      <ul>
+        <li><strong>T (tangent)</strong> — points in the direction of increasing U in texture space, lying in the surface plane.</li>
+        <li><strong>B (bitangent)</strong> — points in the direction of increasing V, also in the surface plane. Computed as <code>B = cross(N, T) * tangentHandedness</code> where <code>tangentHandedness</code> is ±1 stored in the vertex data to preserve UV mirroring.</li>
+        <li><strong>N (normal)</strong> — the geometric surface normal.</li>
+      </ul>
+      <p>All three vectors must be in the same coordinate space (world space is recommended for multi-light setups). T and N are read from vertex attributes and transformed by the normal matrix (the transpose inverse of the world matrix) to get world-space versions. B is reconstructed from T and N in the vertex shader:</p>
+      <pre><code class="language-glsl">vec3 N = normalize(u_normalMatrix * a_normal);
+vec3 T = normalize(u_normalMatrix * a_tangent);
+// Re-orthogonalise T against N (Gram-Schmidt)
+T = normalize(T - dot(T, N) * N);
+vec3 B = cross(N, T) * a_tangentW;  // a_tangentW is handedness (+1 or -1)
+mat3 TBN = mat3(T, B, N);</code></pre>
+      <p>The Gram-Schmidt step (<code>T = normalize(T - dot(T,N)*N)</code>) corrects for any non-orthogonality introduced by the normal matrix transformation, ensuring T is perpendicular to N.</p>
+
+      <h2>Applying in the Fragment Shader</h2>
+      <p>In the fragment shader, the TBN matrix (passed as a varying from the vertex shader) is used to transform the decoded tangent-space normal into world space, where it can be used in any standard lighting equation:</p>
+      <pre><code class="language-glsl">// Decode tangent-space normal from texture
+vec3 rawNormal  = texture(u_normalMap, v_texcoord).rgb;
+vec3 tsNormal   = rawNormal * 2.0 - 1.0;  // remap [0,1] -&gt; [-1,1]
+
+// Transform to world space using the TBN matrix
+vec3 N = normalize(v_TBN * tsNormal);
+
+// Use N in standard diffuse + specular lighting
+vec3 L     = normalize(-u_lightDir);        // world-space light direction
+float diff = max(dot(N, L), 0.0);
+
+vec3 V     = normalize(u_cameraPos - v_worldPos);
+vec3 H     = normalize(L + V);              // half-vector (Blinn-Phong)
+float spec = pow(max(dot(N, H), 0.0), u_shininess);
+
+vec4 albedo = texture(u_diffuse, v_texcoord);
+vec3 color  = albedo.rgb * u_lightColor * diff
+            + u_specularColor * spec;
+fragColor   = vec4(color, albedo.a);</code></pre>
+
+      <h2>Custom Shader Approach in CNA</h2>
+      <p>Since CNA does not include a built-in <code>NormalMapEffect</code>, you must author a custom shader and a <code>.shader.json</code> descriptor. A minimal descriptor for a normal-mapped surface looks like this:</p>
+      <pre><code class="language-cpp">// shaders/normal_map.shader.json
+{
+  "technique": "NormalMap",
+  "passes": [
+    {
+      "name": "P0",
+      "vertex":   "shaders/normal_map.vert",
+      "fragment": "shaders/normal_map.frag"
+    }
+  ],
+  "parameters": [
+    { "name": "u_world",        "type": "Matrix" },
+    { "name": "u_view",         "type": "Matrix" },
+    { "name": "u_projection",   "type": "Matrix" },
+    { "name": "u_normalMatrix", "type": "Matrix3" },
+    { "name": "u_diffuse",      "type": "Texture2D" },
+    { "name": "u_normalMap",    "type": "Texture2D" },
+    { "name": "u_lightDir",     "type": "Vector3" },
+    { "name": "u_lightColor",   "type": "Vector3" },
+    { "name": "u_specularColor","type": "Vector3" },
+    { "name": "u_shininess",    "type": "Single" },
+    { "name": "u_cameraPos",    "type": "Vector3" }
+  ]
+}</code></pre>
+
+      <h2>Complete GLSL Shaders</h2>
+
+      <h3>Vertex Shader (normal_map.vert)</h3>
+      <pre><code class="language-glsl">#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3  a_position;
+layout(location = 1) in vec3  a_normal;
+layout(location = 2) in vec2  a_texcoord;
+layout(location = 3) in vec3  a_tangent;
+layout(location = 4) in float a_tangentW;   // handedness: +1 or -1
+
+uniform mat4 u_world;
+uniform mat4 u_view;
+uniform mat4 u_projection;
+uniform mat3 u_normalMatrix;   // transpose(inverse(mat3(u_world)))
+
+out vec3 v_worldPos;
+out vec2 v_texcoord;
+out mat3 v_TBN;
+
+void main() {
+    vec4 worldPos = u_world * vec4(a_position, 1.0);
+    v_worldPos    = worldPos.xyz;
+    v_texcoord    = a_texcoord;
+
+    // Build TBN in world space
+    vec3 N = normalize(u_normalMatrix * a_normal);
+    vec3 T = normalize(u_normalMatrix * a_tangent);
+    // Gram-Schmidt re-orthogonalisation
+    T      = normalize(T - dot(T, N) * N);
+    vec3 B = cross(N, T) * a_tangentW;
+
+    v_TBN = mat3(T, B, N);
+
+    gl_Position = u_projection * u_view * worldPos;
+}</code></pre>
+
+      <h3>Fragment Shader (normal_map.frag)</h3>
+      <pre><code class="language-glsl">#version 300 es
+precision highp float;
+
+in vec3 v_worldPos;
+in vec2 v_texcoord;
+in mat3 v_TBN;
+
+uniform sampler2D u_diffuse;
+uniform sampler2D u_normalMap;
+uniform vec3      u_lightDir;      // world-space, normalised, points TO light source
+uniform vec3      u_lightColor;
+uniform vec3      u_specularColor;
+uniform float     u_shininess;
+uniform vec3      u_cameraPos;
+
+out vec4 fragColor;
+
+void main() {
+    // Decode tangent-space normal
+    vec3 rawNormal = texture(u_normalMap, v_texcoord).rgb;
+    vec3 tsNormal  = rawNormal * 2.0 - 1.0;
+    vec3 N         = normalize(v_TBN * tsNormal);
+
+    // Lighting vectors
+    vec3 L = normalize(u_lightDir);          // towards light
+    vec3 V = normalize(u_cameraPos - v_worldPos);
+    vec3 H = normalize(L + V);               // Blinn-Phong half-vector
+
+    float diff = max(dot(N, L), 0.0);
+    float spec = pow(max(dot(N, H), 0.0), u_shininess);
+
+    vec4 albedo = texture(u_diffuse, v_texcoord);
+    vec3 color  = albedo.rgb * u_lightColor * diff
+                + u_specularColor * spec;
+
+    fragColor = vec4(color, albedo.a);
+}</code></pre>
+
+      <h2>C++ Setup: Loading and Binding the Normal Map Shader</h2>
+      <pre><code class="language-cpp">class NormalMapGame final : public Game {
+    std::unique_ptr&lt;Effect&gt;       nmEffect_;
+    std::unique_ptr&lt;Texture2D&gt;   diffuseTex_;
+    std::unique_ptr&lt;Texture2D&gt;   normalMapTex_;
+    std::unique_ptr&lt;VertexBuffer&gt; meshVB_;
+    std::unique_ptr&lt;IndexBuffer&gt;  meshIB_;
+    int   indexCount_ = 0;
+    Camera camera_;
+    Vector3 lightDir_ = Vector3::Normalize(Vector3(1.0f, -2.0f, -1.0f));
+
+    void LoadContent() override {
+        diffuseTex_    = Content.Load&lt;Texture2D&gt;("textures/stone_albedo");
+        normalMapTex_  = Content.Load&lt;Texture2D&gt;("textures/stone_normal");
+        nmEffect_      = Content.Load&lt;Effect&gt;("shaders/normal_map");
+
+        // Bind static parameters once
+        nmEffect_-&gt;Parameters["u_diffuse"     ].SetValue(diffuseTex_.get());
+        nmEffect_-&gt;Parameters["u_normalMap"   ].SetValue(normalMapTex_.get());
+        nmEffect_-&gt;Parameters["u_lightColor"  ].SetValue(Vector3(1.0f, 0.95f, 0.85f));
+        nmEffect_-&gt;Parameters["u_specularColor"].SetValue(Vector3(0.6f, 0.6f, 0.6f));
+        nmEffect_-&gt;Parameters["u_shininess"   ].SetValue(64.0f);
+
+        LoadMesh();
+    }
+
+    void Draw(const GameTime&amp;) override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+        gd.Clear(Color(30, 30, 40, 255));
+
+        Matrix world = Matrix::Identity;
+        Matrix3 normalMatrix = Matrix3::Transpose(Matrix3::Invert(Matrix3(world)));
+
+        nmEffect_-&gt;Parameters["u_world"       ].SetValue(world);
+        nmEffect_-&gt;Parameters["u_view"        ].SetValue(camera_.View());
+        nmEffect_-&gt;Parameters["u_projection"  ].SetValue(camera_.Projection());
+        nmEffect_-&gt;Parameters["u_normalMatrix"].SetValue(normalMatrix);
+        nmEffect_-&gt;Parameters["u_lightDir"    ].SetValue(-lightDir_);  // negate: points to light
+        nmEffect_-&gt;Parameters["u_cameraPos"   ].SetValue(camera_.Position());
+
+        gd.setVertexBuffer(*meshVB_);
+        gd.setIndexBuffer(*meshIB_);
+        for (auto&amp; pass : nmEffect_-&gt;getCurrentTechnique().Passes) {
+            pass.Apply();
+            gd.DrawIndexedPrimitives(
+                PrimitiveType::TriangleList, 0, 0, indexCount_ / 3);
+        }
+        gd.Present();
+    }
+};</code></pre>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Tangent data in vertex buffers:</strong> The vertex buffer must contain per-vertex tangent vectors (<code>a_tangent</code> and <code>a_tangentW</code>) in addition to position, normal, and UV. The nova-3d pipeline automatically generates tangents during model import when the mesh has UV coordinates. If you build geometry procedurally, use a tangent-generation algorithm (Mikkelsen's MikkTSpace is the industry standard, implemented by Blender and Substance Painter) before uploading vertex data.</p>
+      </div>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="57-skinned-effect.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 57: SkinnedEffect and Skeletal Animation</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="59-shadow-mapping.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 59: Shadow Mapping</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 77: Asset Streaming and Async Loading - CNA Tutorials</title>
+  <meta name="description" content="Eliminate loading stalls in CNA games with std::async background loading, a thread-safe resource queue, and a loading screen pattern.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/77-async-loading.html">
+  <meta property="og:title"       content="Tutorial 77: Asset Streaming and Async Loading - CNA Tutorials">
+  <meta property="og:description" content="Eliminate loading stalls in CNA games with std::async background loading, a thread-safe resource queue, and a loading screen pattern.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="66-bloom.html" class="docs-nav-link">Tutorial 66: Bloom</a></li>
+        <li><a href="67-deferred-rendering.html" class="docs-nav-link">Tutorial 67: Deferred Rendering</a></li>
+        <li><a href="68-terrain.html" class="docs-nav-link">Tutorial 68: Terrain</a></li>
+        <li><a href="69-water.html" class="docs-nav-link">Tutorial 69: Water</a></li>
+        <li><a href="70-procedural-geometry.html" class="docs-nav-link">Tutorial 70: Procedural Geometry</a></li>
+        <li><a href="71-memory-management.html" class="docs-nav-link">Tutorial 71: Memory Management</a></li>
+        <li><a href="72-backend-selection.html" class="docs-nav-link">Tutorial 72: Backend Selection</a></li>
+        <li><a href="73-profiling.html" class="docs-nav-link">Tutorial 73: Profiling</a></li>
+        <li><a href="74-frustum-culling.html" class="docs-nav-link">Tutorial 74: Frustum Culling</a></li>
+        <li><a href="75-lod.html" class="docs-nav-link">Tutorial 75: LOD</a></li>
+        <li><a href="76-spatial-partitioning.html" class="docs-nav-link">Tutorial 76: Spatial Partitioning</a></li>
+        <li><a href="77-async-loading.html" class="docs-nav-link active">Tutorial 77: Async Loading</a></li>
+        <li><a href="78-multithreading.html" class="docs-nav-link">Tutorial 78: Multi-threading</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 77</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 77: Asset Streaming and Async Loading</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Architecture</p>
+
+      <h2>The problem with loading stalls</h2>
+      <p>Synchronous asset loading in <code>LoadContent</code> blocks the main thread. For a small game with a few textures this is fine — loading takes under a second. For a large game with gigabytes of textures, meshes, and audio, synchronous loading produces freezes that break immersion: the game hangs for several seconds between areas, or shows a frozen loading screen.</p>
+      <p>The solution is to load assets on a background thread and upload them to the GPU on the main thread when they are ready. The two-phase approach is necessary because GPU operations (creating textures, uploading vertex data) must happen on the thread that owns the OpenGL context or Vulkan queue — that is always the main thread in CNA.</p>
+
+      <h2>std::async and std::future for background loading</h2>
+      <p>C++23's standard <code>std::async</code> / <code>std::future</code> provide a simple way to run a function on a thread pool and retrieve its result later:</p>
+      <pre><code class="language-cpp">// Start loading a PNG from disk on a background thread.
+// Returns raw pixel data — no GPU operations yet.
+std::future&lt;std::vector&lt;uint8_t&gt;&gt; LoadRawPixelDataAsync(
+    const std::string& path) {
+    return std::async(std::launch::async, [path]() -&gt; std::vector&lt;uint8_t&gt; {
+        // SDL_image or stb_image — no OpenGL/Vulkan calls here
+        return LoadPNGToMemory(path);  // pure CPU/disk operation
+    });
+}
+
+// In LoadContent or wherever you start the load:
+auto future = LoadRawPixelDataAsync("assets/level2/terrain.png");
+
+// In Update — check if the load is done without blocking:
+if (future.valid() &&
+    future.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+    auto pixels = future.get();  // retrieve result, non-blocking now
+    // Upload to GPU on main thread:
+    terrainTex_ = std::make_unique&lt;Texture2D&gt;(
+        gd, texWidth_, texHeight_,
+        false, SurfaceFormat::Color);
+    terrainTex_-&gt;SetData(pixels.data(),
+                         static_cast&lt;int&gt;(pixels.size()));
+}</code></pre>
+
+      <h2>Thread-safe resource queue</h2>
+      <p>For loading many assets simultaneously, use a producer-consumer queue. Background threads push completed CPU-side data into the queue; the main thread drains the queue each frame to do the GPU upload:</p>
+      <pre><code class="language-cpp">// BackgroundLoader.hpp
+#pragma once
+#include &lt;future&gt;
+#include &lt;queue&gt;
+#include &lt;mutex&gt;
+#include &lt;functional&gt;
+#include &lt;string&gt;
+#include &lt;vector&gt;
+#include &lt;atomic&gt;
+
+struct LoadedAsset {
+    std::string              name;
+    int                      width = 0;
+    int                      height = 0;
+    std::vector&lt;uint8_t&gt;    pixels;
+    std::function&lt;void()&gt;   onComplete;  // optional callback
+};
+
+class BackgroundLoader {
+public:
+    // Enqueue a texture path for background loading.
+    // progressCallback is invoked from the background thread — it must be
+    // thread-safe (e.g. update an atomic progress counter only).
+    void EnqueueTexture(const std::string& name,
+                        const std::string& path,
+                        std::function&lt;void()&gt; onComplete = {}) {
+        ++pending_;
+        futures_.push_back(
+            std::async(std::launch::async,
+                       [this, name, path, onComplete]() {
+                LoadedAsset asset;
+                asset.name       = name;
+                asset.pixels     = LoadPNG(path,
+                                           &asset.width, &asset.height);
+                asset.onComplete = onComplete;
+                {
+                    std::lock_guard&lt;std::mutex&gt; lock(mutex_);
+                    ready_.push(std::move(asset));
+                }
+                --pending_;
+            }));
+    }
+
+    // Call from the main thread each frame.
+    // Returns true if all previously enqueued assets have been processed.
+    bool PumpUploads(GraphicsDevice& gd,
+                     std::unordered_map&lt;std::string,
+                                        std::unique_ptr&lt;Texture2D&gt;&gt;& out,
+                     int maxPerFrame = 2) {
+        std::lock_guard&lt;std::mutex&gt; lock(mutex_);
+        int uploaded = 0;
+        while (!ready_.empty() &amp;&amp; uploaded &lt; maxPerFrame) {
+            LoadedAsset asset = std::move(ready_.front());
+            ready_.pop();
+
+            auto tex = std::make_unique&lt;Texture2D&gt;(
+                gd, asset.width, asset.height,
+                false, SurfaceFormat::Color);
+            tex-&gt;SetData(asset.pixels.data(),
+                         static_cast&lt;int&gt;(asset.pixels.size()));
+            out[asset.name] = std::move(tex);
+
+            if (asset.onComplete) asset.onComplete();
+            ++uploaded;
+        }
+        return pending_.load() == 0 &amp;&amp; ready_.empty();
+    }
+
+    float Progress() const {
+        // crude progress: assumes a known total
+        int done = totalQueued_ - static_cast&lt;int&gt;(pending_.load());
+        return totalQueued_ &gt; 0
+             ? static_cast&lt;float&gt;(done) / totalQueued_
+             : 1.0f;
+    }
+
+    int totalQueued_ = 0;
+
+private:
+    std::atomic&lt;int&gt;             pending_{0};
+    std::mutex                   mutex_;
+    std::queue&lt;LoadedAsset&gt;      ready_;
+    std::vector&lt;std::future&lt;void&gt;&gt; futures_;
+};</code></pre>
+
+      <h2>GPU upload on the main thread</h2>
+      <p>The <code>PumpUploads</code> method above is called from the game's <code>Update</code> or <code>Draw</code>. It dequeues up to <code>maxPerFrame</code> assets to avoid uploading so much data in one frame that the game stutters. Adjust <code>maxPerFrame</code> based on how large each asset is — for small textures set it to 4 or 8; for large ones (4K textures) set it to 1.</p>
+
+      <h2>Loading screen pattern</h2>
+      <p>Implement a state machine in your game that switches between <code>STATE_LOADING</code> and <code>STATE_PLAYING</code>. During loading, render a progress bar using SpriteBatch (no 3D assets needed — just a solid colour quad) and call <code>PumpUploads</code> each frame:</p>
+      <pre><code class="language-cpp">void Update(const GameTime& gt) override {
+    if (state_ == State::Loading) {
+        bool done = loader_-&gt;PumpUploads(
+            getGraphicsDeviceProperty(), textures_, 4);
+        loadProgress_ = loader_-&gt;Progress();
+        if (done) state_ = State::Playing;
+        return;
+    }
+    // Normal game update...
+}
+
+void Draw(const GameTime& gt) override {
+    auto& gd = getGraphicsDeviceProperty();
+    gd.Clear(Color::Black);
+
+    if (state_ == State::Loading) {
+        // Draw a loading bar
+        int barW = static_cast&lt;int&gt;(640.0f * loadProgress_);
+        spriteBatch_-&gt;Begin();
+        spriteBatch_-&gt;Draw(*whitePixel_,
+            Rectangle(80, 350, barW, 20), Color::CornflowerBlue);
+        spriteBatch_-&gt;Draw(*whitePixel_,
+            Rectangle(80, 350, 640, 20), Color::White * 0.3f);
+        spriteBatch_-&gt;DrawString(*font_,
+            "Loading... " +
+            std::to_string(static_cast&lt;int&gt;(loadProgress_ * 100)) + "%",
+            Vector2(80, 310), Color::White);
+        spriteBatch_-&gt;End();
+        gd.Present();
+        return;
+    }
+    // Normal game draw...
+}</code></pre>
+
+      <h2>ContentManager thread safety note</h2>
+      <p>CNA's <code>ContentManager::Load&lt;T&gt;()</code> is <strong>not thread-safe</strong>. Do not call it from background threads. The <code>BackgroundLoader</code> pattern above bypasses <code>ContentManager</code> intentionally — it reads raw file data on background threads and only touches CNA GPU types on the main thread.</p>
+      <p>If you want to use <code>ContentManager</code> for level streaming, create a separate <code>ContentManager</code> per level on the main thread, but trigger the loading from a background thread using a flag / condition variable to signal when to start. The actual <code>Load</code> calls must happen on the main thread.</p>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="76-spatial-partitioning.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 76: Spatial Partitioning</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="78-multithreading.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 78: Multi-threading</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

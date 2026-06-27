@@ -1,0 +1,436 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 65: MSAA Anti-Aliasing - CNA Tutorials</title>
+  <meta name="description" content="Enable MSAA anti-aliasing in CNA via GraphicsDeviceManager.PreferMultiSampling, choose sample counts, and implement FXAA as a post-process alternative for unsupported backends.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/65-msaa.html">
+  <meta property="og:title"       content="Tutorial 65: MSAA Anti-Aliasing - CNA Tutorials">
+  <meta property="og:description" content="Enable MSAA anti-aliasing in CNA via GraphicsDeviceManager.PreferMultiSampling, choose sample counts, and implement FXAA as a post-process alternative for unsupported backends.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="53-effect-parameter.html" class="docs-nav-link">Tutorial 53: GLSL Uniforms and EffectParameter</a></li>
+        <li><a href="54-alpha-test.html"        class="docs-nav-link">Tutorial 54: AlphaTestEffect and Alpha Masking</a></li>
+        <li><a href="55-dual-texture.html"      class="docs-nav-link">Tutorial 55: DualTextureEffect for Lightmaps</a></li>
+        <li><a href="56-environment-map.html"   class="docs-nav-link">Tutorial 56: EnvironmentMapEffect for Reflections</a></li>
+        <li><a href="57-skinned-effect.html"    class="docs-nav-link">Tutorial 57: SkinnedEffect and Skeletal Animation</a></li>
+        <li><a href="58-normal-mapping.html"    class="docs-nav-link">Tutorial 58: Normal Mapping</a></li>
+        <li><a href="59-shadow-mapping.html"    class="docs-nav-link">Tutorial 59: Shadow Mapping</a></li>
+        <li><a href="60-instancing.html"        class="docs-nav-link">Tutorial 60: Instanced Rendering</a></li>
+        <li><a href="61-occlusion-query.html"   class="docs-nav-link">Tutorial 61: Occlusion Queries</a></li>
+        <li><a href="62-mrt.html"               class="docs-nav-link">Tutorial 62: Multiple Render Targets (MRT)</a></li>
+        <li><a href="63-stencil-buffer.html"    class="docs-nav-link">Tutorial 63: Stencil Buffer Effects</a></li>
+        <li><a href="64-cubemaps.html"          class="docs-nav-link">Tutorial 64: Cubemaps and Skyboxes</a></li>
+        <li><a href="65-msaa.html"              class="docs-nav-link active">Tutorial 65: MSAA Anti-Aliasing</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 65: MSAA Anti-Aliasing</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 65: MSAA Anti-Aliasing</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Advanced Rendering</p>
+
+      <p>Aliasing — the "staircase" jagged edge effect on geometry silhouettes — is one of the most immediately visible quality issues in 3D rendering. This tutorial covers Multi-Sample Anti-Aliasing (MSAA), CNA's primary hardware-accelerated AA mode, and the FXAA post-process alternative for backends and devices where MSAA is unavailable or too expensive.</p>
+
+      <h2>What is MSAA?</h2>
+      <p>Multi-Sample Anti-Aliasing (MSAA) works by rendering each pixel at multiple sub-pixel <em>sample positions</em> and averaging the results. For a 4x MSAA framebuffer, the GPU maintains four samples per pixel, each with an independent depth and stencil value. The fragment shader runs once per pixel (not once per sample), but the coverage test runs per-sample. At pixels where a triangle edge crosses, only some of the four samples fall inside the triangle; those samples get the triangle's colour and the others keep the background colour. When the frame is displayed, the four samples are averaged ("resolved"), producing a smooth anti-aliased edge.</p>
+      <p>MSAA is highly effective at eliminating geometric aliasing (jagged polygon edges) because it operates at the rasterisation level with GPU hardware support. It is less effective at texture aliasing (shimmer on distant surfaces with high-frequency detail) — that requires mipmapping and anisotropic filtering (covered in the texture tutorials). Post-process AA techniques like FXAA or TAA can complement MSAA for texture-related aliasing.</p>
+      <p>Key characteristics of MSAA compared to alternatives:</p>
+      <ul>
+        <li><strong>Geometry edges</strong> — excellent. Hardware MSAA eliminates staircase edges on triangles.</li>
+        <li><strong>Texture shimmer</strong> — no improvement without mipmapping; MSAA does not help here.</li>
+        <li><strong>Fragment shader cost</strong> — the fragment shader runs only once per pixel, not per sample (unlike SSAA). This makes 4x MSAA much cheaper than 4x SSAA.</li>
+        <li><strong>Depth and stencil</strong> — per-sample depth and stencil are maintained, so depth testing at edges remains correct.</li>
+        <li><strong>Memory cost</strong> — proportional to sample count. 4x MSAA uses 4x the framebuffer memory and 4x the depth/stencil memory.</li>
+      </ul>
+
+      <h2>PreferMultiSampling Flag</h2>
+      <p>In CNA, MSAA is enabled by setting <code>PreferMultiSampling</code> on the <code>GraphicsDeviceManager</code> before <code>Run()</code> is called. This tells the backend to request a multisampled swap chain or framebuffer from the OS/driver:</p>
+      <pre><code class="language-cpp">class MyGame final : public Game {
+public:
+    MyGame() : graphics_(this) {
+        graphics_.setPreferMultiSampling(true);
+        graphics_.setPreferredBackBufferWidth(1280);
+        graphics_.setPreferredBackBufferHeight(720);
+    }
+    // ...
+private:
+    GraphicsDeviceManager graphics_;
+};</code></pre>
+      <p>The word "Prefer" in <code>PreferMultiSampling</code> is significant: if the hardware or driver does not support MSAA (or does not support the requested sample count), CNA will silently fall back to no MSAA rather than failing. Always check <code>GraphicsDevice.PresentationParameters.MultiSampleCount</code> at runtime to determine the actual sample count in use.</p>
+
+      <h2>GraphicsDeviceManager Settings</h2>
+      <p>The sample count can be specified explicitly. CNA picks the highest supported count up to and including the requested value:</p>
+      <pre><code class="language-cpp">graphics_.setPreferMultiSampling(true);
+
+// Request 4x MSAA. The actual count may be lower if not supported.
+// Common values: 1 (off), 2, 4, 8, 16.
+// Most integrated GPUs support up to 4x; discrete GPUs support up to 16x.
+graphics_.setMultiSampleCount(4);</code></pre>
+      <p>These settings can also be changed at runtime by calling <code>GraphicsDeviceManager::ApplyChanges()</code> after modifying them, which recreates the swap chain with the new parameters. This is useful for an in-game graphics settings screen.</p>
+
+      <h2>MultiSampleCount — Choosing a Level</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Sample Count</th><th>Quality</th><th>Memory &amp; Fill Overhead</th><th>Recommended for</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>1 (no MSAA)</td><td>Aliased</td><td>1x baseline</td><td>Lowest-end mobile, fallback</td></tr>
+            <tr><td>2x</td><td>Noticeable improvement</td><td>~1.5x</td><td>Mobile, battery-saving mode</td></tr>
+            <tr><td>4x</td><td>Good — most edges smooth</td><td>~2x</td><td>Default for desktop/console</td></tr>
+            <tr><td>8x</td><td>Very high</td><td>~3x</td><td>High-end desktop GPU</td></tr>
+            <tr><td>16x</td><td>Diminishing returns vs 8x</td><td>~4x</td><td>Benchmarks, screenshots</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>On most modern dedicated GPUs, 4x MSAA is the sweet spot: it eliminates the vast majority of visible aliasing at roughly double the memory bandwidth of the unsampled case, which is well within the available bandwidth on current hardware. On integrated GPUs (Intel Iris, Apple M-series GPU, Mali, Adreno), 2x or no MSAA and FXAA as a substitute is often the better choice for maintaining 60 fps.</p>
+      <p>Verify the actual count after device creation:</p>
+      <pre><code class="language-cpp">void Initialize() override {
+    Game::Initialize();
+    auto&amp; pp = getGraphicsDeviceProperty().PresentationParameters;
+    // pp.MultiSampleCount reports what the driver actually gave us
+    int actualSamples = pp.MultiSampleCount;
+    // Log to console, display in a debug overlay, etc.
+    (void)actualSamples;
+}</code></pre>
+
+      <h2>Backend Support</h2>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>SDL_RENDERER backend:</strong> <code>setPreferMultiSampling(true)</code> is accepted but silently ignored. SDL2's 2D renderer does not expose MSAA control. Use FXAA (see below) as a post-process alternative when targeting this backend.</p>
+      </div>
+      <ul>
+        <li><strong>EasyGL backend</strong> — enables MSAA via <code>SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1)</code> and <code>SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, count)</code>, then calls <code>glEnable(GL_MULTISAMPLE)</code> after context creation. The actual sample count is confirmed with <code>glGetIntegerv(GL_SAMPLES, &amp;actual)</code>.</li>
+        <li><strong>Vulkan backend</strong> — creates the swap chain images with the requested <code>VkSampleCountFlagBits</code> (e.g., <code>VK_SAMPLE_COUNT_4_BIT</code>) and sets up a multisample resolve attachment in the render pass. Uses <code>vkGetPhysicalDeviceProperties</code> to query <code>framebufferColorSampleCounts</code> for hardware limits.</li>
+      </ul>
+
+      <h2>Complete MSAA Example</h2>
+      <pre><code class="language-cpp">class MsaaGame final : public Game {
+public:
+    MsaaGame() : graphics_(this) {
+        // Request 4x MSAA back buffer
+        graphics_.setPreferMultiSampling(true);
+        graphics_.setPreferredBackBufferWidth(1280);
+        graphics_.setPreferredBackBufferHeight(720);
+    }
+
+protected:
+    void Initialize() override {
+        Game::Initialize();
+
+        // Confirm actual MSAA level from the driver
+        auto&amp; pp = getGraphicsDeviceProperty().PresentationParameters;
+        actualSampleCount_ = pp.MultiSampleCount;
+    }
+
+    void LoadContent() override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+        effect_ = std::make_unique&lt;BasicEffect&gt;(gd);
+        effect_-&gt;setVertexColorEnabled(true);
+        effect_-&gt;setLightingEnabled(false);
+        buildSpinningTriangle(gd);
+    }
+
+    void Update(const GameTime&amp; gt) override {
+        angle_ += (float)gt.getElapsedGameTime().TotalSeconds() * 0.8f;
+    }
+
+    void Draw(const GameTime&amp;) override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+        gd.Clear(Color::CornflowerBlue);
+
+        // Rotate a coloured triangle to make aliasing visible
+        Matrix world = Matrix::CreateRotationZ(angle_);
+        effect_-&gt;setWorld(world);
+        effect_-&gt;setView(Matrix::CreateLookAt(
+            Vector3(0.0f, 0.0f, 3.0f),
+            Vector3::Zero,
+            Vector3::Up));
+        effect_-&gt;setProjection(Matrix::CreatePerspectiveFieldOfView(
+            MathHelper::PiOver4,
+            1280.0f / 720.0f,
+            0.1f, 100.0f));
+
+        gd.setVertexBuffer(*vb_);
+        for (auto&amp; pass : effect_-&gt;getCurrentTechnique().Passes) {
+            pass.Apply();
+            gd.DrawPrimitives(PrimitiveType::TriangleList, 0, triCount_);
+        }
+        gd.Present();
+    }
+
+private:
+    GraphicsDeviceManager         graphics_;
+    std::unique_ptr&lt;BasicEffect&gt;  effect_;
+    std::unique_ptr&lt;VertexBuffer&gt; vb_;
+    float angle_           = 0.0f;
+    int   triCount_        = 0;
+    int   actualSampleCount_ = 1;
+
+    void buildSpinningTriangle(GraphicsDevice&amp; gd) {
+        // A large triangle whose edges cross at steep angles
+        // makes aliasing very visible when MSAA is off.
+        VertexPositionColor verts[3] = {
+            { Vector3( 0.0f,  1.5f, 0.0f), Color::Red   },
+            { Vector3( 1.3f, -0.75f, 0.0f), Color::Green },
+            { Vector3(-1.3f, -0.75f, 0.0f), Color::Blue  },
+        };
+        vb_ = std::make_unique&lt;VertexBuffer&gt;(gd,
+            VertexPositionColor::VertexDeclaration, 3, BufferUsage::WriteOnly);
+        vb_-&gt;SetData(verts, 3);
+        triCount_ = 1;
+    }
+};
+
+int main() {
+    MsaaGame game;
+    game.Run();
+    return 0;
+}</code></pre>
+
+      <h2>Performance Tradeoff</h2>
+      <p>MSAA's performance impact comes primarily from two sources:</p>
+      <ul>
+        <li><strong>Memory bandwidth</strong> — the framebuffer and depth buffer are N times larger (N = sample count). On bandwidth-limited GPUs (integrated graphics, mobile) this can be the dominant cost.</li>
+        <li><strong>Fill rate</strong> — at triangle edges where multiple samples fall inside the triangle, the GPU must write multiple samples. In the worst case (thin triangles covering many edge pixels) this approaches the cost of SSAA. In practice, for typical scene geometry, the overhead is much lower because most pixels are fully covered or fully uncovered.</li>
+      </ul>
+      <p>Fragment shader cost is generally <em>not</em> multiplied by the sample count — the shader runs once per pixel, not once per sample. This is the key architectural advantage of MSAA over SSAA.</p>
+      <p>On modern desktop discrete GPUs (NVIDIA, AMD, Intel Arc), 4x MSAA at 1080p typically adds 5–15% to frame time compared to no AA, making it essentially free for GPU-limited games at 1080p. At 4K, the absolute bandwidth cost is much higher and 2x MSAA or FXAA may be preferable.</p>
+
+      <h2>FXAA: A Post-Process Alternative</h2>
+      <p>Fast Approximate Anti-Aliasing (FXAA) is a screen-space post-processing technique that detects high-contrast edges in the final colour image and blurs them slightly. It runs as a single fullscreen fragment shader pass on the resolved (non-MSAA) framebuffer. Key properties:</p>
+      <ul>
+        <li>Works on any backend, including SDL_RENDERER.</li>
+        <li>No additional memory for multi-sample buffers.</li>
+        <li>Detects edges from colour contrast, so it can also smooth texture edges and alpha-tested geometry.</li>
+        <li>Introduces a small amount of blurring on fine detail (e.g., text, thin lines) as a side effect.</li>
+        <li>Quality is lower than 4x MSAA for hard geometric edges, but the performance cost is very low and constant.</li>
+      </ul>
+      <p>To implement FXAA in CNA: render the scene to a <code>RenderTarget2D</code>, then apply the FXAA shader as a fullscreen pass to the back buffer using a <code>SpriteBatch</code> with a custom effect or with a fullscreen triangle + custom vertex buffer.</p>
+
+      <h3>FXAA GLSL Shader</h3>
+      <pre><code class="language-glsl">// Simplified FXAA — luma-based edge detection and blend
+// Based on Timothy Lottes' FXAA 3.11 algorithm (simplified for clarity)
+#version 300 es
+precision highp float;
+
+in vec2 v_texcoord;
+uniform sampler2D u_screen;
+
+out vec4 fragColor;
+
+const float FXAA_REDUCE_MIN = 1.0 / 128.0;
+const float FXAA_REDUCE_MUL = 1.0 / 8.0;
+const float FXAA_SPAN_MAX   = 8.0;
+
+// Convert RGB to perceptual luminance
+float luma(vec3 rgb) {
+    return dot(rgb, vec3(0.299, 0.587, 0.114));
+}
+
+vec3 fxaa(sampler2D tex, vec2 uv, vec2 texelSize) {
+    // Sample the pixel and its four diagonal neighbours
+    vec3 rgbNW = texture(tex, uv + vec2(-1.0, -1.0) * texelSize).rgb;
+    vec3 rgbNE = texture(tex, uv + vec2( 1.0, -1.0) * texelSize).rgb;
+    vec3 rgbSW = texture(tex, uv + vec2(-1.0,  1.0) * texelSize).rgb;
+    vec3 rgbSE = texture(tex, uv + vec2( 1.0,  1.0) * texelSize).rgb;
+    vec3 rgbM  = texture(tex, uv).rgb;
+
+    float lumaNW = luma(rgbNW);
+    float lumaNE = luma(rgbNE);
+    float lumaSW = luma(rgbSW);
+    float lumaSE = luma(rgbSE);
+    float lumaM  = luma(rgbM);
+
+    float lumaMin = min(lumaM, min(min(lumaNW, lumaNE), min(lumaSW, lumaSE)));
+    float lumaMax = max(lumaM, max(max(lumaNW, lumaNE), max(lumaSW, lumaSE)));
+
+    // Detect edge direction from luma gradient
+    vec2 dir = vec2(
+        -((lumaNW + lumaNE) - (lumaSW + lumaSE)),
+         ((lumaNW + lumaSW) - (lumaNE + lumaSE)));
+
+    float dirReduce = max(
+        (lumaNW + lumaNE + lumaSW + lumaSE) * FXAA_REDUCE_MUL * 0.25,
+        FXAA_REDUCE_MIN);
+    float rcpDirMin = 1.0 / (min(abs(dir.x), abs(dir.y)) + dirReduce);
+
+    dir = clamp(dir * rcpDirMin, vec2(-FXAA_SPAN_MAX), vec2(FXAA_SPAN_MAX))
+          * texelSize;
+
+    // Sample along the edge direction at two offsets
+    vec3 rgbA = 0.5 * (
+        texture(tex, uv + dir * (1.0 / 3.0 - 0.5)).rgb +
+        texture(tex, uv + dir * (2.0 / 3.0 - 0.5)).rgb);
+    vec3 rgbB = rgbA * 0.5 + 0.25 * (
+        texture(tex, uv + dir * -0.5).rgb +
+        texture(tex, uv + dir *  0.5).rgb);
+
+    // Use the wider sample only if it does not cross outside the local range
+    float lumaB = luma(rgbB);
+    if (lumaB &lt; lumaMin || lumaB &gt; lumaMax)
+        return rgbA;
+    return rgbB;
+}
+
+void main() {
+    vec2 texelSize = 1.0 / vec2(textureSize(u_screen, 0));
+    fragColor = vec4(fxaa(u_screen, v_texcoord, texelSize), 1.0);
+}</code></pre>
+
+      <h3>Applying FXAA in the Draw Loop</h3>
+      <pre><code class="language-cpp">// In LoadContent:
+// sceneRT_ = std::make_unique&lt;RenderTarget2D&gt;(...);
+// fxaaEffect_ = Content.Load&lt;Effect&gt;("effects/fxaa");
+// spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(gd);
+
+void Draw(const GameTime&amp;) override {
+    auto&amp; gd = getGraphicsDeviceProperty();
+
+    // 1. Render scene to off-screen target
+    gd.SetRenderTarget(sceneRT_.get());
+    gd.Clear(Color::CornflowerBlue);
+    drawScene(gd);
+
+    // 2. Apply FXAA pass to the back buffer
+    gd.SetRenderTarget(nullptr);
+    gd.Clear(Color::Black);
+
+    fxaaEffect_-&gt;Parameters["u_screen"].SetValue(sceneRT_.get());
+    spriteBatch_-&gt;Begin(SpriteSortMode::Immediate,
+                         BlendState::Opaque,
+                         SamplerState::LinearClamp,
+                         nullptr, nullptr,
+                         fxaaEffect_.get());
+    spriteBatch_-&gt;Draw(*sceneRT_, Vector2::Zero, Color::White);
+    spriteBatch_-&gt;End();
+
+    gd.Present();
+}</code></pre>
+
+      <h2>Choosing Between MSAA and FXAA</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Criterion</th><th>MSAA 4x</th><th>FXAA</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Geometric edge quality</td><td>Excellent</td><td>Good</td></tr>
+            <tr><td>Texture/alpha edge quality</td><td>None</td><td>Good</td></tr>
+            <tr><td>Fine detail preservation</td><td>Perfect</td><td>Slightly blurry</td></tr>
+            <tr><td>Memory overhead</td><td>4x framebuffer</td><td>1x (one RenderTarget2D)</td></tr>
+            <tr><td>Shader overhead</td><td>Minimal</td><td>One fullscreen pass</td></tr>
+            <tr><td>Backend requirement</td><td>EasyGL or Vulkan</td><td>Any backend</td></tr>
+            <tr><td>Deferred rendering compatible</td><td>Complex</td><td>Yes (post-lighting)</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>In practice, many games ship with both: MSAA for the forward-rendered geometry pass, and FXAA or TAA applied as a final post-process to handle remaining aliasing from shading. CNA supports this combination — enable MSAA on the back buffer for the main pass, then optionally add an FXAA pass before <code>Present()</code> for residual aliasing in shaded regions.</p>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="64-cubemaps.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 64: Cubemaps and Skyboxes</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <!-- Tutorial 65 is the last in this series -->
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

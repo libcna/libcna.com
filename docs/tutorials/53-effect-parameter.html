@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 53: GLSL Uniforms and EffectParameter - CNA Tutorials</title>
+  <meta name="description" content="Learn how EffectParameter bridges C++ and GLSL uniforms in CNA, covering SetValue overloads, EffectParameterCollection, array passing, and UBO update patterns.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/53-effect-parameter.html">
+  <meta property="og:title"       content="Tutorial 53: GLSL Uniforms and EffectParameter - CNA Tutorials">
+  <meta property="og:description" content="Learn how EffectParameter bridges C++ and GLSL uniforms in CNA, covering SetValue overloads, EffectParameterCollection, array passing, and UBO update patterns.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="53-effect-parameter.html" class="docs-nav-link active">Tutorial 53: GLSL Uniforms and EffectParameter</a></li>
+        <li><a href="54-alpha-test.html"        class="docs-nav-link">Tutorial 54: AlphaTestEffect and Alpha Masking</a></li>
+        <li><a href="55-dual-texture.html"      class="docs-nav-link">Tutorial 55: DualTextureEffect for Lightmaps</a></li>
+        <li><a href="56-environment-map.html"   class="docs-nav-link">Tutorial 56: EnvironmentMapEffect for Reflections</a></li>
+        <li><a href="57-skinned-effect.html"    class="docs-nav-link">Tutorial 57: SkinnedEffect and Skeletal Animation</a></li>
+        <li><a href="58-normal-mapping.html"    class="docs-nav-link">Tutorial 58: Normal Mapping</a></li>
+        <li><a href="59-shadow-mapping.html"    class="docs-nav-link">Tutorial 59: Shadow Mapping</a></li>
+        <li><a href="60-instancing.html"        class="docs-nav-link">Tutorial 60: Instanced Rendering</a></li>
+        <li><a href="61-occlusion-query.html"   class="docs-nav-link">Tutorial 61: Occlusion Queries</a></li>
+        <li><a href="62-mrt.html"               class="docs-nav-link">Tutorial 62: Multiple Render Targets (MRT)</a></li>
+        <li><a href="63-stencil-buffer.html"    class="docs-nav-link">Tutorial 63: Stencil Buffer Effects</a></li>
+        <li><a href="64-cubemaps.html"          class="docs-nav-link">Tutorial 64: Cubemaps and Skyboxes</a></li>
+        <li><a href="65-msaa.html"              class="docs-nav-link">Tutorial 65: MSAA Anti-Aliasing</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 53: GLSL Uniforms and EffectParameter</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 53: GLSL Uniforms and EffectParameter</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Advanced Shaders</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>Custom <code>Effect</code> objects with <code>EffectParameter</code> require the <strong>EASYGL</strong> or <strong>VULKAN</strong> backend. The SDL_RENDERER backend does not support programmable shaders.</p>
+      </div>
+
+      <h2>The EffectParameter Class</h2>
+      <p>In CNA, an <code>Effect</code> represents a compiled GLSL shader program. Each <code>uniform</code> variable declared in the GLSL source has a corresponding <code>EffectParameter</code> on the C++ side. The <code>EffectParameter</code> is the bridge between your game logic and the GPU uniform slot — calling <code>SetValue()</code> on it schedules the upload so that when the effect's pass is applied, the uniform is correctly set in the shader program.</p>
+      <p>Every <code>Effect</code> in CNA is backed by a <code>.shader.json</code> descriptor file. This file declares the vertex and fragment shader source paths, the technique name, pass names, and the list of uniform names the effect exposes. During loading, CNA's effect system reflects the uniform locations from the compiled GLSL program and creates an <code>EffectParameter</code> entry for each one, storing it in the effect's <code>EffectParameterCollection</code>.</p>
+      <p>Parameters are owned by the effect. You retrieve them by name, store the reference if you access them frequently, and call <code>SetValue()</code> each frame (or whenever the value changes) before calling <code>pass.Apply()</code>. The lifetime of an <code>EffectParameter</code> reference is tied to its parent effect — do not hold references across effect reloads.</p>
+
+      <h2>Getting Parameters with GetByName</h2>
+      <p>There are two syntactically equivalent ways to retrieve an <code>EffectParameter</code> from an effect:</p>
+      <pre><code class="language-cpp">// Subscript operator (preferred for brevity)
+EffectParameter&amp; p1 = effect-&gt;Parameters["u_time"];
+
+// Explicit method (useful when the name is in a variable)
+std::string name = "u_resolution";
+EffectParameter&amp; p2 = effect-&gt;Parameters.GetByName(name);</code></pre>
+      <p>Both return a reference. Accessing a parameter that does not exist in the shader will throw a <code>std::out_of_range</code> exception in debug builds and exhibit undefined behaviour in release builds, so always ensure the uniform name matches exactly — including case — what is declared in the GLSL source. A common convention is to prefix all uniforms with <code>u_</code> to make them visually distinct from varyings and attributes.</p>
+      <p>For performance-sensitive code you can cache the parameter reference in a member variable. Because <code>EffectParameter</code> is returned by reference into the internal collection, caching is safe as long as the effect object is not destroyed:</p>
+      <pre><code class="language-cpp">// Cache at LoadContent time
+timeParam_       = &amp;waveEffect_-&gt;Parameters["u_time"];
+resolutionParam_ = &amp;waveEffect_-&gt;Parameters["u_resolution"];
+
+// Use in Update() without string lookup overhead
+timeParam_-&gt;SetValue(elapsed);
+resolutionParam_-&gt;SetValue(Vector2(800.0f, 600.0f));</code></pre>
+
+      <h2>SetValue() Overloads</h2>
+      <p>The <code>EffectParameter::SetValue()</code> method is overloaded for every GLSL-compatible type that CNA supports. The correct overload is selected by the C++ type of the argument you pass. The table below lists each overload, the corresponding GLSL uniform type, and notes on usage:</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>C++ argument type</th>
+              <th>GLSL uniform type</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><code>float</code></td>              <td><code>float</code></td>          <td>Most common scalar uniform (time, intensity, threshold).</td></tr>
+            <tr><td><code>Vector2</code></td>             <td><code>vec2</code></td>           <td>Screen resolution, UV offset, 2D position.</td></tr>
+            <tr><td><code>Vector3</code></td>             <td><code>vec3</code></td>           <td>World-space positions, RGB colour values, light direction.</td></tr>
+            <tr><td><code>Vector4</code></td>             <td><code>vec4</code></td>           <td>RGBA colour, quaternion, homogeneous position.</td></tr>
+            <tr><td><code>Matrix</code></td>              <td><code>mat4</code></td>           <td>Uploaded column-major (the GLSL default). World, View, Projection, MVP.</td></tr>
+            <tr><td><code>bool</code></td>                <td><code>bool</code></td>           <td>Feature toggles inside the shader (fog enabled, vertex colour enabled).</td></tr>
+            <tr><td><code>Texture2D*</code></td>          <td><code>sampler2D</code></td>      <td>Binds the texture to the next available texture unit and sets the sampler uniform to that unit index.</td></tr>
+            <tr><td><code>TextureCube*</code></td>        <td><code>samplerCube</code></td>    <td>Binds a cubemap to a texture unit and sets the sampler uniform.</td></tr>
+            <tr><td><code>int</code></td>                 <td><code>int</code></td>            <td>Integer uniforms; also used for explicit sampler unit binding.</td></tr>
+            <tr><td><code>float*, int</code></td>         <td><code>float[N]</code></td>       <td>Uploads an array of floats. Used for bone matrices (as flat float arrays) and custom kernel weights.</td></tr>
+            <tr><td><code>Vector4*, int</code></td>       <td><code>vec4[N]</code></td>        <td>Uploads an array of vec4, e.g., a palette of colours or skinning data.</td></tr>
+            <tr><td><code>Matrix*, int</code></td>        <td><code>mat4[N]</code></td>        <td>Uploads an array of matrices. Essential for skeletal animation bone palettes.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><strong>Matrix column-major note:</strong> CNA's <code>Matrix</code> is stored row-major in memory (matching XNA 4.0 convention) but is uploaded to GLSL as column-major using <code>glUniformMatrix4fv(..., GL_TRUE, ...)</code> with the transpose flag so the shader receives the correct layout. You do not need to transpose manually.</p>
+
+      <h2>EffectParameterCollection</h2>
+      <p>The <code>effect-&gt;Parameters</code> property exposes an <code>EffectParameterCollection</code>, which is an iterable container of all <code>EffectParameter</code> objects belonging to the effect. You can iterate over it to inspect or dump all parameters at runtime — useful during debugging:</p>
+      <pre><code class="language-cpp">// Dump all parameter names for debugging
+for (const auto&amp; param : effect-&gt;Parameters) {
+    std::cout &lt;&lt; "  uniform: " &lt;&lt; param.getName()
+              &lt;&lt; "  type: "    &lt;&lt; (int)param.getParameterType()
+              &lt;&lt; "  rows: "    &lt;&lt; param.getRowCount()
+              &lt;&lt; "  cols: "    &lt;&lt; param.getColumnCount()
+              &lt;&lt; "\n";
+}</code></pre>
+      <p>Each <code>EffectParameter</code> exposes the following metadata properties:</p>
+      <ul>
+        <li><code>getName()</code> — the string name of the uniform as declared in GLSL.</li>
+        <li><code>getParameterType()</code> — an <code>EffectParameterType</code> enum value (<code>Single</code>, <code>Vector2</code>, <code>Matrix</code>, <code>Texture</code>, etc.).</li>
+        <li><code>getRowCount()</code> — number of rows (1 for scalars and vectors, 4 for mat4).</li>
+        <li><code>getColumnCount()</code> — number of columns (1 for scalars, 4 for vec4 and mat4).</li>
+      </ul>
+      <p>The collection size reflects only the uniforms declared in the <code>.shader.json</code> descriptor, not all uniforms that may be present in the GLSL source. Uniforms not listed in the descriptor are not reflected and cannot be set from C++. Keep your descriptor in sync with your shader source.</p>
+
+      <h2>Passing Arrays</h2>
+      <p>CNA provides <code>SetValue(const float* values, int count)</code> and <code>SetValue(const Matrix* matrices, int count)</code> overloads for uploading arrays to GLSL array uniforms. The GLSL side declares a fixed-size array:</p>
+      <pre><code class="language-glsl">// In vertex shader
+uniform float u_weights[16];  // e.g. blur kernel weights
+uniform mat4  u_bones[72];    // bone matrix palette for skinning</code></pre>
+      <p>On the C++ side you pass a pointer and an element count:</p>
+      <pre><code class="language-cpp">float weights[16] = { /* ... */ };
+effect-&gt;Parameters["u_weights"].SetValue(weights, 16);
+
+std::vector&lt;Matrix&gt; boneMatrices(72, Matrix::Identity);
+// ... populate matrices ...
+effect-&gt;Parameters["u_bones"].SetValue(boneMatrices.data(), (int)boneMatrices.size());</code></pre>
+      <p>The count must not exceed the array size declared in GLSL. Uploading fewer elements than the declared size is legal — the remaining array slots keep their last-set values. This is commonly used in skeletal animation where the active bone count is less than the maximum palette size of 72.</p>
+
+      <h2>ConstantBuffer / UBO Patterns</h2>
+      <p>Under the <strong>EASYGL</strong> backend, uniforms may be grouped into a Uniform Buffer Object (UBO) per effect pass, depending on how the <code>.shader.json</code> specifies the constant buffer layout. UBOs allow the driver to batch uniform uploads more efficiently than per-uniform <code>glUniform*</code> calls. Under the <strong>VULKAN</strong> backend, small uniform data (up to the push constant limit, typically 128 bytes) may be submitted as push constants, which avoids descriptor set allocation overhead entirely.</p>
+      <p>As a consequence of these batching strategies, the rule is: <strong>call all <code>SetValue()</code> calls before calling <code>pass.Apply()</code></strong>. Calling <code>SetValue()</code> after <code>Apply()</code> within the same draw call is legal but may cause a second UBO upload, which is wasteful. The recommended pattern is:</p>
+      <pre><code class="language-cpp">// Good pattern: set all values, then apply once
+effect-&gt;Parameters["u_time"].SetValue(t);
+effect-&gt;Parameters["u_resolution"].SetValue(res);
+effect-&gt;Parameters["u_mvp"].SetValue(mvp);
+for (auto&amp; pass : effect-&gt;getCurrentTechnique().Passes) {
+    pass.Apply();   // uploads all pending uniform values
+    gd.DrawPrimitives(PrimitiveType::TriangleList, 0, vertCount_);
+}</code></pre>
+      <p>Avoid calling <code>SetValue()</code> inside a tight loop between individual draw calls without also calling <code>Apply()</code> — each <code>Apply()</code> flushes the accumulated dirty uniform state. If multiple objects share the same effect with different parameter values, update and apply per object:</p>
+      <pre><code class="language-cpp">for (auto&amp; obj : scene_) {
+    effect-&gt;Parameters["u_mvp"].SetValue(obj.MVP);
+    effect-&gt;Parameters["u_color"].SetValue(obj.Color);
+    for (auto&amp; pass : effect-&gt;getCurrentTechnique().Passes) {
+        pass.Apply();
+        gd.DrawPrimitives(PrimitiveType::TriangleList, 0, obj.TriCount);
+    }
+}</code></pre>
+
+      <h2>Complete Example: Wave Vertex Animation</h2>
+      <p>The following example demonstrates a custom effect that animates vertex positions in the vertex shader using a sine-wave displacement driven by a time uniform. The fragment shader outputs a colour that shifts over time, demonstrating multiple uniform types in action.</p>
+
+      <h3>GLSL Vertex Shader (wave.vert)</h3>
+      <pre><code class="language-glsl">#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec2 a_texcoord;
+
+uniform float u_time;
+uniform vec2  u_resolution;
+uniform mat4  u_mvp;
+
+out vec2 v_texcoord;
+
+void main() {
+    vec3 pos = a_position;
+    // Displace Y by a sine wave driven by X position and time
+    pos.y += sin(pos.x * 4.0 + u_time * 2.0) * 0.1;
+    gl_Position = u_mvp * vec4(pos, 1.0);
+    v_texcoord  = a_texcoord;
+}</code></pre>
+
+      <h3>GLSL Fragment Shader (wave.frag)</h3>
+      <pre><code class="language-glsl">#version 300 es
+precision highp float;
+
+in vec2 v_texcoord;
+
+uniform float     u_time;
+uniform sampler2D u_texture;
+
+out vec4 fragColor;
+
+void main() {
+    vec4 texColor = texture(u_texture, v_texcoord);
+    // Modulate green channel with a slow pulse
+    float pulse = 0.5 + 0.5 * sin(u_time * 1.5);
+    fragColor = vec4(texColor.r, texColor.g * pulse, texColor.b, texColor.a);
+}</code></pre>
+
+      <h3>C++ Game Class</h3>
+      <pre><code class="language-cpp">class WaveGame final : public Game {
+    std::unique_ptr&lt;Effect&gt;       waveEffect_;
+    std::unique_ptr&lt;Texture2D&gt;   waveTex_;
+    std::unique_ptr&lt;VertexBuffer&gt; vb_;
+    int                           vertCount_ = 0;
+
+    // Cached parameter pointers for fast access
+    EffectParameter* timeParam_       = nullptr;
+    EffectParameter* resolutionParam_ = nullptr;
+    EffectParameter* mvpParam_        = nullptr;
+    EffectParameter* textureParam_    = nullptr;
+
+    void LoadContent() override {
+        waveEffect_ = Content.Load&lt;Effect&gt;("shaders/wave");
+        waveTex_    = Content.Load&lt;Texture2D&gt;("textures/grid");
+
+        // Cache parameter references (valid for the lifetime of waveEffect_)
+        timeParam_       = &amp;waveEffect_-&gt;Parameters["u_time"];
+        resolutionParam_ = &amp;waveEffect_-&gt;Parameters["u_resolution"];
+        mvpParam_        = &amp;waveEffect_-&gt;Parameters["u_mvp"];
+        textureParam_    = &amp;waveEffect_-&gt;Parameters["u_texture"];
+
+        // Bind the texture parameter once (does not change per frame)
+        textureParam_-&gt;SetValue(waveTex_.get());
+
+        // Build a subdivided grid mesh ...
+        BuildGrid(32, 32);
+    }
+
+    void Update(const GameTime&amp; gt) override {
+        float t = (float)gt.getTotalGameTime().TotalSeconds();
+        timeParam_-&gt;SetValue(t);
+        resolutionParam_-&gt;SetValue(Vector2(800.0f, 600.0f));
+    }
+
+    void Draw(const GameTime&amp;) override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+        gd.Clear(Color::Black);
+
+        Matrix mvp = Matrix::CreateRotationY(0.3f)
+                   * Matrix::CreateTranslation(0, 0, -3.0f)
+                   * camera_.View()
+                   * camera_.Projection();
+        mvpParam_-&gt;SetValue(mvp);
+
+        gd.setVertexBuffer(*vb_);
+        for (auto&amp; pass : waveEffect_-&gt;getCurrentTechnique().Passes) {
+            pass.Apply();
+            gd.DrawPrimitives(PrimitiveType::TriangleList, 0, vertCount_);
+        }
+        gd.Present();
+    }
+};</code></pre>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+        </div>
+        <div class="docs-pagination-next">
+          <a href="54-alpha-test.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 54: AlphaTestEffect and Alpha Masking</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

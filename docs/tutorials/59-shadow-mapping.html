@@ -1,0 +1,425 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 59: Shadow Mapping - CNA Tutorials</title>
+  <meta name="description" content="Implement real-time shadow mapping in CNA with a two-pass depth render, light-space matrix, PCF soft shadows, and shadow acne bias. Full GLSL and C++ draw loop included.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/59-shadow-mapping.html">
+  <meta property="og:title"       content="Tutorial 59: Shadow Mapping - CNA Tutorials">
+  <meta property="og:description" content="Implement real-time shadow mapping in CNA with a two-pass depth render, light-space matrix, PCF soft shadows, and shadow acne bias. Full GLSL and C++ draw loop included.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="53-effect-parameter.html" class="docs-nav-link">Tutorial 53: GLSL Uniforms and EffectParameter</a></li>
+        <li><a href="54-alpha-test.html"        class="docs-nav-link">Tutorial 54: AlphaTestEffect and Alpha Masking</a></li>
+        <li><a href="55-dual-texture.html"      class="docs-nav-link">Tutorial 55: DualTextureEffect for Lightmaps</a></li>
+        <li><a href="56-environment-map.html"   class="docs-nav-link">Tutorial 56: EnvironmentMapEffect for Reflections</a></li>
+        <li><a href="57-skinned-effect.html"    class="docs-nav-link">Tutorial 57: SkinnedEffect and Skeletal Animation</a></li>
+        <li><a href="58-normal-mapping.html"    class="docs-nav-link">Tutorial 58: Normal Mapping</a></li>
+        <li><a href="59-shadow-mapping.html"    class="docs-nav-link active">Tutorial 59: Shadow Mapping</a></li>
+        <li><a href="60-instancing.html"        class="docs-nav-link">Tutorial 60: Instanced Rendering</a></li>
+        <li><a href="61-occlusion-query.html"   class="docs-nav-link">Tutorial 61: Occlusion Queries</a></li>
+        <li><a href="62-mrt.html"               class="docs-nav-link">Tutorial 62: Multiple Render Targets (MRT)</a></li>
+        <li><a href="63-stencil-buffer.html"    class="docs-nav-link">Tutorial 63: Stencil Buffer Effects</a></li>
+        <li><a href="64-cubemaps.html"          class="docs-nav-link">Tutorial 64: Cubemaps and Skyboxes</a></li>
+        <li><a href="65-msaa.html"              class="docs-nav-link">Tutorial 65: MSAA Anti-Aliasing</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 59: Shadow Mapping</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 59: Shadow Mapping</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; Advanced Rendering</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>Shadow mapping requires a depth-format <code>RenderTarget2D</code> and custom GLSL shaders. It is available on the <strong>EASYGL</strong> and <strong>VULKAN</strong> backends only. The SDL_RENDERER backend does not support off-screen depth render targets or programmable shaders.</p>
+      </div>
+
+      <p>Shadow mapping is the dominant real-time shadow technique used in 3D games. The algorithm is conceptually elegant: before rendering the visible scene, render it from the light's point of view, recording only depth. This "shadow map" records how far the light can see in each direction. During the main render pass, for each fragment you compute where it would land in the light's view and compare its depth against the stored shadow map depth. If the fragment is farther from the light than what the map recorded, something else was in between — the fragment is in shadow.</p>
+
+      <h2>Shadow Mapping Algorithm</h2>
+      <p>The algorithm runs in two GPU passes per frame:</p>
+      <ol>
+        <li><strong>Depth pass (light's POV):</strong> Set the render target to a depth-format texture (the shadow map). Render the entire scene using a minimal vertex shader that transforms positions into light space. The fragment shader is empty or writes only the depth. The hardware depth buffer is written automatically at the shadow map resolution.</li>
+        <li><strong>Lighting pass (camera's POV):</strong> Restore the normal render target (the back buffer). For each vertex, additionally compute its position in light space and pass it to the fragment shader as a varying. In the fragment shader, project that light-space position into shadow map texture coordinates and sample the shadow map. Compare the sampled depth against the current fragment's light-space depth. If the fragment is deeper (farther from the light), it is shadowed.</li>
+      </ol>
+      <p>The shadow map is a <code>Texture2D</code> (not a cubemap) for directional and spot lights. Point lights require six shadow maps (one per cubemap face) or a special dual-paraboloid encoding, but that is beyond the scope of this tutorial.</p>
+
+      <h2>Depth Render Pass to RenderTarget2D</h2>
+      <p>Create the shadow map as a <code>RenderTarget2D</code> with a floating-point or packed depth surface format. A 1024×1024 shadow map is standard for local shadows; 2048×2048 or 4096×4096 for large outdoor scenes with sun shadows. Using a power-of-two size ensures hardware mip generation works correctly if needed.</p>
+      <pre><code class="language-cpp">// Create shadow map render target
+shadowMap_ = std::make_unique&lt;RenderTarget2D&gt;(
+    gd,
+    1024, 1024,
+    false,                            // no mipmaps
+    SurfaceFormat::Single,            // 32-bit float for depth storage
+    DepthFormat::Depth32              // hardware depth buffer for depth pass
+);
+
+// Alternatively, use DepthFormat::Depth24 for wider compatibility:
+// DepthFormat::Depth24 uses a 24-bit depth buffer, sufficient for most scenes.</code></pre>
+      <p>During the depth pass, bind the shadow map render target, clear it to maximum depth (white = 1.0), and render the scene geometry using the depth effect:</p>
+      <pre><code class="language-cpp">gd.SetRenderTarget(shadowMap_.get());
+gd.Clear(Color::White);  // Clears depth to 1.0 (maximum distance)
+// ... render scene geometry with depth-only effect ...
+gd.SetRenderTarget(nullptr);  // restore back buffer</code></pre>
+
+      <h2>Light Space Matrix</h2>
+      <p>The light space matrix transforms world-space positions into the light's clip space. For a directional light (like the sun), use an orthographic projection centred on the scene's bounding volume. For a spot light, use a perspective projection with a field of view matching the cone angle:</p>
+      <pre><code class="language-cpp">// Directional light (sun-like)
+Vector3 lightPos = Vector3(10.0f, 20.0f, 10.0f);  // position the light above the scene
+Vector3 lightTarget = Vector3::Zero;
+Vector3 lightUp     = Vector3::Up;
+
+Matrix lightView = Matrix::CreateLookAt(lightPos, lightTarget, lightUp);
+
+// Orthographic projection covering a 40x40 unit area, depth range 1..60
+Matrix lightProj = Matrix::CreateOrthographic(40.0f, 40.0f, 1.0f, 60.0f);
+
+// Combine: this is what gets uploaded to the depth-pass vertex shader
+Matrix lightSpaceMatrix_ = lightView * lightProj;</code></pre>
+      <p>The orthographic extents (40×40 in the example) should tightly wrap the visible scene. An overly large frustum wastes shadow map resolution — each shadow map texel covers a larger world-space area, making shadows appear blockier. For best quality, compute tight bounds around the current camera frustum (a technique called "cascaded shadow maps" or "fitted shadow maps").</p>
+
+      <h2>Shadow Map Sampling in the Lighting Shader</h2>
+      <p>In the lighting pass vertex shader, compute the fragment's position in light space and pass it to the fragment shader as a varying:</p>
+      <pre><code class="language-glsl">// In the lighting vertex shader
+uniform mat4 u_lightSpace;
+uniform mat4 u_world;
+
+out vec4 v_lightSpacePos;
+
+void main() {
+    vec4 worldPos    = u_world * vec4(a_position, 1.0);
+    v_lightSpacePos  = u_lightSpace * worldPos;
+    // ... compute camera-space position for gl_Position ...
+}</code></pre>
+      <p>In the fragment shader, project the light-space position to [0,1] UV coordinates and sample the shadow map:</p>
+      <pre><code class="language-glsl">vec3 proj = v_lightSpacePos.xyz / v_lightSpacePos.w;  // perspective divide
+proj = proj * 0.5 + 0.5;                               // NDC [-1,1] -> [0,1]
+
+// Fragments outside the light frustum are not in shadow
+if (proj.z &gt; 1.0) { /* fully lit */ }
+
+float shadowMapDepth = texture(u_shadowMap, proj.xy).r;
+float fragDepth      = proj.z;
+
+// If the fragment is deeper than what the shadow map recorded, it's in shadow
+bool inShadow = (fragDepth &gt; shadowMapDepth + bias);</code></pre>
+
+      <h2>Percentage-Closer Filtering (PCF)</h2>
+      <p>A single shadow map sample produces hard-edged "blocky" shadows with visible aliasing at the shadow boundary, especially when the light frustum is large relative to the shadow map resolution. Percentage-Closer Filtering (PCF) mitigates this by sampling the shadow map at multiple nearby texel locations and averaging the binary shadow test results. This effectively blurs the shadow edge, producing a soft penumbra without a true area light calculation:</p>
+      <pre><code class="language-glsl">float shadowFactor(vec4 lsPos) {
+    vec3 proj = lsPos.xyz / lsPos.w;
+    proj = proj * 0.5 + 0.5;
+    if (proj.z &gt; 1.0) return 1.0;  // outside light frustum = lit
+
+    float bias      = 0.005;
+    float shadow    = 0.0;
+    vec2  texelSize = 1.0 / vec2(textureSize(u_shadowMap, 0));
+
+    // 3x3 PCF kernel
+    for (int x = -1; x &lt;= 1; ++x) {
+        for (int y = -1; y &lt;= 1; ++y) {
+            float pcfDepth = texture(u_shadowMap,
+                proj.xy + vec2(x, y) * texelSize).r;
+            shadow += (proj.z - bias &gt; pcfDepth) ? 0.0 : 1.0;
+        }
+    }
+    return shadow / 9.0;  // average of 9 samples
+}</code></pre>
+      <p>A 3×3 kernel (9 samples) is a good balance between quality and performance. A 5×5 kernel (25 samples) produces noticeably softer shadows at roughly 2.8x the cost. For very high quality, use a Poisson disk kernel with 16–64 samples, optionally rotated randomly per pixel to break the regular pattern.</p>
+
+      <h2>Bias to Avoid Shadow Acne</h2>
+      <p>Shadow acne is a self-shadowing artifact: the surface appears to cast shadows on itself, producing a characteristic stripey or moire pattern. It arises because the shadow map depth is a discretised approximation — each texel covers a non-zero area, and the surface depth sampled during the depth pass may be slightly different from the depth computed during the lighting pass due to floating-point precision differences and the fact that neighbouring texels represent different points on the surface.</p>
+      <p>The fix is to add a small constant "bias" to the shadow map depth comparison. If the fragment's depth minus the bias is still greater than the shadow map depth, it is in shadow; otherwise it is lit. This pushes the comparison threshold slightly outward, eliminating the self-shadowing artifacts:</p>
+      <pre><code class="language-glsl">float bias = 0.005;
+float inShadow = (proj.z - bias &gt; shadowMapDepth) ? 0.0 : 1.0;</code></pre>
+      <p>The bias value requires careful tuning. Too small: acne remains. Too large: "peter-panning" occurs — the shadow appears detached from the shadow-casting object, as if the object is floating. A common technique to automate bias selection is slope-based bias, which scales the bias with the angle between the light direction and the surface normal:</p>
+      <pre><code class="language-glsl">// Slope-scaled bias: larger bias on steep surfaces
+float cosTheta = clamp(dot(N, L), 0.0, 1.0);
+float bias     = max(0.01 * (1.0 - cosTheta), 0.001);</code></pre>
+
+      <h2>Platform Limitations</h2>
+      <p>Shadow mapping has the following platform and backend constraints in CNA:</p>
+      <ul>
+        <li><strong>EASYGL backend:</strong> Fully supported. Uses <code>GL_DEPTH_COMPONENT32F</code> texture format for the shadow map, sampled as a <code>sampler2D</code>. Hardware depth comparison samplers (<code>sampler2DShadow</code> with <code>textureCompare</code>) are also available for hardware PCF at no extra sample cost on supported drivers.</li>
+        <li><strong>VULKAN backend:</strong> Shadow mapping with custom <code>RenderTarget2D</code> and depth formats is planned and partially implemented. Refer to the CNA roadmap for current status.</li>
+        <li><strong>SDL_RENDERER backend:</strong> Shadow mapping is not supported. Off-screen depth render targets and programmable shaders are not available on this backend.</li>
+        <li><strong>Android / WebGL:</strong> Floating-point depth textures require the <code>OES_depth_texture</code> extension on OpenGL ES 2.0, but are native on OpenGL ES 3.0 (which CNA targets). The EASYGL backend on Android and WebAssembly uses ES 3.0 and fully supports shadow mapping.</li>
+      </ul>
+
+      <h2>Complete GLSL Shaders</h2>
+
+      <h3>Depth Pass — Vertex Shader (shadow_depth.vert)</h3>
+      <pre><code class="language-glsl">#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3 a_position;
+
+uniform mat4 u_lightSpace;
+uniform mat4 u_world;
+
+void main() {
+    gl_Position = u_lightSpace * u_world * vec4(a_position, 1.0);
+}</code></pre>
+
+      <h3>Depth Pass — Fragment Shader (shadow_depth.frag)</h3>
+      <pre><code class="language-glsl">#version 300 es
+precision highp float;
+
+out vec4 fragColor;
+
+void main() {
+    // The hardware depth buffer is written automatically.
+    // Output depth value explicitly for SurfaceFormat::Single targets.
+    fragColor = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);
+}</code></pre>
+
+      <h3>Lighting Pass — Fragment Shader with PCF (shadow_lighting.frag)</h3>
+      <pre><code class="language-glsl">#version 300 es
+precision highp float;
+
+in vec3 v_worldPos;
+in vec3 v_normal;
+in vec2 v_texcoord;
+in vec4 v_lightSpacePos;
+
+uniform sampler2D u_shadowMap;
+uniform sampler2D u_diffuse;
+uniform vec3      u_lightDir;       // world-space, towards light source
+uniform vec3      u_lightColor;
+uniform vec3      u_ambientColor;
+
+out vec4 fragColor;
+
+float shadowFactor(vec4 lsPos) {
+    vec3 proj = lsPos.xyz / lsPos.w;
+    proj = proj * 0.5 + 0.5;
+    if (proj.z &gt; 1.0) return 1.0;   // outside light frustum: fully lit
+
+    float cosTheta = clamp(dot(normalize(v_normal), normalize(u_lightDir)), 0.0, 1.0);
+    float bias     = max(0.01 * (1.0 - cosTheta), 0.001);
+
+    float shadow    = 0.0;
+    vec2  texelSize = 1.0 / vec2(textureSize(u_shadowMap, 0));
+    for (int x = -1; x &lt;= 1; ++x) {
+        for (int y = -1; y &lt;= 1; ++y) {
+            float pcfDepth = texture(u_shadowMap,
+                proj.xy + vec2(x, y) * texelSize).r;
+            shadow += (proj.z - bias &gt; pcfDepth) ? 0.0 : 1.0;
+        }
+    }
+    return shadow / 9.0;
+}
+
+void main() {
+    vec3 N    = normalize(v_normal);
+    vec3 L    = normalize(u_lightDir);
+    float diff = max(dot(N, L), 0.0);
+
+    float sf    = shadowFactor(v_lightSpacePos);
+    vec4 albedo = texture(u_diffuse, v_texcoord);
+
+    vec3 ambient = u_ambientColor * albedo.rgb;
+    vec3 diffuse = u_lightColor * diff * sf * albedo.rgb;
+    fragColor    = vec4(ambient + diffuse, albedo.a);
+}</code></pre>
+
+      <h2>Complete C++ Two-Pass Draw Loop</h2>
+      <pre><code class="language-cpp">class ShadowGame final : public Game {
+    std::unique_ptr&lt;RenderTarget2D&gt; shadowMap_;
+    std::unique_ptr&lt;Effect&gt;         depthEffect_;
+    std::unique_ptr&lt;Effect&gt;         lightEffect_;
+    Matrix                          lightSpaceMatrix_;
+    struct SceneObj { VertexBuffer* VB; int TriCount; Matrix World; };
+    std::vector&lt;SceneObj&gt;           scene_;
+    Camera                          camera_;
+    Vector3                         lightPos_{ 10.0f, 20.0f, 10.0f };
+
+    void LoadContent() override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+        shadowMap_ = std::make_unique&lt;RenderTarget2D&gt;(
+            gd, 1024, 1024, false,
+            SurfaceFormat::Single, DepthFormat::Depth32);
+
+        depthEffect_ = Content.Load&lt;Effect&gt;("shaders/shadow_depth");
+        lightEffect_ = Content.Load&lt;Effect&gt;("shaders/shadow_lighting");
+
+        // Configure static lighting parameters
+        lightEffect_-&gt;Parameters["u_lightColor"  ].SetValue(Vector3(1.0f, 0.95f, 0.85f));
+        lightEffect_-&gt;Parameters["u_ambientColor"].SetValue(Vector3(0.15f, 0.15f, 0.2f));
+
+        BuildScene();
+    }
+
+    void Update(const GameTime&amp; gt) override {
+        // Recompute light space matrix each frame (for moving light)
+        Matrix lightView = Matrix::CreateLookAt(
+            lightPos_, Vector3::Zero, Vector3::Up);
+        Matrix lightProj = Matrix::CreateOrthographic(40.0f, 40.0f, 1.0f, 60.0f);
+        lightSpaceMatrix_ = lightView * lightProj;
+
+        lightEffect_-&gt;Parameters["u_lightDir"   ].SetValue(
+            Vector3::Normalize(Vector3::Zero - lightPos_));
+        lightEffect_-&gt;Parameters["u_lightSpace" ].SetValue(lightSpaceMatrix_);
+        depthEffect_-&gt;Parameters["u_lightSpace" ].SetValue(lightSpaceMatrix_);
+    }
+
+    void Draw(const GameTime&amp;) override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+
+        // ---------------------------------------------------------------
+        // Pass 1: Render depth to shadow map from light's point of view
+        // ---------------------------------------------------------------
+        gd.SetRenderTarget(shadowMap_.get());
+        gd.Clear(Color::White);
+        gd.setRasterizerState(RasterizerState::CullCounterClockwise);
+
+        for (auto&amp; obj : scene_) {
+            depthEffect_-&gt;Parameters["u_world"].SetValue(obj.World);
+            gd.setVertexBuffer(*obj.VB);
+            for (auto&amp; pass : depthEffect_-&gt;getCurrentTechnique().Passes) {
+                pass.Apply();
+                gd.DrawPrimitives(PrimitiveType::TriangleList, 0, obj.TriCount);
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Pass 2: Render scene with shadow test from camera's point of view
+        // ---------------------------------------------------------------
+        gd.SetRenderTarget(nullptr);
+        gd.Clear(Color::CornflowerBlue);
+        gd.setRasterizerState(RasterizerState::CullCounterClockwise);
+
+        // Bind the shadow map as a texture for the lighting shader
+        lightEffect_-&gt;Parameters["u_shadowMap" ].SetValue(shadowMap_.get());
+        lightEffect_-&gt;Parameters["u_view"      ].SetValue(camera_.View());
+        lightEffect_-&gt;Parameters["u_projection"].SetValue(camera_.Projection());
+
+        for (auto&amp; obj : scene_) {
+            lightEffect_-&gt;Parameters["u_world"].SetValue(obj.World);
+            gd.setVertexBuffer(*obj.VB);
+            for (auto&amp; pass : lightEffect_-&gt;getCurrentTechnique().Passes) {
+                pass.Apply();
+                gd.DrawPrimitives(PrimitiveType::TriangleList, 0, obj.TriCount);
+            }
+        }
+
+        gd.Present();
+    }
+};</code></pre>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Depth buffer format caution:</strong> When using <code>SurfaceFormat::Single</code> for the shadow map, both the red channel of the texture and the hardware depth buffer store depth values. Make sure you sample from the red channel (<code>.r</code>) in the PCF loop. On some drivers, sampling from <code>.r</code> vs <code>.rrrr</code> differs when the texture is not set up as a depth comparison sampler. If you see incorrect shadows, verify the swizzle used when sampling <code>u_shadowMap</code>.</p>
+      </div>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="58-normal-mapping.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 58: Normal Mapping</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="60-instancing.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 60: Instanced Rendering</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 71: Memory Management in C++ - CNA Tutorials</title>
+  <meta name="description" content="RAII resource ownership, unique_ptr asset holders, Dispose patterns, move semantics, and common pitfalls in CNA C++ game development.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/71-memory-management.html">
+  <meta property="og:title"       content="Tutorial 71: Memory Management in C++ - CNA Tutorials">
+  <meta property="og:description" content="RAII resource ownership, unique_ptr asset holders, Dispose patterns, move semantics, and common pitfalls in CNA C++ game development.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="66-bloom.html" class="docs-nav-link">Tutorial 66: Bloom</a></li>
+        <li><a href="67-deferred-rendering.html" class="docs-nav-link">Tutorial 67: Deferred Rendering</a></li>
+        <li><a href="68-terrain.html" class="docs-nav-link">Tutorial 68: Terrain</a></li>
+        <li><a href="69-water.html" class="docs-nav-link">Tutorial 69: Water</a></li>
+        <li><a href="70-procedural-geometry.html" class="docs-nav-link">Tutorial 70: Procedural Geometry</a></li>
+        <li><a href="71-memory-management.html" class="docs-nav-link active">Tutorial 71: Memory Management</a></li>
+        <li><a href="72-backend-selection.html" class="docs-nav-link">Tutorial 72: Backend Selection</a></li>
+        <li><a href="73-profiling.html" class="docs-nav-link">Tutorial 73: Profiling</a></li>
+        <li><a href="74-frustum-culling.html" class="docs-nav-link">Tutorial 74: Frustum Culling</a></li>
+        <li><a href="75-lod.html" class="docs-nav-link">Tutorial 75: LOD</a></li>
+        <li><a href="76-spatial-partitioning.html" class="docs-nav-link">Tutorial 76: Spatial Partitioning</a></li>
+        <li><a href="77-async-loading.html" class="docs-nav-link">Tutorial 77: Async Loading</a></li>
+        <li><a href="78-multithreading.html" class="docs-nav-link">Tutorial 78: Multi-threading</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 71</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 71: Memory Management in C++</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;·&nbsp; C++ Fundamentals</p>
+
+      <h2>C++ vs C# memory model</h2>
+      <p>XNA games are written in C#, which has a garbage collector. When a <code>Texture2D</code> object goes out of scope in C#, the GC eventually reclaims the CPU-side managed memory, and the finalizer releases the underlying GPU resource. This can lead to GC pauses but the programmer rarely needs to think about it.</p>
+      <p>CNA games are written in C++, which has no garbage collector. Every GPU resource (<code>Texture2D</code>, <code>VertexBuffer</code>, <code>Effect</code>, <code>RenderTarget2D</code>) that you allocate must be released explicitly, or it leaks both the CPU backing allocation and the underlying GPU resource (texture object, VBO, FBO). The C++ idiom for deterministic cleanup is RAII.</p>
+
+      <h2>RAII in CNA</h2>
+      <p>RAII (Resource Acquisition Is Initialisation) ties resource lifetime to object lifetime. A <code>Texture2D</code> object's constructor acquires the GPU resource; its destructor releases it. As long as the <code>Texture2D</code> is held in a smart pointer (<code>std::unique_ptr</code> or <code>std::shared_ptr</code>), the resource is released when the smart pointer goes out of scope or is reset.</p>
+      <p>CNA's classes implement an <code>IDisposable</code>-style interface via a <code>Dispose()</code> virtual method, mirroring XNA's pattern. You can call <code>Dispose()</code> explicitly to release a resource early (e.g. when unloading a level), or let the destructor call it automatically.</p>
+
+      <h2>The Dispose(bool) override pattern</h2>
+      <p>CNA base classes call a protected <code>Dispose(bool disposing)</code> virtual method. Override it in your subclass to release your own resources:</p>
+      <pre><code class="language-cpp">class MyGame : public Game {
+protected:
+    // Called when the game is shutting down, or when Dispose() is called.
+    // disposing == true  : called from Dispose() — safe to release managed objects.
+    // disposing == false : called from destructor — only release unmanaged resources.
+    void Dispose(bool disposing) override {
+        if (disposing) {
+            // Release CNA managed objects in reverse LoadContent order
+            spriteBatch_.reset();
+            texture_.reset();
+            effect_.reset();
+        }
+        // Call parent implementation
+        Game::Dispose(disposing);
+    }
+};</code></pre>
+
+      <h2>std::unique_ptr vs raw pointers</h2>
+      <p>Always prefer <code>std::unique_ptr</code> for game objects and GPU resources. Never use <code>new</code>/<code>delete</code> directly in game code.</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Pattern</th><th>Recommendation</th></tr></thead>
+        <tbody>
+          <tr><td><code>std::unique_ptr&lt;T&gt;</code></td><td>Single owner. Default choice for assets, game objects, and GPU resources.</td></tr>
+          <tr><td><code>std::shared_ptr&lt;T&gt;</code></td><td>Shared ownership. Use when multiple systems hold a reference (e.g. a texture used by many sprites in different systems).</td></tr>
+          <tr><td>Raw pointer <code>T*</code></td><td>Non-owning reference only. Use for passing a resource to a function that does not claim ownership.</td></tr>
+          <tr><td><code>new</code> / <code>delete</code></td><td>Avoid. If you must use them, immediately wrap in a smart pointer.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2>Proper RAII resource ownership in a game class</h2>
+      <pre><code class="language-cpp">#include &lt;memory&gt;
+#include "Microsoft/Xna/Framework/Game.hpp"
+#include "Microsoft/Xna/Framework/Graphics/GraphicsDeviceManager.hpp"
+#include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
+#include "Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
+#include "Microsoft/Xna/Framework/Graphics/BasicEffect.hpp"
+#include "Microsoft/Xna/Framework/Graphics/VertexBuffer.hpp"
+
+using namespace Microsoft::Xna::Framework;
+using namespace Microsoft::Xna::Framework::Graphics;
+
+class MyGame final : public Game {
+public:
+    MyGame() : graphics_(this) {
+        graphics_.setPreferredBackBufferWidth(1280);
+        graphics_.setPreferredBackBufferHeight(720);
+    }
+
+    // Non-copyable, non-movable — Game owns the GraphicsDevice
+    MyGame(const MyGame&) = delete;
+    MyGame& operator=(const MyGame&) = delete;
+
+protected:
+    void LoadContent() override {
+        auto& gd = getGraphicsDeviceProperty();
+
+        // All GPU resources created here and stored in unique_ptr members.
+        // They are released in reverse order when the unique_ptrs are destroyed.
+        spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(gd);
+        texture_     = std::make_unique&lt;Texture2D&gt;("assets/hero.png", gd);
+        effect_      = std::make_unique&lt;BasicEffect&gt;(gd);
+
+        // Procedurally built vertex data owned by a local vector,
+        // then uploaded and the local vector discarded.
+        std::vector&lt;VertexPositionColor&gt; verts = BuildTriangle();
+        vb_ = std::make_unique&lt;VertexBuffer&gt;(
+            gd, VertexPositionColor::VertexDeclaration,
+            static_cast&lt;int&gt;(verts.size()), BufferUsage::None);
+        vb_-&gt;SetData(verts.data(), static_cast&lt;int&gt;(verts.size()));
+        // verts is released here — GPU copy is all we need.
+    }
+
+    void UnloadContent() override {
+        // Called by the framework before the GraphicsDevice is destroyed.
+        // Reset smart pointers in the opposite order of creation.
+        vb_.reset();
+        effect_.reset();
+        texture_.reset();
+        spriteBatch_.reset();
+    }
+
+    void Update(const GameTime&) override { /* game logic */ }
+
+    void Draw(const GameTime&) override {
+        auto& gd = getGraphicsDeviceProperty();
+        gd.Clear(Color::CornflowerBlue);
+        spriteBatch_-&gt;Begin();
+        spriteBatch_-&gt;Draw(*texture_, Vector2(100.0f, 80.0f), Color::White);
+        spriteBatch_-&gt;End();
+        gd.Present();
+    }
+
+private:
+    GraphicsDeviceManager              graphics_;
+    std::unique_ptr&lt;SpriteBatch&gt;      spriteBatch_;
+    std::unique_ptr&lt;Texture2D&gt;        texture_;
+    std::unique_ptr&lt;BasicEffect&gt;      effect_;
+    std::unique_ptr&lt;VertexBuffer&gt;     vb_;
+};</code></pre>
+
+      <h2>Move semantics</h2>
+      <p>CNA objects support move construction and move assignment (they delete copy operations). Moves transfer ownership without copying the GPU resource:</p>
+      <pre><code class="language-cpp">// Wrong: Texture2D is not copyable
+Texture2D a("logo.png", gd);
+Texture2D b = a;  // compile error: copy constructor is deleted
+
+// Correct: move transfers ownership; 'a' becomes empty
+Texture2D b = std::move(a);
+// 'a' is now in a valid-but-unspecified state; do not use it.
+
+// With unique_ptr (preferred):
+auto tex1 = std::make_unique&lt;Texture2D&gt;("logo.png", gd);
+auto tex2 = std::move(tex1);
+// tex1 is now nullptr; tex2 owns the GPU texture.</code></pre>
+
+      <h2>Common pitfalls</h2>
+      <h3>Double-free</h3>
+      <p>Calling <code>Dispose()</code> twice on a CNA object is safe — subsequent calls are no-ops. However, deleting a raw pointer twice is undefined behaviour:</p>
+      <pre><code class="language-cpp">// WRONG — double delete, undefined behaviour
+Texture2D* t = new Texture2D("img.png", gd);
+delete t;
+delete t;  // crash or heap corruption
+
+// Correct — unique_ptr prevents this
+auto t = std::make_unique&lt;Texture2D&gt;("img.png", gd);
+// t is automatically deleted once, when it goes out of scope.</code></pre>
+
+      <h3>Dangling references</h3>
+      <p>Storing a raw pointer or reference to a CNA object and then resetting its owning <code>unique_ptr</code> leaves a dangling pointer:</p>
+      <pre><code class="language-cpp">// WRONG
+SpriteBatch* rawPtr = spriteBatch_.get();
+spriteBatch_.reset();  // SpriteBatch is destroyed
+rawPtr-&gt;Begin();       // dangling pointer — undefined behaviour
+
+// Correct: only keep raw pointers for the duration of a function call
+void DrawSprites(SpriteBatch& sb) {
+    sb.Begin();
+    // ... use sb
+    sb.End();
+    // sb is a reference, valid as long as the caller's unique_ptr is alive
+}</code></pre>
+
+      <h3>Accessing released GPU resources</h3>
+      <p>If you call <code>Dispose()</code> on a <code>Texture2D</code> and then try to bind it to a shader uniform, the underlying OpenGL or Vulkan handle is invalid. Always destroy resources after their last use, not before.</p>
+
+      <h2>LoadContent / UnloadContent patterns</h2>
+      <p>The CNA framework calls <code>UnloadContent</code> before the <code>GraphicsDevice</code> is torn down. This guarantees that GPU resources are released while the device is still valid. Do not release GPU resources in your destructor if there is any chance the device has already been destroyed — use <code>UnloadContent</code> instead.</p>
+      <p>For level streaming, call <code>ContentManager::Unload()</code> to release all assets loaded through that manager, then load the new level's assets. Use separate <code>ContentManager</code> instances per level to make unloading clean:</p>
+      <pre><code class="language-cpp">// In your Game subclass
+std::unique_ptr&lt;ContentManager&gt; levelContent_;
+
+void LoadLevel(const std::string& levelName) {
+    // Unload previous level assets
+    if (levelContent_) levelContent_-&gt;Unload();
+
+    // Create a fresh ContentManager for this level
+    levelContent_ = std::make_unique&lt;ContentManager&gt;(
+        Services, "Content/" + levelName);
+
+    // Load assets for the new level
+    playerTexture_  = levelContent_-&gt;Load&lt;Texture2D&gt;("player");
+    backgroundTex_  = levelContent_-&gt;Load&lt;Texture2D&gt;("background");
+}</code></pre>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="70-procedural-geometry.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 70: Procedural Geometry</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="72-backend-selection.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 72: Choosing the Right Backend</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>

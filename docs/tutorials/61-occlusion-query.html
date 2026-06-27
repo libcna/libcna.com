@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 61: Occlusion Queries - CNA Tutorials</title>
+  <meta name="description" content="Use OcclusionQuery in CNA to count GPU-visible fragments and gate expensive effects like lens flare, light shafts, and hardware LOD selection without CPU stalls.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/61-occlusion-query.html">
+  <meta property="og:title"       content="Tutorial 61: Occlusion Queries - CNA Tutorials">
+  <meta property="og:description" content="Use OcclusionQuery in CNA to count GPU-visible fragments and gate expensive effects like lens flare, light shafts, and hardware LOD selection without CPU stalls.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<main>
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+      <div class="docs-sidebar-title">Tutorials</div>
+      <ul class="docs-nav-list">
+        <li><a href="53-effect-parameter.html" class="docs-nav-link">Tutorial 53: GLSL Uniforms and EffectParameter</a></li>
+        <li><a href="54-alpha-test.html"        class="docs-nav-link">Tutorial 54: AlphaTestEffect and Alpha Masking</a></li>
+        <li><a href="55-dual-texture.html"      class="docs-nav-link">Tutorial 55: DualTextureEffect for Lightmaps</a></li>
+        <li><a href="56-environment-map.html"   class="docs-nav-link">Tutorial 56: EnvironmentMapEffect for Reflections</a></li>
+        <li><a href="57-skinned-effect.html"    class="docs-nav-link">Tutorial 57: SkinnedEffect and Skeletal Animation</a></li>
+        <li><a href="58-normal-mapping.html"    class="docs-nav-link">Tutorial 58: Normal Mapping</a></li>
+        <li><a href="59-shadow-mapping.html"    class="docs-nav-link">Tutorial 59: Shadow Mapping</a></li>
+        <li><a href="60-instancing.html"        class="docs-nav-link">Tutorial 60: Instanced Rendering</a></li>
+        <li><a href="61-occlusion-query.html"   class="docs-nav-link active">Tutorial 61: Occlusion Queries</a></li>
+        <li><a href="62-mrt.html"               class="docs-nav-link">Tutorial 62: Multiple Render Targets (MRT)</a></li>
+        <li><a href="63-stencil-buffer.html"    class="docs-nav-link">Tutorial 63: Stencil Buffer Effects</a></li>
+        <li><a href="64-cubemaps.html"          class="docs-nav-link">Tutorial 64: Cubemaps and Skyboxes</a></li>
+        <li><a href="65-msaa.html"              class="docs-nav-link">Tutorial 65: MSAA Anti-Aliasing</a></li>
+      </ul>
+    </aside>
+
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../../tutorials.html">Tutorials</a></li>
+        <li aria-current="page">Tutorial 61: Occlusion Queries</li>
+      </ol>
+    </nav>
+
+    <article class="docs-content">
+      <h1>Tutorial 61: Occlusion Queries</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Advanced Rendering</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>EasyGL and Vulkan backends only.</strong> <code>OcclusionQuery</code> relies on <code>GL_ARB_occlusion_query</code> (core since OpenGL 1.5) or the Vulkan query pool API. It is not available on the SDL_RENDERER backend. Always check <code>GraphicsDevice.GraphicsProfile</code> at runtime if your application must fall back gracefully.</p>
+      </div>
+
+      <h2>The OcclusionQuery Class</h2>
+      <p>An <code>OcclusionQuery</code> wraps a GPU hardware query object. When geometry is rendered between a matching <code>Begin()</code> / <code>End()</code> pair, the GPU counts how many fragment samples pass the depth test for that geometry. CNA retrieves this count after the GPU has finished processing the relevant commands.</p>
+      <p>The classic application is <strong>lens flare visibility</strong>: draw a small proxy geometry (a sphere or a single point sprite) at the position of the sun or a bright light source and ask the GPU whether any part of it was visible. If the count is zero the light is fully behind geometry and the lens flare should be hidden; if it is non-zero the flare should be shown, scaled proportionally to the visible pixel count for partial occlusion.</p>
+      <p>Occlusion queries are also widely used for:</p>
+      <ul>
+        <li><strong>Light shaft / god ray gating</strong> — only compute expensive ray-marched light shafts when the light source is at least partially visible.</li>
+        <li><strong>Hardware LOD selection</strong> — if a large object is fully occluded by other geometry, skip rendering its expensive high-detail mesh entirely this frame.</li>
+        <li><strong>Portal occlusion</strong> — draw a portal quad and skip rendering the rooms it connects to if the portal itself is hidden.</li>
+        <li><strong>Impostor switching</strong> — switch from a 3D mesh to a 2D billboard impostor when the object is too small on screen (combining occlusion with screen-space size estimation).</li>
+      </ul>
+      <p>Construction simply takes a reference to the <code>GraphicsDevice</code>:</p>
+      <pre><code class="language-cpp">auto query = std::make_unique&lt;OcclusionQuery&gt;(getGraphicsDeviceProperty());</code></pre>
+
+      <h2>Begin() and End()</h2>
+      <p>Surround the proxy geometry draw calls with <code>query.Begin()</code> and <code>query.End()</code>:</p>
+      <pre><code class="language-cpp">query_-&gt;Begin();
+
+// Draw cheap proxy geometry at the light's world position.
+// A small sphere, a billboard quad, or even a single point sprite works.
+drawSunProxy(gd);
+
+query_-&gt;End();</code></pre>
+      <p>Important rules for the Begin/End block:</p>
+      <ul>
+        <li>You <em>must not</em> nest queries — only one query may be active (between Begin and End) at a time per <code>GraphicsDevice</code>.</li>
+        <li>Do not change the render target, blend state, or depth-stencil state inside the query block in unexpected ways. The depth test must be enabled (and configured correctly for your scene) for the fragment count to be meaningful.</li>
+        <li>The proxy geometry should be <strong>cheap to render</strong> — the point is to get a visibility answer, not to draw something beautiful. Disable colour writes during the proxy draw (set <code>ColorWriteChannels::None</code>) so the query does not contribute any visible pixels to the frame.</li>
+      </ul>
+      <pre><code class="language-cpp">// Best practice: disable colour writes during the proxy draw
+// so the query result does not affect the visible image.
+ColorWriteChannels saved = gd.BlendState.ColorWriteChannels;
+BlendState noColor = BlendState::Opaque;
+noColor.ColorWriteChannels = ColorWriteChannels::None;
+gd.setBlendState(noColor);
+
+query_-&gt;Begin();
+drawSunProxy(gd);
+query_-&gt;End();
+
+gd.setBlendState(BlendState::Opaque); // restore</code></pre>
+
+      <h2>IsComplete</h2>
+      <p><code>OcclusionQuery::IsComplete</code> returns <code>true</code> once the GPU has made the result available. The result is <em>not</em> available immediately after <code>End()</code> — the GPU processes commands asynchronously and may not have reached those commands yet.</p>
+      <p>In practice on most drivers and hardware, the result becomes available <strong>one to two frames</strong> after the query was issued. Never spin-wait for <code>IsComplete</code> in a tight loop. The correct pattern is to check <code>IsComplete</code> once per frame and consume the result only when it is ready:</p>
+      <pre><code class="language-cpp">// Per-frame check — non-blocking
+if (queryPending_ &amp;&amp; query_-&gt;IsComplete) {
+    lastPixelCount_ = query_-&gt;PixelCount;
+    queryPending_   = false;
+}</code></pre>
+      <p>If <code>IsComplete</code> returns <code>false</code>, simply keep using the result from the previous frame. For effects like lens flare, a one- or two-frame lag is completely imperceptible to the player.</p>
+
+      <h2>PixelCount</h2>
+      <p><code>OcclusionQuery::PixelCount</code> returns the number of fragment samples that passed the depth test during the query. The exact interpretation depends on what proxy geometry you drew:</p>
+      <ul>
+        <li><strong>0</strong> — the proxy was fully occluded. The light source or effect is completely hidden behind other geometry.</li>
+        <li><strong>Non-zero</strong> — at least some of the proxy was visible. The value can be used to scale the flare intensity proportionally: <code>float visibility = clamp(pixelCount / float(maxProxyPixels), 0.0f, 1.0f);</code></li>
+        <li>On MSAA framebuffers the count may reflect <em>sample</em> coverage, not pixel coverage, and may be larger than you expect. Normalise by <code>MultiSampleCount</code> if needed.</li>
+      </ul>
+
+      <h2>The Latency Problem and the Ring-Buffer Pattern</h2>
+      <p>The most critical pitfall with occlusion queries is GPU-CPU synchronisation. If you call <code>PixelCount</code> before the result is ready, the driver must <strong>stall the CPU</strong> until the GPU has finished — this is a pipeline bubble that can cost several milliseconds per frame and destroy performance.</p>
+      <p>The safe solution is to decouple the query submission from the result read by one or more frames. A simple boolean flag achieves this for a single query. For multiple simultaneous queries (e.g., one per light source), use a ring buffer of query objects:</p>
+      <pre><code class="language-cpp">// Ring buffer of N queries (N = max pipeline depth, typically 2-3)
+static constexpr int QUERY_LAG = 2;
+std::unique_ptr&lt;OcclusionQuery&gt; queries_[QUERY_LAG];
+int  writeIdx_ = 0; // index to issue this frame's query
+int  readIdx_  = 0; // index to read last available result
+bool valid_[QUERY_LAG] = {};
+
+// In LoadContent:
+for (int i = 0; i &lt; QUERY_LAG; ++i)
+    queries_[i] = std::make_unique&lt;OcclusionQuery&gt;(gd);
+
+// In Draw:
+// 1. Read from the oldest pending query (non-blocking)
+if (valid_[readIdx_] &amp;&amp; queries_[readIdx_]-&gt;IsComplete) {
+    lastPixelCount_ = queries_[readIdx_]-&gt;PixelCount;
+    valid_[readIdx_] = false;
+    readIdx_ = (readIdx_ + 1) % QUERY_LAG;
+}
+
+// 2. Issue a new query for this frame
+queries_[writeIdx_]-&gt;Begin();
+drawProxy(gd);
+queries_[writeIdx_]-&gt;End();
+valid_[writeIdx_] = true;
+writeIdx_ = (writeIdx_ + 1) % QUERY_LAG;</code></pre>
+
+      <h2>Complete Example: Lens Flare Visibility</h2>
+      <p>The following example renders a lens flare sprite that fades in and out smoothly based on the GPU occlusion result for a small sun proxy sphere. The flare alpha is smoothed over time to avoid jarring one-frame pop-ins caused by the query latency.</p>
+
+      <pre><code class="language-cpp">class LensFlareGame final : public Game {
+    std::unique_ptr&lt;OcclusionQuery&gt; query_;
+    std::unique_ptr&lt;Texture2D&gt;     flareTex_;
+    std::unique_ptr&lt;SpriteBatch&gt;   spriteBatch_;
+
+    bool   queryPending_   = false;
+    int    lastPixelCount_ = 0;
+    float  flareAlpha_     = 0.0f;
+
+    // World-space position of the sun
+    Vector3 sunWorldPos_ = Vector3(500.0f, 800.0f, -2000.0f);
+
+    void LoadContent() override {
+        auto& gd = getGraphicsDeviceProperty();
+        query_       = std::make_unique&lt;OcclusionQuery&gt;(gd);
+        flareTex_    = Content.Load&lt;Texture2D&gt;("textures/lens_flare");
+        spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(gd);
+    }
+
+    void Draw(const GameTime&amp; gt) override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+        gd.Clear(Color::Black);
+
+        // --- 1. Consume last frame's query result (non-blocking) ---
+        if (queryPending_ &amp;&amp; query_-&gt;IsComplete) {
+            lastPixelCount_ = query_-&gt;PixelCount;
+            queryPending_   = false;
+        }
+
+        // Smoothly lerp alpha toward target (0 = hidden, 1 = fully visible)
+        float targetAlpha = (lastPixelCount_ &gt; 0) ? 1.0f : 0.0f;
+        float dt = (float)gt.getElapsedGameTime().TotalSeconds();
+        flareAlpha_ += (targetAlpha - flareAlpha_) * std::min(dt * 8.0f, 1.0f);
+
+        // --- 2. Draw the scene ---
+        drawScene(gd);
+
+        // --- 3. Issue occlusion query for sun proxy (no colour output) ---
+        if (!queryPending_) {
+            // Disable colour writes so the proxy dot does not affect the image
+            BlendState noWrite = BlendState::Opaque;
+            noWrite.ColorWriteChannels = ColorWriteChannels::None;
+            gd.setBlendState(noWrite);
+
+            query_-&gt;Begin();
+            drawSunProxySphere(gd, sunWorldPos_); // small sphere at sun
+            query_-&gt;End();
+            queryPending_ = true;
+
+            gd.setBlendState(BlendState::Opaque);
+        }
+
+        // --- 4. Draw lens flare sprite at sun's screen position ---
+        if (flareAlpha_ &gt; 0.005f) {
+            Vector3 sunScreen = gd.Viewport.Project(
+                sunWorldPos_, camera_.Projection(), camera_.View(), Matrix::Identity);
+
+            if (sunScreen.Z &gt; 0.0f &amp;&amp; sunScreen.Z &lt; 1.0f) {
+                Color flareColor = Color::White * flareAlpha_;
+                spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, BlendState::Additive);
+                spriteBatch_-&gt;Draw(
+                    *flareTex_,
+                    Vector2(sunScreen.X - flareTex_-&gt;Width  / 2.0f,
+                            sunScreen.Y - flareTex_-&gt;Height / 2.0f),
+                    flareColor);
+                spriteBatch_-&gt;End();
+            }
+        }
+
+        gd.Present();
+    }
+};</code></pre>
+
+      <h2>EasyGL and Vulkan Implementation Notes</h2>
+      <p>On the EasyGL backend, <code>OcclusionQuery</code> uses <code>glGenQueries</code> / <code>glBeginQuery(GL_SAMPLES_PASSED, id)</code> / <code>glEndQuery</code> / <code>glGetQueryObjectiv(id, GL_QUERY_RESULT_AVAILABLE, &amp;ready)</code>. The <code>GL_SAMPLES_PASSED</code> query counts individual MSAA samples; divide by <code>GraphicsDevice.PresentationParameters.MultiSampleCount</code> to get pixel-level counts on MSAA framebuffers.</p>
+      <p>On the Vulkan backend, CNA allocates a <code>VkQueryPool</code> with <code>VK_QUERY_TYPE_OCCLUSION</code> and submits <code>vkCmdBeginQuery</code> / <code>vkCmdEndQuery</code> into the command buffer. Results are retrieved with <code>vkGetQueryPoolResults</code> using <code>VK_QUERY_RESULT_WITH_AVAILABILITY_BIT</code> to avoid blocking the CPU.</p>
+
+      <nav class="docs-pagination" aria-label="Page navigation">
+        <div class="docs-pagination-prev">
+          <a href="60-instancing.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&larr; Previous</span>
+            <span class="pagination-title">Tutorial 60: Instanced Rendering</span>
+          </a>
+        </div>
+        <div class="docs-pagination-next">
+          <a href="62-mrt.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &rarr;</span>
+            <span class="pagination-title">Tutorial 62: Multiple Render Targets (MRT)</span>
+          </a>
+        </div>
+      </nav>
+    </article>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. ~95% API surface implemented. Full 2D and 3D rendering working.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../../docs/getting-started.html">Getting Started</a></li>
+          <li><a href="../../docs/building.html">Building</a></li>
+          <li><a href="../../docs/platforms.html">Platforms</a></li>
+          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+</body>
+</html>
