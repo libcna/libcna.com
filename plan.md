@@ -1,107 +1,183 @@
-# libcna.com update plan — 2026-07-02
+# libcna.com update plan — 2026-07-09
 
-Source of truth: `/rv/data/development/github.com/openeggbert/cna` (real project state, verified directly:
-`NEXT.md`, `known_bugs.md`, `AUDIT.md`, `GRAPHICS_TASKS.md`, `git log`, header count, test count).
+Source of truth: `/rv/data/development/github.com/openeggbert/cna` (real project state, verified
+directly: `README.md`, `NEXT.md`, `docs/xna-4-api-coverage.md`, `known_bugs.md`, git log, direct
+header count, `.github/workflows/`). Previous sync was 2026-07-02 (`6b4be1a`); since then CNA has
+had **~1,494 more commits** (2,038 total, HEAD `c77cc0a9`, 2026-07-09) — roughly 73% of the
+project's entire git history landed in the last week. This is a much bigger delta than a routine
+sync; several headline stats and feature claims are now substantially out of date.
 
-Goal: bring every factual claim on libcna.com in line with the real current state of CNA, close
-disclosure/consistency gaps, and raise overall site quality to a genuinely top-notch (špičkové) level.
-Never fabricate URLs/links/IDs — leave those as explicit TODOs if the real value isn't known.
+Never fabricate URLs/links/IDs/percentages — where the CNA project itself no longer publishes a
+number (e.g. per-backend completion %), use its own qualitative framing instead of inventing one.
 
-## Ground truth (verified 2026-07-02)
+## Ground truth (verified 2026-07-09, HEAD `c77cc0a9`)
 
-- Unit tests (`CnaTests`, GoogleTest): **1,813 / 1,813 pass**, 0 known failures. (Site currently says 374, 1 pre-existing failure.)
-- Public headers: **280**. (Site currently says 271.)
-- Separate from the unit suite: EasyGL integration tests (~63 executables) have 2 known pre-existing
-  failures (`easygl_device_dispose_order_test`, one pixel-readback test tied to the Vulkan
-  SpriteBatch bug below); Vulkan integration tests 11/13 historically pass; Bgfx is smoke-tested only
-  (no pixel readback API). These are backend integration tests, not part of the "374/1813" unit stat —
-  the site currently conflates the two.
-- Known bug (confirmed, undisclosed on site): multiple `SpriteBatch::Begin()/End()` pairs in one frame
-  silently drop all but the last batch. Confirmed on Vulkan. Workaround: one Begin/End per frame.
-- Backend maturity roughly matches what architecture.html's table already says (EasyGL/SDL_RENDERER
-  stable, Vulkan ~93%, Bgfx ~82%, WebGPU not started/not in CMake at all) — good, don't need to
-  re-derive this, just fix the couple of stale labels noted below.
-- `cna-samples` is a real, separate repo. Cross-checked directly against `PLAN.md`'s status table and
-  the actual `samples/` directory: **31 of 83** targeted XNA 4.0 samples are confirmed ✅ Done
-  (Platformer, CatapultWars, GameStateManagement, Pathfinding, ParticleSample, Audio3D, GesturesSample,
-  etc.); 5 more directories exist on disk (Spacewar, BloomSample, ColorReplacement, ReachGraphicsDemo,
-  Yacht) but are marked Deferred/Todo — excluded from any "done" count to avoid overclaiming.
-- `cna_audio`/`cna_devices`/`cna_graphics`/`cna_input`/`cna_net` are NOT separate products — they're
-  worktree branches of the same `cna` repo. Site correctly does not present them as separate libraries;
-  keep it that way.
-- A second, separate minimal site already exists at `cna.openeggbert.com` — relationship to libcna.com
-  is undecided; needs a decision from Robert, not something to silently paper over.
+- **Public headers:** `include/` now has **440** (`.hpp`/`.h`, direct count). Was 280 (279 confirmed
+  at the 07-02 baseline commit). Breakdown: 346 under `Microsoft/` (317 `Xna/Framework/`, of which
+  119 are Graphics: 100 top-level + 19 PackedVector) + 94 under `CNA/` (internal backend contracts).
+- **Tests:** full `ctest` (EasyGL backend): **4,522/4,525 passing (99%)**, verified fresh today
+  (Task 493, commit `2233de15`). 3 known pre-existing failures, all in GPU/pixel integration tests,
+  none in the pure unit suite: `EasyGL_MRT_TwoAttachments`, `EasyGL_GraphicsDevice_ReferenceStencil`
+  (Task 872, open), `easy-gl-resource-smoke-tests` (vendored `easy-gl` Mesa/llvmpipe env quirk, not
+  a CNA bug). Breakdown confirmed via Task 494 (`2fe45b55`): **~4,357 pure GoogleTest unit tests**
+  (`tests/`, `CnaTests` target, **0 known failures**) + **388 GPU/pixel integration tests**
+  (`examples/`, individually registered via `add_test()`), of which **168 are EasyGL-specific**
+  (166/168 passing — the 2 EasyGL failures above). Was 1,813/1,813, 0 known failures.
+- **API coverage:** headline **~85%** (EasyGL backend, 2D+3D game) is unchanged and still accurate
+  (`docs/xna-4-api-coverage.md`, touched today, Task 483/490). What *did* change: the gap list.
+  Touch input and XACT audio — previously cited on the site as open gaps — are now closed:
+  - `Input::Touch`: **~98% behavior**, byte-faithful FNA gesture-pipeline port, fully wired
+    (`feature/input` Phase I2/I9). Site currently says "GetState() returns an empty collection on
+    all platforms" — **false**, fix everywhere.
+  - `Audio (XACT)` — AudioEngine/SoundBank/WaveBank/Cue: **~97%**, real `.xgs`/`.xsb`/`.xwb` parser +
+    SDL3_mixer playback, category/lifecycle/3D/instance-limit/fade/RPC curves all real. Site
+    currently says "stub only, ~0% functional" in ~15 places — **false**, fix everywhere.
+  - Remaining main gap, sitewide: **XNB content pipeline / binary content compatibility**
+    (`ContentManager` ~65%, no `.xnb` parsing, custom `.model.json` instead). This should replace
+    "XACT audio, .xnb content pipeline, touch input backend, GamerServices" as the single honest
+    headline gap.
+  - `docs/xna-4-api-coverage.md` itself still lists `GamerServices ~5%`/`Framework.Net 0%
+    (intentionally excluded)` — **this specific row is stale**, contradicted directly by
+    `README.md` §7 and by real files on disk (see next point). Treat the coverage-table row as an
+    oversight, not ground truth, for GamerServices/Net specifically.
+- **NEW major feature area — GamerServices / Net / Avatar** (not on the site at all today; kicked
+  off 2026-06-30, largely landed by 2026-07-07, hardening pass ongoing per `plan_net.md`):
+  - `GamerServices`: complete XNA-shaped API port (`Gamer`, `SignedInGamer`, `GamerProfile`,
+    `FriendGamer`/`FriendCollection`, leaderboards, `Guide`, achievements). Local/synthetic
+    semantics, not Xbox-Live-binary-compatible — same approach FNA itself uses for this namespace.
+  - `Net` (`NetworkSession`): complete API surface (5 enums + 18 classes). **Real networking** for
+    `SystemLink`, backed by ENet (reliable UDP, vendored) — hosting, joining, LAN discovery,
+    `AppData` relay, disconnect handling, `StartGame`/`EndGame` broadcast all run over a genuine
+    transport. Verified across **4 platforms**: Linux (native, 2-process loopback), Windows (WinSock2
+    under Wine), Web/Emscripten (real ENet-over-WebSocket, client-only per browser sandbox), Android
+    NDK (native ENet/UDP, real x86_64 emulator).
+  - `Avatar` (within `GamerServices`): `AvatarAnimation`/`AvatarDescription`/`AvatarRenderer` ported
+    from a decompiled real Microsoft XNA 4.0 reference assembly — FNA never implemented this at all.
+  - Confirmed via real files (`include/Microsoft/Xna/Framework/Net/NetworkSession.hpp` + `.cpp` +
+    tests) and `plan_net.md` (132/132 tasks closed, second hardening pass in progress).
+- **Windows: now a real supported platform**, not "Planned". Via `SDL_RENDERER` backend (MSVC 2022,
+  clang-cl, or MinGW-w64) — cross-compiled with MinGW-w64 from Linux and **verified running under
+  Wine** (i.e. verified-but-not-on-native-hardware, same honesty tier as the site's existing
+  Android "verified on emulator" framing — don't overclaim native Windows CI). Site currently shows
+  "Windows: Planned" in ~7 places — fix everywhere, with the precise cross-compiled/Wine caveat.
+- **Vulkan SpriteBatch multi-Begin/End bug: FIXED.** Commit `b90940090`, Task 664, **2026-07-07**.
+  Root cause: `Begin()` destructively cleared vectors `End()` had just populated, plus a hardcoded
+  offset-0 harvest bug. Fixed via a per-cycle `BatchSnapshot` + real running cursor; regression test
+  added (`examples/vulkan_spritebatch_multi_begin_end_test.cpp`). CNA's own `known_bugs.md` **still
+  lists this as open — that file is stale**, same pattern as last sync's `known_bugs.md` discovery.
+  Site currently discloses this as an open "known issue" on `features.html`'s Vulkan card and
+  `docs/roadmap.html` — update to "fixed 2026-07-07".
+- **New Vulkan known issue to disclose** (replaces the fixed SpriteBatch one, same honesty-first
+  precedent as last sync): `BlendState` is "almost entirely fake — hardcodes one blend equation
+  regardless of request", confirmed 5× via pixel tests (Task 868, **open**). Also `OcclusionQuery`
+  is **architecturally blocked** on Vulkan (Task 447 — deferred-draw recording can't correlate a
+  query's Begin/End span to a specific deferred draw). Positive: `DepthStencilState` compare-op +
+  stencil ops are now real (Task 870, 2026-07-08, previously a gap).
+- **Bgfx reached full 2D+3D pixel-verified parity with EasyGL/Vulkan as of Phase 72.** Was "~82%, in
+  progress". Remaining named gaps: custom `ShaderEffect` (GLSL/SPIR-V) source compilation
+  unsupported (`CreateEffectBackend` returns `nullptr`); `OcclusionQuery` Begin/End wiring is real
+  but pixel-verified correctness can't be confirmed in this project's sandbox (software GL 2.1
+  driver, no dedicated-view architecture yet — Task 917, open). 1 known pre-existing test failure:
+  `Bgfx_RenderTarget2D_MsaaResolve` (Xvfb has no DRI3 support — documented sandbox limitation, not a
+  code bug).
+- **No more round completion percentages per backend in CNA's own docs.** The project deliberately
+  moved from "~93%"/"~82%"-style badges to a qualitative maturity ranking + named-gap list (EasyGL
+  most mature → Vulkan second-most → Bgfx third-but-at-parity → SDL_RENDERER 2D-only-by-design).
+  Do not invent new percentages for Vulkan/Bgfx; replace `~93%`/`~82%` UI badges with short
+  maturity-rank labels sourced from the above, keeping visual structure (table cells, card badges)
+  intact.
+- **CI now partially exists.** Two GitHub Actions workflows added 2026-07-07:
+  `.github/workflows/input-ci.yml` (matrix: EasyGL/SDL_RENDERER/Vulkan/bgfx + ASan/UBSan, runs the
+  Input test suite only, triggered on `feature/input`/`develop`/`master`) and
+  `devices-tests.yml` (Devices/Sensors gtest suite). **Graphics, Audio, and Net are still verified
+  manually, not gated by CI.** Site's `showcase.html` says "CNA does not currently run automated
+  CI" — this is now **partially false**; fix to something like "CI covers the Input and
+  Devices/Sensors subsystems (GitHub Actions); Graphics/Audio/Net are still verified via manual
+  local `ctest` runs, not yet gated by CI" — do not overclaim full-repo CI, it doesn't exist yet.
+- **cna-samples: 48 done (was 31), out of 153 total catalogued** (source: `cna-samples/PLAN.md`
+  "Sample Count Summary" table, repo HEAD 2026-07-06). Breakdown: 48 ✅ Done, 10 🔓 Unblocked
+  (ready, no remaining engine gap), 28 🚧 Placeholder (blocked on a real CNA gap), 67 Ignored (never
+  gets a directory — out of scope). Addressable set is 153−67=86; 48+10=58 of that 86 are done or
+  ready. The site's "31 of 83 targeted" framing is superseded by this table — no historical "31"
+  figure exists in `cna-samples`' own tracked history, so the old figure was likely already stale
+  before 07-02. Use "48 samples ported and building, out of 153 cataloged original XNA 4.0 Game
+  Studio samples (86 addressable after excluding 67 out-of-scope)."
+- **Pre-existing site contradictions (independent of new CNA drift) now resolve themselves the
+  right way:** root `roadmap.html` line ~177 already claims XACT audio is "Complete" — this
+  contradicted `features.html`/`docs/faq.html` before, but is **now actually true** (XACT ~97%).
+  Fix by updating the *other* pages to match, not by walking back `roadmap.html`. Root
+  `roadmap.html` line ~286's stale "Vulkan 3D textured pipeline is the remaining gap" phrase is
+  still wrong (was already stale in 07-02, missed by the last sync) — fix to reflect the real
+  current Vulkan gaps (BlendState, OcclusionQuery).
+- `docs/xna-compatibility.html` is the most granular page (~30 subsystem rows, a bar chart, and a
+  separate "~80% functionally usable" overall estimate) — needs the most careful line-by-line pass.
 
-## P0 — Accuracy fixes (do first)
+## Execution approach (all complete)
 
-- [x] 1. Sitewide stat refresh: `374` → `1,813` (prose) / `1813` (code/terminal-output blocks),
-      `271` → `280`. Done via targeted phrase-level Python replace across all 18 affected files;
-      verified zero stray matches remain (confirmed docs/tutorials/70-procedural-geometry.html's `374`
-      substring was a false positive inside an unrelated magic number and was correctly left alone).
-- [x] 2. Removed/corrected the "1 pre-existing failure" claim tied to the *unit* test count — now
-      reads "0 known failures" / "no known pre-existing failures" wherever it appeared.
-- [x] 3. Reconciled all "~95% of XNA 4.0 implemented" / "~95% API surface implemented" claims down to
-      `~85%` for consistency. This was bigger than initially scoped: beyond `docs/roadmap.html`'s
-      heading, the exact same stale footer sentence was baked into **87 tutorial pages (14 through
-      100)** plus `docs/platforms.html`'s footer — found via a second, broader sweep after the initial
-      374/271 fix, since these didn't contain either of those numbers. Fixed via a targeted batch
-      replace; verified zero "~95% API surface implemented" instances remain. Also corrected
-      `docs/roadmap.html`'s stale "Vulkan: full 3D textured/lit pipeline is the remaining gap" framing
-      (leftover from before Vulkan reached ~93%) in three places on that page.
-- [x] 4. Fixed `showcase.html`'s false CI claims — reworded to "manual smoke test" / "no automated CI"
-      framing (3 spots: intro paragraph, CI-role callout, platform table row).
-- [x] 5. Disclosed the known Vulkan SpriteBatch multi-Begin/End bug in `features.html`'s Vulkan card
-      and `roadmap.html` (also mentioned the separate `easygl_device_dispose_order_test` integration
-      failure there for completeness).
-- [x] 6. Fixed `architecture.html` stale Vulkan labels (ASCII diagram + directory-tree comment) to
-      match the page's own ~93% framing.
-- [x] 7. Removed the dead TODO comment in `index.html` above the GitHub link.
-
-## P1 — Sitewide technical/SEO quality
-
-- [x] 8. Added `<link rel="canonical">` to all 140 pages (root + docs + tutorials), derived
-      deterministically from file path; verified exactly one canonical tag per file afterward.
-- [x] 9. Fixed `index.html` `og:url` from `/index.html` to the bare domain `https://libcna.com/`.
-
-## P2 — Content depth (real, verifiable additions)
-
-- [x] 10. Expanded the existing (but thin, 2-card) "Sample Applications — cna-samples" section on
-       `showcase.html` with an accurate count (31 confirmed ports, verified against the real
-       `cna-samples/PLAN.md` status table and cross-checked against the actual `samples/` directory
-       listing — deliberately excluded 5 directories that exist but are marked Deferred/Todo in PLAN.md
-       to avoid overclaiming) and 4 new representative cards spanning full games, AI/pathfinding,
-       audio, and touch gestures.
-- [x] 11. Refreshed `roadmap.html`'s "What's new" timeline with the recent Texture2D FNA-conformance
-       work and the cna-samples milestone. Also fixed `docs/roadmap.html`'s stale Vulkan "remaining
-       gap" framing (see item 3).
-
-## P3 — Needs a decision from Robert (do not guess)
-
-- [ ] 12. Asked about the relationship between libcna.com and the pre-existing `cna.openeggbert.com`
-       site (redirect it, retire it, or keep both intentionally distinct) — no response received:
-       left as-is, not touched. Re-ask or revisit later.
-- [ ] 13. TODO placeholders that need real-world values (not fabricatable): `videos.html` YouTube video
-       IDs + channel link, `contact.html` Android/Play Store link + author contact + cna-demo repo
-       link, `demos.html` APK download links. Leave as visible TODO badges until real links are
-       supplied.
-
-## Also fixed along the way
-
-- [x] 14. `search-index.json` carried the same stale "374-test suite" phrasing in 3 description fields
-       (getting-started/migrate-xna/unit-testing tutorial entries) — fixed to 1,813; verified JSON
-       still parses.
-- [x] 15. Post-edit validation: re-swept the entire repo for `374`/`271`/stale-percentage patterns
-       (zero remaining outside the one legitimate magic-number false positive), verified the
-       `architecture.html` ASCII diagram box stayed character-aligned after the Vulkan label edit, and
-       ran an HTML tag-balance check on the most heavily edited pages (all clean).
+1. [x] **P0a — sitewide mechanical stat sweep** (scripted, done centrally to avoid conflicting
+   edits): `280`→`440` headers, `1,813`/`1813`→`4,357` unit tests across 18 files + `search-index.json`.
+   Verified zero stray old figures remained afterward (one legitimate coordinate false positive,
+   `280.0f`/`280, 100` in tutorial code samples, correctly left alone).
+2. [x] **P0b — qualitative accuracy fixes**, split by file group and executed in parallel (6 forked
+   agents with full research context): landing pages (index/about/features), architecture+roadmap
+   pages, `docs/xna-compatibility.html`, showcase+FAQ+contribute, subsystem docs pages
+   (audio/platforms/building/input/migration/documentation), tutorial pages with stale XACT/stub
+   claims + `vs-alternatives.html`. All landed cleanly (0 HTML tag-balance issues across 142 pages).
+   - [x] Removed XACT "stub/~0%" claims (15+ files) → real, ~97%, SDL3_mixer-backed.
+   - [x] Removed Touch "empty collection/partial" claims → ~98%, wired gesture pipeline.
+   - [x] Windows "Planned" → supported via SDL_RENDERER, MinGW-w64 cross-compiled, Wine-verified
+     (only the specifically-confirmed cross-compile+Wine row was upgraded on `docs/building.html`/
+     `docs/platforms.html`; native MSVC/native-Windows-MinGW rows correctly left "Planned" — not
+     specifically confirmed by source facts).
+   - [x] Vulkan SpriteBatch bug → fixed 2026-07-07 disclosed; replaced with real BlendState/
+     OcclusionQuery gap disclosure everywhere (features.html, roadmap.html, docs/roadmap.html,
+     docs/rendering-backends.html, docs/building.html, docs/tutorials/72/85/86, docs/3d-rendering.html).
+   - [x] Bgfx "~82%, in progress" → full 2D+3D pixel-verified parity (Phase 72), named remaining
+     gaps (ShaderEffect source compilation, OcclusionQuery sandbox-verification) — same file set.
+   - [x] Added new GamerServices/Net/Avatar feature content: new features.html card, about.html
+     "what problem does CNA solve" bullets + portability line, index.html status callout, root
+     roadmap.html + docs/roadmap.html "what's new"/milestone entries, docs/xna-compatibility.html
+     new `Microsoft.Xna.Framework.Net` section + GamerServices/Avatar row rewrite.
+   - [x] cna-samples 31/83 → 48/153 (86 addressable) — showcase.html, root roadmap.html, index.html.
+   - [x] CI disclosure fixed to partial (Input + Devices CI exists via GitHub Actions;
+     Graphics/Audio/Net still manual) — showcase.html, docs/faq.html.
+   - [x] Fixed root `roadmap.html`'s stale Vulkan "remaining gap" phrase and stale bug-name known-
+     failures paragraph; left its (now-true) XACT "Complete" claim alone.
+3. [x] **P1 — verification pass:** re-grepped for every old figure/claim sitewide; found and fixed
+   6 files the fork file-groups had missed (`docs/rendering-backends.html`, `docs/3d-rendering.html`,
+   `docs/building.html`, `docs/tutorials/72-backend-selection.html`, `docs/tutorials/85-vulkan-backend.html`,
+   `docs/tutorials/86-bgfx-backend.html`) plus 2 small ones (`docs/tutorials/95-speedy-blupi.html`'s
+   stale "replace XACT" instruction, `docs/audio.html`'s stale `#tier-2-stub-only-xact` anchor id).
+   Also caught and fixed 2 **internal contradictions introduced by the forks themselves**:
+   `features.html`'s Vulkan card listed "occlusion queries" as supported one paragraph above a
+   "OcclusionQuery is architecturally blocked" known-gap note; a separate `features.html`
+   OcclusionQuery feature card claimed it was "implemented... on Vulkan" outright — both fixed to
+   consistently say Vulkan's `OcclusionQuery` is blocked. Also fixed
+   `docs/tutorials/86-bgfx-backend.html`'s "What's limited" list, which still said `OcclusionQuery`
+   was "stubbed... returns 0 always" one paragraph below text I'd already corrected to say the
+   Begin/End wiring is real. Fixed a genuinely pre-existing (not CNA-sync-related) dead link in
+   `docs/vs-alternatives.html`: it said a MonoGame/FNA migration guide was "planned" via a
+   commented-out link, when `docs/migration-from-monogame.html` already exists — linked it.
+   Also fixed 2 stale `search-index.json` description fields the file-level sweep didn't reach
+   because they aren't sourced from any single page's own meta tags. Final re-sweep: zero stray
+   instances of `280`/`1,813`/`93%`/`82%`/`31 of 83` anywhere in the repo; 0/142 pages have
+   unbalanced HTML tags; `search-index.json` parses as valid JSON.
+4. **P2 — carry forward from last sync, still open, not touched, do not guess:**
+   - `cna.openeggbert.com` vs `libcna.com` relationship — no response received last time either.
+   - TODO placeholders needing real values: `videos.html` YouTube IDs/channel, `contact.html`
+     Android/Play Store + author contact + cna-demo link, `demos.html` APK download links.
+5. Commit only after user confirms (per this session's git safety rules) — do not push without
+   explicit request.
 
 ## Out of scope but flagged once
 
-- Security: all `cna`/`cna_*` sibling repos have a GitHub personal access token embedded in plaintext
-  in their `.git/config` remote URL. Not a website task — recommend rotating/removing it separately.
-
-## Execution order
-
-P0 (1→7) first since these are direct factual corrections a visitor could catch and lose trust over,
-then P1 (8→9, mechanical), then P2 (10→11, additive), then ask about P3 (12) once, leave P3-13 alone
-unless Robert supplies real links.
+- `known_bugs.md` in the `cna` repo is stale (still lists the fixed SpriteBatch bug) — not a
+  website task, flag to Robert.
+- `docs/xna-4-api-coverage.md`'s `GamerServices ~5%` / `Framework.Net 0%` row in the `cna` repo
+  itself contradicts `README.md` §7 and real files — likely an oversight from a doc pass that
+  didn't touch the Net-track rows. Not a website task, flag to Robert.
+- `README.md` §6 (Backend System) still calls Vulkan "incomplete, TODO/stub areas", contradicting
+  its own §1 Project Status ("real, working 3D rendering... second-most mature"). Not a website
+  task, flag to Robert.
+- `sitemap.xml` (138 URLs) has drifted from the actual 142-page site (gap predates this sync too,
+  not touched by 07-02 sync either) — low priority, not attempted this round unless time remains.
