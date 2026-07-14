@@ -111,7 +111,7 @@ git submodule update --init --recursive</code></pre>
       <p>This populates <code>third_party/SDL</code>, <code>third_party/SDL_image</code>, and <code>third_party/SDL_mixer</code>. After this step, SDL is built from source by the CMake build - no system SDL packages are required.</p>
 
       <h2>Step 2 - Select a backend and build</h2>
-      <p>CNA requires exactly one rendering backend to be selected at configuration time via <code>-DCNA_GRAPHICS_BACKEND=&lt;BACKEND&gt;</code>. Available backends: <code>SDL_RENDERER</code>, <code>EASYGL</code>, <code>BGFX</code>, <code>VULKAN</code>.</p>
+      <p>CNA requires exactly one rendering backend to be selected at configuration time via <code>-DCNA_GRAPHICS_BACKEND=&lt;BACKEND&gt;</code>. Nine backends are available today: <code>SDL_RENDERER</code>, <code>EASYGL</code>, <code>BGFX</code>, and <code>VULKAN</code> are CNA's four established, cross-platform, pixel-test-verified backends; <code>WEBGPU</code> is an experimental native desktop backend; <code>HEADLESS</code> and <code>SOFTWARE</code> are CI/testing-only backends that need no GPU or display server; and <code>D3D11</code>/<code>D3D12</code> are native, Windows-only backends (Wine-verified from Linux, not yet verified on real Windows hardware).</p>
 
       <h3>Linux - EasyGL (OpenGL) backend</h3>
       <pre><code>cmake -S . -B build -DCNA_GRAPHICS_BACKEND=EASYGL
@@ -147,6 +147,44 @@ cmake --build build-bgfx --target CNA</code></pre>
       <pre><code>cmake -S . -B build-vulkan -DCNA_GRAPHICS_BACKEND=VULKAN
 cmake --build build-vulkan --target CNA</code></pre>
       <p>The Vulkan backend is CNA's second-most mature backend: full 2D and 3D pipeline, all five stock effects (pixel-tested), instancing, MRT, MSAA 4×, FillMode::WireFrame, and Texture3D/TextureCube. Open gaps: <code>BlendState</code> Requires a Vulkan-capable GPU and driver. Vulkan SDK headers must be present (usually via your distribution's <code>vulkan-headers</code> / <code>libvulkan-dev</code> package).</p>
+
+      <h3>WebGPU backend (experimental)</h3>
+      <pre><code>cmake -S . -B build-webgpu -DCNA_GRAPHICS_BACKEND=WEBGPU
+cmake --build build-webgpu --target CNA</code></pre>
+      <p>An experimental fifth backend using native <code>wgpu-native</code> (pinned v29.0.1.1). By default CMake downloads the official prebuilt package automatically; for an offline/reproducible build, extract the package yourself and pass <code>-DCNA_WEBGPU_ROOT=/absolute/path/to/wgpu-native -DCNA_WEBGPU_AUTO_DOWNLOAD=OFF</code>. The native 2D baseline (SpriteBatch, Texture2D, resize/present, backbuffer readback) is verified, including against an independent real game; most stock 3D effects, render targets, and full state-object mapping are still open. Browser/Emscripten WebGPU is not implemented — this is the native desktop backend only.</p>
+
+      <h3>Headless backend (CI/testing-only)</h3>
+      <pre><code>cmake -S . -B build-headless -DCNA_GRAPHICS_BACKEND=HEADLESS -DCNA_BUILD_TESTS=ON
+cmake --build build-headless -j</code></pre>
+      <p>Renders nothing by design — no window, no GPU context, no OpenGL/Vulkan library is even linked. Every draw/resource call does real bookkeeping instead (argument validation, resource-lifecycle tracking, draw-call/state-change counters), controlled by a runtime strictness dial (<code>CNA_HEADLESS_MODE=Fast|Validation|Trace</code>). Built for fast CI runs of game <em>logic</em> with no display server needed at all — not for verifying pixel output.</p>
+
+      <h3>Software backend (CPU rasterizer, CI/testing-only)</h3>
+      <pre><code>cmake -S . -B build-software -DCNA_GRAPHICS_BACKEND=SOFTWARE -DCNA_BUILD_TESTS=ON
+cmake --build build-software -j</code></pre>
+      <p>Unlike Headless, this backend actually rasterizes real triangles into a CPU-owned RGBA8 framebuffer (a real edge-function rasterizer, perspective-correct interpolation, real per-pixel depth test) — no GPU, window, or display server involved at any point. Useful for deterministic pixel tests on GPU-less CI machines. Verified against EasyGL on a canonical test scene with a max per-channel pixel difference of 1. Not a real-time backend: no SIMD, no multithreading, and <code>Present()</code> is a no-op.</p>
+
+      <h3>Direct3D 11 backend (native Windows, Wine-verified)</h3>
+      <pre><code># Install the cross toolchain (Debian/Ubuntu)
+sudo apt install mingw-w64
+
+cmake -S . -B build-d3d11 \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64.cmake \
+      -DCNA_GRAPHICS_BACKEND=D3D11 \
+      -DCNA_BUILD_TESTS=ON
+cmake --build build-d3d11 -j</code></pre>
+      <p><code>D3D11</code> is hard-gated to <code>CMAKE_SYSTEM_NAME=Windows</code> at configure time — it cannot be selected on a native Linux/macOS configure. A real <code>ID3D11Device</code>/<code>ID3D11DeviceContext</code> backs this: all 10 stock HLSL shader variants, textures/render targets (MRT/MSAA/occlusion queries), all four state-object classes, a real SpriteBatch, and a runtime-<code>D3DCompile()</code> custom <code>ShaderEffect</code> path, all pixel-verified (6 CTest binaries, 96+ checks). Verified by cross-compiling with MinGW-w64 and running the result through <strong>Wine + DXVK</strong> on a real GPU — this proves the backend's logic, not real-Windows-hardware parity (MSVC build, real DXGI present/tearing, device-lost recovery, and WARP fallback are still open). To reproduce the Wine dev-loop:</p>
+      <pre><code>sudo apt-get install -y dxvk-wine64
+WINEPREFIX=~/.wine-cna-d3d11 wineboot --init
+WINEPREFIX=~/.wine-cna-d3d11 dxvk-setup install
+scripts/run-wine-dxvk.sh build-d3d11/examples/d3d11_smoke_test.exe</code></pre>
+
+      <h3>Direct3D 12 backend (native Windows, Wine-verified, off-screen only)</h3>
+      <pre><code>cmake -S . -B build-d3d12 \
+      -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64.cmake \
+      -DCNA_GRAPHICS_BACKEND=D3D12 \
+      -DCNA_BUILD_TESTS=ON
+cmake --build build-d3d12 --target CNA</code></pre>
+      <p>Same Windows-only CMake gate as <code>D3D11</code>. Built directly on <code>D3D11</code>'s own HLSL/DXBC bytecode and format/state tables. Real command queues, descriptor heaps, command lists, fences, a per-resource barrier tracker, PSOs, root signatures, all 10 stock HLSL shader variants, a real SpriteBatch, and functionally-proven device-removed recovery are all pixel-verified <strong>off-screen</strong> (the <code>D3D12_Smoke</code> CTest: 80/80 checks). Verified via <strong>Wine + vkd3d-proton</strong> (a separate translation layer and Wine prefix from <code>D3D11</code>'s own DXVK setup) — swap-chain presentation genuinely crashes under this dev loop (a real Wine/vkd3d-proton <code>dxgi.dll</code> architecture mismatch, not a CNA bug), so every proof stays off-screen; real-Windows-hardware verification is also still open. Runtime-settable blend/depth-stencil/rasterizer state, per-slot <code>SamplerState</code>, a public render-target backend, <code>Texture3D</code>, and occlusion queries are not yet implemented for this backend. Test binaries run through <code>scripts/run-wine-vkd3d.sh</code>, which needs vkd3d-proton's <code>d3d12.dll</code>/<code>d3d12core.dll</code> (obtainable from a Steam "Proton - Experimental" install or vkd3d-proton's prebuilt GitHub releases) registered as native DLL overrides in a dedicated Wine prefix.</p>
 
       <h3>Emscripten / WebAssembly (EasyGL + WebGL 2)</h3>
       <pre><code># 1. Install and activate the Emscripten SDK
@@ -206,6 +244,9 @@ cmake --build build --target cna_demo_2d
             <tr><td>Windows x86_64</td><td>MSVC 2022</td><td>SDL_RENDERER</td><td><span class="status-badge status-planned">Planned</span></td></tr>
             <tr><td>Windows x86_64</td><td>MinGW-w64</td><td>SDL_RENDERER</td><td><span class="status-badge status-planned">Planned</span></td></tr>
             <tr><td>Linux → Windows</td><td>MinGW-w64 (cross)</td><td>SDL_RENDERER</td><td><span class="status-badge status-done">Verified (Wine)</span></td></tr>
+            <tr><td>Linux → Windows</td><td>MinGW-w64 (cross)</td><td>D3D11</td><td><span class="status-badge status-done">Verified (Wine+DXVK); real Windows hardware still open</span></td></tr>
+            <tr><td>Linux → Windows</td><td>MinGW-w64 (cross)</td><td>D3D12</td><td><span class="status-badge status-done">Verified off-screen (Wine+vkd3d-proton); real Windows hardware still open</span></td></tr>
+            <tr><td>Linux x86_64</td><td>GCC 12+ / Clang 15+</td><td>WEBGPU, HEADLESS, SOFTWARE</td><td><span class="status-badge status-done">Tested</span></td></tr>
           </tbody>
         </table>
       </div>
@@ -217,9 +258,11 @@ cmake --build build --target cna_demo_2d
             <tr><th>Option</th><th>Values</th><th>Default</th><th>Description</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>CNA_GRAPHICS_BACKEND</code></td><td><code>SDL_RENDERER</code>, <code>EASYGL</code>, <code>BGFX</code>, <code>VULKAN</code></td><td><code>SDL_RENDERER</code></td><td>Selects the rendering backend for this build.</td></tr>
+            <tr><td><code>CNA_GRAPHICS_BACKEND</code></td><td><code>SDL_RENDERER</code>, <code>EASYGL</code>, <code>BGFX</code>, <code>VULKAN</code>, <code>WEBGPU</code>, <code>HEADLESS</code>, <code>SOFTWARE</code>, <code>D3D11</code>, <code>D3D12</code></td><td><code>SDL_RENDERER</code></td><td>Selects the rendering backend for this build. <code>HEADLESS</code>/<code>SOFTWARE</code> are CI/testing-only (no GPU needed); <code>D3D11</code>/<code>D3D12</code> are Windows-only (require the MinGW-w64 toolchain file when cross-compiling from Linux).</td></tr>
             <tr><td><code>CNA_USE_SYSTEM_SDL</code></td><td><code>ON</code>, <code>OFF</code></td><td><code>OFF</code></td><td>Link against system SDL3 packages instead of vendored submodules.</td></tr>
             <tr><td><code>CNA_BGFX_BUILD_SHADERC</code></td><td><code>ON</code>, <code>OFF</code></td><td><code>OFF</code></td><td>Build bgfx's <code>shaderc</code> shader compiler tool (only relevant for <code>BGFX</code> backend; needed to recompile bgfx shaders from GLSL source).</td></tr>
+            <tr><td><code>CNA_WEBGPU_ROOT</code></td><td>path</td><td><em>(unset)</em></td><td>Path to a manually-extracted <code>wgpu-native</code> package (only relevant for <code>WEBGPU</code> backend). Requires <code>-DCNA_WEBGPU_AUTO_DOWNLOAD=OFF</code>.</td></tr>
+            <tr><td><code>CNA_WEBGPU_AUTO_DOWNLOAD</code></td><td><code>ON</code>, <code>OFF</code></td><td><code>ON</code></td><td>Automatically download the prebuilt <code>wgpu-native</code> package for the <code>WEBGPU</code> backend.</td></tr>
           </tbody>
         </table>
       </div>
@@ -248,6 +291,11 @@ cmake --build build --target cna_demo_2d
       <h3>bgfx: FetchContent download fails</h3>
       <p>The BGFX backend fetches <code>bgfx.cmake</code> via CMake's <code>FetchContent</code> during configuration. This requires an internet connection. If you are behind a proxy, set the <code>https_proxy</code> environment variable before running CMake.</p>
 
+      <h3>WebGPU: wgpu-native package not found</h3>
+      <p>By default the <code>WEBGPU</code> backend downloads the pinned <code>wgpu-native</code> v29.0.1.1 package automatically at configure time, which requires an internet connection. For an offline or reproducible build, extract the official package yourself (it must contain <code>include/webgpu.h</code> and a <code>libwgpu_native</code> library under <code>lib/</code>) and pass <code>-DCNA_WEBGPU_ROOT=/absolute/path -DCNA_WEBGPU_AUTO_DOWNLOAD=OFF</code>.</p>
+
+      <h3>D3D11 / D3D12: "requires CMAKE_SYSTEM_NAME=Windows"</h3>
+      <p>Both Direct3D backends are hard-gated to a Windows target and fail fast with a <code>FATAL_ERROR</code> on a native Linux/macOS configure. Cross-compile from Linux using <code>-DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64.cmake</code> (the same MinGW-w64 toolchain SDL_RENDERER's own Windows cross-build already uses), then run the resulting binaries through <code>scripts/run-wine-dxvk.sh</code> (D3D11, needs Wine + DXVK) or <code>scripts/run-wine-vkd3d.sh</code> (D3D12, needs Wine + vkd3d-proton, a separate Wine prefix from D3D11's). Both wrappers fail loudly if the run silently fell back to a software path instead of the expected translation layer.</p>
 
     <nav class="docs-pagination" aria-label="Page navigation">
       <div class="docs-pagination-prev">
@@ -272,7 +320,7 @@ cmake --build build --target cna_demo_2d
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 227 of 245 XNA 4.0 public types implemented, verified by 4,373 unit tests and 490 GPU pixel tests across four rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 227 of 245 XNA 4.0 public types implemented, verified by 4,373 unit tests and 490 GPU pixel tests across its four established rendering backends.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

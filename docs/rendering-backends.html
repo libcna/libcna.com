@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Rendering Backends - CNA Documentation</title>
-  <meta name="description" content="CNA rendering backends guide - SDL_Renderer, EasyGL (OpenGL), bgfx, and Vulkan. Comparison, tradeoffs, and how to select a backend.">
+  <meta name="description" content="CNA rendering backends guide - SDL_Renderer, EasyGL (OpenGL), bgfx, Vulkan, WebGPU, native Direct3D 11/12, and the CI-only Headless/Software backends. Comparison, tradeoffs, and how to select a backend.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/rendering-backends.html">
   <meta property="og:title"       content="Rendering Backends - CNA Documentation">
-  <meta property="og:description" content="CNA rendering backends guide - SDL_Renderer, EasyGL (OpenGL), bgfx, and Vulkan. Comparison, tradeoffs, and how to select a backend.">
+  <meta property="og:description" content="CNA rendering backends guide - SDL_Renderer, EasyGL (OpenGL), bgfx, Vulkan, WebGPU, native Direct3D 11/12, and the CI-only Headless/Software backends. Comparison, tradeoffs, and how to select a backend.">
   <link rel="stylesheet" href="../css/style.css">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/rendering-backends.html">
@@ -19,7 +19,7 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "CNA Rendering Backends",
-  "description": "CNA rendering backends guide - SDL_Renderer, EasyGL (OpenGL), bgfx, and Vulkan. Comparison, tradeoffs, and how to select a backend.",
+  "description": "CNA rendering backends guide - SDL_Renderer, EasyGL (OpenGL), bgfx, Vulkan, WebGPU, native Direct3D 11/12, and the CI-only Headless/Software backends. Comparison, tradeoffs, and how to select a backend.",
   "url": "https://libcna.com/docs/rendering-backends.html",
   "datePublished": "2026-06-27",
   "author": {
@@ -111,6 +111,12 @@
           <li><a href="#easygl-opengl-es-30-backend">EasyGL (OpenGL ES 3.0) backend</a></li>
           <li><a href="#bgfx-backend">bgfx backend</a></li>
           <li><a href="#vulkan-backend">Vulkan backend</a></li>
+          <li><a href="#webgpu-backend">WebGPU backend (experimental)</a></li>
+          <li><a href="#headless-backend">Headless backend (CI / testing)</a></li>
+          <li><a href="#software-backend">Software backend (CPU rasterizer)</a></li>
+          <li><a href="#d3d11-backend">Direct3D 11 backend (Windows-only)</a></li>
+          <li><a href="#d3d12-backend">Direct3D 12 backend (Windows-only, off-screen)</a></li>
+          <li><a href="#ci-and-platform-backend-verification">CI &amp; platform-specific backend verification</a></li>
           <li><a href="#stock-effect-backend-parity">Stock Effect backend parity</a></li>
           <li><a href="#fillmodewireframe-availability">FillMode::WireFrame availability</a></li>
           <li><a href="#which-backend-should-i-choose">Which backend should I choose?</a></li>
@@ -121,6 +127,7 @@
       <h2 id="how-backends-work">How backends work</h2>
       <p>CNA separates the game-facing rendering API from the underlying rendering implementation through a set of pure virtual interfaces (<code>IGraphicsBackend</code>, <code>ISpriteBatchBackend</code>, <code>ITextureBackend</code>). Game code never calls backend APIs directly.</p>
       <p>A backend is selected at <strong>build time</strong> via the CMake variable <code>CNA_GRAPHICS_BACKEND</code>. Only one backend is compiled per build - there is no runtime dispatch overhead. Swapping backends requires only a CMake reconfiguration.</p>
+      <p>CNA now supports nine backends in total: the four established general-purpose backends below (SDL_Renderer, EasyGL, bgfx, Vulkan), an experimental native WebGPU backend, two CI/testing-only backends that need no GPU at all (Headless, Software), and two native Windows Direct3D backends (D3D11, D3D12).</p>
       <pre><code># SDL_Renderer (2D, all platforms, simplest)
 cmake -S . -B build -DCNA_GRAPHICS_BACKEND=SDL_RENDERER
 
@@ -131,7 +138,22 @@ cmake -S . -B build -DCNA_GRAPHICS_BACKEND=EASYGL
 cmake -S . -B build -DCNA_GRAPHICS_BACKEND=BGFX
 
 # Vulkan (2D + full 3D, all stock effects)
-cmake -S . -B build -DCNA_GRAPHICS_BACKEND=VULKAN</code></pre>
+cmake -S . -B build -DCNA_GRAPHICS_BACKEND=VULKAN
+
+# WebGPU (experimental; native wgpu-native, 2D + early 3D)
+cmake -S . -B build -DCNA_GRAPHICS_BACKEND=WEBGPU
+
+# Headless (CI/testing only; no GPU or window, renders nothing by design)
+cmake -S . -B build -DCNA_GRAPHICS_BACKEND=HEADLESS
+
+# Software (CPU rasterizer; deterministic pixel tests, no GPU needed)
+cmake -S . -B build -DCNA_GRAPHICS_BACKEND=SOFTWARE
+
+# Direct3D 11 (Windows-only; needs the MinGW-w64 toolchain file)
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64.cmake -DCNA_GRAPHICS_BACKEND=D3D11
+
+# Direct3D 12 (Windows-only, off-screen only; needs the MinGW-w64 toolchain file)
+cmake -S . -B build -DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64.cmake -DCNA_GRAPHICS_BACKEND=D3D12</code></pre>
 
       <h2 id="backend-test-results">How well each backend is verified</h2>
       <p>Each backend gets its own full test run, because backend selection happens at compile time. These are GPU pixel-readback tests: they render a scene on a real graphics context, read the framebuffer back, and assert on actual pixel values.</p>
@@ -204,9 +226,40 @@ cmake -S . -B build -DCNA_GRAPHICS_BACKEND=VULKAN</code></pre>
               <td><span class="status-badge status-done">Implemented</span></td>
               <td>Full 2D and 3D, all stock effects, instancing, MSAA</td>
             </tr>
+            <tr>
+              <td><code>WEBGPU</code></td>
+              <td>Native <code>wgpu-native</code> (experimental)</td>
+              <td><span class="status-badge status-wip">Experimental</span></td>
+              <td>Native desktop WebGPU experimentation; 2D <code>SpriteBatch</code> is production-quality, 3D is an early baseline</td>
+            </tr>
+            <tr>
+              <td><code>HEADLESS</code></td>
+              <td>No GPU/window &mdash; validation + counters only</td>
+              <td><span class="status-badge status-done">Implemented</span></td>
+              <td>CI logic tests with no GPU or display server at all</td>
+            </tr>
+            <tr>
+              <td><code>SOFTWARE</code></td>
+              <td>CPU rasterizer (no GPU)</td>
+              <td><span class="status-badge status-done">Implemented</span></td>
+              <td>Deterministic, GPU-free pixel tests and cross-backend diagnostics</td>
+            </tr>
+            <tr>
+              <td><code>D3D11</code></td>
+              <td>Native Direct3D 11 (Windows-only)</td>
+              <td><span class="status-badge status-done">Implemented</span></td>
+              <td>Native Windows Direct3D 11 (Wine+DXVK-verified; real Windows hardware verification still open)</td>
+            </tr>
+            <tr>
+              <td><code>D3D12</code></td>
+              <td>Native Direct3D 12 (Windows-only)</td>
+              <td><span class="status-badge status-wip">Off-screen only</span></td>
+              <td>Off-screen Direct3D 12 rendering/CI (swap-chain presentation not yet working under this project's Wine+vkd3d-proton dev loop)</td>
+            </tr>
           </tbody>
         </table>
       </div>
+      <p style="margin-top:0.75rem;"><strong>Planned, not yet started:</strong> a <code>D3D9</code> (Direct3D 9) backend is planned but not authorized for implementation. Its feasibility has been spiked and proven — Microsoft's own XNA 4.0 stock-effect HLSL shaders compile to real D3D9 bytecode, and real XNA 4.0 itself has been made to run as a verification oracle — but building it awaits a project-owner go-ahead. See the <a href="../roadmap.html">Roadmap</a> for details.</p>
 
       <h2 id="sdlrenderer-backend">SDL_Renderer backend</h2>
       <p><strong>CMake flag:</strong> <code>-DCNA_GRAPHICS_BACKEND=SDL_RENDERER</code></p>
@@ -270,6 +323,138 @@ cmake -S . -B build -DCNA_GRAPHICS_BACKEND=VULKAN</code></pre>
       <p><strong>Two gaps that older documentation still lists are now closed.</strong> <code>BlendState</code> has a real per-<code>Blend</code>/<code>BlendFunction</code> mapping covering all 13 XNA blend factors, including <code>BlendFactor</code> and <code>InverseBlendFactor</code>. <code>OcclusionQuery</code> now performs real per-draw-call correlation. Both landed in code after the write-ups that describe them as blocked; if you read otherwise elsewhere, that source is out of date.</p>
       <p><strong>Current state:</strong> Full 2D and 3D pipeline, all five stock effects pixel-tested, custom SPIR-V shaders supported. 125 of 126 GPU pixel tests pass; the one failure is <code>RasterizerState.DepthBias</code>.</p>
       <p><strong>Recommended for:</strong> Production 3D applications on Vulkan-capable desktop and mobile hardware, and anywhere you want low-level GPU control with a near-complete XNA effects pipeline.</p>
+
+      <h2 id="webgpu-backend">WebGPU backend (experimental)</h2>
+      <p><strong>CMake flag:</strong> <code>-DCNA_GRAPHICS_BACKEND=WEBGPU</code></p>
+      <p>The WebGPU backend is CNA's fifth graphics backend, activated by the project owner on 2026-07-12. It targets the native <code>wgpu-native</code> implementation (pinned to v29.0.1.1, auto-downloaded by CMake by default) rather than a browser — this is a native desktop backend, not browser/Emscripten WebGPU.</p>
+      <p><strong>Current state:</strong> the native 2D baseline is genuinely verified: device/surface setup, resize and present-mode handling, RGBA8 <code>Texture2D</code> upload, a full WGSL <code>SpriteBatch</code> pipeline (tint, source/destination rect, rotation, flips, linear/nearest filtering, wrap/clamp/mirror sampling), and real <code>GetBackBufferData()</code> pixel readback are all implemented and verified — twice: once via CNA's own demo, and independently against a real third-party XNA-style game (<code>../mobile-eggbert</code>) that reached its main menu and played a full animated cutscene with pixel-correct rendering. A first real 3D draw path (<code>DrawColoredPrimitives</code>, genuinely depth-tested, not "last draw wins") also exists.</p>
+      <p><strong>Advantages:</strong></p>
+      <ul>
+        <li>Modern explicit GPU API with a native (non-browser) implementation</li>
+        <li>2D <code>SpriteBatch</code> rendering is production-quality and independently verified against a real game</li>
+        <li>Genuine depth-tested 3D draw path already proven</li>
+      </ul>
+      <p><strong>Limitations:</strong></p>
+      <ul>
+        <li>Stock effects (<code>BasicEffect</code> real lighting/texture dispatch, <code>SkinnedEffect</code>, etc.) are not yet implemented — only an unlit/untextured 3D draw path exists so far</li>
+        <li>No render targets, cube/3D textures, MSAA, or instancing yet</li>
+        <li><code>Texture2D.GetData()</code> (arbitrary texture readback), full <code>BlendState</code>/<code>RasterizerState</code>/stencil-op mapping, and custom WGSL effects are all open</li>
+        <li>Browser/Emscripten WebGPU is not implemented — native desktop only</li>
+      </ul>
+      <p><strong>Recommended for:</strong> experimenting with CNA's WebGPU path today for 2D games; not yet a 3D-parity alternative to EasyGL/Vulkan/Bgfx.</p>
+
+      <h2 id="headless-backend">Headless backend (CI / testing only)</h2>
+      <p><strong>CMake flag:</strong> <code>-DCNA_GRAPHICS_BACKEND=HEADLESS</code></p>
+      <p>The Headless backend is a CI/testing-only backend, verified 2026-07-13. It never touches SDL's video subsystem, OpenGL, Vulkan, or any GPU library — no window is created and no GPU context exists. <strong>It renders nothing by design</strong>: <code>ReadBackbuffer()</code> simply reports the last <code>Clear()</code> color for every pixel. In place of real rendering it does real bookkeeping — argument validation, resource-lifecycle tracking, and draw-call/state-change counters — so a test can assert "this code path ran, with these arguments, this many times, and nothing leaked," fast and without a display server.</p>
+      <p>A runtime strictness dial (the <code>CNA_HEADLESS_MODE</code> environment variable) selects between <code>Fast</code> (counters only), <code>Validation</code> (default — throws on the kind of misuse a real backend would reject), and <code>Trace</code> (adds a structured call log, debug labels, and trace-log diffing between two runs).</p>
+      <p><strong>Advantages:</strong></p>
+      <ul>
+        <li>No GPU, window, or display server needed at all — runs in any CI container</li>
+        <li>Fast: skips real rendering entirely, just validates and counts</li>
+        <li>Validated against a real third-party game (<code>../mobile-eggbert</code>), running 20+ seconds with zero crashes or exceptions</li>
+      </ul>
+      <p><strong>Limitations:</strong></p>
+      <ul>
+        <li>Proves nothing about pixel correctness — it is a logic-testing harness, not a rendering backend</li>
+        <li>No disposed-state-object validation (a real interface constraint, not a gap expected to close)</li>
+      </ul>
+      <p><strong>Recommended for:</strong> fast CI tests of game logic (draw-call counts, resource lifetime, argument validation) where no GPU or display server is available.</p>
+
+      <h2 id="software-backend">Software backend (CPU rasterizer)</h2>
+      <p><strong>CMake flag:</strong> <code>-DCNA_GRAPHICS_BACKEND=SOFTWARE</code></p>
+      <p>The Software backend is a CPU-only rasterizer, verified 2026-07-13. Like Headless it never touches SDL's video subsystem, OpenGL, Vulkan, or any GPU library — but unlike Headless it actually rasterizes real triangles into a CPU-owned RGBA8 framebuffer, with a real edge-function rasterizer, perspective-correct attribute interpolation, and a real per-pixel depth test. <code>GetBackBufferData()</code> returns genuinely correct pixels, with no GPU, window, or display server involved at any point.</p>
+      <p>Verified 2026-07-13 against EasyGL on a canonical unlit-triangle scene via a dedicated cross-backend diagnostic tool: max per-channel pixel difference of 1 (effectively identical, ordinary rounding noise).</p>
+      <p><strong>Advantages:</strong></p>
+      <ul>
+        <li>Deterministic pixel tests with no GPU driver, display server, or Xvfb needed at all</li>
+        <li>Works in server/CI environments with no GPU whatsoever</li>
+        <li>A fast, portable, independently-implemented reference for basic XNA primitive/effect rendering behavior</li>
+      </ul>
+      <p><strong>Limitations:</strong></p>
+      <ul>
+        <li><code>TriangleList</code> only — other primitive types throw a clear error</li>
+        <li>No per-light diffuse lighting or fog (<code>DualTextureEffect</code>/<code>EnvironmentMapEffect</code>/<code>SkinnedEffect</code> are supported, minus lighting)</li>
+        <li>No MRT, MSAA, mipmapping, <code>Texture3D</code>, or <code>RenderTargetCube</code></li>
+        <li>Only two blend modes distinguished (<code>Opaque</code> vs. one simplified "over" composite for everything else)</li>
+        <li><code>Present()</code> is a no-op — there is no way to view a Software-rendered frame on screen in its current form</li>
+        <li>Not a real-time backend — no SIMD, multithreading, or tiling; correctness and determinism are the goals, not speed</li>
+      </ul>
+      <p><strong>Recommended for:</strong> deterministic, GPU-free pixel tests, headless CI environments with no GPU at all, and cross-backend rendering diagnostics.</p>
+
+      <h2 id="d3d11-backend">Direct3D 11 backend (Windows-only)</h2>
+      <p><strong>CMake flags:</strong> <code>-DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64.cmake -DCNA_GRAPHICS_BACKEND=D3D11</code></p>
+      <p>The D3D11 backend is CNA's first native Direct3D backend — as opposed to Bgfx, which can select a D3D11/D3D12 renderer internally on Windows, but that is bgfx's own abstraction rather than a CNA-level one. It gives XNA/FNA-style games a dependency-free native Windows path. Verified 2026-07-14: hard-gated to <code>CMAKE_SYSTEM_NAME=Windows</code> at configure time, cross-compiled from Linux with MinGW-w64, and verified running through <strong>Wine + DXVK</strong> on a real GPU — 6 CTest binaries, 96+ checks, all passing.</p>
+      <p><strong>Working and pixel-verified:</strong> all 10 stock HLSL shader variants (<code>BasicEffect</code>/<code>AlphaTestEffect</code>/<code>DualTextureEffect</code>/<code>EnvironmentMapEffect</code>/<code>SkinnedEffect</code>, each colored/textured/lit variant, plus sprite/instanced), textures and render targets (MRT, 4&times; MSAA, occlusion queries), all four state-object classes (<code>BlendState</code>/<code>DepthStencilState</code>/<code>RasterizerState</code>/<code>SamplerState</code>), a real <code>SpriteBatch</code> (rotation/scale/crop/flip, custom <code>Effect</code> support, <code>TextureAddressMode</code> Wrap/Mirror), and a runtime-<code>D3DCompile()</code>-backed custom <code>ShaderEffect</code> path.</p>
+      <p><strong>Advantages:</strong></p>
+      <ul>
+        <li>Native Direct3D 11, not a translation layer — direct control over the exact calls made</li>
+        <li>Broad, pixel-verified coverage across all 10 stock shader variants and all 4 state-object classes</li>
+        <li>Real <code>SpriteBatch</code> plus a working, Wine-verified swap chain and <code>Present()</code></li>
+      </ul>
+      <p><strong>Limitations:</strong></p>
+      <ul>
+        <li><strong>Windows-only</strong> — the CMake configure step fails fast with a clear error on native Linux/macOS</li>
+        <li><strong>Not yet verified on real Windows hardware.</strong> Every check above ran through Wine+DXVK on this project's own Linux dev machine's real GPU — real DXGI present/tearing behavior, full device-lost recovery, and WARP software-rasterizer fallback all still need a real Windows machine</li>
+        <li>Specular highlights, multi-light discrimination, and mip chains beyond level 0 are implemented but not yet independently pixel-tested</li>
+      </ul>
+      <p><strong>Recommended for:</strong> teams that want a dependency-free native Direct3D 11 path for Windows once real-hardware verification lands; today, best used for local Wine+DXVK development and CI.</p>
+
+      <h2 id="d3d12-backend">Direct3D 12 backend (Windows-only, off-screen)</h2>
+      <p><strong>CMake flags:</strong> <code>-DCMAKE_TOOLCHAIN_FILE=cmake/toolchains/mingw-w64.cmake -DCNA_GRAPHICS_BACKEND=D3D12</code></p>
+      <p>The D3D12 backend is CNA's second native Direct3D backend, built directly on D3D11's own experience — it shares D3D11's HLSL/DXBC shader bytecode, format/state mapping tables, and constant-buffer layouts. Verified 2026-07-14 the same way as D3D11 (Windows-only hard gate, MinGW-w64 cross-compiled) but through <strong>Wine + vkd3d-proton</strong> instead of DXVK. <code>D3D12_Smoke</code> CTest: 80/80 checks, all passing.</p>
+      <p><strong>Working and pixel-verified, off-screen:</strong> real command queues, descriptor heaps, command lists, fences with genuine 2-frame back-pressure, a real per-resource barrier-transition tracker, pipeline state objects, root signatures, vertex/index buffers, 2D and cube textures, the same 10 stock HLSL shader variants D3D11 uses, a real <code>SpriteBatch</code>, and a real, functionally-proven device-removed recovery path.</p>
+      <p><strong>Off-screen only — the most significant open gap:</strong> swap-chain creation is implemented for real but crashes under this dev loop, a genuine architecture mismatch between the system <code>dxgi.dll</code> and vkd3d-proton's own <code>d3d12.dll</code> — a real Wine/vkd3d-proton environment issue, <strong>not a CNA bug</strong>. Every proof for this backend stays off-screen for that reason.</p>
+      <p><strong>Advantages:</strong></p>
+      <ul>
+        <li>Real, off-screen-pixel-verified D3D12 device/command/PSO/root-signature pipeline, reusing D3D11's proven HLSL shaders</li>
+        <li>Real, functionally-proven device-removed recovery (full teardown/rebuild of every device-lifetime resource)</li>
+      </ul>
+      <p><strong>Limitations:</strong></p>
+      <ul>
+        <li><strong>Windows-only</strong>, same hard CMake gate as D3D11, and <strong>not yet verified on real Windows hardware</strong></li>
+        <li><strong>Off-screen only</strong> — no working swap chain/<code>Present()</code> under this dev loop</li>
+        <li>No runtime-settable <code>BlendState</code>/<code>DepthStencilState</code>/<code>RasterizerState</code> (baked into hardcoded PSOs); no per-slot <code>SamplerState</code> (hardcoded static sampler)</li>
+        <li>No public render-target backend (<code>RenderTarget2D</code>/<code>RenderTargetCube</code>/MRT don't work via the real XNA API yet), no <code>Texture3D</code>, no occlusion queries</li>
+      </ul>
+      <p><strong>Recommended for:</strong> off-screen D3D12 rendering/CI work today; not yet usable for an on-screen Windows game until swap-chain presentation and real-hardware verification land.</p>
+
+      <h2 id="ci-and-platform-backend-verification">CI &amp; platform-specific backend verification</h2>
+      <p>Five more backends exist for purposes other than general cross-platform 2D/3D gameplay rendering — CI logic testing, deterministic GPU-free pixel testing, native Windows Direct3D, and an experimental native WebGPU path. Each is verified differently from the four backends above, so they are <strong>not</strong> part of the shared "490 GPU pixel tests across its four established backends" figure quoted elsewhere on this site:</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Backend</th><th>Verification method</th><th>Notes</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>HEADLESS</code></td>
+              <td>Dedicated <code>Headless_*</code> CTest suite (bookkeeping/argument-validation/trace-log checks) plus a real third-party game run 20+ seconds with zero crashes</td>
+              <td>Renders nothing by design &mdash; proves call sequencing and resource lifetime, not pixels</td>
+            </tr>
+            <tr>
+              <td><code>SOFTWARE</code></td>
+              <td>Dedicated rasterizer/effects CTests plus a cross-backend pixel-diff tool run against EasyGL (max per-channel difference of 1 on a canonical scene)</td>
+              <td>Real CPU-rendered pixels, no GPU &mdash; <code>TriangleList</code> only, no lighting/fog in v1</td>
+            </tr>
+            <tr>
+              <td><code>D3D11</code></td>
+              <td>6 CTest binaries, 96+ checks, via Wine+DXVK on a real GPU</td>
+              <td>Windows-only; not yet verified on real Windows hardware</td>
+            </tr>
+            <tr>
+              <td><code>D3D12</code></td>
+              <td><code>D3D12_Smoke</code> CTest, 80/80 checks, via Wine+vkd3d-proton, off-screen only</td>
+              <td>Windows-only; swap-chain presentation doesn't work under this dev loop (a real Wine/vkd3d-proton <code>dxgi.dll</code> mismatch, not a CNA bug); not yet verified on real Windows hardware</td>
+            </tr>
+            <tr>
+              <td><code>WEBGPU</code></td>
+              <td>Automated native smoke CTest plus a manual-review SpriteBatch validation scene, verified twice (CNA's own demo and an independent real third-party game)</td>
+              <td>2D is genuinely pixel-correct; full stock effects, render targets, and MSAA are still open</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
 
       <h2 id="stock-effect-backend-parity">Stock Effect backend parity</h2>
       <p>The table below shows the per-backend status for each stock XNA effect. Legend: <strong>pixel-tested</strong> = rendered output verified; <strong>compiles/links</strong> = code present but no pixel-level regression test yet; <strong>not implemented</strong> = missing; <strong>N/A</strong> = effect is 3D-only, not applicable to the 2D-only backend.</p>
@@ -376,6 +561,22 @@ cmake -S . -B build -DCNA_GRAPHICS_BACKEND=VULKAN</code></pre>
         <span class="callout-icon">&#128161;</span>
         <p><strong>For Vulkan production use:</strong> The <code>VULKAN</code> backend has all five stock effects (pixel-tested), instancing, MSAA 4x, MRT, custom SPIR-V shaders, real per-factor <code>BlendState</code> and working <code>OcclusionQuery</code>. Choose it when you need full low-level GPU control on Vulkan-capable hardware.</p>
       </div>
+      <div class="callout callout--info">
+        <span class="callout-icon">&#128161;</span>
+        <p><strong>For CI logic tests with no GPU at all:</strong> Use <code>HEADLESS</code>. It renders nothing but validates every draw call, tracks resource lifetime, and runs in any container with no display server.</p>
+      </div>
+      <div class="callout callout--info">
+        <span class="callout-icon">&#128161;</span>
+        <p><strong>For deterministic, GPU-free pixel tests:</strong> Use <code>SOFTWARE</code>. It's a real CPU rasterizer — genuinely correct pixels with no GPU, driver, or Xvfb needed, though it's not a real-time backend.</p>
+      </div>
+      <div class="callout callout--info">
+        <span class="callout-icon">&#128161;</span>
+        <p><strong>For native Windows Direct3D:</strong> Use <code>D3D11</code> for a dependency-free, pixel-verified native Direct3D 11 path (Wine+DXVK-verified; real Windows hardware verification still open), or <code>D3D12</code> if you specifically need off-screen D3D12 rendering today (swap-chain presentation isn't working yet under this project's Wine+vkd3d-proton dev loop).</p>
+      </div>
+      <div class="callout callout--info">
+        <span class="callout-icon">&#128161;</span>
+        <p><strong>For experimenting with WebGPU:</strong> Use <code>WEBGPU</code>. Its native 2D <code>SpriteBatch</code> path is genuinely verified against a real game; 3D stock effects and render targets are still early.</p>
+      </div>
 
 
     <nav class="docs-pagination" aria-label="Page navigation">
@@ -401,7 +602,7 @@ cmake -S . -B build -DCNA_GRAPHICS_BACKEND=VULKAN</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 227 of 245 XNA 4.0 public types implemented, verified by 4,373 unit tests and 490 GPU pixel tests across four rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 227 of 245 XNA 4.0 public types implemented, verified by 4,373 unit tests and 490 GPU pixel tests across its four established rendering backends.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
