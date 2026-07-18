@@ -61,6 +61,7 @@
         <li><a href="input.html" class="docs-nav-link">Input System</a></li>
         <li><a href="math-types.html" class="docs-nav-link">Math Types</a></li>
         <li><a href="content-manager.html" class="docs-nav-link">ContentManager</a></li>
+        <li><a href="content-pipeline-xnb.html" class="docs-nav-link">XNB Content Pipeline</a></li>
         <li><a href="3d-rendering.html" class="docs-nav-link">3D Rendering</a></li>
         <li><a href="packed-vector.html" class="docs-nav-link">PackedVector Types</a></li>
         <li><a href="vs-alternatives.html" class="docs-nav-link">CNA vs Alternatives</a></li>
@@ -89,12 +90,18 @@
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Implementation status:</strong> The Storage namespace is <strong>implemented</strong>. Headers are present and the API is functional for file I/O on all supported platforms.</p>
+        <p><strong>Implementation status: 100% functionally complete.</strong> All three <code>Storage</code> types are fully implemented &mdash; real <code>std::filesystem</code> I/O, a hand-written glob matcher for the pattern-based directory queries, and correct <code>&lt;root&gt;/&lt;displayName&gt;/Player{N}</code> save namespacing. The async <code>Begin*</code>/<code>End*</code> pairs are implemented synchronously, which is the correct behaviour on desktop.</p>
+      </div>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Storage has zero unit tests.</strong> It is one of only two areas of CNA (with <code>Media</code>) that carries none at all. The implementation is complete and real, but nothing in the 4,845-case suite exercises it &mdash; so "complete" here means audited by reading the code, not verified by running it. Treat it accordingly.</p>
       </div>
 
       <h2>Overview</h2>
       <p>The <code>Microsoft::Xna::Framework::Storage</code> namespace provides a platform-independent abstraction for save-game and user-data persistence. On the original Xbox 360, <code>StorageDevice</code> represented a physical memory unit or hard drive, and device selection was presented to the player as a system UI. On PC, the selector returned immediately with the local user profile directory.</p>
-      <p>CNA preserves the full XNA 4.0 API shape, including the Begin/End asynchronous pattern, but all operations complete synchronously on current platforms. The <code>StorageContainer</code> maps directly to a directory on the local filesystem, and <code>StorageDevice</code> represents that location. The async wrappers exist purely for source-level XNA compatibility and return immediately.</p>
+      <p>CNA preserves the full XNA 4.0 API shape, including the Begin/End asynchronous pattern, and backs it with genuine <code>std::filesystem</code> operations. <code>StorageContainer</code> maps to a real directory on the local filesystem and <code>StorageDevice</code> represents that location.</p>
+      <p>The async wrappers complete synchronously. This is a deliberate choice rather than a shortcut: the pattern exists in XNA because Xbox 360 storage selection could block on player interaction with a system UI, which has no desktop analogue. Local filesystem operations return fast enough that dispatching them to a thread would add latency and failure modes without adding responsiveness. Source-level XNA compatibility is preserved either way &mdash; your callback still fires and <code>End*</code> still returns the result.</p>
 
       <h2>Namespace members at a glance</h2>
 
@@ -168,25 +175,14 @@
         </table>
       </div>
 
-      <h3>Platform storage paths</h3>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>Platform</th><th>Root path</th></tr>
-          </thead>
-          <tbody>
-            <tr><td>Linux / macOS</td><td><code>~/.local/share/&lt;AppName&gt;/</code></td></tr>
-            <tr><td>Windows</td><td><code>%APPDATA%\&lt;AppName&gt;\</code></td></tr>
-            <tr><td>Android</td><td><code>getFilesDir() / &lt;AppName&gt; /</code> (internal app storage)</td></tr>
-            <tr><td>Web (Emscripten)</td><td>Emscripten persistent FS mount (limited; requires explicit flush)</td></tr>
-          </tbody>
-        </table>
-      </div>
-
-      <div class="callout callout--warn">
-        <span class="callout-icon">&#9888;</span>
-        <p>On the Web target, writes to the Emscripten persistent filesystem are buffered in memory. Call <code>EM_ASM(FS.syncfs(false, function(){}))</code> after writing to flush data to IndexedDB. Failing to sync means data is lost when the tab closes.</p>
-      </div>
+      <h3>On-disk layout</h3>
+      <p>Saves are namespaced on disk as <code>&lt;root&gt;/&lt;displayName&gt;/Player{N}</code>, matching XNA's own scheme:</p>
+      <ul>
+        <li><code>&lt;root&gt;</code> &mdash; the storage root the <code>StorageDevice</code> represents.</li>
+        <li><code>&lt;displayName&gt;</code> &mdash; the container name you pass to <code>BeginOpenContainer</code>.</li>
+        <li><code>Player{N}</code> &mdash; the per-player subdirectory, derived from the <code>PlayerIndex</code> the device was selected for.</li>
+      </ul>
+      <p>The consequence is the one XNA intended: two players on the same machine writing to the same container name do not collide, and a container opened without a player index is shared across the title.</p>
 
       <h2>StorageContainer</h2>
       <p><code>StorageContainer</code> provides file and directory access scoped to a named save context within a device. It implements the XNA 4.0 API almost entirely. All paths passed to its methods are relative to the container root directory.</p>
@@ -258,6 +254,9 @@
         </table>
       </div>
 
+      <h3>Pattern matching</h3>
+      <p>The pattern-taking overloads are backed by a hand-written glob matcher rather than a delegation to the platform shell or a regex engine. That keeps wildcard semantics identical across every platform CNA builds for, instead of inheriting whatever the host's directory-enumeration API happens to do.</p>
+
       <h2>StorageDeviceNotConnectedException</h2>
       <p><code>StorageDeviceNotConnectedException</code> is thrown when a <code>StorageDevice</code> that was previously valid is no longer accessible — for example, if a memory unit was ejected on Xbox 360. In CNA, because storage always maps to the local filesystem, this exception is raised only in exceptional circumstances such as the backing directory being removed by an external process after the device was opened.</p>
       <p>It derives from <code>ExternalException</code> and carries a human-readable message. Catch it wherever you call <code>BeginOpenContainer</code> or perform file operations if your application needs to handle a missing device gracefully.</p>
@@ -277,7 +276,7 @@
         <li>Call the <code>Begin*</code> method, supplying an optional <code>AsyncCallback</code> and state object. It returns an <code>IAsyncResult</code>.</li>
         <li>In the callback (or by polling <code>IAsyncResult::IsCompleted</code>), call the matching <code>End*</code> method to retrieve the result.</li>
       </ol>
-      <p>In CNA, all storage operations complete synchronously: the <code>Begin*</code> call performs the operation immediately and the returned <code>IAsyncResult</code> has <code>IsCompleted == true</code> before the callback is even invoked. The pattern is preserved verbatim so that XNA save-game code ports without changes.</p>
+      <p>In CNA, all storage operations complete synchronously: the <code>Begin*</code> call performs the operation immediately and the returned <code>IAsyncResult</code> has <code>IsCompleted == true</code> before the callback is even invoked. The pattern is preserved verbatim so that XNA save-game code ports without changes, and synchronous completion is the correct semantics for a desktop filesystem &mdash; there is no system UI to wait on and no removable media to negotiate.</p>
 
       <h2>Code examples</h2>
 
@@ -362,7 +361,7 @@ container-&gt;Dispose();</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 227 of 245 XNA 4.0 public types implemented, verified by 4,373 unit tests and 490 GPU pixel tests across its four established rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

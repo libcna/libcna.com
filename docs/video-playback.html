@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Video Playback - CNA Documentation</title>
-  <meta name="description" content="CNA video playback documentation - VideoPlayer, Video class, FFmpeg integration, platform availability, and rendering patterns.">
+  <meta name="description" content="CNA video playback documentation - VideoPlayer's real FFmpeg decoder, PTS-driven pacing, rendering patterns, and why video is effectively native-Linux-only today.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/video-playback.html">
   <meta property="og:title"       content="Video Playback - CNA Documentation">
-  <meta property="og:description" content="CNA video playback documentation - VideoPlayer, Video class, FFmpeg integration, platform availability, and rendering patterns.">
+  <meta property="og:description" content="CNA video playback documentation - VideoPlayer's real FFmpeg decoder, PTS-driven pacing, rendering patterns, and why video is effectively native-Linux-only today.">
   <link rel="stylesheet" href="../css/style.css">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/video-playback.html">
@@ -61,6 +61,7 @@
         <li><a href="input.html" class="docs-nav-link">Input System</a></li>
         <li><a href="math-types.html" class="docs-nav-link">Math Types</a></li>
         <li><a href="content-manager.html" class="docs-nav-link">ContentManager</a></li>
+        <li><a href="content-pipeline-xnb.html" class="docs-nav-link">XNB Content Pipeline</a></li>
         <li><a href="3d-rendering.html" class="docs-nav-link">3D Rendering</a></li>
         <li><a href="packed-vector.html" class="docs-nav-link">PackedVector Types</a></li>
         <li><a href="vs-alternatives.html" class="docs-nav-link">CNA vs Alternatives</a></li>
@@ -89,11 +90,23 @@
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Implementation status: Partial.</strong> Video playback is functional on <strong>Linux</strong> and <strong>Windows</strong>. FFmpeg is excluded from the Emscripten (WebAssembly) and Android builds; see the <a href="#platform-availability">Platform Availability</a> section for alternatives.</p>
+        <p><strong>Implementation status:</strong> <code>VideoPlayer</code> is <strong>real</strong> &mdash; it genuinely decodes video through FFmpeg (real <code>libavcodec</code>, <code>libavformat</code> and <code>libswresample</code>, with PTS-driven pacing), not a placeholder that returns blank frames.</p>
+      </div>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Video is effectively native-Linux-only today.</strong> FFmpeg is unavailable on <strong>Emscripten</strong>, on <strong>Android</strong>, and on <strong>every Windows target</strong>. The decoder is genuine, but on any platform other than desktop Linux it is simply not there. Do not plan a cross-platform title around <code>VideoPlayer</code> in its current state. See <a href="#platform-availability">Platform Availability</a>.</p>
       </div>
 
       <h2>Overview</h2>
       <p><code>VideoPlayer</code> and <code>Video</code> live in the <code>Microsoft::Xna::Framework::Media</code> namespace, matching the XNA 4.0 API. CNA uses <a href="https://ffmpeg.org/" target="_blank" rel="noopener">FFmpeg</a> as its video decoding back-end: the decoder reads compressed frames from the container, converts them from YUV colour space to RGBA, and uploads the result as a <code>Texture2D</code>. Your <code>Draw()</code> method retrieves that texture each frame via <code>VideoPlayer::GetTexture()</code> and renders it with <code>SpriteBatch</code> (or any other drawing path) exactly like any other <code>Texture2D</code>.</p>
+      <p>This is a real decoder, and worth distinguishing from the rest of the <code>Media</code> namespace. <code>MediaPlayer</code> genuinely plays songs and <code>VideoPlayer</code> genuinely decodes video; the Zune/Windows-Phone media <em>catalogue</em> API in the same namespace &mdash; <code>MediaLibrary</code>, <code>Album</code>, <code>Artist</code>, <code>Playlist</code>, <code>Picture</code> and their collections &mdash; throws on every member. That split is why <code>Media</code>'s overall functional coverage sits around 33% despite the playback path being sound.</p>
+      <p>Frame timing is driven by the stream's own presentation timestamps rather than by a fixed frame counter, so playback tracks the container's real timeline instead of drifting against it.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>There are zero test files for <code>Media</code>.</strong> Every other major area of CNA carries unit tests; this one carries none. The decoder works, but nothing in the suite guards it against regression.</p>
+      </div>
 
       <p>Supported container and codec combinations:</p>
       <ul>
@@ -109,9 +122,11 @@
         <span class="callout-icon">&#9888;</span>
         <p><strong>Platform restriction &mdash; FFmpeg is NOT available on:</strong></p>
         <ul>
-          <li><strong>Emscripten / WebAssembly</strong> &mdash; FFmpeg is excluded from the WASM build. Use the HTML5 <code>&lt;video&gt;</code> element for in-browser video playback instead.</li>
-          <li><strong>Android</strong> &mdash; FFmpeg integration is pending. Use the Android <code>MediaPlayer</code> API directly until support lands.</li>
+          <li><strong>Emscripten / WebAssembly</strong> &mdash; use the HTML5 <code>&lt;video&gt;</code> element for in-browser video playback instead.</li>
+          <li><strong>Android</strong> &mdash; use the Android <code>MediaPlayer</code> API directly.</li>
+          <li><strong>Every Windows target</strong> &mdash; both the MinGW-w64 cross-toolchain and native MSVC. Windows builds have no video decoding at all.</li>
         </ul>
+        <p>That leaves desktop Linux as the only platform where <code>VideoPlayer</code> actually decodes anything.</p>
       </div>
 
       <h2 id="video-class">Video Class</h2>
@@ -262,14 +277,14 @@ auto video = content.Load&lt;Video&gt;("videos/intro");</code></pre>
           </thead>
           <tbody>
             <tr>
-              <td>Linux</td>
+              <td>Linux (desktop)</td>
               <td><span class="status-badge status-done">Yes</span></td>
-              <td>&mdash;</td>
+              <td>&mdash; the only platform with working video</td>
             </tr>
             <tr>
-              <td>Windows</td>
-              <td><span class="status-badge status-done">Yes</span></td>
-              <td>&mdash;</td>
+              <td>Windows (MinGW-w64 and native MSVC)</td>
+              <td><span class="status-badge status-wip">No</span></td>
+              <td>None &mdash; no video decoding on any Windows build</td>
             </tr>
             <tr>
               <td>Emscripten / WebAssembly</td>
@@ -278,7 +293,7 @@ auto video = content.Load&lt;Video&gt;("videos/intro");</code></pre>
             </tr>
             <tr>
               <td>Android</td>
-              <td><span class="status-badge status-wip">Pending</span></td>
+              <td><span class="status-badge status-wip">No</span></td>
               <td>Android <code>MediaPlayer</code> API</td>
             </tr>
           </tbody>
@@ -286,20 +301,17 @@ auto video = content.Load&lt;Video&gt;("videos/intro");</code></pre>
       </div>
 
       <h2 id="ffmpeg-setup">FFmpeg Setup</h2>
-      <p>FFmpeg must be installed on the host system before building CNA with video support. CNA's CMake configuration locates FFmpeg via <code>find_package(FFmpeg)</code> or pkg-config; no additional CMake flags are required once the libraries are present.</p>
+      <p>FFmpeg is an <strong>optional, desktop-Linux-only</strong> dependency, located through pkg-config at configure time. It must be installed on the host system before building CNA with video support; if it is absent, CNA builds fine and video is simply unavailable.</p>
 
       <p>On Debian and Ubuntu:</p>
-      <pre><code>sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswscale-dev</code></pre>
+      <pre><code>sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswresample-dev libswscale-dev</code></pre>
 
-      <p>The four required libraries are:</p>
-      <ul>
-        <li><code>libavcodec</code> &mdash; codec implementations (H.264, VP8/VP9, Theora, &hellip;)</li>
-        <li><code>libavformat</code> &mdash; container demuxers (MP4, MKV, OGV, &hellip;)</li>
-        <li><code>libavutil</code> &mdash; shared utilities and pixel format descriptors</li>
-        <li><code>libswscale</code> &mdash; YUV-to-RGBA colour space conversion</li>
-      </ul>
+      <p>The decoder is built on <code>libavcodec</code> (codec implementations), <code>libavformat</code> (container demuxers) and <code>libswresample</code> (audio resampling), alongside the usual FFmpeg support libraries.</p>
 
-      <p>On Windows, pre-built FFmpeg development packages are available from <a href="https://github.com/BtbN/FFmpeg-Builds/releases" target="_blank" rel="noopener">BtbN/FFmpeg-Builds</a>. Extract the package and set the <code>FFMPEG_ROOT</code> CMake variable (or add the <code>lib</code> directory to <code>CMAKE_PREFIX_PATH</code>) so that <code>find_package</code> can locate the headers and import libraries.</p>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>There is no Windows FFmpeg setup to describe. Video is not wired up on any Windows target, so installing FFmpeg development packages there will not enable <code>VideoPlayer</code>.</p>
+      </div>
 
       <h2 id="code-examples">Code Examples</h2>
 
@@ -397,7 +409,7 @@ void MyGame::Update(GameTime gameTime) {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 227 of 245 XNA 4.0 public types implemented, verified by 4,373 unit tests and 490 GPU pixel tests across its four established rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

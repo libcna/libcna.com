@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ContentManager - CNA Documentation</title>
-  <meta name="description" content="CNA ContentManager documentation - loading typed assets with Load&lt;T&gt;(), built-in type readers, JSON descriptor formats, custom ContentTypeReader, and XNB pipeline note.">
+  <meta name="description" content="CNA ContentManager documentation - loading typed assets with Load&lt;T&gt;(), .xnb-first asset resolution with loose-file fallback, built-in type readers, JSON descriptor formats, and custom ContentTypeReader.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/content-manager.html">
   <meta property="og:title"       content="ContentManager - CNA Documentation">
-  <meta property="og:description" content="CNA ContentManager documentation - loading typed assets with Load&lt;T&gt;(), built-in type readers, JSON descriptor formats, custom ContentTypeReader, and XNB pipeline note.">
+  <meta property="og:description" content="CNA ContentManager documentation - loading typed assets with Load&lt;T&gt;(), .xnb-first asset resolution with loose-file fallback, built-in type readers, JSON descriptor formats, and custom ContentTypeReader.">
   <link rel="stylesheet" href="../css/style.css">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/content-manager.html">
@@ -61,6 +61,7 @@
         <li><a href="input.html" class="docs-nav-link">Input System</a></li>
         <li><a href="math-types.html" class="docs-nav-link">Math Types</a></li>
         <li><a href="content-manager.html" class="docs-nav-link active">ContentManager</a></li>
+        <li><a href="content-pipeline-xnb.html" class="docs-nav-link">XNB Content Pipeline</a></li>
         <li><a href="3d-rendering.html" class="docs-nav-link">3D Rendering</a></li>
         <li><a href="packed-vector.html" class="docs-nav-link">PackedVector Types</a></li>
         <li><a href="vs-alternatives.html" class="docs-nav-link">CNA vs Alternatives</a></li>
@@ -89,6 +90,7 @@
         <h2 class="toc-title">On this page</h2>
         <ul class="toc-list">
           <li><a href="#overview">Overview</a></li>
+          <li><a href="#two-asset-paths">Two asset paths: .xnb first, loose files second</a></li>
           <li><a href="#core-api">Core API</a></li>
           <li><a href="#built-in-content-type-readers">Built-in content type readers</a></li>
           <li><a href="#json-descriptor-formats">JSON descriptor formats</a></li>
@@ -97,16 +99,16 @@
           <li><a href="#serviceprovider-note">ServiceProvider note</a></li>
         </ul>
       </nav>
-      <p class="doc-meta">Microsoft::Xna::Framework::Content &mdash; typed asset loading with JSON descriptors</p>
+      <p class="doc-meta">Microsoft::Xna::Framework::Content &mdash; typed asset loading from <code>.xnb</code> binaries or loose files</p>
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Implementation status:</strong> Partial &mdash; core <code>Load&lt;T&gt;()</code> and <code>Unload()</code> are implemented for all built-in types. XNB binary pipeline is <strong>not supported</strong>. <code>IServiceProvider</code> wiring is simplified; <code>Game::Services</code> is available but not all XNA services are pre-registered.</p>
+        <p><strong>Implementation status:</strong> The <code>Content</code> namespace is roughly <strong>80% functional</strong>: core <code>Load&lt;T&gt;()</code> and <code>Unload()</code> work for all built-in types, and CNA now has a <strong>real <code>.xnb</code> reader</strong> wired straight into <code>ContentManager</code> &mdash; see <a href="content-pipeline-xnb.html">XNB Content Pipeline</a>. <code>IServiceProvider</code> wiring is simplified; <code>Game::Services</code> is available but not all XNA services are pre-registered. Two specific caveats: <code>ResourceContentManager</code> is a pure stub, and <code>Unload()</code> clears the manager's internal maps without disposing the assets they held.</p>
       </div>
 
       <h2 id="overview">Overview</h2>
       <p><code>ContentManager</code> lives in the <code>Microsoft::Xna::Framework::Content</code> namespace and is the standard mechanism for loading typed game assets from disk. It mirrors the XNA 4.0 API: call <code>Load&lt;T&gt;(assetName)</code> with a path relative to <code>RootDirectory</code>, and the manager returns a reference to the loaded asset. Assets are cached internally; repeated calls with the same name return the same object without re-reading the file.</p>
-      <p>CNA does <em>not</em> use the XNA Content Pipeline binary format (<code>.xnb</code>). Instead, complex asset types such as fonts, models, and shaders are described by small JSON descriptor files. Simple image and audio formats are loaded directly from their native container (PNG, WAV, OGG, etc.) without any intermediate build step.</p>
+      <p>CNA supports <em>both</em> asset paths. It reads the XNA Content Pipeline binary format (<code>.xnb</code>) through a real reader, and it also loads loose files directly: complex asset types such as fonts, models, and shaders can be described by small JSON descriptor files, while simple image and audio formats are read straight from their native container (PNG, WAV, OGG, etc.) with no intermediate build step.</p>
       <p>A <code>ContentManager</code> is constructed with an <code>IServiceProvider&amp;</code> and a <code>rootDirectory</code> string. In a typical <code>Game</code> subclass the instance is accessed through <code>this-&gt;Content</code>, which is pre-configured with the game's service provider and a default root of <code>"Content"</code>.</p>
 
       <pre><code>// Typical construction (done for you inside Game)
@@ -114,6 +116,15 @@ ContentManager content(services, "Content");
 
 // Or construct manually
 ContentManager myContent(game.Services, "Assets/Levels/Level1");</code></pre>
+
+      <h2 id="two-asset-paths">Two asset paths: .xnb first, loose files second</h2>
+      <p>For any given asset name, <code>ContentManager</code> <strong>prefers a <code>.xnb</code> when one exists</strong> and falls back to the loose-file path otherwise. Call sites do not change: <code>Load&lt;Texture2D&gt;("textures/player")</code> resolves to <code>textures/player.xnb</code> if that file is present, and to <code>textures/player.png</code> if it is not.</p>
+      <p>This means content built by the original Microsoft tooling (or by MonoGame's <code>mgcb</code>) can be dropped into a project as-is, and mixed freely with loose assets in the same content tree. Migration can go either way and one asset at a time.</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>One required startup call.</strong> The XNB type-reader registry is empty by default &mdash; a deliberate design decision, documented in the header. Call <code>CNA::Internal::Xnb::RegisterAllBuiltInXnbReaders()</code> once at startup before loading any content, or the <code>.xnb</code> path will not resolve. Full details, the list of 49 registered readers, and the honest gaps (no <code>ReflectiveReader</code>, so no custom types) are on the <a href="content-pipeline-xnb.html">XNB Content Pipeline</a> page.</p>
+      </div>
 
       <h2 id="core-api">Core API</h2>
 
@@ -160,7 +171,7 @@ ContentManager myContent(game.Services, "Assets/Levels/Level1");</code></pre>
         <li>Delegates to <code>ReadAsset(fullPath)</code> on the reader.</li>
         <li>Stores the result in the cache and returns a reference to it.</li>
       </ol>
-      <p>For types that map directly to a file container (e.g. <code>Texture2D</code> from a PNG), no extension is required in the asset name &mdash; the reader appends the appropriate extension automatically. For JSON-described types the asset name must resolve to the <code>.font.json</code>, <code>.model.json</code>, or <code>.shader.json</code> file, with or without the extension.</p>
+      <p>For types that map directly to a file container (e.g. <code>Texture2D</code> from a PNG), no extension is required in the asset name &mdash; the reader appends the appropriate extension automatically. For JSON-described types the asset name must resolve to the <code>.font.json</code> or <code>.shader.json</code> file, with or without the extension.</p>
 
       <h2 id="built-in-content-type-readers">Built-in content type readers</h2>
 
@@ -195,14 +206,14 @@ ContentManager myContent(game.Services, "Assets/Levels/Level1");</code></pre>
             </tr>
             <tr>
               <td><code>Model</code></td>
-              <td><code>.model.json</code></td>
-              <td>JSON descriptor plus binary vertex/index sidecars. Can carry an optional skeleton and animation clips, which arrive as <code>SkinningData</code> on the model's <code>Tag</code>.</td>
+              <td><code>.cnj</code>, <code>.xnb</code></td>
+              <td>CNA's primary model path is <code>.cnj</code>, produced offline from glTF 2.0 by the <code>gltf_to_cnj</code> tool. The XNB model reader family is also registered. See <a href="model-loading.html">Model Loading</a>.</td>
               <td><span class="status-badge status-done">Implemented</span></td>
             </tr>
             <tr>
               <td><code>SkinnedModelEXT</code></td>
-              <td><code>.skinnedmodel.json</code></td>
-              <td>CNA extension (not an XNA type) for skinned meshes with their own skeleton/clip sidecars.</td>
+              <td><code>.cnj</code></td>
+              <td>CNA extension (not an XNA type) for skinned meshes, carrying a skeleton and <code>AnimationClipEXT</code> data.</td>
               <td><span class="status-badge status-done">Implemented</span></td>
             </tr>
             <tr>
@@ -226,15 +237,15 @@ ContentManager myContent(game.Services, "Assets/Levels/Level1");</code></pre>
             <tr>
               <td><code>Video</code></td>
               <td>MP4, OGV, WEBM, MKV, AVI, MOV</td>
-              <td>Decoded via FFmpeg and played through <code>VideoPlayer</code>. <strong>Not available on Emscripten or Android.</strong></td>
-              <td><span class="status-badge status-partial">Desktop only</span></td>
+              <td>Decoded via FFmpeg and played through <code>VideoPlayer</code>. <strong>FFmpeg is unavailable on Emscripten, Android and every Windows target &mdash; effectively native Linux only.</strong> There is no XNB <code>VideoReader</code>.</td>
+              <td><span class="status-badge status-partial">Linux only</span></td>
             </tr>
           </tbody>
         </table>
       </div>
 
       <h2 id="json-descriptor-formats">JSON descriptor formats</h2>
-      <p>CNA replaces the XNA Content Pipeline's compiled <code>.xnb</code> files with lightweight JSON descriptors. These are plain text files that live alongside your assets and reference the actual binary data files (images, meshes, shaders) by path. No offline build step is required.</p>
+      <p>Alongside the <code>.xnb</code> reader, CNA supports lightweight JSON descriptors for the loose-file path. These are plain text files that live alongside your assets and reference the actual binary data files (images, shaders) by path, with no offline build step. They are the practical option when you have no XNA Content Pipeline output to start from &mdash; and, because there is no <code>ReflectiveReader</code>, the only option for custom asset types.</p>
 
       <h3 id="font-json">.font.json &mdash; SpriteFont</h3>
       <p>Describes a pre-rendered glyph atlas. The <code>image</code> field points to the atlas texture (any format supported by <code>Texture2D</code>). Each entry in the <code>glyphs</code> array maps a Unicode character to its position and metrics within the atlas.</p>
@@ -264,16 +275,8 @@ ContentManager myContent(game.Services, "Assets/Levels/Level1");</code></pre>
         </table>
       </div>
 
-      <h3>.model.json &mdash; Model</h3>
-      <p>Describes a 3D model composed of one or more meshes and their materials. The <code>mesh</code> field references an OBJ or other supported mesh file; <code>materials</code> lists texture assignments for each named material group.</p>
-      <pre><code>{
-  "mesh": "models/house.obj",
-  "materials": [
-    { "name": "wall",  "diffuse": "textures/wall.png"  },
-    { "name": "roof",  "diffuse": "textures/roof.png"  },
-    { "name": "glass", "diffuse": "textures/glass.png", "transparent": true }
-  ]
-}</code></pre>
+      <h3>Models &mdash; .cnj, not JSON</h3>
+      <p>Models are the exception to the descriptor pattern. CNA's actual model content path is the offline <code>gltf_to_cnj</code> tool, which converts glTF 2.0 into a binary <code>.cnj</code> carrying the <code>Model</code> and its <code>AnimationClip</code> data. Pipeline-built models can alternatively be read straight from <code>.xnb</code>. See <a href="model-loading.html">Model Loading</a>.</p>
 
       <h3>.shader.json &mdash; Effect / ShaderEffect</h3>
       <p>References the vertex and fragment shader source files (GLSL for EasyGL, SPIR-V for Vulkan) and declares the uniform names the effect exposes as <code>EffectParameter</code> objects.</p>
@@ -318,7 +321,7 @@ ContentManager::RegisterReader&lt;LevelData&gt;(std::make_shared&lt;LevelDataRea
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>No XNB pipeline:</strong> CNA does not parse <code>.xnb</code> binary files produced by the Microsoft XNA Content Pipeline tool. There is no plan to support XNB. Port your assets by replacing <code>.xnb</code> references with the equivalent raw files (images, audio) or JSON descriptors (<code>.font.json</code>, <code>.model.json</code>, <code>.shader.json</code>) as described above.</p>
+        <p><strong>Custom types are loose-file only.</strong> A <code>ContentTypeReader&lt;T&gt;</code> registered as above serves the loose-file path. It does <em>not</em> extend the <code>.xnb</code> reader: XNA deserialised user-defined types by reflection, and CNA has no <code>ReflectiveReader</code> equivalent, so custom types cannot be loaded from an <code>.xnb</code> at all. Keep custom asset types as raw files or JSON descriptors, or convert them at build time. See <a href="content-pipeline-xnb.html#known-gaps">Known gaps</a>.</p>
       </div>
 
       <h2 id="code-examples">Code examples</h2>
@@ -337,9 +340,10 @@ ContentManager::RegisterReader&lt;LevelData&gt;(std::make_shared&lt;LevelDataRea
     MediaPlayer::IsRepeating = true;
 }</code></pre>
 
-      <h3>Example 2 &mdash; Loading a Model via .model.json</h3>
-      <pre><code>// Content/models/house.model.json must exist on disk
-Model&amp; houseModel = Content.Load&lt;Model&gt;("models/house.model");
+      <h3>Example 2 &mdash; Loading a Model</h3>
+      <pre><code>// Resolves Content/models/house.xnb if present,
+// otherwise the .cnj produced by gltf_to_cnj
+Model&amp; houseModel = Content.Load&lt;Model&gt;("models/house");
 
 // Draw all meshes with their associated BasicEffect
 houseModel.Draw(worldMatrix, camera.View(), camera.Projection());</code></pre>
@@ -397,9 +401,9 @@ TileMap&amp; map = Content.Load&lt;TileMap&gt;("maps/world1.tilemap.json");</cod
     </a>
       </div>
       <div class="docs-pagination-next">
-    <a href="audio.html" class="pagination-link pagination-next">
+    <a href="content-pipeline-xnb.html" class="pagination-link pagination-next">
       <span class="pagination-direction">Next →</span>
-      <span class="pagination-title">Audio</span>
+      <span class="pagination-title">XNB Content Pipeline</span>
     </a>
       </div>
     </nav>
@@ -412,7 +416,7 @@ TileMap&amp; map = Content.Load&lt;TileMap&gt;("maps/world1.tilemap.json");</cod
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 227 of 245 XNA 4.0 public types implemented, verified by 4,373 unit tests and 490 GPU pixel tests across its four established rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

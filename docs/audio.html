@@ -61,6 +61,7 @@
         <li><a href="input.html" class="docs-nav-link">Input System</a></li>
         <li><a href="math-types.html" class="docs-nav-link">Math Types</a></li>
         <li><a href="content-manager.html" class="docs-nav-link">ContentManager</a></li>
+        <li><a href="content-pipeline-xnb.html" class="docs-nav-link">XNB Content Pipeline</a></li>
         <li><a href="3d-rendering.html" class="docs-nav-link">3D Rendering</a></li>
         <li><a href="packed-vector.html" class="docs-nav-link">PackedVector Types</a></li>
         <li><a href="vs-alternatives.html" class="docs-nav-link">CNA vs Alternatives</a></li>
@@ -92,6 +93,7 @@
           <li><a href="#tier-1-implemented-sdl3mixer">Tier 1 — Implemented (SDL3_mixer)</a></li>
           <li><a href="#loading-audio-via-contentmanager">Loading audio via ContentManager</a></li>
           <li><a href="#tier-2-xact">Tier 2 — XACT (AudioEngine/SoundBank/WaveBank/Cue)</a></li>
+          <li><a href="#honest-partials">Honest partials</a></li>
           <li><a href="#microphone">Microphone</a></li>
         </ul>
       </nav>
@@ -99,11 +101,12 @@
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Implementation status:</strong> <code>SoundEffect</code>, <code>SoundEffectInstance</code>, <code>DynamicSoundEffectInstance</code>, <code>MediaPlayer</code>, and <code>Song</code> are fully implemented via SDL3_mixer. The XACT runtime (<code>AudioEngine</code>, <code>SoundBank</code>, <code>WaveBank</code>, <code>Cue</code>) is now real too — a genuine <code>.xgs</code>/<code>.xsb</code>/<code>.xwb</code> parser plays back through SDL3_mixer, with category/lifecycle/3D/instance-limit and fade handling and continuous RPC volume/pitch curves. <code>Microphone</code> is also implemented, using real SDL3 capture devices. The Audio namespace is approximately <strong>~97% API surface implemented</strong>; documented deviations only (no HRTF/elevation, no AttackTime/ReleaseTime envelope tracking).</p>
+        <p><strong>Implementation status:</strong> The <code>Audio</code> namespace covers 19 types and is roughly <strong>92% functional</strong>. <code>SoundEffect</code>, <code>SoundEffectInstance</code>, <code>DynamicSoundEffectInstance</code>, <code>MediaPlayer</code>, and <code>Song</code> are implemented via SDL3_mixer. XACT is <strong>a real parser and player, not a facade</strong>: a 1,115-line parser for the XGS/XWB/XSB binary formats, FACT's actual volume formula, and real RPC curves, all output through SDL3_mixer. 3D audio uses FAudio's exact Doppler calculation and F3DAudio attenuation. <code>Microphone</code> is implemented against real SDL3 capture devices. Audio carries <strong>493 unit tests</strong>. Honest partials are listed in <a href="#tier-2-xact">Tier 2</a>.</p>
       </div>
 
       <h2 id="overview">Overview</h2>
-      <p>CNA's audio system is split into two tiers. <strong>Tier 1</strong> covers the SDL3_mixer-backed classes that provide fully functional playback of sound effects and music. <strong>Tier 2</strong> covers the XACT subsystem — cue-based audio driven by <code>.xgs</code>/<code>.xsb</code>/<code>.xwb</code> content, now genuinely parsed and played back rather than stubbed.</p>
+      <p>CNA's audio system is split into two tiers. <strong>Tier 1</strong> covers the SDL3_mixer-backed classes that provide fully functional playback of sound effects and music. <strong>Tier 2</strong> covers the XACT subsystem — cue-based audio driven by <code>.xgs</code>/<code>.xsb</code>/<code>.xwb</code> content, genuinely parsed and played back rather than stubbed.</p>
+      <p>It is worth being precise about what "real XACT" means here, because most XNA reimplementations stop at the API shape. CNA ships a 1,115-line parser for the three XACT binary formats, and the playback side reproduces FACT's actual volume formula and evaluates real RPC (runtime parameter control) curves rather than approximating them. The 3D positional path uses FAudio's exact Doppler calculation and F3DAudio's attenuation model. The <a href="#honest-partials">honest partials</a> below are the places where that fidelity currently stops.</p>
       <p>SDL3_mixer is vendored as a Git submodule and built alongside CNA. It uses the <code>MIX_Mixer</code> track-based model internally: each <code>SoundEffectInstance</code> and each <code>Song</code> played through <code>MediaPlayer</code> occupies its own mixer track, rather than writing to a global shared output. This avoids the global-state pitfalls present in older SDL_mixer versions and maps cleanly onto the XNA per-instance API.</p>
       <p>All audio classes live in the <code>Microsoft::Xna::Framework::Audio</code> namespace, with <code>MediaPlayer</code> and <code>Song</code> in <code>Microsoft::Xna::Framework::Media</code>, matching XNA 4.0 exactly.</p>
 
@@ -270,7 +273,7 @@ auto custom = SoundEffect::FromStream(file);</code></pre>
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>XACT is now real (~97% functional).</strong> <code>AudioEngine</code>, <code>SoundBank</code>, and <code>WaveBank</code> genuinely parse <code>.xgs</code>/<code>.xsb</code>/<code>.xwb</code> content, and <code>Cue</code> plays it back through SDL3_mixer, including category routing, natural-completion state reconciliation, weighted variation selection, category/cue instance-limit enforcement with fade in/out, and continuous RPC volume/pitch re-evaluation every <code>AudioEngine::Update()</code> tick. Documented, intentional deviations remain: no HRTF/elevation modelling, no AttackTime/ReleaseTime envelope tracking.</p>
+        <p><strong>XACT is a real parser and player, not a facade.</strong> <code>AudioEngine</code>, <code>SoundBank</code>, and <code>WaveBank</code> genuinely parse the XGS/XWB/XSB binary formats through a 1,115-line parser, and <code>Cue</code> plays the result back through SDL3_mixer using FACT's actual volume formula and real RPC curves. 3D cues are positioned with FAudio's exact Doppler calculation and F3DAudio attenuation.</p>
       </div>
 
       <div class="table-wrap">
@@ -288,31 +291,39 @@ auto custom = SoundEffect::FromStream(file);</code></pre>
               <td><code>AudioEngine</code></td>
               <td>Present</td>
               <td><span class="status-badge status-done">Implemented</span></td>
-              <td>Real <code>.xgs</code> parsing, categories, global variables, <code>Update()</code> lifecycle sweep</td>
+              <td>Real XGS parsing; drives RPC curve evaluation</td>
             </tr>
             <tr>
               <td><code>SoundBank</code></td>
               <td>Present</td>
               <td><span class="status-badge status-done">Implemented</span></td>
-              <td>Real <code>.xsb</code> parsing (compact + non-compact), <code>PlayCue</code>, <code>GetCue</code></td>
+              <td>Real XSB parsing, <code>PlayCue</code>, <code>GetCue</code></td>
             </tr>
             <tr>
               <td><code>WaveBank</code></td>
               <td>Present</td>
               <td><span class="status-badge status-done">Implemented</span></td>
-              <td>Real <code>.xwb</code> parsing (incl. ADPCM), lazy streaming reads</td>
+              <td>Real XWB parsing. XMA and WMA wave formats throw.</td>
             </tr>
             <tr>
               <td><code>Cue</code></td>
               <td>Present</td>
               <td><span class="status-badge status-done">Implemented</span></td>
-              <td>Real playback, category-/cue-level instance-limit enforcement with fade, continuous RPC curves</td>
+              <td>Real playback through SDL3_mixer with FACT's volume formula. Only the first <code>PlayWave</code> per track is honored.</td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <p>XACT-driven audio now works directly in CNA — you no longer need to migrate <code>AudioEngine</code>/<code>SoundBank</code>/<code>Cue</code> calls away. For new CNA-only projects without existing XACT content, <code>SoundEffect</code> and <code>SoundEffectInstance</code> remain the simpler Tier 1 API and integrate directly with <code>ContentManager</code>.</p>
+      <p>XACT-driven audio works directly in CNA — you do not need to migrate <code>AudioEngine</code>/<code>SoundBank</code>/<code>Cue</code> calls away. For new CNA-only projects without existing XACT content, <code>SoundEffect</code> and <code>SoundEffectInstance</code> remain the simpler Tier 1 API and integrate directly with <code>ContentManager</code>.</p>
+
+      <h3 id="honest-partials">Honest partials</h3>
+      <p>Three limitations are worth knowing before you point a real XACT project at CNA:</p>
+      <ul>
+        <li><strong>Only the first <code>PlayWave</code> per track is honored.</strong> Cues authored with multiple waves on a single track will not play them all.</li>
+        <li><strong>XMA and WMA throw.</strong> Wave banks using either compressed format cannot be played; re-encode to a supported format.</li>
+        <li><strong>The reverb send is a no-op.</strong> The API accepts it, but no reverb is applied to the signal.</li>
+      </ul>
 
       <h2 id="microphone">Microphone</h2>
       <p><code>Microphone</code> is implemented using real SDL3 capture devices: device enumeration, <code>Start()</code>/<code>Stop()</code>, and <code>BufferReady</code> delivery all work against genuine hardware input.</p>
@@ -320,9 +331,9 @@ auto custom = SoundEffect::FromStream(file);</code></pre>
 
     <nav class="docs-pagination" aria-label="Page navigation">
       <div class="docs-pagination-prev">
-    <a href="content-manager.html" class="pagination-link pagination-prev">
+    <a href="content-pipeline-xnb.html" class="pagination-link pagination-prev">
       <span class="pagination-direction">← Previous</span>
-      <span class="pagination-title">Content Manager</span>
+      <span class="pagination-title">XNB Content Pipeline</span>
     </a>
       </div>
       <div class="docs-pagination-next">
@@ -341,7 +352,7 @@ auto custom = SoundEffect::FromStream(file);</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 227 of 245 XNA 4.0 public types implemented, verified by 4,373 unit tests and 490 GPU pixel tests across its four established rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

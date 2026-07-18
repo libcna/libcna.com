@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>3D Rendering - CNA Documentation</title>
-  <meta name="description" content="CNA 3D rendering guide - vertex buffers, index buffers, draw calls, BasicEffect, camera setup, depth state, Model rendering, instancing, and render targets.">
+  <meta name="description" content="CNA 3D rendering guide - vertex and index buffers, draw calls, BasicEffect, cameras, depth state, Model rendering, per-backend 3D support across the 14 backends, and the SurfaceFormat::Color-only restriction.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/3d-rendering.html">
   <meta property="og:title"       content="3D Rendering - CNA Documentation">
-  <meta property="og:description" content="CNA 3D rendering guide - vertex buffers, index buffers, draw calls, BasicEffect, camera setup, depth state, Model rendering, instancing, and render targets.">
+  <meta property="og:description" content="CNA 3D rendering guide - vertex and index buffers, draw calls, BasicEffect, cameras, depth state, Model rendering, per-backend 3D support across the 14 backends, and the SurfaceFormat::Color-only restriction.">
   <link rel="stylesheet" href="../css/style.css">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/3d-rendering.html">
@@ -61,6 +61,7 @@
         <li><a href="input.html" class="docs-nav-link">Input System</a></li>
         <li><a href="math-types.html" class="docs-nav-link">Math Types</a></li>
         <li><a href="content-manager.html" class="docs-nav-link">ContentManager</a></li>
+        <li><a href="content-pipeline-xnb.html" class="docs-nav-link">XNB Content Pipeline</a></li>
         <li><a href="3d-rendering.html" class="docs-nav-link active">3D Rendering</a></li>
         <li><a href="packed-vector.html" class="docs-nav-link">PackedVector Types</a></li>
         <li><a href="vs-alternatives.html" class="docs-nav-link">CNA vs Alternatives</a></li>
@@ -89,6 +90,8 @@
         <h2 class="toc-title">On this page</h2>
         <ul class="toc-list">
           <li><a href="#overview">Overview</a></li>
+          <li><a href="#cross-backend-caveats">Cross-backend caveats</a></li>
+          <li><a href="#surface-formats">Surface format restriction</a></li>
           <li><a href="#vertex-types">Vertex types</a></li>
           <li><a href="#buffer-management">Buffer management</a></li>
           <li><a href="#binding-and-draw-calls">Binding and draw calls</a></li>
@@ -107,14 +110,19 @@
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Implementation status:</strong> Full 3D rendering is available on the <strong>EasyGL (OpenGL ES 3.0) backend</strong> (most mature, the reference backend), the <strong>Vulkan backend</strong> (second-most mature; all five stock effects pixel-tested, open gaps in <code>BlendState</code> custom modes and <code>OcclusionQuery</code>), and the <strong>bgfx backend</strong> (reached full 2D+3D pixel-verified parity as of Phase 72, aside from custom <code>ShaderEffect</code> source compilation). All three also expose 3D through <strong>WebGL 2 via Emscripten</strong> where applicable &mdash; the House 3D Demo runs live in the browser. <code>SDL_RENDERER</code> supports <strong>2D only</strong> by design. Two new native Windows-only backends, <strong>D3D11</strong> and <strong>D3D12</strong>, also have real, pixel-verified 3D &mdash; all 10 stock HLSL shader variants, render targets (MRT/MSAA), and (on D3D11) occlusion queries &mdash; verified by cross-compiling with MinGW-w64 and running through Wine+DXVK/vkd3d-proton on a real GPU; native Windows hardware verification is still open, and D3D12's proof is off-screen only (its swap chain does not work under this dev loop). The experimental <strong>WebGPU</strong> backend has only a first, minimal 3D draw path so far (unlit, untextured primitives) &mdash; not yet full 3D parity with the backends above.</p>
+        <p><strong>Implementation status:</strong> CNA ships <strong>14 selectable rendering backends</strong>, chosen at build time with <code>-DCNA_GRAPHICS_BACKEND</code>; exactly one is compiled into a given binary and there is no runtime dispatch. Eight of them expose a 3D pipeline. <strong>EasyGL</strong> is production-ready and the reference backend for 3D. <strong>Vulkan</strong>, <strong>D3D9</strong>, <strong>D3D11</strong>, <strong>SDL_GPU</strong> and the CPU <strong>Software</strong> rasterizer are functional. <strong>D3D12</strong>, <strong>bgfx</strong> and <strong>WebGPU</strong> are partial, each with specific holes worth knowing before you pick one &mdash; see the table below. The remaining backends (SDL_Renderer, Dx3, Ascii, Canvas, Headless) are 2D-only or render nothing at all by design.</p>
+      </div>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Only <code>SurfaceFormat::Color</code> textures can be constructed.</strong> <code>Texture::ValidateFormat</code> throws for all 25 other surface formats, and it is called from both <code>Texture2D</code> constructors as well as <code>Texture3D</code> and <code>TextureCube</code>. Float, half-float and HDR render targets are therefore unavailable across every backend, despite <code>SurfaceFormat</code> listing them. DXT/DDS files load only by CPU-decompressing to RGBA. See <a href="#surface-formats">Surface format restriction</a>.</p>
       </div>
 
       <h2 id="overview">Overview</h2>
       <p>CNA exposes XNA 4.0&rsquo;s full 3D pipeline through the <code>Microsoft::Xna::Framework::Graphics</code> namespace. The pipeline follows the same pattern as the original API: you upload geometry into <code>VertexBuffer</code> and <code>IndexBuffer</code> objects, configure a <code>GraphicsDevice</code> render state, apply an <code>Effect</code>, and issue a draw call.</p>
       <p>The <strong>EasyGL backend</strong> maps directly onto OpenGL ES 3.0 (desktop OpenGL 3.3 on platforms that support it). The <strong>Vulkan backend</strong> uses the same GLSL shaders compiled to SPIR-V and a Vulkan 1.1 pipeline. When compiled with Emscripten both backends emit WebGL 2 calls, enabling the same code to run in modern web browsers with no modification.</p>
-      <p>The <strong>SDL_RENDERER backend</strong> does not expose a programmable 3D pipeline &mdash; it is intended for 2D-only games that use <code>SpriteBatch</code>. The <strong>bgfx backend</strong> reached full 2D+3D pixel-verified parity with EasyGL and Vulkan as of this project's Phase 72, aside from custom <code>ShaderEffect</code> source compilation, which bgfx does not support.</p>
-      <p>The <strong>D3D11 backend</strong> is a native (non-bgfx) Direct3D 11 implementation using hand-written HLSL for all 10 stock shader variants &mdash; Windows-only, cross-compiled with MinGW-w64, and verified through Wine+DXVK on a real GPU. The <strong>D3D12 backend</strong> shares the same HLSL/DXBC bytecode and is verified the same way through Wine+vkd3d-proton, but every proof is off-screen: its swap chain does not work under this dev loop (a genuine Wine/vkd3d-proton <code>dxgi.dll</code> mismatch, not a CNA bug), and it is missing runtime-settable state objects, a public render-target backend, <code>Texture3D</code>, and occlusion queries that D3D11 already has for real. The experimental <strong>WebGPU backend</strong> uses native <code>wgpu-native</code> and WGSL shaders; its 2D <code>SpriteBatch</code> pipeline is genuinely verified, but 3D is limited to a first depth-tested <code>DrawColoredPrimitives</code> path &mdash; stock effects, instancing, and render targets are still open. Neither <strong>Headless</strong> nor <strong>Software</strong> belongs in the "3D rendering" comparison above in the same sense: Headless is a CI/logic-testing backend that renders nothing at all by design, and Software is a CPU-only rasterizer intended for deterministic pixel tests (TriangleList only, no per-light lighting/fog) rather than real-time 3D gameplay.</p>
+      <p><strong>SDL_Renderer</strong>, <strong>Dx3</strong>, <strong>Ascii</strong> and <strong>Canvas</strong> do not expose a programmable 3D pipeline; they are 2D backends. SDL_Renderer is notable for being the only backend whose capability reporting is fully truthful &mdash; it throws on 3D calls by design rather than silently doing nothing.</p>
+      <p><strong>Headless</strong> and <strong>Software</strong> sit outside the usual comparison. Headless deliberately renders nothing (its <code>ReadBackbuffer</code> returns the last clear colour) and exists for fast CI of game logic. Software is a genuine CPU rasterizer &mdash; real edge functions, a real Z-buffer and perspective-correct 1/w interpolation &mdash; but it is TriangleList-only and intended for deterministic pixel tests rather than real-time gameplay. It does, however, need no GPU at all.</p>
 
       <div class="table-wrap">
         <table>
@@ -128,47 +136,100 @@
           <tbody>
             <tr>
               <td>EasyGL</td>
-              <td><span class="status-badge status-done">Most mature</span></td>
-              <td>OpenGL ES 3.0 / WebGL 2 via Emscripten; reference backend for all 3D testing</td>
+              <td><span class="status-badge status-done">Production-ready</span></td>
+              <td>The most mature backend and the 3D reference. 13 GLSL programs, all 9 effect families, per-vertex and per-pixel lighting, instancing, occlusion queries, anisotropy, fog, and GL context-loss recovery. Also the Emscripten default.</td>
             </tr>
             <tr>
               <td>Vulkan</td>
-              <td><span class="status-badge status-done">Second-most mature</span></td>
-              <td>Vulkan 1.1; supports instancing and wireframe fill mode; open gaps: <code>BlendState</code> custom modes, <code>OcclusionQuery</code></td>
+              <td><span class="status-badge status-done">Functional (near production)</span></td>
+              <td>35 SPIR-V entry points, 8 effect paths, MRT proxy, device-queried depth formats, real stencil PSO, MSAA resolve, mip blit cascades.</td>
             </tr>
             <tr>
-              <td>bgfx</td>
-              <td><span class="status-badge status-done">Full parity (Phase 72)</span></td>
-              <td>All five stock effects pixel-tested; custom <code>ShaderEffect</code> source compilation not supported</td>
-            </tr>
-            <tr>
-              <td>SDL_RENDERER</td>
-              <td><span class="status-badge status-wip">2D only</span></td>
-              <td>No programmable shader pipeline; use SpriteBatch only</td>
+              <td>D3D9</td>
+              <td><span class="status-badge status-done">Functional</span></td>
+              <td>Windows-only. 72 verified SM2/SM3 shader blobs, full device-lost and <code>D3DPOOL_DEFAULT</code> recovery, caps-validated MRT. Uniquely targets pixel-exact XNA 4.0 authenticity.</td>
             </tr>
             <tr>
               <td>D3D11</td>
-              <td><span class="status-badge status-done">Pixel-verified (Wine+DXVK)</span></td>
-              <td>Windows-only, native HLSL; all 10 stock shader variants, MRT/MSAA, occlusion queries; not yet verified on real Windows hardware</td>
+              <td><span class="status-badge status-done">Functional</span></td>
+              <td>Windows-only. Five state-object caches, MRT with deferred resolve, instancing, runtime <code>D3DCompile</code>. Note: <code>startIndex</code>/<code>baseVertex</code> draw offsets are ignored.</td>
+            </tr>
+            <tr>
+              <td>SDL_GPU</td>
+              <td><span class="status-badge status-done">Functional</span></td>
+              <td>Deferred/retained design, 23 SPIR-V blobs, 9 effect families, stencil and MSAA resolve. Vulkan-only device today.</td>
+            </tr>
+            <tr>
+              <td>Software</td>
+              <td><span class="status-badge status-done">Functional (narrow)</span></td>
+              <td>Genuine CPU rasterizer with real Z-buffer and perspective-correct interpolation. TriangleList only. Needs no GPU.</td>
             </tr>
             <tr>
               <td>D3D12</td>
-              <td><span class="status-badge status-wip">Pixel-verified off-screen only</span></td>
-              <td>Windows-only, same HLSL/DXBC as D3D11; swap chain doesn't work under this dev loop (Wine/vkd3d-proton mismatch); no runtime state objects, render targets, <code>Texture3D</code>, or occlusion queries yet</td>
+              <td><span class="status-badge status-partial">Partial</span></td>
+              <td>Windows-only. Strong core (PSO/root-signature caches, barrier tracker) but <strong>no scissor, no viewport, no stencil and no blend factor</strong>. MRT clears but never draws.</td>
+            </tr>
+            <tr>
+              <td>bgfx</td>
+              <td><span class="status-badge status-partial">Partial</span></td>
+              <td>108 shader blobs, but <strong>GL/GLES/Vulkan/WebGPU only &mdash; no D3D or Metal variants</strong>, so 3D silently draws nothing on bgfx's default Windows/macOS renderer. <code>DrawUserIndexedPrimitives</code> corrupts geometry (see caveats below).</td>
             </tr>
             <tr>
               <td>WebGPU</td>
-              <td><span class="status-badge status-wip">Experimental, 2D-focused</span></td>
-              <td>Native <code>wgpu-native</code>/WGSL; SpriteBatch 2D pipeline verified, only a first minimal 3D draw path so far</td>
+              <td><span class="status-badge status-partial">Partial / experimental</span></td>
+              <td>Backbuffer-only forward renderer: <strong>no render targets at all</strong>, no MSAA, no cube or 3D textures, no queries, no instancing, non-functional stencil.</td>
             </tr>
             <tr>
-              <td>Headless / Software</td>
-              <td><span class="status-badge status-wip">CI/testing only</span></td>
-              <td>Headless renders nothing (logic/CI testing only); Software is a CPU rasterizer for deterministic pixel tests (TriangleList only, no lighting) &mdash; neither is a real-time gameplay backend</td>
+              <td>SDL_Renderer, Dx3, Ascii, Canvas</td>
+              <td><span class="status-badge status-wip">2D only</span></td>
+              <td>No programmable 3D pipeline. SDL_Renderer throws on 3D calls by design and is the only backend whose capability reporting is fully truthful.</td>
+            </tr>
+            <tr>
+              <td>Headless</td>
+              <td><span class="status-badge status-wip">Renders nothing</span></td>
+              <td>A test harness, not a renderer. For fast CI of game logic.</td>
             </tr>
           </tbody>
         </table>
       </div>
+
+      <h2 id="cross-backend-caveats">Cross-backend caveats</h2>
+      <p>Three verified issues cut across backends and are worth knowing before you debug something that looks like your own bug.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Caveat</th>
+              <th>Detail</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>SupportsCapability()</code> is unreliable</td>
+              <td>The base implementation returns <code>true</code> for everything, and 7 of the 14 backends never override it (Ascii, D3D11, D3D12, D3D9, Headless, SDL_GPU, Software). WebGPU claims 5 capabilities it does not have; Software claims 6; Ascii reports the inverse of the backend it wraps. Do not use it to gate features.</td>
+            </tr>
+            <tr>
+              <td>Draw offsets ignored</td>
+              <td><code>startIndex</code> and <code>baseVertex</code> are ignored on D3D11, and on bgfx outside the wireframe path.</td>
+            </tr>
+            <tr>
+              <td>bgfx 32-bit index corruption</td>
+              <td><code>DrawUserIndexedPrimitives</code> corrupts geometry on bgfx: the backend never overrides <code>CreateIndexBuffer32</code>, so 32-bit indices are uploaded into a 16-bit buffer. Every other 3D backend implements this correctly.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h2 id="surface-formats">Surface format restriction</h2>
+      <p>This one constrains real 3D work more than any backend gap, so it is worth stating plainly rather than burying in a compatibility table.</p>
+      <p><code>Texture::ValidateFormat</code> accepts <strong><code>SurfaceFormat::Color</code> and nothing else</strong>. It throws for all 25 other formats in the enum, and it runs from both <code>Texture2D</code> constructors as well as from <code>Texture3D</code> and <code>TextureCube</code>. The <code>SurfaceFormat</code> enum lists the full XNA set for API compatibility, but only one member is constructible today.</p>
+      <p>The practical consequences:</p>
+      <ul>
+        <li><strong>No float, half-float or HDR render targets.</strong> Techniques that depend on them &mdash; HDR tone mapping, floating-point G-buffers, high-precision shadow maps &mdash; cannot be built on CNA today, on any backend.</li>
+        <li><strong>Compressed textures are decompressed on the CPU.</strong> DXT and DDS files still load, but by expanding to RGBA in memory rather than being handed to the GPU compressed. You lose the VRAM saving that was the point of shipping them compressed.</li>
+        <li><strong>Single-channel and packed formats are unavailable</strong> for masks, lookup tables and similar uses; pack the data into an RGBA texture instead.</li>
+      </ul>
 
       <h2 id="vertex-types">Vertex types</h2>
       <p>CNA provides the same four built-in vertex types as XNA 4.0. Every vertex type carries a static <code>VertexDeclaration</code> that describes the layout of its fields to the GPU. You can also define custom vertex structs and supply a matching <code>VertexDeclaration</code>.</p>
@@ -478,7 +539,7 @@ graphicsDevice-&gt;DepthStencilState  = DepthStencilState::DepthRead;
 DrawTransparentMeshes(); // caller responsible for back-to-front sorting</code></pre>
 
       <h2 id="rendertarget2d">RenderTarget2D</h2>
-      <p>Off-screen rendering lets you draw a scene into a texture and then use that texture in a subsequent draw call &mdash; for example for shadow maps, reflections, or post-process effects.</p>
+      <p>Off-screen rendering lets you draw a scene into a texture and then use that texture in a subsequent draw call &mdash; for example for shadow maps, reflections, or post-process effects. <code>SurfaceFormat::Color</code> is not just the conventional choice here but the <a href="#surface-formats">only constructible one</a>.</p>
 
       <pre><code>// Create a 512x512 off-screen target
 auto rt = std::make_shared&lt;RenderTarget2D&gt;(
@@ -538,7 +599,7 @@ for (auto&amp; mesh : model-&gt;Meshes) {
 }</code></pre>
 
       <h2 id="texture3d-and-texturecube">Texture3D and TextureCube</h2>
-      <p><code>Texture3D</code> (volumetric) and <code>TextureCube</code> (six-face cube map) are implemented on the EasyGL and Vulkan backends. <code>TextureCube</code> is used directly by <code>EnvironmentMapEffect</code> for reflection mapping. <code>Texture3D</code> is useful for volumetric fog, 3D lookup tables (LUTs), and density fields.</p>
+      <p><code>Texture3D</code> (volumetric) and <code>TextureCube</code> (six-face cube map) are available on the 3D-capable backends; <strong>WebGPU supports neither</strong>. <code>TextureCube</code> is used directly by <code>EnvironmentMapEffect</code> for reflection mapping. <code>Texture3D</code> is useful for volumetric fog, 3D lookup tables (LUTs), and density fields. Both go through the same <code>ValidateFormat</code> check as <code>Texture2D</code>, so both are <code>SurfaceFormat::Color</code>-only &mdash; a float LUT is not constructible.</p>
 
       <pre><code>// Load a cube map through ContentManager
 auto skybox = content.Load&lt;TextureCube&gt;("textures/skybox");
@@ -573,11 +634,11 @@ graphicsDevice-&gt;DrawInstancedPrimitives(
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><code>DrawInstancedPrimitives</code> is available on <strong>EasyGL, Vulkan, and D3D11</strong> (D3D11's instanced HLSL variant is pixel-verified via a dedicated per-instance input layout). The bgfx and SDL_RENDERER backends do not currently support it.</p>
+        <p>Instancing is confirmed on <strong>EasyGL</strong> and <strong>D3D11</strong>. It is <strong>not available on WebGPU</strong>, and the 2D-only backends (SDL_Renderer, Dx3, Ascii, Canvas) have no instancing path at all. Verify against your chosen backend before relying on it &mdash; and note that <code>SupportsCapability()</code> cannot answer this question reliably (see <a href="#cross-backend-caveats">Cross-backend caveats</a>).</p>
       </div>
 
       <h3>Multiple render targets (MRT)</h3>
-      <p>The EasyGL and Vulkan backends support binding multiple <code>RenderTarget2D</code> objects simultaneously, enabling G-buffer rendering for deferred shading. The native D3D11 backend also has a real, pixel-verified 2-target MRT path (a single <code>OMSetRenderTargets</code> call with independent per-target clears); D3D12 has no public render-target backend at all yet, so MRT is not available there. Pass an array of render targets to <code>SetRenderTargets</code>:</p>
+      <p>Binding multiple <code>RenderTarget2D</code> objects simultaneously enables G-buffer rendering for deferred shading. Support varies sharply: <strong>Vulkan</strong> has an MRT proxy, <strong>D3D11</strong> has MRT with deferred resolve, and <strong>D3D9</strong> has caps-validated MRT. On <strong>D3D12</strong>, MRT clears but <strong>never draws</strong>. <strong>WebGPU has no render targets at all</strong> &mdash; it is a backbuffer-only forward renderer. Bear in mind the <a href="#surface-formats">Color-only surface format restriction</a>: a G-buffer packed into RGBA8 targets is the only option. Pass an array of render targets to <code>SetRenderTargets</code>:</p>
 
       <pre><code>graphicsDevice-&gt;SetRenderTargets({
     RenderTargetBinding(albedoRT),
@@ -590,7 +651,7 @@ DrawGeometryPass();
 graphicsDevice-&gt;SetRenderTarget(nullptr);</code></pre>
 
       <h3>OcclusionQuery</h3>
-      <p><code>OcclusionQuery</code> asks the GPU how many fragments passed the depth test for a given draw. This is used for techniques like hardware-accelerated lens flares or conditional rendering of expensive effects.</p>
+      <p><code>OcclusionQuery</code> asks the GPU how many fragments passed the depth test for a given draw. This is used for techniques like hardware-accelerated lens flares or conditional rendering of expensive effects. Occlusion queries are confirmed on <strong>EasyGL</strong>; <strong>WebGPU has no queries at all</strong>.</p>
 
       <pre><code>auto query = std::make_shared&lt;OcclusionQuery&gt;(graphicsDevice);
 query-&gt;Begin();
@@ -716,8 +777,8 @@ graphicsDevice-&gt;DepthStencilState = DepthStencilState::Default;
 graphicsDevice-&gt;BlendState        = BlendState::Opaque;
 houseModel-&gt;Draw(houseWorld, view, proj);</code></pre>
 
-      <h3>Wireframe rendering (Vulkan only)</h3>
-      <p>Wireframe rendering requires <code>RasterizerState::WireFrame</code>, which sets <code>FillMode::WireFrame</code>. This fill mode is not available on the EasyGL (OpenGL ES 3.0) backend because OpenGL ES does not expose a polygon fill-mode toggle. Use the Vulkan backend for wireframe output.</p>
+      <h3>Wireframe rendering</h3>
+      <p>Wireframe rendering requires <code>RasterizerState::WireFrame</code>, which sets <code>FillMode::WireFrame</code>. This fill mode is not available on the EasyGL (OpenGL ES 3.0) backend because OpenGL ES does not expose a polygon fill-mode toggle. Vulkan supports it; bgfx has a dedicated wireframe path (and is, incidentally, the only bgfx path where draw offsets are honoured).</p>
 
       <pre><code>// Switch to wireframe (Vulkan backend required)
 graphicsDevice-&gt;RasterizerState = RasterizerState::WireFrame;
@@ -759,7 +820,7 @@ graphicsDevice-&gt;RasterizerState = RasterizerState::CullCounterClockwise;</cod
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 227 of 245 XNA 4.0 public types implemented, verified by 4,373 unit tests and 490 GPU pixel tests across its four established rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
