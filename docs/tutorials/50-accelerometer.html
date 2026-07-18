@@ -21,6 +21,7 @@
   "headline": "Tutorial 50: Accelerometer and Sensors",
   "url": "https://libcna.com/docs/tutorials/50-accelerometer.html",
   "datePublished": "2026-06-27",
+  "dateModified": "2026-07-18",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -38,6 +39,7 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main-content">Skip to content</a>
 <nav class="nav">
   <div class="nav-container">
     <a href="../../index.html" class="nav-brand">CNA</a>
@@ -55,14 +57,14 @@
       <a href="../../showcase.html"      class="nav-link">Showcase</a>
       <a href="../../videos.html"        class="nav-link">Videos</a>
       <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
-      <a href="../../contact.html">Contact</a>
+      <a href="../../contact.html"         class="nav-link">Contact</a>
       <a href="../../search.html" class="nav-link">Search</a>
       <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
     </div>
   </div>
 </nav>
 
-<main>
+<main id="main-content">
   <div class="tutorial-layout">
 <div class="docs-main">
 <article class="docs-content">
@@ -77,44 +79,60 @@
       <h1>Tutorial 50: Accelerometer and Sensors</h1>
         <p class="doc-meta">CNA &mdash; C++ XNA 4.0 reimplementation</p>
 
+        <div class="callout callout--info">
+          <span class="callout-icon">&#8505;</span>
+          <p><strong>What you&rsquo;ll learn</strong></p>
+          <ul>
+            <li>Starting the <code>Accelerometer</code> and reading an <code>AccelerometerReading</code>.</li>
+            <li>The axis conventions, and which way is up.</li>
+            <li>Smoothing raw samples with a low-pass filter before using them as input.</li>
+          </ul>
+          <p><strong>Before you start</strong> &mdash; <a href="49-touch-input.html">Tutorial 49: Touch Input and Gestures</a> &mdash; sensors are the other half of mobile input. Requires <code>-DCNA_DEVICES=ON</code>: the <code>Microsoft::Devices</code> sensor layer is gated behind that CMake option, which defaults to <strong>OFF</strong>. Real readings additionally need hardware that has the sensor.</p>
+        </div>
+
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
-          <p><strong>Platform support.</strong> Accelerometer support in CNA depends on the underlying SDL3 sensor API (<code>SDL_Sensor</code>). On <strong>Android</strong>: sensor access is implemented but requires hardware validation &mdash; test on a real device. On <strong>Desktop (Linux/Windows)</strong>: the accelerometer API is not available unless the hardware exposes a compatible SDL sensor (some laptops with motion sensors qualify). Always check <code>Accelerometer::IsSupported</code> before calling <code>Start()</code>.</p>
+          <p><strong>Platform support.</strong> Accelerometer support in CNA depends on the underlying SDL3 sensor API (<code>SDL_Sensor</code>). On <strong>Android</strong>: sensor access is implemented but requires hardware validation &mdash; test on a real device. On <strong>Desktop (Linux/Windows)</strong>: the accelerometer API is not available unless the hardware exposes a compatible SDL sensor (some laptops with motion sensors qualify). Always check the static <code>Accelerometer::getIsSupportedProperty()</code> before calling <code>Start()</code> on an instance.</p>
         </div>
 
         <h2>Accelerometer class</h2>
-        <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Input/Accelerometer.hpp"
-using namespace Microsoft::Xna::Framework::Input;
+        <pre><code class="language-cpp">#include "Microsoft/Devices/Sensors/Accelerometer.hpp"
+using namespace Microsoft::Devices::Sensors;
 
-// Check platform support
-if (!Accelerometer::IsSupported()) {
+// Support is a static query; sampling is per-instance.
+if (!Accelerometer::getIsSupportedProperty()) {
     // Fall back to keyboard/gamepad tilt simulation
     return;
 }
 
+Accelerometer accelerometer;   // keep this alive as a member
+
 // Start sampling
-Accelerometer::Start();
+accelerometer.Start();
 
 // ... in Update():
-AccelerometerReading reading = Accelerometer::GetCurrentReading();
+AccelerometerReading reading = accelerometer.getCurrentValueProperty();
+Vector3 g = reading.getAccelerationProperty();
 
 // Stop when no longer needed (saves battery on mobile)
-Accelerometer::Stop();</code></pre>
+accelerometer.Stop();</code></pre>
 
         <h2>AccelerometerReading</h2>
-        <pre><code class="language-cpp">struct AccelerometerReading {
-    // Acceleration in each axis, expressed in units of g (9.81 m/s^2)
-    // When the device lies flat on a table:  X ≈ 0, Y ≈ 0, Z ≈ -1 (or +1 depending on OS)
-    // When tilted left:  X negative
-    // When tilted right: X positive
-    // When tilted toward user: Y positive
-    double Acceleration_X;
-    double Acceleration_Y;
-    double Acceleration_Z;
+        <p><code>AccelerometerReading</code> is a class, not a plain struct: the acceleration comes back as a single <code>Vector3</code> through a property accessor.</p>
+        <pre><code class="language-cpp">AccelerometerReading reading = accelerometer.getCurrentValueProperty();
 
-    // Timestamp of the reading (nanoseconds since boot on Android)
-    long long Timestamp;
-};</code></pre>
+// Acceleration in each axis, expressed in units of g (9.81 m/s^2)
+// When the device lies flat on a table:  X ≈ 0, Y ≈ 0, Z ≈ -1 (or +1 depending on OS)
+// When tilted left:  X negative
+// When tilted right: X positive
+// When tilted toward user: Y positive
+Vector3 acceleration = reading.getAccelerationProperty();
+
+// Timestamp of the reading, as a DateTimeOffset
+auto timestamp = reading.getTimestampProperty();
+
+// True once at least one sample has arrived from the driver
+bool valid = accelerometer.getIsDataValidProperty();</code></pre>
 
         <h2>Axis conventions</h2>
         <div class="table-wrap">
@@ -136,13 +154,10 @@ Accelerometer::Stop();</code></pre>
 Vector3 filteredTilt_ = Vector3::Zero; // member variable
 
 void Update(GameTime&amp;) override {
-    if (!Accelerometer::IsSupported()) return;
+    if (!Accelerometer::getIsSupportedProperty()) return;
 
-    AccelerometerReading raw = Accelerometer::GetCurrentReading();
-    Vector3 rawTilt(
-        static_cast&lt;float&gt;(raw.Acceleration_X),
-        static_cast&lt;float&gt;(raw.Acceleration_Y),
-        static_cast&lt;float&gt;(raw.Acceleration_Z));
+    AccelerometerReading raw = accelerometer_.getCurrentValueProperty();
+    Vector3 rawTilt = raw.getAccelerationProperty();
 
     filteredTilt_ = Vector3::Lerp(filteredTilt_, rawTilt, kAlpha);
 }</code></pre>
@@ -156,7 +171,11 @@ void Update(GameTime&amp;) override {
         </ul>
 
         <h2>Code example: tilt-based marble game input</h2>
-        <pre><code class="language-cpp">class MarbleGame final : public Game {
+        <pre><code class="language-cpp">#include "Microsoft/Devices/Sensors/Accelerometer.hpp"
+
+using namespace Microsoft::Devices::Sensors;
+
+class MarbleGame final : public Game {
 public:
     MarbleGame() : graphics_(this) {
         setIsFixedTimeStepProperty(true);
@@ -169,14 +188,14 @@ protected:
         marblePos_ = Vector2(400, 300);
         marbleVel_ = Vector2::Zero;
 
-        useTilt_ = Accelerometer::IsSupported();
+        useTilt_ = Accelerometer::getIsSupportedProperty();
         if (useTilt_)
-            Accelerometer::Start();
+            accelerometer_.Start();
     }
 
     void UnloadContent() override {
         if (useTilt_)
-            Accelerometer::Stop();
+            accelerometer_.Stop();
     }
 
     void Update(GameTime&amp; gameTime) override {
@@ -187,9 +206,9 @@ protected:
 
         if (useTilt_) {
             // Tilt the device to roll the marble
-            AccelerometerReading r = Accelerometer::GetCurrentReading();
-            filteredX_ = filteredX_ * 0.8f + static_cast&lt;float&gt;(r.Acceleration_X) * 0.2f;
-            filteredY_ = filteredY_ * 0.8f + static_cast&lt;float&gt;(r.Acceleration_Y) * 0.2f;
+            Vector3 a = accelerometer_.getCurrentValueProperty().getAccelerationProperty();
+            filteredX_ = filteredX_ * 0.8f + a.X * 0.2f;
+            filteredY_ = filteredY_ * 0.8f + a.Y * 0.2f;
 
             // Dead zone: ignore tiny tilts
             const float kDeadZone = 0.05f;
@@ -216,15 +235,15 @@ protected:
         // Clamp to screen
         auto&amp; vp = getGraphicsDeviceProperty().getViewportProperty();
         const float r = 20.0f; // marble radius in pixels
-        marblePos_.X = MathHelper::Clamp(marblePos_.X, r, vp.Width  - r);
-        marblePos_.Y = MathHelper::Clamp(marblePos_.Y, r, vp.Height - r);
+        marblePos_.X = MathHelper::Clamp(marblePos_.X, r, vp.getWidthProperty()  - r);
+        marblePos_.Y = MathHelper::Clamp(marblePos_.Y, r, vp.getHeightProperty() - r);
 
         // Bounce off walls
-        if (marblePos_.X &lt;= r || marblePos_.X &gt;= vp.Width  - r) marbleVel_.X *= -0.6f;
-        if (marblePos_.Y &lt;= r || marblePos_.Y &gt;= vp.Height - r) marbleVel_.Y *= -0.6f;
+        if (marblePos_.X &lt;= r || marblePos_.X &gt;= vp.getWidthProperty()  - r) marbleVel_.X *= -0.6f;
+        if (marblePos_.Y &lt;= r || marblePos_.Y &gt;= vp.getHeightProperty() - r) marbleVel_.Y *= -0.6f;
     }
 
-    void Draw(GameTime&amp;) override {
+    void Draw(const GameTime&amp;) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color::DarkGray);
 
@@ -234,7 +253,7 @@ protected:
             static_cast&lt;int&gt;(marblePos_.X - 20),
             static_cast&lt;int&gt;(marblePos_.Y - 20),
             40, 40);
-        spriteBatch_-&gt;Draw(*marbleTex_, dest, Color::White);
+        spriteBatch_-&gt;Draw(marbleTex_, dest, Color::White);
         spriteBatch_-&gt;End();
 
         gd.Present();
@@ -242,8 +261,9 @@ protected:
 
 private:
     GraphicsDeviceManager          graphics_;
+    Microsoft::Devices::Sensors::Accelerometer accelerometer_;
     std::unique_ptr&lt;SpriteBatch&gt;   spriteBatch_;
-    Texture2D*                     marbleTex_ = nullptr;
+    Texture2D       marbleTex_;
     Vector2                        marblePos_;
     Vector2                        marbleVel_;
     bool                           useTilt_   = false;

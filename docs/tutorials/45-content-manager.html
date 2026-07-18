@@ -21,6 +21,7 @@
   "headline": "Tutorial 45: ContentManager and Asset Pipeline",
   "url": "https://libcna.com/docs/tutorials/45-content-manager.html",
   "datePublished": "2026-06-27",
+  "dateModified": "2026-07-18",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -38,6 +39,7 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main-content">Skip to content</a>
 <nav class="nav">
   <div class="nav-container">
     <a href="../../index.html" class="nav-brand">CNA</a>
@@ -62,7 +64,7 @@
   </div>
 </nav>
 
-<main>
+<main id="main-content">
   <div class="tutorial-layout">
 <div class="docs-main">
 <article class="docs-content">
@@ -76,6 +78,18 @@
 
       <h1>Tutorial 45: ContentManager and Asset Pipeline</h1>
         <p class="doc-meta">CNA &mdash; C++ XNA 4.0 reimplementation</p>
+
+        <div class="callout callout--info">
+          <span class="callout-icon">&#8505;</span>
+          <p><strong>What you&rsquo;ll learn</strong></p>
+          <ul>
+            <li>The generic <code>ContentManager::Load&lt;T&gt;</code> and which asset types it accepts.</li>
+            <li><code>RootDirectory</code> and how asset paths resolve.</li>
+            <li>Freeing assets with <code>Unload()</code> on a state change.</li>
+            <li>The JSON descriptor formats CNA uses.</li>
+          </ul>
+          <p><strong>Before you start</strong> &mdash; <a href="08-textures.html">Tutorial 08: Loading and Drawing Textures</a> and <a href="09-spritefont.html">Tutorial 09: Drawing Text with SpriteFont</a> &mdash; this is the reference pass over the loader those two used informally.</p>
+        </div>
 
         <p>CNA's <code>ContentManager</code> provides the same <code>Load&lt;T&gt;</code> interface as XNA 4.0, and it reads two kinds of content: compiled <code>.xnb</code> binaries, and open file formats such as PNG, glTF, WAV, OGG and <code>.cnj</code> descriptors. When both exist for an asset, the <code>.xnb</code> wins.</p>
 
@@ -133,7 +147,7 @@ auto* font = content.Load&lt;SpriteFont&gt;("fonts/arial20");</code></pre>
 content.setRootDirectoryProperty("Content");
 
 // Nested managers per state (one content manager per game screen)
-ContentManager levelContent(getServicesProperty(), "Content/Level1");</code></pre>
+ContentManager levelContent(&amp;getServicesProperty(), "Content/Level1");</code></pre>
 
         <h2>ContentManager::Unload()</h2>
         <p><code>Unload()</code> disposes every asset loaded through that <code>ContentManager</code> instance. Call it when transitioning between game states to reclaim GPU and audio memory.</p>
@@ -200,9 +214,7 @@ sfx-&gt;Play(0.8f, 0.0f, 0.0f);</code></pre>
         <h2>Code example: load multiple assets, unload on state change</h2>
         <pre><code class="language-cpp">class MultiAssetGame final : public Game {
 public:
-    MultiAssetGame() : graphics_(this),
-        menuContent_(nullptr),
-        gameContent_(nullptr) {}
+    MultiAssetGame() : graphics_(this) {}
 
 protected:
     void Initialize() override {
@@ -219,7 +231,7 @@ protected:
 
         // Game-level assets in a separate manager so they can be unloaded
         gameContent_ = std::make_unique&lt;ContentManager&gt;(
-            getServicesProperty(), "Content/Game");
+            &amp;getServicesProperty(), "Content/Game");
         playerTex_   = gameContent_-&gt;Load&lt;Texture2D&gt;("player");
         enemyTex_    = gameContent_-&gt;Load&lt;Texture2D&gt;("enemy");
         shootSfx_    = gameContent_-&gt;Load&lt;SoundEffect&gt;("shoot");
@@ -234,15 +246,15 @@ protected:
         if (state_ == GameState::Playing &amp;&amp; kb.IsKeyDown(Keys::Escape)) {
             // Free all in-game assets; menu assets remain loaded
             gameContent_-&gt;Unload();
-            playerTex_  = nullptr;
-            enemyTex_   = nullptr;
-            shootSfx_   = nullptr;
-            levelModel_ = nullptr;
+            playerTex_ = {};
+            enemyTex_ = {};
+            shootSfx_.reset();
+            levelModel_ = {};
             state_ = GameState::Menu;
         }
     }
 
-    void Draw(GameTime&amp;) override {
+    void Draw(const GameTime&amp;) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color::Black);
         // ... draw based on state_ ...
@@ -255,17 +267,18 @@ private:
 
     GraphicsDeviceManager                  graphics_;
     std::unique_ptr&lt;ContentManager&gt;        gameContent_;
-    SpriteFont*  menuFont_    = nullptr;
-    Texture2D*   menuBg_      = nullptr;
-    Texture2D*   playerTex_   = nullptr;
-    Texture2D*   enemyTex_    = nullptr;
-    SoundEffect* shootSfx_    = nullptr;
-    Model*       levelModel_  = nullptr;
+    Texture2D                              menuBg_;
+    Texture2D                              playerTex_;
+    Texture2D                              enemyTex_;
+    Model                                  levelModel_;
+    std::optional&lt;SpriteFont&gt;              menuFont_;   // no default ctor
+    std::optional&lt;SoundEffect&gt;             shootSfx_;   // no default ctor
 };</code></pre>
 
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
-          <p>Pointers returned by <code>Load&lt;T&gt;</code> are owned by the <code>ContentManager</code>. After calling <code>Unload()</code>, all pointers from that manager are dangling. Null them immediately as shown above.</p>
+          <p><code>Load&lt;T&gt;</code> returns the asset <strong>by value</strong>, so your member <em>is</em> your copy &mdash; there is no shared handle to keep alive. How you declare that member depends on the type: <code>Texture2D</code> and <code>Model</code> are default-constructible, so a plain value member works and is what CNA's own examples use. <code>SpriteFont</code>, <code>Song</code> and <code>SoundEffect</code> are not, so wrap those in <code>std::optional&lt;T&gt;</code> and take the address with <code>&amp;*font_</code> when an API wants a pointer.</p>
+          <p>After <code>Unload()</code> the manager's cached copy is gone; reset your holders as shown above so the next state change reloads cleanly.</p>
         </div>
 
         <nav class="docs-pagination" aria-label="Page navigation">

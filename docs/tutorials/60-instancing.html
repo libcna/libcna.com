@@ -21,6 +21,7 @@
   "headline": "Tutorial 60: Instanced Rendering",
   "url": "https://libcna.com/docs/tutorials/60-instancing.html",
   "datePublished": "2026-06-27",
+  "dateModified": "2026-07-18",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -38,6 +39,7 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main-content">Skip to content</a>
 <nav class="nav">
   <div class="nav-container">
     <a href="../../index.html" class="nav-brand">CNA</a>
@@ -62,7 +64,7 @@
   </div>
 </nav>
 
-<main>
+<main id="main-content">
   <div class="tutorial-layout">
 <article class="docs-content">
       <nav class="breadcrumb" aria-label="Breadcrumb">
@@ -75,6 +77,18 @@
 
       <h1>Tutorial 60: Instanced Rendering</h1>
       <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Advanced Rendering</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>What instanced rendering saves, and calling <code>DrawInstancedPrimitives</code>.</li>
+          <li>Supplying per-instance data through a second <code>VertexBuffer</code> and a <code>VertexBufferBinding</code> array.</li>
+          <li>Packing a world matrix and colour per instance.</li>
+          <li>Choosing between static and dynamic instance buffers.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="38-vertex-buffers.html">Tutorial 38: Vertex Buffers and Index Buffers</a> (bindings and buffer usage) and <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (the instanced vertex shader reads the extra stream). Requires a 3D-capable backend such as <code>EASYGL</code> or <code>VULKAN</code>; the 2D-only backends (<code>SDL_Renderer</code>, <code>DX3</code>, <code>ASCII</code>, <code>CANVAS</code>) throw on 3D calls.</p>
+      </div>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
@@ -200,19 +214,25 @@ struct GrassInstance {
     // Per-blade colour tint
     Vector4 color;
 
-    // Register the vertex declaration so CNA knows the memory layout.
-    static const VertexDeclaration VertexDeclaration;
+    // Describes the memory layout to CNA. Note the name: calling the member
+    // `VertexDeclaration` would shadow the type inside this class scope, so
+    // the stock vertex types use getVertexDeclarationStatic() and so do we.
+    static const VertexDeclaration&amp; getVertexDeclarationStatic();
 };
 
-// Register: 5 x Vector4 = 5 x 4 floats = 80 bytes per instance.
+// 5 x Vector4 = 5 x 4 floats = 80 bytes per instance.
 // Attribute indices 4-8 are used (0-3 are reserved for per-vertex data).
-const VertexDeclaration GrassInstance::VertexDeclaration = VertexDeclaration({
-    VertexElement(0,  VertexElementFormat::Vector4, VertexElementUsage::TextureCoordinate, 4),
-    VertexElement(16, VertexElementFormat::Vector4, VertexElementUsage::TextureCoordinate, 5),
-    VertexElement(32, VertexElementFormat::Vector4, VertexElementUsage::TextureCoordinate, 6),
-    VertexElement(48, VertexElementFormat::Vector4, VertexElementUsage::TextureCoordinate, 7),
-    VertexElement(64, VertexElementFormat::Vector4, VertexElementUsage::Color,             8),
-});
+const VertexDeclaration&amp; GrassInstance::getVertexDeclarationStatic()
+{
+    static const VertexDeclaration decl({
+        VertexElement(0,  VertexElementFormat::Vector4, VertexElementUsage::TextureCoordinate, 4),
+        VertexElement(16, VertexElementFormat::Vector4, VertexElementUsage::TextureCoordinate, 5),
+        VertexElement(32, VertexElementFormat::Vector4, VertexElementUsage::TextureCoordinate, 6),
+        VertexElement(48, VertexElementFormat::Vector4, VertexElementUsage::TextureCoordinate, 7),
+        VertexElement(64, VertexElementFormat::Vector4, VertexElementUsage::Color,             8),
+    });
+    return decl;
+}
 
 class GrassGame final : public Game {
     std::unique_ptr&lt;VertexBuffer&gt; meshVB_;       // grass blade geometry
@@ -255,10 +275,13 @@ class GrassGame final : public Game {
 
         instanceVB_ = std::make_unique&lt;VertexBuffer&gt;(
             gd,
-            GrassInstance::VertexDeclaration,
+            GrassInstance::getVertexDeclarationStatic(),
             instanceCount_,
             BufferUsage::None);
-        instanceVB_-&gt;SetData(instances.data(), instanceCount_);
+        // GrassInstance is a custom struct, so it goes through SetDataRaw --
+        // SetData is overloaded only for the seven stock vertex types.
+        instanceVB_-&gt;SetDataRaw(instances.data(), instanceCount_,
+                                sizeof(GrassInstance));
 
         // ShaderEffect takes shader SOURCE TEXT, not a content name or a path.
         // Compiled .fx bytecode is unsupported: Effect(device, effectCode) throws
@@ -274,7 +297,7 @@ class GrassGame final : public Game {
         }
     }
 
-    void Draw(GameTime&) override {
+    void Draw(const GameTime&) override {
         auto& gd = getGraphicsDeviceProperty();
         gd.Clear(Color::SkyBlue);
 
@@ -383,9 +406,10 @@ void main() {
       <p>If instance transforms change every frame (e.g., moving particles), recreate or map the instance buffer each frame:</p>
       <pre><code class="language-cpp">// Update instance buffer each frame for dynamic instances
 void UpdateInstanceBuffer(std::vector&lt;GrassInstance&gt;& instances) {
-    instanceVB_-&gt;SetData(
+    instanceVB_-&gt;SetDataRaw(
         instances.data(),
-        static_cast&lt;int&gt;(instances.size()));
+        static_cast&lt;int&gt;(instances.size()),
+        sizeof(GrassInstance));
 }</code></pre>
       <p>For completely static environments (a forest that never changes) prefer <code>BufferUsage::WriteOnly</code> and upload once in <code>LoadContent</code>. For partially dynamic scenes (most grass static, some animated) consider splitting into a static instance buffer and a smaller dynamic one, and issuing two instanced draw calls.</p>
 

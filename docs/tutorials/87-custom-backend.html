@@ -21,6 +21,7 @@
   "headline": "Tutorial 87: Writing a Custom Rendering Backend",
   "url": "https://libcna.com/docs/tutorials/87-custom-backend.html",
   "datePublished": "2026-06-27",
+  "dateModified": "2026-07-18",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -38,6 +39,7 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main-content">Skip to content</a>
 <nav class="nav">
   <div class="nav-container">
     <a href="../../index.html" class="nav-brand">CNA</a>
@@ -62,7 +64,7 @@
   </div>
 </nav>
 
-<main>
+<main id="main-content">
   <div class="tutorial-layout">
 <div class="docs-main">
 <article class="docs-content">
@@ -77,154 +79,109 @@
       <h1>Tutorial 87: Writing a Custom Rendering Backend</h1>
         <p class="doc-meta">CNA &mdash; C++ XNA 4.0 reimplementation</p>
 
+        <div class="callout callout--info">
+          <span class="callout-icon">&#8505;</span>
+          <p><strong>What you&rsquo;ll learn</strong></p>
+          <ul>
+            <li>How CNA splits the XNA-compatible frontend from the <code>IGraphicsBackend</code> backend.</li>
+            <li>Every method category a backend must implement.</li>
+            <li>Registering a backend and selecting it at configure time.</li>
+            <li>The texture upload and shader compilation paths, and how to test a new backend.</li>
+          </ul>
+          <p><strong>Before you start</strong> &mdash; <a href="72-backend-selection.html">Tutorial 72: Choosing the Right Rendering Backend</a> (what the existing backends do) and <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (backends receive shader source, so know what that source is). Reading the real backends under <code>src/CNA/Internal/Backends/</code> alongside this page is strongly recommended.</p>
+        </div>
+
         <h2>CNA backend architecture</h2>
         <p>CNA's rendering pipeline is split into a frontend (the XNA-compatible API in <code>Microsoft::Xna::Framework::Graphics</code>) and a backend (the actual GPU calls). The backend interface is <code>IGraphicsBackend</code>. The frontend delegates all draw calls to the active backend through this interface. You can add a new backend without modifying any frontend code.</p>
 
         <h2>IGraphicsBackend interface overview</h2>
-        <p>The interface lives in <code>cna/backend/IGraphicsBackend.hpp</code>. It defines pure virtual methods for all GPU operations. A concrete backend must implement every method or stub it with a no-op.</p>
-        <p>Required method categories:</p>
+        <p>The interface lives in <code>include/CNA/Internal/Backends/Common/IGraphicsBackend.hpp</code>, in namespace <code>CNA::Internal::Backends</code>. That one header declares the whole backend contract: <code>IGraphicsBackend</code> itself plus the resource interfaces it hands back.</p>
+        <p>The design is <strong>not</strong> one flat interface of opaque integer handles. <code>IGraphicsBackend</code> is a factory: it owns the window and the frame, and it returns <code>std::unique_ptr</code>s to per-resource backend objects, each with its own small interface.</p>
         <ul>
-          <li>Initialization: <code>Init(SDL_Window*)</code>, <code>Shutdown()</code></li>
-          <li>Frame: <code>Clear(Color)</code>, <code>Present()</code></li>
-          <li>Vertex/Index buffers: <code>CreateVertexBuffer(...)</code>, <code>SetData(...)</code>, <code>SetVertexBuffer(...)</code></li>
-          <li>Textures: <code>CreateTexture2D(...)</code>, <code>SetTextureData(...)</code>, <code>BindTexture(...)</code></li>
-          <li>Shaders/Effects: <code>CompileEffect(...)</code>, <code>ApplyEffect(...)</code></li>
-          <li>Pipeline state: <code>SetBlendState(...)</code>, <code>SetDepthStencilState(...)</code>, <code>SetRasterizerState(...)</code></li>
-          <li>Draw calls: <code>DrawPrimitives(...)</code>, <code>DrawIndexedPrimitives(...)</code></li>
-          <li>Render targets: <code>CreateRenderTarget2D(...)</code>, <code>SetRenderTarget(...)</code></li>
+          <li>Frame and surface: <code>Clear(float r, float g, float b, float a)</code>, <code>Present()</code>, <code>GetViewportSize(int&amp;, int&amp;)</code>, <code>SetVirtualResolution(int, int)</code>, <code>SetPresentationMode(int)</code>.</li>
+          <li>Resource factories: <code>CreateTexture(const ImageData&amp;)</code>, <code>CreateSpriteBatch()</code>, <code>CreateOcclusionQuery()</code>, <code>CreateTexture3D(&hellip;)</code>, <code>CreateTextureCube(&hellip;)</code> &mdash; returning <code>ITextureBackend</code>, <code>ISpriteBatchBackend</code>, <code>IOcclusionQueryBackend</code>, and friends.</li>
+          <li>Resource interfaces declared alongside it: <code>IVertexBufferBackend</code>, <code>IIndexBufferBackend</code>, <code>IEffectBackend</code>, <code>IRenderTargetBackend</code>, <code>IRenderTargetCubeBackend</code>.</li>
+          <li>SDL escape hatches, still marked <em>TODO: abstract later</em> in the header: <code>GetWindowInternal()</code>, <code>GetRendererInternal()</code>.</li>
         </ul>
+        <div class="callout callout--info">
+          <span class="callout-icon">&#8505;</span>
+          <p>The interface carries <strong>59 pure virtual methods</strong>. Many more are virtual-with-a-default, deliberately: <code>ReadBackbuffer</code> throws unless overridden, <code>SetSwapInterval</code> is a no-op, <code>CreateOcclusionQuery</code> returns <code>nullptr</code>, and the coordinate-transform pair returns <code>false</code> to mean &ldquo;window space equals logical space&rdquo;. A partial backend is a supported thing to build &mdash; you override what your API can do and inherit a documented fallback for the rest.</p>
+        </div>
 
         <h2>Skeleton custom backend class</h2>
-        <pre><code class="language-cpp">// MyCustomBackend.hpp
+        <p>A backend is constructed ready to draw &mdash; there is no separate <code>Init</code>/<code>Shutdown</code> pair, the constructor and destructor do that work. Below is the shape of a minimal backend; the real ones under <code>src/CNA/Internal/Backends/</code> are the authoritative reference for the remaining overrides.</p>
+        <pre><code class="language-cpp">// MyCustomGraphicsBackend.hpp
 #pragma once
-#include "cna/backend/IGraphicsBackend.hpp"
-#include "Microsoft/Xna/Framework/Graphics/Color.hpp"
+#include "CNA/Internal/Backends/Common/IGraphicsBackend.hpp"
 
-class MyCustomBackend final : public CNA::IGraphicsBackend {
-public:
-    // --- Lifecycle ---
-    bool Init(SDL_Window* window) override {
-        window_ = window;
-        // Initialize your GPU context here
-        return true;
-    }
+namespace CNA::Internal::Backends::MyCustom
+{
+    class MyCustomGraphicsBackend final : public IGraphicsBackend
+    {
+    public:
+        explicit MyCustomGraphicsBackend(const GraphicsBackendCreateArgs&amp; args);
+        ~MyCustomGraphicsBackend() override;
 
-    void Shutdown() override {
-        // Release GPU resources
-    }
+        // --- Frame ---
+        void Clear(float r, float g, float b, float a) override;
+        void Present() override;
+        void GetViewportSize(int&amp; width, int&amp; height) override;
+        void SetVirtualResolution(int width, int height) override;
+        void SetPresentationMode(int mode) override;
 
-    // --- Frame ---
-    void Clear(const Microsoft::Xna::Framework::Graphics::Color& color) override {
-        clearColor_ = color;
-        // Submit clear command to your GPU API
-    }
+        // --- SDL escape hatches (still required by the interface) ---
+        SDL_Window*   GetWindowInternal()   const override { return window_; }
+        SDL_Renderer* GetRendererInternal() const override { return nullptr; }
 
-    void Present() override {
-        // Swap front/back buffers
-        SDL_GL_SwapWindow(window_);
-    }
+        // --- Resource factories ---
+        std::unique_ptr&lt;ITextureBackend&gt;     CreateTexture(const ImageData&amp; data) override;
+        std::unique_ptr&lt;ISpriteBatchBackend&gt; CreateSpriteBatch() override;
 
-    // --- Vertex buffer ---
-    BackendHandle CreateVertexBuffer(int vertexCount,
-                                     int vertexStride,
-                                     bool dynamic) override {
-        // Allocate GPU buffer, return opaque handle
-        return ++nextHandle_;
-    }
+        // Optional: the base class already returns nullptr, meaning
+        // "this backend has no hardware occlusion queries".
+        std::unique_ptr&lt;IOcclusionQueryBackend&gt; CreateOcclusionQuery() override
+        {
+            return nullptr;
+        }
 
-    void SetVertexBufferData(BackendHandle handle,
-                             const void* data,
-                             int byteCount) override {
-        // Upload data to GPU buffer identified by handle
-    }
-
-    void BindVertexBuffer(BackendHandle handle, int stride) override {
-        // Bind buffer for next draw call
-        boundVB_ = handle;
-        boundVBStride_ = stride;
-    }
-
-    // --- Texture ---
-    BackendHandle CreateTexture2D(int width, int height,
-                                  SurfaceFormat format) override {
-        return ++nextHandle_;
-    }
-
-    void SetTextureData(BackendHandle handle,
-                        int level, const void* data, int byteCount) override {
-        // Upload mip level data
-    }
-
-    void BindTexture(int unit, BackendHandle handle) override {
-        // Bind to texture unit
-    }
-
-    // --- Draw ---
-    void DrawPrimitives(PrimitiveType type,
-                        int startVertex,
-                        int primitiveCount) override {
-        // Submit draw call with currently bound VB and effect
-    }
-
-    void DrawIndexedPrimitives(PrimitiveType type,
-                               int baseVertex,
-                               int startIndex,
-                               int primitiveCount) override {
-        // Submit indexed draw call
-    }
-
-    // --- State ---
-    void SetBlendState(const BlendState& state) override {}
-    void SetDepthStencilState(const DepthStencilState& state) override {}
-    void SetRasterizerState(const RasterizerState& state) override {}
-
-    // --- Shaders ---
-    BackendHandle CompileEffect(const char* glslSource, size_t len) override {
-        // Compile shader source, return handle
-        return ++nextHandle_;
-    }
-
-    void ApplyEffect(BackendHandle handle, int pass) override {
-        // Bind compiled shader program
-    }
-
-private:
-    SDL_Window*   window_       = nullptr;
-    BackendHandle nextHandle_   = 0;
-    BackendHandle boundVB_      = 0;
-    int           boundVBStride_= 0;
-    Microsoft::Xna::Framework::Graphics::Color clearColor_{};
-};</code></pre>
-
-        <h2>Registering a backend</h2>
-        <pre><code class="language-cpp">// In your main() before creating Game:
-#include "cna/backend/BackendRegistry.hpp"
-#include "MyCustomBackend.hpp"
-
-int main() {
-    CNA::BackendRegistry::Register("MYCUSTOM",
-        []() -> std::unique_ptr&lt;CNA::IGraphicsBackend&gt; {
-            return std::make_unique&lt;MyCustomBackend&gt;();
-        });
-
-    MyGame game;
-    game.Run();
-    return 0;
+    private:
+        SDL_Window* window_        = nullptr;
+        int         virtualWidth_  = 0;
+        int         virtualHeight_ = 0;
+    };
 }</code></pre>
+        <p>Each factory returns an object implementing its own small interface. <code>ITextureBackend</code>, for instance, requires only <code>GetWidth()</code>, <code>GetHeight()</code> and <code>GetNativeTexture()</code>; <code>UpdatePixels</code>, <code>UpdatePixelsLevel</code>, <code>BindGL</code> and <code>GetData</code> all have no-op defaults you override when your API supports them.</p>
 
-        <p>Then build with <code>-DCNA_GRAPHICS_BACKEND=MYCUSTOM</code>.</p>
+        <h2>Selecting a backend</h2>
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p>There is <strong>no runtime backend registry</strong> in CNA &mdash; no <code>Register(&quot;NAME&quot;, factory)</code> call, and nothing to do inside <code>main()</code>. The backend is a <em>compile-time</em> choice: exactly one backend translation unit is compiled into the library, chosen by the <code>CNA_GRAPHICS_BACKEND</code> CMake option.</p>
+        </div>
+        <p>The whole contract between CNA and a backend implementation is one free function, in namespace <code>CNA::Internal::Backends</code>, defined by whichever backend <code>.cpp</code> got compiled. <code>GraphicsDevice</code> calls it &mdash; unqualified, resolved at link time &mdash; and never knows which backend it got:</p>
+        <pre><code class="language-cpp">// MyCustomGraphicsBackend.cpp
+namespace CNA::Internal::Backends
+{
+    std::unique_ptr&lt;IGraphicsBackend&gt; CreateGraphicsBackend(
+        const GraphicsBackendCreateArgs&amp; args)
+    {
+        return std::make_unique&lt;MyCustom::MyCustomGraphicsBackend&gt;(args);
+    }
+}</code></pre>
+        <p><code>GraphicsBackendCreateArgs</code> is what the frontend hands you at construction: the <code>SDL_Window*</code>, the requested <code>virtualWidth</code>/<code>virtualHeight</code>, a <code>CnaPresentationMode</code>, <code>multiSampleCount</code>, the swap interval, and the <code>contextRecoveryEnabled</code> flag. Add your source directory and a <code>CNA_BACKEND_MYCUSTOM</code> compile definition to the backend branch in <code>CMakeLists.txt</code>, then configure with <code>-DCNA_GRAPHICS_BACKEND=MYCUSTOM</code>.</p>
 
         <h2>Texture upload path</h2>
-        <p>The texture upload flow: <code>Texture2D</code> constructor calls <code>backend-&gt;CreateTexture2D(w, h, format)</code> to allocate, then <code>backend-&gt;SetTextureData(handle, 0, pixels, bytes)</code> for the mip 0 data. For mipmaps, call <code>SetTextureData</code> for each level. On <code>Draw</code>, the <code>SpriteBatch</code> or <code>Effect</code> calls <code>backend-&gt;BindTexture(unit, handle)</code> before the draw call.</p>
+        <p><code>Texture2D</code> asks the backend for one object per texture rather than juggling handles: it calls <code>backend-&gt;CreateTexture(imageData)</code> and keeps the returned <code>std::unique_ptr&lt;ITextureBackend&gt;</code> for the texture's lifetime. Later writes go through that object &mdash; <code>UpdatePixels(rgba, stride)</code> for a full level-0 replacement, <code>UpdatePixelsLevel(level, rgba, w, h)</code> for an individual mip. Readback runs the other way through <code>GetData(&hellip;)</code>, and <code>Texture2D</code> only reaches for it when it has no CPU-side shadow copy of its own &mdash; in practice, for render targets.</p>
+        <p>If your backend can lose its GPU context (WebGL, or an Android app going to background), implement <code>ShareCpuPixels</code>: <code>Texture2D</code> passes a <code>shared_ptr</code> to the pixel buffer it already owns, so you can restore from it after a context loss without keeping a second copy.</p>
 
         <h2>Shader compilation</h2>
-        <p>CNA's built-in effects (BasicEffect, etc.) ship as GLSL source strings. The backend's <code>CompileEffect</code> receives GLSL and must return a compiled handle. For Vulkan backends, convert GLSL to SPIR-V using shaderc at compile time. For Direct3D backends, translate GLSL to HLSL using SPIRV-Cross &mdash; or study CNA's own real <code>D3D11</code>/<code>D3D12</code> backends, which take a different, hand-written-HLSL approach (all 10 stock shader variants written directly in HLSL rather than transpiled) if you want a working reference instead of a from-scratch translation.</p>
+        <p>Shaders are the responsibility of <code>IEffectBackend</code>, not of <code>IGraphicsBackend</code> directly. How the source reaches the GPU is entirely the backend's business, and CNA's own backends deliberately disagree: EasyGL and Vulkan consume GLSL (Vulkan compiling to SPIR-V), the WebGPU backend uses WGSL via <code>wgpu-native</code>, and the D3D11/D3D12 backends ship all stock shader variants as hand-written HLSL rather than transpiling anything. Pick whichever of those is closest to your target API and read that backend first.</p>
 
         <h2>Real reference implementations</h2>
-        <p>This tutorial teaches the interface shape using a hypothetical <code>MYCUSTOM</code> backend, but CNA now ships several real, non-hypothetical backends worth reading as reference implementations of the same <code>IGraphicsBackend</code> contract: native Direct3D <code>D3D11</code>/<code>D3D12</code> (Windows-only, hand-written HLSL), an experimental native <code>WEBGPU</code> backend (WGSL shaders via <code>wgpu-native</code>), and two CI/testing-oriented backends, <code>HEADLESS</code> (implements the full interface without a GPU or window at all &mdash; a good model for the "null backend that returns stub handles" idea below, except it does real argument validation and resource-lifecycle bookkeeping instead of just stubbing out) and <code>SOFTWARE</code> (a real CPU rasterizer, useful as a template if your custom backend also needs to produce genuine pixels without a GPU). Source lives under <code>src/CNA/Internal/Backends/{D3D11,D3D12,WebGPU,Headless,Software}/</code> in the CNA repository.</p>
+        <p>This tutorial teaches the interface shape using a hypothetical <code>MYCUSTOM</code> backend, but CNA now ships several real, non-hypothetical backends worth reading as reference implementations of the same <code>IGraphicsBackend</code> contract: native Direct3D <code>D3D11</code>/<code>D3D12</code> (Windows-only, hand-written HLSL), an experimental native <code>WEBGPU</code> backend (WGSL shaders via <code>wgpu-native</code>), and two CI/testing-oriented backends, <code>HEADLESS</code> (implements the full interface without a GPU or window at all) and <code>SOFTWARE</code> (a real CPU rasterizer, useful as a template if your custom backend also needs to produce genuine pixels without a GPU). Source lives under <code>src/CNA/Internal/Backends/{D3D11,D3D12,WebGPU,Headless,Software}/</code> in the CNA repository.</p>
 
         <h2>Testing strategy</h2>
-        <p>Test your backend by running CNA's 4,845-test suite with <code>CNA_GRAPHICS_BACKEND=MYCUSTOM</code>. The test suite is headless for math tests; rendering tests open a window and compare pixel outputs. A null backend that returns stub handles passes all math tests and lets you validate the frontend independently of GPU hardware.</p>
+        <p>Configure with <code>-DCNA_GRAPHICS_BACKEND=MYCUSTOM</code> and run CNA's 4,845-test suite. The math tests never touch the GPU, so they pass the moment your backend constructs without crashing &mdash; that alone validates the frontend against your build. The 648 backend pixel and integration tests are the real exercise: they open a window, render, and compare output.</p>
+        <p>The <code>HEADLESS</code> backend is the model to copy for bring-up. It implements the full interface with no GPU and no window, but it still validates its arguments and tracks resource lifetimes rather than stubbing everything out &mdash; which means it catches frontend misuse instead of silently swallowing it.</p>
 
         <nav class="docs-pagination" aria-label="Page navigation">
           <div class="docs-pagination-prev">
@@ -234,9 +191,9 @@ int main() {
             </a>
           </div>
           <div class="docs-pagination-next">
-            <a href="89-sharp-runtime.html" class="pagination-link pagination-next">
+            <a href="88-device-layer.html" class="pagination-link pagination-next">
               <span class="pagination-direction">Next &rarr;</span>
-              <span class="pagination-title">Tutorial 89: Extending CNA with sharp-runtime</span>
+              <span class="pagination-title">Tutorial 88: Native OS Integration with CNA::Devices</span>
             </a>
           </div>
         </nav>

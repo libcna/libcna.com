@@ -21,6 +21,7 @@
   "headline": "Tutorial 61: Occlusion Queries",
   "url": "https://libcna.com/docs/tutorials/61-occlusion-query.html",
   "datePublished": "2026-06-27",
+  "dateModified": "2026-07-18",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -38,6 +39,7 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main-content">Skip to content</a>
 <nav class="nav">
   <div class="nav-container">
     <a href="../../index.html" class="nav-brand">CNA</a>
@@ -62,7 +64,7 @@
   </div>
 </nav>
 
-<main>
+<main id="main-content">
   <div class="tutorial-layout">
 <article class="docs-content">
       <nav class="breadcrumb" aria-label="Breadcrumb">
@@ -75,6 +77,17 @@
 
       <h1>Tutorial 61: Occlusion Queries</h1>
       <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Advanced Rendering</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>Wrapping a draw call in <code>OcclusionQuery::Begin()</code> / <code>End()</code> and reading <code>PixelCount</code>.</li>
+          <li>Why <code>IsComplete</code> matters, and the ring-buffer pattern that hides query latency.</li>
+          <li>Using visibility results without stalling the CPU on the GPU.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> (drawing the geometry you are querying) and <a href="44-bounding-volumes.html">Tutorial 44: Bounding Volumes and Spatial Queries</a> (visibility tests generally). Requires a 3D-capable backend such as <code>EASYGL</code> or <code>VULKAN</code>; the 2D-only backends (<code>SDL_Renderer</code>, <code>DX3</code>, <code>ASCII</code>, <code>CANVAS</code>) throw on 3D calls. The implementation notes here are written for the <code>EASYGL</code> and <code>VULKAN</code> backends.</p>
+      </div>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
@@ -113,7 +126,7 @@ query_-&gt;End();</code></pre>
 // so the query result does not affect the visible image.
 ColorWriteChannels saved = gd.BlendState.ColorWriteChannels;
 BlendState noColor = BlendState::Opaque;
-noColor.ColorWriteChannels = ColorWriteChannels::None;
+noColor.setColorWriteChannelsProperty(ColorWriteChannels::None);
 gd.setBlendStateProperty(noColor);
 
 query_-&gt;Begin();
@@ -126,8 +139,8 @@ gd.setBlendStateProperty(BlendState::Opaque); // restore</code></pre>
       <p><code>OcclusionQuery::IsComplete</code> returns <code>true</code> once the GPU has made the result available. The result is <em>not</em> available immediately after <code>End()</code> — the GPU processes commands asynchronously and may not have reached those commands yet.</p>
       <p>In practice on most drivers and hardware, the result becomes available <strong>one to two frames</strong> after the query was issued. Never spin-wait for <code>IsComplete</code> in a tight loop. The correct pattern is to check <code>IsComplete</code> once per frame and consume the result only when it is ready:</p>
       <pre><code class="language-cpp">// Per-frame check — non-blocking
-if (queryPending_ &amp;&amp; query_-&gt;IsComplete) {
-    lastPixelCount_ = query_-&gt;PixelCount;
+if (queryPending_ &amp;&amp; query_-&gt;getIsCompleteProperty()) {
+    lastPixelCount_ = query_-&gt;getPixelCountProperty();
     queryPending_   = false;
 }</code></pre>
       <p>If <code>IsComplete</code> returns <code>false</code>, simply keep using the result from the previous frame. For effects like lens flare, a one- or two-frame lag is completely imperceptible to the player.</p>
@@ -156,8 +169,8 @@ for (int i = 0; i &lt; QUERY_LAG; ++i)
 
 // In Draw:
 // 1. Read from the oldest pending query (non-blocking)
-if (valid_[readIdx_] &amp;&amp; queries_[readIdx_]-&gt;IsComplete) {
-    lastPixelCount_ = queries_[readIdx_]-&gt;PixelCount;
+if (valid_[readIdx_] &amp;&amp; queries_[readIdx_]-&gt;getIsCompleteProperty()) {
+    lastPixelCount_ = queries_[readIdx_]-&gt;getPixelCountProperty();
     valid_[readIdx_] = false;
     readIdx_ = (readIdx_ + 1) % QUERY_LAG;
 }
@@ -174,7 +187,7 @@ writeIdx_ = (writeIdx_ + 1) % QUERY_LAG;</code></pre>
 
       <pre><code class="language-cpp">class LensFlareGame final : public Game {
     std::unique_ptr&lt;OcclusionQuery&gt; query_;
-    std::unique_ptr&lt;Texture2D&gt;     flareTex_;
+    Texture2D       flareTex_;
     std::unique_ptr&lt;SpriteBatch&gt;   spriteBatch_;
 
     bool   queryPending_   = false;
@@ -191,13 +204,13 @@ writeIdx_ = (writeIdx_ + 1) % QUERY_LAG;</code></pre>
         spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(gd);
     }
 
-    void Draw(GameTime&amp; gt) override {
+    void Draw(const GameTime&amp; gt) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color::Black);
 
         // --- 1. Consume last frame's query result (non-blocking) ---
-        if (queryPending_ &amp;&amp; query_-&gt;IsComplete) {
-            lastPixelCount_ = query_-&gt;PixelCount;
+        if (queryPending_ &amp;&amp; query_-&gt;getIsCompleteProperty()) {
+            lastPixelCount_ = query_-&gt;getPixelCountProperty();
             queryPending_   = false;
         }
 
@@ -213,7 +226,7 @@ writeIdx_ = (writeIdx_ + 1) % QUERY_LAG;</code></pre>
         if (!queryPending_) {
             // Disable colour writes so the proxy dot does not affect the image
             BlendState noWrite = BlendState::Opaque;
-            noWrite.ColorWriteChannels = ColorWriteChannels::None;
+            noWrite.setColorWriteChannelsProperty(ColorWriteChannels::None);
             gd.setBlendStateProperty(noWrite);
 
             query_-&gt;Begin();
@@ -226,16 +239,16 @@ writeIdx_ = (writeIdx_ + 1) % QUERY_LAG;</code></pre>
 
         // --- 4. Draw lens flare sprite at sun's screen position ---
         if (flareAlpha_ &gt; 0.005f) {
-            Vector3 sunScreen = gd.Viewport.Project(
-                sunWorldPos_, camera_.Projection(), camera_.View(), Matrix::Identity);
+            Vector3 sunScreen = gd.getViewportProperty().Project(
+                sunWorldPos_, camera_.Projection(), camera_.View(), Matrix::getIdentityProperty());
 
             if (sunScreen.Z &gt; 0.0f &amp;&amp; sunScreen.Z &lt; 1.0f) {
                 Color flareColor = Color::White * flareAlpha_;
                 spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, BlendState::Additive);
                 spriteBatch_-&gt;Draw(
-                    *flareTex_,
-                    Vector2(sunScreen.X - flareTex_-&gt;Width  / 2.0f,
-                            sunScreen.Y - flareTex_-&gt;Height / 2.0f),
+                    flareTex_,
+                    Vector2(sunScreen.X - flareTex_.getWidthProperty()  / 2.0f,
+                            sunScreen.Y - flareTex_.getHeightProperty() / 2.0f),
                     flareColor);
                 spriteBatch_-&gt;End();
             }
