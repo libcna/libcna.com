@@ -103,7 +103,12 @@
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Implementation status:</strong> All four state-object families are fully implemented. Built-in presets and custom state creation work on both the EasyGL and Vulkan backends. See per-section notes for backend-specific limitations.</p>
+        <p><strong>Implementation status:</strong> all four state-object families are present, with built-in presets and custom state creation, and the state types themselves are well covered by CNA's Graphics unit tests. What varies is whether the selected backend honours a given state. The notable gaps: <strong>D3D12 has no scissor, no viewport, no stencil and no blend factor</strong>, and <strong>WebGPU's stencil is non-functional</strong>. Read the per-section notes and <a href="rendering-backends.html">Rendering Backends</a> before designing around any state you cannot see take effect.</p>
+      </div>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Do not trust <code>SupportsCapability()</code> to tell you whether a state is honoured.</strong> The base implementation returns <code>true</code> for everything and 8 of the 14 backends (Ascii, D3D9, D3D11, D3D12, Headless, SDL_GPU, Software, WebGPU) never override it. WebGPU claims 5 capabilities it does not have, Software claims 6, and Ascii reports the inverse of the backend it wraps. Verify visually or with a pixel test rather than by querying.</p>
       </div>
 
       <h2 id="overview">Overview</h2>
@@ -252,6 +257,11 @@ graphicsDevice.DepthStencilState = DepthStencilState::None;</code></pre>
         </table>
       </div>
 
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Stencil is not universal.</strong> Real stencil pipelines exist on Vulkan (a real stencil PSO) and SDL_GPU. <strong>D3D12 has no stencil support</strong> and <strong>WebGPU's stencil is non-functional</strong>, so stencil-based masking and outlining silently do nothing on those two backends.</p>
+      </div>
+
       <h2 id="rasterizerstate">RasterizerState</h2>
       <p><code>RasterizerState</code> controls how triangles are converted to fragments. The most commonly adjusted settings are face culling and fill mode.</p>
 
@@ -307,7 +317,7 @@ graphicsDevice.RasterizerState = RasterizerState::CullNone;</code></pre>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>WireFrame backend limitation:</strong> <code>FillMode::WireFrame</code> requires the Vulkan backend. It is not available on the EasyGL backend and will be silently ignored if set. Use it only when you can guarantee a Vulkan render path.</p>
+        <p><strong>WireFrame is backend-dependent.</strong> <code>FillMode::WireFrame</code> is not honoured everywhere, and a backend that ignores it will silently keep drawing solid rather than raising an error. Because CNA picks its backend at build time, verify wireframe visually against the backend you actually ship. Note also that on bgfx, draw offsets (<code>startIndex</code>/<code>baseVertex</code>) are ignored outside the wireframe path.</p>
       </div>
 
       <h2 id="samplerstate">SamplerState</h2>
@@ -404,6 +414,11 @@ graphicsDevice.DrawPrimitives(PrimitiveType::TriangleList, 0, triangleCount);
 
 // Disable scissor test afterwards
 graphicsDevice.RasterizerState = RasterizerState::CullCounterClockwise;</code></pre>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>D3D12 implements neither scissor nor viewport.</strong> On a D3D12 build, setting <code>ScissorRectangle</code> or <code>Viewport</code> has no effect and rasterisation is not clipped &mdash; split-screen and clipped-UI techniques will render full-screen instead. D3D12 also has no blend factor, so <code>Blend::BlendFactor</code> and <code>BlendState::BlendFactor</code> do nothing there.</p>
+      </div>
 
       <h2 id="common-patterns">Common patterns</h2>
 
@@ -522,19 +537,18 @@ void ParticleSystem::Draw(GraphicsDevice& gd, const Camera& cam)
     }
 }</code></pre>
 
-      <h3>Example 4: Custom RasterizerState (no culling + wireframe on Vulkan)</h3>
+      <h3>Example 4: Custom RasterizerState (no culling + wireframe)</h3>
       <pre><code>// Build a custom rasterizer state for debug wireframe rendering.
-// WireFrame fill mode requires the Vulkan backend.
+// WireFrame is not honoured by every backend — verify it visually
+// against the backend this build was configured with.
 RasterizerState wireframeState;
-wireframeState.CullMode          = CullMode::None;
-wireframeState.FillMode          = FillMode::WireFrame; // Vulkan only
+wireframeState.CullMode             = CullMode::None;
+wireframeState.FillMode             = FillMode::WireFrame;
 wireframeState.MultiSampleAntiAlias = false;
 
-if (graphicsDevice.IsVulkanBackend()) {
-    graphicsDevice.RasterizerState = wireframeState;
-    DrawSceneWireframe();
-    graphicsDevice.RasterizerState = RasterizerState::CullCounterClockwise;
-}</code></pre>
+graphicsDevice.RasterizerState = wireframeState;
+DrawSceneWireframe();
+graphicsDevice.RasterizerState = RasterizerState::CullCounterClockwise;</code></pre>
 
       <h3>Example 5: Per-slot sampler state for multi-texture</h3>
       <pre><code>// DualTextureEffect uses two texture slots.

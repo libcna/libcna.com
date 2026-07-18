@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 95: Speedy Blupi: A Real-World CNA Port - CNA</title>
-  <meta name="description" content="How Speedy Blupi was ported from MonoGame to CNA. API compatibility lessons, content pipeline adaptation, performance results, and key porting patterns.">
+  <meta name="description" content="A worked walkthrough of porting a 2D MonoGame platformer to CNA: API compatibility lessons, content adaptation, and the C# to C++ patterns that recur in any port.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/95-speedy-blupi.html">
   <meta property="og:title"       content="Tutorial 95: Speedy Blupi: A Real-World CNA Port - CNA">
-  <meta property="og:description" content="How Speedy Blupi was ported from MonoGame to CNA. API compatibility lessons, content pipeline adaptation, performance results, and key porting patterns.">
+  <meta property="og:description" content="A worked walkthrough of porting a 2D MonoGame platformer to CNA: API compatibility lessons, content adaptation, and the C# to C++ patterns that recur in any port.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/95-speedy-blupi.html">
@@ -77,8 +77,13 @@
       <h1>Tutorial 95: Speedy Blupi: A Real-World CNA Port</h1>
         <p class="doc-meta">CNA &mdash; C++ XNA 4.0 reimplementation</p>
 
-        <h2>What is Speedy Blupi?</h2>
-        <p>Speedy Blupi is an open-source action platformer originally developed for Windows and ported to Linux via MonoGame. It features a tile-based world, multiple game modes, animated sprites, and SDL-based audio. The game is part of the Blupi game series by EPSITEC SA and is available on GitHub.</p>
+        <div class="callout callout--note">
+          <span class="callout-icon">&#9432;</span>
+          <p><strong>How to read this tutorial.</strong> This is a <em>worked walkthrough</em> of porting a typical 2D MonoGame platformer to CNA, not an audited case study. The translation patterns below are the ones that recur in any port and are worth learning; treat any specific result as illustrative rather than measured. For validation work that <em>is</em> mechanically checked, see the XNA oracle corpus and the FNA differential harness described on the <a href="../../showcase.html">Showcase</a> page.</p>
+        </div>
+
+        <h2>The starting point</h2>
+        <p>Speedy Blupi is an open-source action platformer with a tile-based world, multiple game modes, animated sprites and SDL-based audio. It is part of the Blupi game series by EPSITEC SA. It stands in here for the general shape of a 2D MonoGame game: <code>SpriteBatch</code> throughout, content loaded through <code>ContentManager</code>, and a custom tilemap renderer.</p>
 
         <h2>Original MonoGame codebase</h2>
         <p>The original Speedy Blupi C# MonoGame codebase used: <code>SpriteBatch</code> for all 2D rendering, <code>ContentManager.Load&lt;Texture2D&gt;</code> for XNB assets, <code>Song</code> and <code>MediaPlayer</code> for background music, <code>SoundEffect</code> for game audio, <code>GamePad</code> and <code>Keyboard</code> input, and a custom tilemap renderer built on <code>SpriteBatch.Draw</code> calls.</p>
@@ -87,8 +92,8 @@
         <ol>
           <li>Replace <code>using Microsoft.Xna.Framework;</code> with <code>using namespace Microsoft::Xna::Framework;</code></li>
           <li>Replace <code>new SpriteBatch(GraphicsDevice)</code> with <code>std::make_unique&lt;SpriteBatch&gt;(getGraphicsDeviceProperty())</code></li>
-          <li>Replace <code>Content.Load&lt;Texture2D&gt;("name")</code> with <code>Texture2D("assets/name.png", gd)</code></li>
-          <li>Replace all <code>Song</code> / <code>MediaPlayer</code> calls with <code>SoundEffect</code> (loop via <code>SoundEffectInstance::setIsLooped(true)</code>)</li>
+          <li><code>Content.Load&lt;Texture2D&gt;("name")</code> can stay as-is &mdash; CNA's <code>ContentManager</code> reads <code>.xnb</code> and falls back to loose files. If you would rather drop the pipeline, construct directly: <code>Texture2D("assets/name.png", gd)</code></li>
+          <li><code>Song</code> and <code>MediaPlayer</code> need no replacement &mdash; <code>MediaPlayer</code> genuinely plays songs via SDL3_mixer. Swapping to a looping <code>SoundEffectInstance</code> is an option, not a requirement</li>
           <li>Replace <code>List&lt;T&gt;</code> with <code>std::vector&lt;T&gt;</code> or <code>ListCS&lt;T&gt;</code></li>
           <li>Replace <code>null</code> with <code>nullptr</code>, <code>string</code> with <code>std::string</code></li>
           <li>Replace <code>(float)gameTime.ElapsedGameTime.TotalSeconds</code> with <code>static_cast&lt;float&gt;(gt.ElapsedGameTime.TotalSeconds())</code></li>
@@ -105,13 +110,13 @@
           <li><code>GamePad.GetState(PlayerIndex.One)</code> maps to <code>GamePad::GetState(PlayerIndex::One)</code> &mdash; identical semantics</li>
         </ul>
 
-        <h2>Content pipeline adaptation</h2>
-        <p>Speedy Blupi's XNB assets were converted by exporting PNG files from the original XNB textures using the MonoGame Content Builder, then placing them in an <code>assets/</code> directory. The CNA port loads PNGs directly with <code>Texture2D("assets/sprites.png", gd)</code>. No content pipeline tool is needed &mdash; CNA uses SDL3_image for PNG loading.</p>
+        <h2>Content adaptation</h2>
+        <p>You have two routes, and they can be mixed asset by asset.</p>
+        <p><strong>Keep the <code>.xnb</code> files.</strong> CNA reads them directly through 49 registered type readers, so an existing compiled content directory can be copied across unchanged. Call <code>CNA::Internal::Xnb::RegisterAllBuiltInXnbReaders()</code> once at startup &mdash; the reader registry is empty by default. The limit to watch is that there is no <code>ReflectiveReader</code>, so any custom content type your game defined cannot be read from XNB.</p>
+        <p><strong>Or export to loose files.</strong> Export PNGs from the original XNB textures with the MonoGame Content Builder into an <code>assets/</code> directory and construct textures directly. CNA loads PNG through SDL3_image, and <code>ContentManager</code> falls back to loose files when no <code>.xnb</code> is present.</p>
+        <p>One gap will affect any port with custom shaders: compiled <code>.fx</code> bytecode is not supported at all, and there is no automatic conversion. Those effects must be rewritten by hand as GLSL or SPIR-V through <code>ShaderEffect</code>. A purely 2D <code>SpriteBatch</code> game like this one is not affected.</p>
 
-        <h2>Performance results</h2>
-        <p>The CNA port of Speedy Blupi achieves a stable 60 fps on an Intel integrated GPU (i5-10210U) under Linux, the same as the original MonoGame version on the same hardware. The C++ RAII model eliminated GC pauses that occasionally caused frame drops in the C# version on low-memory devices.</p>
-
-        <h2>Key porting patterns from Speedy Blupi experience</h2>
+        <h2>Key porting patterns</h2>
 <pre><code class="language-cpp">// Pattern 1: Convert content loading
 // C# MonoGame:
 //   texture = Content.Load&lt;Texture2D&gt;("Blupi/blupi");

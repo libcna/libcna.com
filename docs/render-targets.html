@@ -180,28 +180,59 @@ RenderTarget2D rt(
               <td>EasyGL (OpenGL ES 3.0 / WebGL 2)</td>
               <td>FBO + <code>GL_TEXTURE_2D</code></td>
               <td>Depth renderbuffer (<code>GL_RENDERBUFFER</code>)</td>
-              <td><span class="status-badge status-done">Implemented</span></td>
+              <td><span class="status-badge status-done">Real, incl. MRT</span></td>
             </tr>
             <tr>
               <td>Vulkan</td>
               <td>Off-screen <code>VkImage</code> + <code>VkImageView</code></td>
               <td>Depth <code>VkImage</code> attachment in <code>VkRenderPass</code></td>
-              <td><span class="status-badge status-done">Implemented</span></td>
+              <td><span class="status-badge status-done">Real; MRT proxy, MSAA resolve</span></td>
             </tr>
             <tr>
-              <td>bgfx</td>
-              <td>bgfx framebuffer texture</td>
-              <td>&mdash;</td>
-              <td><span class="status-badge status-partial">compiles/links</span></td>
+              <td>D3D9 (Windows-only)</td>
+              <td>Off-screen surface in <code>D3DPOOL_DEFAULT</code></td>
+              <td>Depth-stencil surface</td>
+              <td><span class="status-badge status-done">Real; caps-validated MRT</span></td>
             </tr>
             <tr>
-              <td>SDL_Renderer</td>
-              <td><code>SDL_Texture</code> with target flag</td>
+              <td>D3D11 (Windows-only)</td>
+              <td>Render-target view over a texture</td>
+              <td>Depth-stencil view</td>
+              <td><span class="status-badge status-done">Real; MRT with deferred resolve</span></td>
+            </tr>
+            <tr>
+              <td>SDL_GPU</td>
+              <td>SDL_GPU texture used as a colour target</td>
+              <td>Depth-stencil target</td>
+              <td><span class="status-badge status-done">Real; stencil + MSAA resolve</span></td>
+            </tr>
+            <tr>
+              <td>D3D12 (Windows-only)</td>
+              <td>Render-target view</td>
+              <td>Depth-stencil view</td>
+              <td><span class="status-badge status-partial">MRT is cleared but never drawn to</span></td>
+            </tr>
+            <tr>
+              <td>WebGPU</td>
               <td>&mdash;</td>
-              <td><span class="status-badge status-wip">not implemented</span></td>
+              <td>&mdash;</td>
+              <td><span class="status-badge status-wip">No render-target support at all</span></td>
+            </tr>
+            <tr>
+              <td>Headless</td>
+              <td>&mdash;</td>
+              <td>&mdash;</td>
+              <td><span class="status-badge status-wip">Renders nothing by design</span></td>
             </tr>
           </tbody>
         </table>
+      </div>
+
+      <p>The remaining backends &mdash; SDL_Renderer, Dx3, Ascii and Canvas (all 2D-only), plus Software and bgfx &mdash; are not characterised for render-target behaviour by the current audit, so do not assume off-screen rendering works on them without testing. WebGPU is a backbuffer-only forward renderer: it has no render targets, no MSAA and no cube/3D textures, so every technique on this page is unavailable there. The Headless backend deliberately renders nothing at all; its <code>ReadBackbuffer</code> returns the last clear colour. See <a href="rendering-backends.html">Rendering Backends</a> for the full picture across all 14 backends.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Only <code>SurfaceFormat::Color</code> render targets exist.</strong> <code>Texture::ValidateFormat</code> throws for all 25 other surface formats, and it is called from the <code>Texture2D</code>, <code>Texture3D</code> and <code>TextureCube</code> constructors. Float, half-float and HDR render targets are therefore unavailable in CNA today, despite <code>SurfaceFormat</code> listing those enumerators. Every example on this page uses <code>SurfaceFormat::Color</code> for that reason.</p>
       </div>
 
       <h2>Setting the render target</h2>
@@ -242,15 +273,18 @@ basicEffect.SetTexture(renderTarget);
 basicEffect.SetTextureEnabled(true);</code></pre>
 
       <h2>Multiple Render Targets (MRT)</h2>
-      <p>The EasyGL and Vulkan backends support rendering simultaneously to up to four colour targets in a single draw call. Pass a collection of render targets to <code>SetRenderTargets()</code>. Each target must have the same dimensions. In the fragment shader, output values are written to each attachment in order.</p>
-      <pre><code>// Create G-buffer targets (albedo, normals, depth-as-colour)
+      <p>MRT is real on EasyGL, Vulkan, D3D9 (caps-validated) and D3D11 (with a deferred resolve). Pass a collection of render targets to <code>SetRenderTargets()</code>. Each target must have the same dimensions. In the fragment shader, output values are written to each attachment in order.</p>
+      <p>Two caveats: <strong>D3D12 clears an MRT but never draws to it</strong>, so a G-buffer pass silently produces nothing there; and because only <code>SurfaceFormat::Color</code> can be constructed, every attachment must be RGBA8 &mdash; you cannot allocate a packed-normal or HDR emissive target and must encode into 8-bit channels instead.</p>
+      <pre><code>// Create G-buffer targets (albedo, normals, emissive)
+// NOTE: all attachments must be SurfaceFormat::Color — CNA cannot
+// construct Rgba1010102 / HalfVector4 / any other format today.
 RenderTarget2D rtAlbedo (graphicsDevice, 1920, 1080, SurfaceFormat::Color,
                           DepthFormat::Depth24Stencil8, 0,
                           RenderTargetUsage::DiscardContents);
-RenderTarget2D rtNormals(graphicsDevice, 1920, 1080, SurfaceFormat::Rgba1010102,
+RenderTarget2D rtNormals(graphicsDevice, 1920, 1080, SurfaceFormat::Color,
                           DepthFormat::None, 0,
                           RenderTargetUsage::DiscardContents);
-RenderTarget2D rtEmissive(graphicsDevice, 1920, 1080, SurfaceFormat::HalfVector4,
+RenderTarget2D rtEmissive(graphicsDevice, 1920, 1080, SurfaceFormat::Color,
                            DepthFormat::None, 0,
                            RenderTargetUsage::DiscardContents);
 
@@ -265,7 +299,7 @@ graphicsDevice.SetRenderTarget(nullptr);</code></pre>
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>MRT limit:</strong> Up to 4 simultaneous colour attachments are supported on EasyGL and Vulkan. The bgfx backend supports MRT in principle but has not been tested. SDL_Renderer does not support MRT.</p>
+        <p><strong>MRT support:</strong> real on EasyGL, Vulkan, D3D9 and D3D11. D3D12 clears an MRT but never draws to it. WebGPU has no render targets at all. The 2D-only backends and bgfx are not characterised for MRT &mdash; test before relying on them.</p>
       </div>
 
       <h2>RenderTargetCube</h2>
@@ -349,7 +383,7 @@ environmentMapEffect.SetEnvironmentMap(rtCube);</code></pre>
 
       <h2>Common use cases</h2>
       <ul>
-        <li><strong>Shadow maps</strong> — render the scene from the light's point of view into a depth-only <code>RenderTarget2D</code> (<code>DepthFormat::Depth24</code>, <code>SurfaceFormat::Single</code>), then sample it in the main pass to compute shadow factors.</li>
+        <li><strong>Shadow maps</strong> — render the scene from the light's point of view into a <code>RenderTarget2D</code> (<code>DepthFormat::Depth24</code>), then sample it in the main pass to compute shadow factors. Note that the colour attachment must still be <code>SurfaceFormat::Color</code>, so a single-channel float depth target is not available; pack depth into RGBA8 instead.</li>
         <li><strong>Post-processing effects</strong> — render the full scene into a render target, then apply screen-space effects (blur, bloom, colour grading, FXAA) in one or more additional passes before presenting.</li>
         <li><strong>Minimap rendering</strong> — render a top-down view of the game world into a small render target each frame and display it as a HUD element via <code>SpriteBatch</code>.</li>
         <li><strong>Blur and bloom passes</strong> — chain multiple render targets: render → horizontal blur → vertical blur → composite back onto the main scene.</li>
@@ -433,7 +467,7 @@ auto rtAlbedo  = std::make_shared&lt;RenderTarget2D&gt;(
 
 auto rtNormals = std::make_shared&lt;RenderTarget2D&gt;(
     *graphicsDevice, 1920, 1080,
-    SurfaceFormat::Rgba1010102, DepthFormat::None, 0,
+    SurfaceFormat::Color, DepthFormat::None, 0,  // Color is the only constructible format
     RenderTargetUsage::DiscardContents);
 
 auto gBufferEffect = content-&gt;Load&lt;ShaderEffect&gt;("shaders/gbuffer_write");

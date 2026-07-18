@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 86: bgfx Backend: Features and Limitations - CNA</title>
-  <meta name="description" content="CNA's bgfx rendering backend. Full 2D+3D pixel-verified parity as of Phase 72. What works, what's limited, and when to choose bgfx over EasyGL or Vulkan.">
+  <meta name="description" content="CNA's bgfx rendering backend - currently partial. Ships no D3D or Metal shader variants, so 3D silently draws nothing on bgfx's default Windows and macOS renderers. What works, what is broken, and when not to choose it.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/86-bgfx-backend.html">
   <meta property="og:title"       content="Tutorial 86: bgfx Backend: Features and Limitations - CNA">
-  <meta property="og:description" content="CNA's bgfx rendering backend. Full 2D+3D pixel-verified parity as of Phase 72. What works, what's limited, and when to choose bgfx over EasyGL or Vulkan.">
+  <meta property="og:description" content="CNA's bgfx rendering backend - currently partial. Ships no D3D or Metal shader variants, so 3D silently draws nothing on bgfx's default Windows and macOS renderers. What works, what is broken, and when not to choose it.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/86-bgfx-backend.html">
@@ -77,54 +77,51 @@
       <h1>Tutorial 86: bgfx Backend: Features and Limitations</h1>
         <p class="doc-meta">CNA &mdash; C++ XNA 4.0 reimplementation</p>
 
-        <h2>bgfx overview (full 2D+3D parity, Phase 72)</h2>
-        <p>bgfx is a cross-platform rendering abstraction library that supports OpenGL, Vulkan, Direct3D 11/12, and Metal. CNA's bgfx backend wraps bgfx to provide XNA-compatible rendering. It reached full 2D+3D pixel-verified parity with EasyGL and Vulkan as of this project's Phase 72 &mdash; all five stock effects, render targets (MSAA/mip/depth), and all four state classes are real and pixel-tested &mdash; with the advantage of bgfx's broad platform reach and Metal support on macOS. Two named gaps remain: custom <code>ShaderEffect</code> source compilation is unsupported (bgfx wants precompiled binary shaders), and <code>OcclusionQuery</code> correctness can't be pixel-verified in this project's CI sandbox (software GL 2.1 driver), though the Begin/End wiring itself is real.</p>
-        <p>Note that bgfx's own Direct3D 11/12 support here is <em>bgfx's</em> internal abstraction, not CNA's. CNA also now ships separate, <em>native</em> <code>D3D11</code>/<code>D3D12</code> backends (Windows-only, hand-written HLSL, no bgfx dependency) &mdash; see <a href="72-backend-selection.html">Tutorial 72</a> if you specifically want a direct Direct3D code path rather than going through bgfx's abstraction.</p>
+        <h2>bgfx overview &mdash; partial, and narrower than bgfx itself</h2>
+
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>Read this before choosing bgfx.</strong> The upstream bgfx library supports OpenGL, Vulkan, Direct3D and Metal. CNA's bgfx backend does not reach all of them: it ships 108 shader blobs, but only for <strong>GL, GLES, Vulkan and WebGPU &mdash; there are no D3D or Metal variants</strong>. On bgfx's default renderer on Windows (Direct3D) and macOS (Metal), <strong>3D silently draws nothing</strong>. There is no error and no warning, just an empty frame.</p>
+        </div>
+
+        <p>CNA's bgfx backend wraps bgfx to provide XNA-compatible rendering, and is classified as <strong>partial</strong>. It is one of CNA's four original backends, dating from April 2026, and it carries a reasonable amount of CTest coverage &mdash; but its shader-variant gap and two verified correctness defects mean it is not a drop-in alternative to EasyGL or Vulkan today.</p>
+        <p>Note that bgfx's own Direct3D 11/12 support here is <em>bgfx's</em> internal abstraction, not CNA's. CNA also ships three separate, <em>native</em> Direct3D backends &mdash; <code>D3D9</code>, <code>D3D11</code> and <code>D3D12</code> (Windows-only, hand-written HLSL, no bgfx dependency) &mdash; see <a href="72-backend-selection.html">Tutorial 72</a> if you specifically want a direct Direct3D code path rather than going through bgfx's abstraction.</p>
 
         <h2>Enabling bgfx backend</h2>
-        <pre><code class="language-cpp"># Clone bgfx alongside CNA (sibling directory)
-git clone https://github.com/bkaradzic/bgfx.git ../bgfx
-git clone https://github.com/bkaradzic/bx.git ../bx
-git clone https://github.com/bkaradzic/bimg.git ../bimg
-
-cmake -S . -B build-bgfx \
+        <p>bgfx is pulled in automatically via CMake FetchContent (<code>bgfx.cmake</code>) &mdash; you do not need to clone it yourself:</p>
+        <pre><code class="language-cpp">cmake -S . -B build-bgfx \
   -DCNA_GRAPHICS_BACKEND=BGFX \
-  -DBGFX_DIR=../bgfx \
   -DCMAKE_BUILD_TYPE=Release
 cmake --build build-bgfx -j$(nproc)</code></pre>
+        <p>One caveat worth knowing: <code>bgfx.cmake</code> is fetched at <code>GIT_TAG master</code>, making it <strong>the only unpinned dependency in the entire project</strong>. An upstream bgfx change can therefore break this backend's build without any change on CNA's side.</p>
 
         <h2>What works (basic 3D, SpriteBatch, most effects)</h2>
         <ul>
           <li>Full SpriteBatch 2D rendering including rotation, scale, and color tinting</li>
           <li>BasicEffect, AlphaTestEffect, DualTextureEffect</li>
           <li>VertexBuffer, IndexBuffer, and DrawPrimitives / DrawIndexedPrimitives</li>
-          <li>Texture2D (all formats that bgfx supports)</li>
-          <li>RenderTarget2D (basic usage, no MSAA via XNA API)</li>
+          <li>Texture2D &mdash; note that CNA can only construct <code>SurfaceFormat::Color</code> textures anywhere, regardless of what bgfx supports</li>
           <li>BlendState, DepthStencilState, RasterizerState</li>
           <li>SamplerState (point, linear, anisotropic)</li>
           <li>Keyboard, Mouse, GamePad input (via SDL3)</li>
           <li>SoundEffect / SoundEffectInstance audio (via SDL3_mixer, independent of bgfx)</li>
         </ul>
 
-        <h2>What's limited</h2>
+        <h2>What is broken or missing</h2>
         <ul>
-          <li>Custom <code>ShaderEffect</code> (GLSL/SPIR-V source compilation): unsupported &mdash; bgfx wants precompiled binary shaders, so <code>CreateEffectBackend</code> returns <code>nullptr</code></li>
-          <li>OcclusionQuery: Begin/End wiring is real, but visible-vs-occluded pixel-count correctness can't be pixel-verified under this project's CI sandbox (software GL 2.1 driver, no dedicated-view architecture yet)</li>
-          <li>Wireframe fill mode: not exposed through bgfx's state flags at the CNA level</li>
-          <li><code>RenderTarget2D</code> MSAA resolve: implemented, but one regression test (<code>Bgfx_RenderTarget2D_MsaaResolve</code>) is a documented pre-existing failure in this project's sandbox specifically (Xvfb has no DRI3 support) &mdash; not a code bug</li>
+          <li><strong>No D3D or Metal shader variants.</strong> The 108 shader blobs cover GL, GLES, Vulkan and WebGPU only, so 3D produces an empty frame on bgfx's default Windows and macOS renderers.</li>
+          <li><strong>32-bit index buffers are corrupted.</strong> The backend never overrides <code>CreateIndexBuffer32</code>, so 32-bit indices are uploaded into a 16-bit buffer and <code>DrawUserIndexedPrimitives</code> renders corrupt geometry. Every other 3D backend in CNA implements this correctly. This is a confirmed bug, not a limitation.</li>
+          <li><strong>Draw offsets are ignored.</strong> <code>startIndex</code> and <code>baseVertex</code> have no effect outside the wireframe path, so drawing a sub-range of a shared buffer renders the wrong geometry.</li>
+          <li><strong>Custom <code>ShaderEffect</code> is not a verified path here.</strong> The two pixel-tested custom-shader paths are GLSL on EasyGL and SPIR-V on Vulkan; bgfx expects its own precompiled binary shaders.</li>
         </ul>
-        <p>All five stock effects (<code>BasicEffect</code>, <code>AlphaTestEffect</code>, <code>DualTextureEffect</code>, <code>EnvironmentMapEffect</code>, <code>SkinnedEffect</code>) are pixel-tested on bgfx as of Phase 72 &mdash; SkinnedEffect and EnvironmentMapEffect are no longer partial.</p>
+        <p>The first three of these are tracked as open contribution opportunities &mdash; see <a href="../../contribute.html">Contribute</a>.</p>
 
         <h2>bgfx's own API layer</h2>
         <p>bgfx has its own API (<code>bgfx::submit</code>, <code>bgfx::setVertexBuffer</code>, etc.) that is separate from CNA's XNA-style API. CNA's bgfx backend translates XNA calls into bgfx draw calls internally. You do not need to know bgfx's API to use CNA on the bgfx backend, but if you need features not exposed by CNA, you can call <code>bgfx::</code> functions directly after obtaining the bgfx context from CNA's internal backend handle (not officially supported, use at your own risk).</p>
 
-        <h2>When to use bgfx</h2>
-        <ul>
-          <li>macOS with Metal: bgfx supports Metal; EasyGL uses deprecated OpenGL on macOS</li>
-          <li>Windows with Direct3D 11: bgfx can target D3D11 for better Windows compatibility</li>
-          <li>Multi-backend game that needs to run on consoles: bgfx supports PS5/Xbox via NDA platform ports</li>
-          <li>When EasyGL or Vulkan is unavailable on target hardware</li>
-        </ul>
+        <h2>When to use bgfx &mdash; and when not to</h2>
+        <p>Use it when you are working on the backend itself, or when you have verified that your target platform resolves bgfx to a GL, GLES or Vulkan renderer and you are not relying on 32-bit indices or draw offsets.</p>
+        <p><strong>Do not</strong> reach for it as the macOS answer: CNA's bgfx ships no Metal shaders, so 3D will not draw. macOS handling across CNA is minimal in general and there is no macOS CI. Equally, do not choose it for Windows Direct3D &mdash; CNA has three native Direct3D backends (<code>D3D9</code>, <code>D3D11</code>, <code>D3D12</code>) that are Windows-gated, hand-written, and do not go through bgfx's abstraction. See <a href="72-backend-selection.html">Tutorial 72</a>.</p>
 
         <pre><code class="language-cpp"># CMakeLists.txt for bgfx backend
 cmake_minimum_required(VERSION 3.20)

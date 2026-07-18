@@ -363,7 +363,12 @@ public:
       <p>The key rule: if you would write <code>new Foo(...)</code> in C#, write <code>std::make_unique&lt;Foo&gt;(...)</code> in C++ and store the result in a <code>std::unique_ptr&lt;Foo&gt;</code> member. The destructor will run automatically when your game object is destroyed.</p>
 
       <h2 id="content-pipeline">5. Content pipeline</h2>
-      <p>XNA and MonoGame use a pre-compilation pipeline that converts source assets into proprietary <code>.xnb</code> binary files, which are then loaded at runtime via <code>ContentManager.Load&lt;T&gt;</code>. CNA does not support the XNB format.</p>
+      <p>XNA and MonoGame pre-compile source assets into <code>.xnb</code> binary files, which are then loaded at runtime via <code>ContentManager.Load&lt;T&gt;</code>. <strong>CNA now reads <code>.xnb</code> directly.</strong> A real XNB reader is wired into <code>ContentManager</code>: 49 registered type readers covering all primitives, all math types, <code>Texture2D</code>/<code>Texture3D</code>/<code>TextureCube</code>, <code>SpriteFont</code>, <code>SoundEffect</code>, <code>Song</code>, the five stock effects and the model family, plus a real LZX decompressor and two-pass shared-resource resolution. <code>ContentManager</code> prefers a <code>.xnb</code> when one exists and falls back to loose files otherwise, so you can migrate asset by asset.</p>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p>You must call <code>CNA::Internal::Xnb::RegisterAllBuiltInXnbReaders()</code> once at startup. The registry is deliberately empty by default, so an <code>.xnb</code> load will fail until you do. See <a href="content-pipeline-xnb.html">XNB Content Pipeline</a> for the full reader list and the known gaps.</p>
+      </div>
 
       <div class="table-wrap">
         <table>
@@ -376,33 +381,37 @@ public:
           <tbody>
             <tr>
               <td>Pre-compile assets with MGCB / XNA Content Pipeline Tool</td>
-              <td>No build step required for most asset types</td>
+              <td>Existing <code>.xnb</code> output can be copied across as-is; loose source files also work with no build step</td>
             </tr>
             <tr>
               <td><code>.xnb</code> binary files at runtime</td>
-              <td>Raw asset files (PNG, WAV, OGG) or JSON descriptor files</td>
+              <td><code>.xnb</code> binary files at runtime, or raw asset files (PNG, WAV, OGG) / JSON descriptors</td>
             </tr>
             <tr>
               <td><code>Content.Load&lt;Texture2D&gt;("player")</code> loads <code>player.xnb</code></td>
-              <td><code>Content-&gt;Load&lt;Texture2D&gt;("player")</code> loads <code>player.png</code> directly</td>
+              <td><code>Content-&gt;Load&lt;Texture2D&gt;("player")</code> prefers <code>player.xnb</code>, else falls back to <code>player.png</code></td>
             </tr>
             <tr>
               <td>Fonts: <code>.spritefont</code> + MGCB</td>
-              <td>Fonts: <code>.font.json</code> descriptor referencing a TTF file</td>
+              <td>Fonts: a compiled <code>SpriteFont</code> <code>.xnb</code>, or a <code>.font.json</code> descriptor referencing a TTF file</td>
             </tr>
             <tr>
               <td>Models: <code>.fbx</code> / <code>.obj</code> compiled to <code>.xnb</code></td>
-              <td>Models: <code>.model.json</code> descriptor referencing OBJ/FBX</td>
+              <td>Models: the XNB model readers, a <code>.model.json</code> descriptor, or the <code>gltf_to_cnj</code> converter (CNA's own model path)</td>
             </tr>
             <tr>
               <td>Custom shaders: <code>.fx</code> HLSL compiled by pipeline</td>
-              <td>Shaders: <code>.shader.json</code> referencing GLSL (EasyGL), SPIR-V (Vulkan), HLSL (native D3D11, Windows-only), or WGSL (experimental WebGPU)</td>
+              <td><strong>No equivalent.</strong> Rewrite as a <code>.shader.json</code> referencing GLSL (EasyGL) or SPIR-V (Vulkan) &mdash; the two verified <code>ShaderEffect</code> paths</td>
+            </tr>
+            <tr>
+              <td>Custom / user-defined content types</td>
+              <td><strong>No equivalent from XNB.</strong> There is no <code>ReflectiveReader</code>; move these to raw assets or JSON descriptors</td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <p>For a typical 2D game the migration is straightforward: place PNG and OGG files in your content directory and update <code>Content-&gt;setRootDirectory()</code> to point at it. The <code>Load&lt;T&gt;</code> call is identical.</p>
+      <p>For a typical 2D game the migration is straightforward: copy your existing content directory across, register the built-in readers at startup, and the <code>Load&lt;T&gt;</code> calls are identical. Where you would rather drop the pre-compilation step entirely, place PNG and OGG files in the content directory instead and point <code>Content-&gt;setRootDirectory()</code> at it.</p>
 
       <h2 id="audio">6. Audio</h2>
       <p>CNA implements the main XNA audio API in the <code>Microsoft::Xna::Framework::Audio</code> namespace. The common classes work as expected:</p>
@@ -411,7 +420,7 @@ public:
         <li><code>SoundEffectInstance</code> — a controllable instance of a <code>SoundEffect</code>: pause, resume, loop, and volume control all work.</li>
         <li><code>MediaPlayer</code> / <code>Song</code> — background music playback. API identical to XNA.</li>
       </ul>
-      <p>The XACT subsystem (<code>AudioEngine</code>, <code>SoundBank</code>, <code>WaveBank</code>, <code>Cue</code>) is now genuinely implemented (~97% functional) — a real <code>.xgs</code>/<code>.xsb</code>/<code>.xwb</code> parser plays back through SDL3_mixer with category/instance-limit/fade handling and continuous RPC curves. Games that rely on XACT for audio can keep doing so; <code>SoundEffect</code> and <code>MediaPlayer</code> remain simpler alternatives for projects without existing XACT content.</p>
+      <p>The <code>Audio</code> namespace is around 92% functional. The XACT subsystem (<code>AudioEngine</code>, <code>SoundBank</code>, <code>WaveBank</code>, <code>Cue</code>) is a real parser and player rather than a facade: a 1,115-line parser for the XGS/XWB/XSB binary formats, FACT's actual volume formula and real RPC curves, playing back through SDL3_mixer. 3D audio uses FAudio's exact Doppler and F3DAudio attenuation. Games that rely on XACT can keep doing so, with three caveats: <strong>only the first <code>PlayWave</code> per track is honoured, XMA and WMA throw, and reverb is a no-op.</strong> <code>SoundEffect</code> and <code>MediaPlayer</code> remain simpler alternatives for projects without existing XACT content.</p>
 
       <h2 id="gaps">7. Known gaps and limitations</h2>
 
@@ -419,11 +428,14 @@ public:
         <span class="callout-icon">&#9888;</span>
         <p><strong>Before porting, review these known gaps.</strong> The API surface is largely there, but the items below are absent, partial, or need hardware validation. See <a href="verification.html">Verification &amp; Known Issues</a> for the complete current list.</p>
         <ul>
-          <li><strong>XNB is supported, with limits</strong> &mdash; <code>.xnb</code> files load through 49 registered type readers, but there is no <code>ReflectiveReader</code>, so custom/user-defined types must move to raw assets (PNG, WAV, OGG) or JSON descriptors. See <a href="content-pipeline-xnb.html">XNB Content Pipeline</a>.</li>
-          <li><strong>GamerServices</strong> &mdash; a complete API port exists (<code>Gamer</code>, <code>SignedInGamer</code>, <code>GamerProfile</code>, leaderboards, <code>Guide</code>, achievements), with local/synthetic semantics rather than real Xbox Live binary compatibility — the same approach FNA itself uses for this namespace.</li>
-          <li><strong>Touch input</strong> &mdash; the <code>TouchPanel</code> API and gesture pipeline (Tap, FreeDrag, Flick, Pinch...PinchComplete) are fully wired and byte-faithful to FNA's behavior (~98%).</li>
-          <li><strong>macOS</strong> &mdash; not an official target. SDL3 supports macOS and CNA may compile there, but it is untested.</li>
-          <li><strong>FillMode::WireFrame</strong> &mdash; available on the Vulkan backend only; not supported on EasyGL.</li>
+          <li><strong>Compiled <code>.fx</code> bytecode is not supported at all</strong> &mdash; <code>Effect(GraphicsDevice&amp;, byte[])</code> throws unconditionally, and the XNB <code>EffectReader</code> is registered as an always-throwing placeholder. There is no MojoShader equivalent. Any custom effect must be rewritten by hand as GLSL or SPIR-V through <code>ShaderEffect</code>. <strong>This is the single biggest real porting gap.</strong></li>
+          <li><strong>Only <code>SurfaceFormat::Color</code> textures can be constructed</strong> &mdash; <code>Texture::ValidateFormat</code> throws for all 25 other formats, so float/half/HDR textures and render targets are unavailable. DXT/DDS files load only by CPU-decompressing to RGBA.</li>
+          <li><strong>XNB is supported, with limits</strong> &mdash; <code>.xnb</code> files load through 49 registered type readers, but there is no <code>ReflectiveReader</code>, so custom/user-defined types must move to raw assets (PNG, WAV, OGG) or JSON descriptors. <code>EnumReader</code>, <code>ExternalReferenceReader</code> and <code>VideoReader</code> are also missing. See <a href="content-pipeline-xnb.html">XNB Content Pipeline</a>.</li>
+          <li><strong>GamerServices is a shim</strong> &mdash; all 51 types are present with complete signatures, but there is <em>no backend of any kind</em>: no Steam, no HTTP, no filesystem persistence. Nothing is saved. <code>Guide</code>'s message boxes throw, <code>ShowKeyboardInput</code> displays nothing, leaderboard I/O throws, and <code>GamerServicesDispatcher::Initialize()</code> fabricates four gamers named "Stub Gamer". Your XNA code will compile and run, but achievements and leaderboards will do nothing.</li>
+          <li><strong>The <code>Media</code> catalogue API throws</strong> &mdash; <code>MediaPlayer</code> and <code>VideoPlayer</code> are real, but 14 types (<code>MediaLibrary</code>, <code>MediaSource</code>, <code>Album</code>, <code>Artist</code>, <code>Genre</code>, <code>Playlist</code>, <code>Picture</code>, <code>PictureAlbum</code> and their collections) throw on every member. Video decoding uses FFmpeg and is effectively native-Linux-only &mdash; unavailable on Emscripten, Android and every Windows target.</li>
+          <li><strong>Touch input</strong> &mdash; the <code>TouchPanel</code> API and gesture pipeline are fully wired, with all 10 XNA gesture types genuinely detected (~95%). One bug: <code>TouchCollection</code> reports <code>IsReadOnly == true</code> but its mutators mutate rather than throwing.</li>
+          <li><strong>macOS</strong> &mdash; minimal handling only; not an official target. iOS is not a target either.</li>
+          <li><strong>Backend-dependent state</strong> &mdash; <code>FillMode::WireFrame</code> is not honoured on every backend, and D3D12 implements no scissor, viewport, stencil or blend factor. Do not trust <code>SupportsCapability()</code> to tell you which; verify visually. See <a href="graphics-state.html">Graphics State</a>.</li>
         </ul>
       </div>
 

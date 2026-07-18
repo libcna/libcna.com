@@ -66,23 +66,30 @@ git submodule update --init --recursive</code></pre>
       <p>This populates <code>third_party/SDL</code>, <code>third_party/SDL_image</code>, and <code>third_party/SDL_mixer</code>. SDL3 is built from source by CMake — no system SDL packages are required.</p>
 
       <h3>Step 2 — Clone sibling repositories</h3>
-      <p>CNA requires <code>sharp-runtime</code> and, for the EasyGL backend, <code>easy-gl</code>, to be present as sibling directories next to <code>cna/</code>:</p>
+      <p>CNA always requires <code>sharp-runtime</code> as a sibling directory next to <code>cna/</code>. Two more siblings are needed only by specific backends: <code>easy-gl</code> for EasyGL and <code>free-direct</code> for Dx3.</p>
       <pre><code>parent/
 ├── cna/
-├── sharp-runtime/
-└── easy-gl/</code></pre>
+├── sharp-runtime/   # always required
+├── easy-gl/         # required by the EASYGL backend
+└── free-direct/     # required by the DX3 backend</code></pre>
       <p>Clone them at the same level:</p>
       <pre><code>git clone https://github.com/openeggbert/sharp-runtime.git
-git clone https://github.com/openeggbert/easy-gl.git</code></pre>
+git clone https://github.com/openeggbert/easy-gl.git
+git clone https://github.com/openeggbert/free-direct.git</code></pre>
 
       <h3>Step 3 — Build with EasyGL</h3>
       <pre><code>cmake -S . -B build -DCNA_GRAPHICS_BACKEND=EASYGL
 cmake --build build --target CNA CnaTests</code></pre>
-      <p>The <code>CNA</code> target builds the framework library. The <code>CnaTests</code> target builds the GoogleTest unit-test binary. For other backends (<code>SDL_RENDERER</code>, <code>BGFX</code>, <code>VULKAN</code>, <code>WEBGPU</code>, <code>HEADLESS</code>, <code>SOFTWARE</code>, <code>D3D11</code>, <code>D3D12</code>) and cross-compilation instructions, see the <a href="docs/building.html">Building documentation</a>.</p>
+      <p>The <code>CNA</code> target builds the framework library. The <code>CnaTests</code> target builds the GoogleTest unit-test binary. CNA selects its backend at <strong>build time</strong> &mdash; exactly one per build, with no runtime dispatch &mdash; so testing another backend means a fresh configure. The 14 valid values are <code>SDL_RENDERER</code>, <code>EASYGL</code>, <code>BGFX</code>, <code>VULKAN</code>, <code>WEBGPU</code>, <code>HEADLESS</code>, <code>SOFTWARE</code>, <code>D3D11</code>, <code>D3D12</code>, <code>CANVAS</code>, <code>ASCII</code>, <code>DX3</code>, <code>D3D9</code> and <code>SDL_GPU</code>. See the <a href="docs/building.html">Building documentation</a> for cross-compilation instructions.</p>
 
       <h3>Step 4 — Run the tests</h3>
       <pre><code>ctest --test-dir build --output-on-failure</code></pre>
-      <p>All 4,845 unit tests should pass on a clean Linux build with the EasyGL backend. If any fail, please open an issue with the full CTest output.</p>
+      <p>The <code>CnaTests</code> binary holds 4,845 GoogleTest cases across 419 suites; a live EasyGL build tree registers 5,089 CTest entries in total. All should pass on a clean Linux build with the EasyGL backend. If any fail, please open an issue with the full CTest output.</p>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p>Because backend choice is compile-time, full coverage requires 14 separate configure + build + test runs. Only one CI workflow is auto-triggered, and it runs a five-way Linux matrix over the <code>input</code>-labelled tests &mdash; so verifying your change on more than one backend locally is genuinely valuable.</p>
+      </div>
 
       <!-- ====================================================
            Section 2 — Repository structure
@@ -105,7 +112,7 @@ cmake --build build --target CNA CnaTests</code></pre>
             </tr>
             <tr>
               <td><code>tests/</code></td>
-              <td>GoogleTest unit tests (<code>CnaTests</code> target, 4,845 tests). Covers math types, geometry, curves, game loop semantics, PackedVector precision, and more.</td>
+              <td>GoogleTest unit tests (<code>CnaTests</code> target &mdash; 4,845 cases across 419 suites in 287 <code>.cpp</code> files). Heaviest areas: Graphics 1,627, CNA internals 553, Audio 493, Devices/Sensors 356, GamerServices 311, Input 232, Net 174, Content 158, core math ~700.</td>
             </tr>
             <tr>
               <td><code>third_party/</code></td>
@@ -161,50 +168,68 @@ cmake --build build --target CNA CnaTests</code></pre>
 
         <div class="card">
           <span class="status-badge status-wip" style="margin-bottom:0.75rem;">Open</span>
-          <h3>bgfx <code>RenderTargetCube</code> depth attachment</h3>
-          <p>A cube-map face with a <code>Depth24Stencil8</code> attachment renders nothing at all on bgfx. Investigated three times with apitrace and RenderDoc; the framebuffer, view id and texture binding are all provably correct, yet the content never appears. Genuinely unsolved &mdash; a good puzzle for someone who knows GL/bgfx internals.</p>
+          <h3>bgfx 32-bit index buffers</h3>
+          <p>A confirmed correctness bug. The bgfx backend never overrides <code>CreateIndexBuffer32</code>, so 32-bit indices are uploaded into a 16-bit buffer and <code>DrawUserIndexedPrimitives</code> corrupts geometry. Every other 3D backend implements this. Well-scoped and clearly diagnosed &mdash; a good first substantial contribution.</p>
         </div>
 
         <div class="card">
           <span class="status-badge status-wip" style="margin-bottom:0.75rem;">Open</span>
-          <h3>Bgfx custom <code>ShaderEffect</code> support</h3>
-          <p>Bgfx reached full 2D+3D pixel-verified parity with EasyGL and Vulkan, but custom GLSL/SPIR-V <code>ShaderEffect</code> source compilation is still unsupported — <code>CreateEffectBackend</code> returns <code>nullptr</code> because bgfx wants precompiled binary shaders. Knowledge of bgfx's shader toolchain required.</p>
+          <h3>bgfx D3D and Metal shader variants</h3>
+          <p>bgfx ships 108 shader blobs, but only for GL, GLES, Vulkan and WebGPU &mdash; there are no D3D or Metal variants. The practical consequence is that <strong>3D silently draws nothing on bgfx's default Windows and macOS renderers</strong>. Building out the missing shader variants through bgfx's shader toolchain would make the backend genuinely cross-platform.</p>
         </div>
 
         <div class="card">
-          <span class="status-badge status-done" style="margin-bottom:0.75rem;">Parity (Phase 72)</span>
-          <h3>BGFX rendering backend</h3>
-          <p>The BGFX backend now has full 2D+3D pixel-verified parity with EasyGL and Vulkan. Remaining named gaps: custom <code>ShaderEffect</code> source compilation (above) and <code>OcclusionQuery</code> pixel-verified correctness, which can't be confirmed under this project's sandbox (software GL 2.1 driver, no dedicated-view architecture yet).</p>
+          <span class="status-badge status-wip" style="margin-bottom:0.75rem;">Open</span>
+          <h3>Truthful <code>SupportsCapability()</code></h3>
+          <p>The base implementation returns <code>true</code> for everything, and 8 of the 14 backends (Ascii, D3D9, D3D11, D3D12, Headless, SDL_GPU, Software, WebGPU) never override it. WebGPU claims 5 capabilities it lacks, Software claims 6, and Ascii reports the inverse of the backend it wraps. SDL_Renderer is currently the only backend whose capability reporting is fully truthful &mdash; it is the model to follow. Mechanical, high-value, and easy to verify.</p>
         </div>
 
         <div class="card">
-          <span class="status-badge status-planned" style="margin-bottom:0.75rem;">Needs native CI</span>
-          <h3>Windows CI</h3>
-          <p>CNA builds on Windows with the <code>SDL_RENDERER</code> backend (MSVC 2022, clang-cl, or MinGW-w64) and is verified cross-compiled with MinGW-w64 plus running under Wine — but there's no native-hardware or CI coverage yet. Setting up a GitHub Actions Windows runner (CNA's existing CI currently covers only the Input and Devices/Sensors subsystems) would close a real gap.</p>
+          <span class="status-badge status-wip" style="margin-bottom:0.75rem;">Open</span>
+          <h3>D3D12 scissor, viewport, stencil and blend factor</h3>
+          <p>D3D12 has a strong core (PSO and root-signature caches, a barrier tracker) but four unimplemented pieces of fixed-function state, and its MRT path clears attachments but never draws to them. Windows-only work with a clear specification and existing sibling implementations in D3D9 and D3D11 to follow.</p>
         </div>
 
         <div class="card">
-          <span class="status-badge status-planned" style="margin-bottom:0.75rem;">Needs real hardware</span>
-          <h3>D3D11 / D3D12 real-Windows verification</h3>
-          <p>Both native Direct3D backends are fully built and pixel-verified through Wine (DXVK for D3D11, vkd3d-proton for D3D12) on a real GPU, but neither has run on an actual Windows machine yet. If you have access to real Windows hardware, running the existing CTest suites there — and, for D3D12, actually exercising a real swap chain/<code>Present()</code>, which crashes only under this project's Wine dev loop — would close a well-scoped, clearly-documented gap.</p>
+          <span class="status-badge status-wip" style="margin-bottom:0.75rem;">Open</span>
+          <h3>Draw-offset handling</h3>
+          <p><code>startIndex</code> and <code>baseVertex</code> are ignored on D3D11, and on bgfx outside the wireframe path. Any code that draws a sub-range of a shared buffer therefore renders the wrong geometry on those backends. Small, well-defined, and pixel-testable.</p>
+        </div>
+
+        <div class="card">
+          <span class="status-badge status-planned" style="margin-bottom:0.75rem;">Needs CI</span>
+          <h3>Broader CI coverage</h3>
+          <p>CI is thin. Only <code>input-ci.yml</code> is auto-triggered &mdash; ubuntu-24.04, gcc-14, a five-way matrix (EasyGL, EasyGL with ASan/UBSan, SDL_Renderer, Vulkan, bgfx) running only the <code>input</code>-labelled tests. <code>devices-tests.yml</code> is path-filtered to <code>Microsoft/Devices/**</code>, and <code>d3d-windows-ci.yml</code> is manual-dispatch only. There is no macOS, Android or Emscripten CI at all, and the full unit and GPU pixel suites are run by hand rather than gated. Extending any of this is real, useful work.</p>
+        </div>
+
+        <div class="card">
+          <span class="status-badge status-planned" style="margin-bottom:0.75rem;">Needs a Windows toolchain fix</span>
+          <h3><code>CnaTests</code> on Windows</h3>
+          <p>The full <code>CnaTests</code> suite cannot build on any Windows toolchain: roughly ten test files use the POSIX <code>::setenv()</code>. Replacing those with a portable shim would let the whole unit suite run natively on Windows for the first time, which in turn would make Windows CI worth expanding.</p>
         </div>
 
         <div class="card">
           <span class="status-badge status-planned" style="margin-bottom:0.75rem;">Unofficial</span>
           <h3>macOS support</h3>
-          <p>SDL3 supports macOS out of the box. CNA has no known macOS-specific blockers, but it has not been tested there. If you have a Mac, a build report or CI workflow would be very welcome.</p>
+          <p>CNA has minimal macOS handling today and no macOS CI. If you have a Mac, a build report or a CI workflow would be very welcome. Note that bgfx has no Metal shader variants, so EasyGL or Vulkan (via MoltenVK) are the realistic starting points.</p>
         </div>
 
         <div class="card">
-          <span class="status-badge status-planned" style="margin-bottom:0.75rem;">Planned</span>
-          <h3>Content pipeline / XNB parser</h3>
-          <p>CNA has no XNB asset parser. The existing content loader accepts JSON-described assets. New loader types (fonts, tilesets, spritesheets) modelled on the existing pattern are always welcome, as is an XNB binary format reader.</p>
+          <span class="status-badge status-wip" style="margin-bottom:0.75rem;">Open</span>
+          <h3>XNB reader gaps</h3>
+          <p>The <code>.xnb</code> pipeline is real &mdash; 49 registered type readers, an LZX decompressor, fuzz-hardened parsing, wired into <code>ContentManager</code>. The remaining gaps are specific: there is <strong>no <code>ReflectiveReader</code></strong>, so no custom or user-defined type can be loaded from XNB at all; <code>EnumReader</code>, <code>ExternalReferenceReader</code> and <code>VideoReader</code> are missing; and <code>EffectReader</code> is a placeholder that always throws. The <code>Array</code>/<code>List</code>/<code>Dictionary</code>/<code>Nullable</code> readers are implemented but not registered, since without reflection each closed generic needs hand-registration. See <a href="docs/content-pipeline-xnb.html">XNB Content Pipeline</a>.</p>
+        </div>
+
+        <div class="card">
+          <span class="status-badge status-wip" style="margin-bottom:0.75rem;">Open</span>
+          <h3>ContentManager lifecycle</h3>
+          <p><code>ContentManager::Unload()</code> clears its maps without disposing the assets they held, and <code>ResourceContentManager</code> is the repository's only pure stub. Both are small, self-contained fixes with obvious correctness criteria.</p>
         </div>
 
         <div class="card">
           <span class="status-badge status-planned" style="margin-bottom:0.75rem;">Always welcome</span>
           <h3>Test coverage</h3>
-          <p>4,845 unit tests exist and pass, but many XNA types and edge cases are uncovered. New GoogleTest unit tests for any <code>Microsoft::Xna::Framework</code> type or method are accepted without reservation — just follow the pattern in <code>tests/</code>. Separately, a 168-test EasyGL GPU/pixel integration suite passes 166/168 (2 documented pre-existing failures) — new pixel tests under <code>examples/</code> are equally welcome.</p>
+          <p>4,845 unit tests exist and pass, but coverage is uneven &mdash; <strong><code>Media</code> and <code>Storage</code> have zero unit tests</strong>, which is the clearest gap on the board. The Canvas backend is another: it is mature within its narrow Emscripten scope but <strong>no automated test ever renders a Canvas pixel</strong>. New GoogleTest unit tests for any type are accepted without reservation; follow the pattern in <code>tests/</code>. Pixel tests under <code>examples/</code> are equally welcome &mdash; roughly 436 of the 559 example programs already do real GPU-to-CPU readback with exact-match assertions.</p>
         </div>
 
       </div>
@@ -218,7 +243,7 @@ cmake --build build --target CNA CnaTests</code></pre>
         <li><strong>API shape is fixed.</strong> The <code>Microsoft::Xna::Framework</code> public API mirrors XNA 4.0 exactly. Do not rename, remove, or add overloads to public methods without a compelling reason backed by FNA precedent.</li>
         <li><strong>Properties become getter/setter methods.</strong> C# <code>public int Width { get; set; }</code> becomes <code>intcs getWidth() const</code> and <code>void setWidth(intcs value)</code> in C++.</li>
         <li><strong>Use <code>sharp-runtime</code> types.</strong> Use <code>intcs</code>, <code>bytecs</code>, <code>Single</code>, <code>String</code>, events, and interfaces from <code>sharp-runtime</code> to match C# semantics. Avoid raw <code>int</code> or <code>float</code> at the public API boundary.</li>
-        <li><strong>No extra runtime dependencies.</strong> The only permitted runtime dependencies are SDL3, <code>easy-gl</code> (EASYGL backend), and <code>sharp-runtime</code>. Do not introduce new third-party libraries without prior discussion.</li>
+        <li><strong>No extra runtime dependencies.</strong> CNA's dependency set is deliberately small and mostly vendored or submoduled &mdash; SDL3 (plus SDL_image and SDL_mixer), <code>sharp-runtime</code>, and the per-backend siblings <code>easy-gl</code> and <code>free-direct</code>, alongside in-tree <code>enet</code>, <code>cgltf</code>, <code>stb</code> and <code>wgpu-native</code>. Do not introduce new third-party libraries without prior discussion.</li>
         <li><strong>Mark non-XNA additions as <code>NOXNA</code>.</strong> Any method or type added purely for C++ convenience must carry a <code>// NOXNA</code> comment so that API coverage tooling stays accurate.</li>
       </ul>
 
