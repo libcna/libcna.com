@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 89: Extending CNA with sharp-runtime - CNA</title>
-  <meta name="description" content="sharp-runtime provides C#-style type aliases and patterns for CNA. IDisposable, IEquatable, Event&lt;T&gt;, ListCS&lt;T&gt;, and using it independently.">
+  <meta name="description" content="sharp-runtime is the C++23 .NET BCL subset CNA is built on. Type aliases, System::TimeSpan, System::IDisposable, collections, System::IO and System.Text.Json.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/89-sharp-runtime.html">
   <meta property="og:title"       content="Tutorial 89: Extending CNA with sharp-runtime - CNA">
-  <meta property="og:description" content="sharp-runtime provides C#-style type aliases and patterns for CNA. IDisposable, IEquatable, Event&lt;T&gt;, ListCS&lt;T&gt;, and using it independently.">
+  <meta property="og:description" content="sharp-runtime is the C++23 .NET BCL subset CNA is built on. Type aliases, System::TimeSpan, System::IDisposable, collections, System::IO and System.Text.Json.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/89-sharp-runtime.html">
@@ -77,127 +77,260 @@
       <h1>Tutorial 89: Extending CNA with sharp-runtime</h1>
         <p class="doc-meta">CNA &mdash; C++ XNA 4.0 reimplementation</p>
 
-        <h2>What is sharp-runtime?</h2>
-        <p><code>sharp-runtime</code> is a small C++23 header-only library that provides C#-inspired type aliases and patterns used throughout CNA. It lives in the sibling <code>../sharp-runtime</code> repository and has no external dependencies. CNA requires sharp-runtime at build time.</p>
+        <h2>What sharp-runtime actually is</h2>
+        <p><code>sharp-runtime</code> is a separate C++23 project that reimplements a subset of the .NET Base Class Library in idiomatic C++. It is not a small helper header — at the time of writing it is 135,204 lines across its <code>include/</code> and <code>src/</code> trees, covered by 12,370 GoogleTest cases, over 1,560 commits. It is licensed MIT (CNA itself is Ms-PL).</p>
+        <p>CNA does not merely bundle it; CNA is <em>built on</em> it. <code>Color</code> stores <code>bytecs</code> channels, <code>GameTime</code> carries <code>System::TimeSpan</code>, and <code>GraphicsResource</code> derives from <code>System::IDisposable</code>. You will meet these types in almost every CNA signature you read.</p>
 
-        <h2>Type aliases</h2>
-        <p>sharp-runtime defines aliases that map C# primitive type names to their C++ equivalents, reducing friction when reading XNA documentation or porting C# code.</p>
+        <div class="callout callout--info">
+          <span class="callout-icon">&#8505;</span>
+          <p><strong>Scope, stated plainly.</strong> sharp-runtime's own README calls it "a pragmatic subset designed for use in native C++ applications", explicitly <strong>not</strong> a CLR or a full .NET runtime. Reflection, the GC, P/Invoke, serialization infrastructure, and TLS are permanent non-goals. Do not expect a C# program to port mechanically.</p>
+        </div>
+
+        <h2>Two include roots</h2>
+        <p>There are exactly two top-level directories under <code>include/</code>, and they mean different things:</p>
+        <div class="table-wrap">
         <table>
           <thead>
-            <tr>
-              <th>C# type</th>
-              <th>C++ sharp-runtime alias</th>
-              <th>Underlying C++ type</th>
-            </tr>
+            <tr><th>Include root</th><th>Namespace</th><th>What lives there</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>byte</code></td><td><code>bytecs</code></td><td><code>uint8_t</code></td></tr>
+            <tr><td><code>System/</code></td><td><code>System</code> and nested (<code>System::IO</code>, <code>System::Text::Json</code>, <code>System::Collections::Generic</code>, …)</td><td>The BCL port itself — one header per .NET type, named exactly as in .NET.</td></tr>
+            <tr><td><code>SharpRuntime/</code></td><td><code>SharpRuntime</code></td><td>The project's own additions: the primitive type aliases, a property helper, and storage paths.</td></tr>
+          </tbody>
+        </table>
+        </div>
+        <p>So the include path for .NET's <code>System.IDisposable</code> is <code>"System/IDisposable.hpp"</code>, and for the type aliases it is <code>"SharpRuntime/SharpRuntimeHelper.hpp"</code>. There is no <code>sharp-runtime/</code> include prefix.</p>
+
+        <h2>Build integration</h2>
+        <p>sharp-runtime is a <strong>sibling checkout</strong>, not a git submodule. CNA's top-level <code>CMakeLists.txt</code> adds it directly and hard-errors with an explanatory message if the directory is missing:</p>
+        <pre><code class="language-bash">git clone https://github.com/openeggbert/cna.git
+git clone https://github.com/openeggbert/sharp-runtime.git
+# the two checkouts must be siblings; CNA resolves ../sharp-runtime</code></pre>
+        <pre><code class="language-cmake">add_subdirectory(../sharp-runtime SHARP_RUNTIME)</code></pre>
+        <p>The resulting CMake target is a static library named <code>SHARP_RUNTIME</code>, and it publicly exports its <code>include/</code> directory. CNA's own example targets link both:</p>
+        <pre><code class="language-cmake">target_link_libraries(MyGame PRIVATE CNA SHARP_RUNTIME)</code></pre>
+
+        <h2>Primitive type aliases</h2>
+        <p>These are the symbols you will see most often, because they appear in CNA's public signatures. They live in <code>namespace SharpRuntime</code> in <code>SharpRuntime/SharpRuntimeHelper.hpp</code>.</p>
+        <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>C# type</th><th>Alias</th><th>Underlying type</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>sbyte</code></td><td><code>sbytecs</code></td><td><code>int8_t</code></td></tr>
+            <tr><td><code>byte</code></td><td><code>bytecs</code> (also <code>ubytecs</code>)</td><td><code>uint8_t</code></td></tr>
+            <tr><td><code>short</code></td><td><code>shortcs</code></td><td><code>int16_t</code></td></tr>
+            <tr><td><code>ushort</code></td><td><code>ushortcs</code></td><td><code>uint16_t</code></td></tr>
             <tr><td><code>int</code></td><td><code>intcs</code></td><td><code>int32_t</code></td></tr>
             <tr><td><code>uint</code></td><td><code>uintcs</code></td><td><code>uint32_t</code></td></tr>
             <tr><td><code>long</code></td><td><code>longcs</code></td><td><code>int64_t</code></td></tr>
-            <tr><td><code>float</code> / <code>Single</code></td><td><code>Single</code></td><td><code>float</code></td></tr>
-            <tr><td><code>double</code></td><td><code>doublecs</code></td><td><code>double</code></td></tr>
-            <tr><td><code>bool</code></td><td><code>boolcs</code></td><td><code>bool</code></td></tr>
-            <tr><td><code>char</code></td><td><code>charcs</code></td><td><code>char16_t</code> (UTF-16 like C#)</td></tr>
+            <tr><td><code>ulong</code></td><td><code>ulongcs</code></td><td><code>uint64_t</code></td></tr>
+            <tr><td><code>char</code></td><td><code>charcs</code></td><td><code>char16_t</code> (UTF-16, as in C#)</td></tr>
+            <tr><td><code>IntPtr</code></td><td><code>IntPtr</code></td><td><code>std::uintptr_t</code></td></tr>
           </tbody>
         </table>
+        </div>
+        <p>A second set of aliases uses the .NET framework type names directly, which is what makes FNA/XNA C# source read almost verbatim: <code>SByte</code>, <code>Byte</code>, <code>Int16</code>, <code>UInt16</code>, <code>Int32</code>, <code>UInt32</code>, <code>Int64</code>, <code>UInt64</code>, <code>Single</code> (&rarr; <code>float</code>), and <code>String</code> (&rarr; <code>std::string</code>).</p>
 
-        <h2>IDisposable&lt;T&gt; pattern</h2>
-        <p>CNA resources implement RAII, but sharp-runtime provides an explicit <code>IDisposable&lt;T&gt;</code> base class for types that need deterministic cleanup, matching the <code>using(var x = ...)</code> pattern from C#.</p>
-        <p>Custom class using IDisposable pattern from sharp-runtime:</p>
-        <pre><code class="language-cpp">#include "sharp-runtime/IDisposable.hpp"
-#include "sharp-runtime/types.hpp"  // bytecs, intcs, Single, etc.
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>There is no <code>doublecs</code> and no <code>boolcs</code>.</strong> C++ <code>double</code> and <code>bool</code> already match C# <code>double</code> and <code>bool</code> exactly, so no alias was introduced. Nor is there a <code>Double</code> or <code>Boolean</code> alias in the <code>SharpRuntime</code> namespace — <code>System/Double.hpp</code> and <code>System/Boolean.hpp</code> are separate BCL types with static members, not aliases.</p>
+        </div>
+
+        <p>Numeric limits are provided as <code>constexpr</code> constants alongside the aliases — <code>INTCS_MAX</code>/<code>INTCS_MIN</code>, <code>BYTECS_MAX</code>/<code>BYTECS_MIN</code>, and the equivalents for every integer alias.</p>
+
+        <h2>Where you meet the aliases in CNA</h2>
+        <p>CNA headers pull the aliases into their own namespace with <code>using</code> declarations, so you generally do not have to qualify them. <code>Color.hpp</code> is representative:</p>
+        <pre><code class="language-cpp">#include "SharpRuntime/SharpRuntimeHelper.hpp"
+
+namespace Microsoft::Xna::Framework
+{
+    using SharpRuntime::bytecs;
+    using SharpRuntime::intcs;
+    using SharpRuntime::uintcs;
+
+    class Color
+    {
+    public:
+        NOXNA Color(bytecs r, bytecs g, bytecs b);
+        NOXNA Color(bytecs r, bytecs g, bytecs b, bytecs alpha);
+
+        [[nodiscard]] bytecs getRProperty() const;
+        void setRProperty(bytecs value);
+        // ...
+    };
+}</code></pre>
+        <p>Occasionally a CNA signature qualifies the alias explicitly, and then you see the namespace. <code>Effect</code>'s compiled-bytecode constructor is one such place:</p>
+        <pre><code class="language-cpp">// Microsoft/Xna/Framework/Graphics/Effect.hpp
+Effect(GraphicsDevice&amp; device, const std::vector&lt;SharpRuntime::bytecs&gt;&amp; effectCode);</code></pre>
+
+        <h2>System::TimeSpan</h2>
+        <p><code>System::TimeSpan</code> is the type CNA uses for every duration. <code>GameTime</code> is built from two of them, and <code>Game::TargetElapsedTime</code> is one:</p>
+        <pre><code class="language-cpp">#include "System/TimeSpan.hpp"
+#include "Microsoft/Xna/Framework/GameTime.hpp"
+
+using System::TimeSpan;
+
+// Fixed timestep: run Update() 30 times per second instead of the default 60.
+setTargetElapsedTimeProperty(TimeSpan::FromSeconds(1.0 / 30.0));
+
+void Update(GameTime&amp; gameTime) override
+{
+    // getTotalSecondsProperty() returns double, not float.
+    const double dt = gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty();
+    angle_ += static_cast&lt;float&gt;(dt) * 0.8f;
+}</code></pre>
+        <p>The factory methods are <code>FromDays</code>, <code>FromHours</code>, <code>FromMinutes</code>, <code>FromSeconds</code>, <code>FromMilliseconds</code>, <code>FromMicroseconds</code> (all taking <code>double</code>) and <code>FromTicks</code> (taking <code>longcs</code>). Constructors take ticks, or <code>(hours, minutes, seconds)</code>, or <code>(days, hours, minutes, seconds, milliseconds = 0, …)</code>. The total-value accessors — <code>getTotalSecondsProperty()</code>, <code>getTotalMillisecondsProperty()</code> — return <code>double</code>.</p>
+
+        <h2>System::IDisposable and CNA's Dispose pattern</h2>
+        <p><code>System::IDisposable</code> is a plain abstract interface with one method. There is no template parameter and no CRTP:</p>
+        <pre><code class="language-cpp">// System/IDisposable.hpp
+namespace System {
+    class IDisposable {
+    public:
+        virtual void Dispose() = 0;
+        virtual ~IDisposable() = default;
+    };
+}</code></pre>
+        <p>Its contract, as documented in the header: <code>Dispose()</code> must be safe to call more than once, must release everything the instance holds, and should not throw. C# has <code>using</code> to call it for you; C++ has destructors, so CNA leans on RAII and treats the explicit call as the early-release escape hatch.</p>
+        <p>CNA wires this into its graphics types. Every GPU-backed resource derives from <code>GraphicsResource</code> — <code>VertexBuffer</code>, <code>IndexBuffer</code>, and <code>Effect</code> directly, the texture types through the intermediate <code>Texture</code> base — and <code>GraphicsResource</code> implements the interface and adds the .NET-style protected two-argument overload:</p>
+        <pre><code class="language-cpp">// Microsoft/Xna/Framework/Graphics/GraphicsResource.hpp
+class GraphicsResource : public System::Object, public System::IDisposable
+{
+public:
+    void Dispose() override;
+    [[nodiscard]] bool getIsDisposedProperty() const;
+
+protected:
+    // disposing == true when called from Dispose(); false from the destructor path.
+    virtual void Dispose(bool disposing);
+
+private:
+    bool isDisposed_ = false;
+};</code></pre>
+        <p>When you write your own resource-holding type and want it to fit the same shape, implement the interface directly:</p>
+        <pre><code class="language-cpp">#include "System/IDisposable.hpp"
+#include "SharpRuntime/SharpRuntimeHelper.hpp"
+
 #include &lt;fstream&gt;
 #include &lt;string&gt;
 
-// A resource that must be explicitly closed, like a C# IDisposable
-class GameDataFile : public sharp::IDisposable&lt;GameDataFile&gt; {
+using SharpRuntime::intcs;
+using SharpRuntime::Single;
+
+class GameDataFile : public System::IDisposable
+{
 public:
     explicit GameDataFile(const std::string&amp; path)
         : file_(path, std::ios::binary)
     {
-        if (!file_.is_open())
-            throw std::runtime_error("Cannot open: " + path);
     }
 
-    // IDisposable&lt;T&gt; requires you to implement Dispose()
-    void Dispose() override {
+    // Idempotent, as the interface's own documentation requires.
+    void Dispose() override
+    {
         if (!disposed_) {
             file_.close();
             disposed_ = true;
         }
     }
 
-    ~GameDataFile() { Dispose(); }
+    ~GameDataFile() override { Dispose(); }
 
-    intcs ReadInt32() {
+    intcs ReadInt32()
+    {
         intcs value = 0;
-        file_.read(reinterpret_cast&lt;char*&gt;(&amp;value), sizeof(intcs));
-        return value;
-    }
-
-    Single ReadSingle() {
-        Single value = 0.0f;
-        file_.read(reinterpret_cast&lt;char*&gt;(&amp;value), sizeof(Single));
+        file_.read(reinterpret_cast&lt;char*&gt;(&amp;value), sizeof(value));
         return value;
     }
 
 private:
     std::fstream file_;
-    bool disposed_ = false;
-};
-
-// Usage in game code:
-void LoadLevel(const std::string&amp; path) {
-    GameDataFile file(path);          // RAII: closes on scope exit
-    intcs  entityCount = file.ReadInt32();
-    Single spawnX      = file.ReadSingle();
-    Single spawnY      = file.ReadSingle();
-    // ... load entities ...
-    file.Dispose();                   // explicit early close (optional)
-}</code></pre>
-
-        <h2>IEquatable&lt;T&gt;</h2>
-        <p><code>IEquatable&lt;T&gt;</code> provides a typed equality interface. CNA math types implement it so you can compare <code>Vector2</code>, <code>Color</code>, etc. with <code>Equals()</code> in addition to <code>==</code>.</p>
-        <pre><code class="language-cpp">#include "sharp-runtime/IEquatable.hpp"
-
-struct Point : public sharp::IEquatable&lt;Point&gt; {
-    intcs X, Y;
-    bool Equals(const Point&amp; other) const override {
-        return X == other.X &amp;&amp; Y == other.Y;
-    }
+    bool         disposed_ = false;
 };</code></pre>
 
-        <h2>Events (Event&lt;T&gt;)</h2>
-        <p>sharp-runtime provides a multicast delegate / event system matching C#'s <code>event Action&lt;T&gt;</code>.</p>
-        <pre><code class="language-cpp">#include "sharp-runtime/Event.hpp"
+        <h2>Collections</h2>
+        <p>The collections live under <code>System/Collections/Generic/</code> and keep their .NET names — <code>List</code>, <code>Dictionary</code>, <code>HashSet</code>, <code>Queue</code>, <code>Stack</code>, <code>SortedDictionary</code>, <code>SortedList</code>, <code>SortedSet</code>, <code>LinkedList</code>, <code>PriorityQueue</code>, <code>OrderedDictionary</code>, plus the interfaces (<code>IList</code>, <code>ICollection</code>, <code>IEnumerable</code>, <code>IDictionary</code>, and the read-only variants) and the comparer family. Further namespaces exist for <code>Concurrent</code>, <code>Immutable</code>, <code>Frozen</code>, <code>ObjectModel</code>, and <code>Specialized</code>.</p>
+        <p><code>List&lt;T&gt;</code> wraps a <code>std::vector&lt;T&gt;</code> and exposes the .NET method names. Note that the count is a <em>property</em> accessor returning <code>intcs</code>, not a <code>Count()</code> method:</p>
+        <pre><code class="language-cpp">#include "System/Collections/Generic/List.hpp"
 
-sharp::Event&lt;int&gt; OnScoreChanged;  // multicast event
+using System::Collections::Generic::List;
+using SharpRuntime::intcs;
 
-// Subscribe:
-OnScoreChanged += [](int newScore) {
-    printf("Score: %d\n", newScore);
-};
-
-// Fire:
-OnScoreChanged(42);  // calls all subscribers</code></pre>
-
-        <h2>Collections (ListCS&lt;T&gt;)</h2>
-        <p><code>ListCS&lt;T&gt;</code> is a thin wrapper over <code>std::vector&lt;T&gt;</code> that adds C# <code>List&lt;T&gt;</code>-style method names: <code>Add</code>, <code>Remove</code>, <code>Contains</code>, <code>Count</code>, <code>Clear</code>, <code>IndexOf</code>.</p>
-        <pre><code class="language-cpp">#include "sharp-runtime/ListCS.hpp"
-sharp::ListCS&lt;std::string&gt; names;
+List&lt;std::string&gt; names;
 names.Add("Alice");
 names.Add("Bob");
+
 if (names.Contains("Alice")) {
     names.Remove("Alice");
 }
-intcs count = names.Count();  // 1</code></pre>
 
-        <h2>Using sharp-runtime independently</h2>
-        <p>sharp-runtime can be used in any C++23 project without CNA. It is a header-only library with no external dependencies.</p>
-        <pre><code class="language-cpp"># Add sharp-runtime to any CMake project:
-add_subdirectory(../sharp-runtime ${CMAKE_BINARY_DIR}/sharp-runtime)
-target_link_libraries(MyProject PRIVATE sharp-runtime::sharp-runtime)</code></pre>
+const intcs count = names.getCountProperty();   // 1
+const intcs where = names.IndexOf("Bob");       // 0
+std::string&amp; first = names[0];
+
+// STL iteration works too — begin()/end() are provided.
+for (const auto&amp; n : names) { /* ... */ }
+
+names.Clear();</code></pre>
+        <p>Beyond the interface methods it also carries the .NET conveniences: <code>AddRange</code>, <code>InsertRange</code>, <code>GetRange</code>, <code>Insert</code>, <code>RemoveAt</code>, <code>RemoveAll</code>, <code>Sort</code> (with and without a comparison), <code>Reverse</code>, and <code>CopyTo</code>.</p>
+
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>Iterator invalidation is C++'s, not C#'s.</strong> <code>List&lt;T&gt;</code>'s own header notes that iterating with <code>begin()</code>/<code>end()</code> follows plain <code>std::vector&lt;T&gt;</code> invalidation rules — a mutation during iteration is undefined behaviour here, rather than the <code>InvalidOperationException</code> C# would throw.</p>
+        </div>
+
+        <h2>System::IO</h2>
+        <p><code>System/IO/</code> ports the file and stream types: <code>File</code>, <code>FileInfo</code>, <code>Directory</code>, <code>DirectoryInfo</code>, <code>FileStream</code>, <code>MemoryStream</code>, <code>BufferedStream</code>, <code>BinaryReader</code>, <code>BinaryWriter</code>, <code>FileSystemWatcher</code>, the IO exception hierarchy, and the <code>Compression</code>, <code>Hashing</code>, and <code>IsolatedStorage</code> sub-namespaces.</p>
+        <p>The static helpers on <code>File</code> are the quickest way to read a save file or a config blob:</p>
+        <pre><code class="language-cpp">#include "System/IO/File.hpp"
+
+using System::IO::File;
+
+if (File::Exists(path)) {
+    const std::string text  = File::ReadAllText(path);
+    const auto        bytes = File::ReadAllBytes(path);  // std::vector&lt;SharpRuntime::bytecs&gt;
+}
+
+File::WriteAllText(path, "level=3\n");</code></pre>
+
+        <h2>System.Text.Json</h2>
+        <p><code>System/Text/Json/</code> ports the modern .NET JSON API — <code>JsonDocument</code>, <code>JsonElement</code>, <code>JsonSerializer</code>, <code>Utf8JsonWriter</code>, the options and enum types, plus <code>Nodes</code> and <code>Serialization</code> sub-namespaces. This is genuinely useful in a CNA game, because CNA's own <code>.cnj</code> content format is JSON, so your tooling and your game can speak the same format.</p>
+        <p><code>JsonDocument::Parse</code> returns a <code>std::shared_ptr&lt;JsonDocument&gt;</code>, and the root is reached through a property accessor:</p>
+        <pre><code class="language-cpp">#include "System/Text/Json/JsonDocument.hpp"
+#include "System/IO/File.hpp"
+
+using System::Text::Json::JsonDocument;
+using System::Text::Json::JsonElement;
+
+auto doc = JsonDocument::Parse(System::IO::File::ReadAllText("save.json"));
+JsonElement root = doc-&gt;getRootElementProperty();
+
+JsonElement level;
+if (root.TryGetProperty("level", level)) {
+    const int n = level.GetInt32();
+    // ...
+}
+
+const std::string name = root.GetProperty("playerName").GetString();</code></pre>
+
+        <div class="callout callout--info">
+          <span class="callout-icon">&#8505;</span>
+          <p><strong>One documented deviation.</strong> .NET's <code>JsonElement.GetString()</code> returns <code>string?</code> and special-cases JSON <code>null</code> before its type check. This port returns <code>std::string</code>, so a JSON <code>null</code> maps to <code>""</code>. If the distinction matters, test <code>getValueKindProperty() == JsonValueKind::Null</code> first. The header says so explicitly — sharp-runtime documents its divergences rather than hiding them.</p>
+        </div>
+
+        <h2>What else is in there</h2>
+        <p>The <code>System/</code> tree is far wider than a game needs, and browsing it is the fastest way to find out whether something you want already exists. Beyond the areas above it covers <code>System::Text</code> (including <code>RegularExpressions</code>, <code>Encodings</code>, <code>Unicode</code>), <code>System::Threading</code> (with <code>Tasks</code> and <code>Channels</code>), <code>System::Net</code> (<code>Http</code>, <code>Sockets</code>, <code>WebSockets</code>, …), <code>System::Numerics</code>, <code>System::Globalization</code>, <code>System::Diagnostics</code>, <code>System::Xml</code> (with <code>Linq</code> and <code>XPath</code>), <code>System::Security</code>, <code>System::Buffers</code>, and the full exception hierarchy plus <code>DateTime</code>, <code>DateTimeOffset</code>, <code>Guid</code>, <code>Random</code>, <code>Convert</code>, <code>BitConverter</code>, <code>Math</code>/<code>MathF</code>, <code>Span</code>/<code>ReadOnlySpan</code>, <code>Memory</code>, <code>Tuple</code>/<code>ValueTuple</code>, and <code>Version</code>.</p>
+        <p>Two extras sit on the <code>SharpRuntime/</code> side: <code>SharpRuntime/Prop.hpp</code> (a property helper), and <code>SharpRuntime/Storage/StoragePaths.hpp</code>, whose <code>GetIsolatedStorageRoot()</code> returns the <code>std::filesystem::path</code> that <code>System::IO::IsolatedStorage</code> is rooted at — the right place to put save games.</p>
+
+        <h2>Using sharp-runtime without CNA</h2>
+        <p>Nothing in sharp-runtime depends on CNA; the dependency runs one way only. It is a C++23 static library, so any CMake project can consume it the same way CNA does:</p>
+        <pre><code class="language-cmake">set(SHARP_RUNTIME_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(../sharp-runtime SHARP_RUNTIME)
+
+target_link_libraries(MyProject PRIVATE SHARP_RUNTIME)</code></pre>
+        <p>It is not header-only — there is a real <code>src/</code> tree, so linking the <code>SHARP_RUNTIME</code> target is required, not optional. It vendors GoogleTest, nlohmann/json, tinyxml2, and miniz under <code>vendor/</code>, each under its own permissive licence.</p>
 
         <nav class="docs-pagination" aria-label="Page navigation">
           <div class="docs-pagination-prev">
@@ -209,7 +342,7 @@ target_link_libraries(MyProject PRIVATE sharp-runtime::sharp-runtime)</code></pr
           <div class="docs-pagination-next">
             <a href="90-easy-gl.html" class="pagination-link pagination-next">
               <span class="pagination-direction">Next &rarr;</span>
-              <span class="pagination-title">Tutorial 90: easy-gl Integration</span>
+              <span class="pagination-title">Tutorial 90: Integration with easy-gl Directly</span>
             </a>
           </div>
         </nav>

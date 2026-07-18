@@ -83,74 +83,131 @@
 
       <h2>Forward vs deferred rendering</h2>
       <p>In <em>forward rendering</em> each object is drawn once per light that affects it, or lights are accumulated in a single pass with a fixed array of lights packed into shader uniforms. The cost scales as O(objects × lights) and becomes prohibitive when both counts are large.</p>
-      <p><em>Deferred rendering</em> separates geometry processing from lighting. The geometry pass runs once per object and outputs surface properties (albedo, normal, position) into a set of off-screen textures called the <em>G-buffer</em> (geometry buffer). The lighting pass then iterates over all lights and reads the G-buffer, computing lighting in screen space without touching the geometry again. The cost is O(objects) + O(lights × screen pixels covered by each light volume).</p>
+      <p><em>Deferred rendering</em> separates geometry processing from lighting. The geometry pass runs once per object and outputs surface properties (albedo, normal, depth) into a set of off-screen textures called the <em>G-buffer</em> (geometry buffer). The lighting pass then iterates over all lights and reads the G-buffer, computing lighting in screen space without touching the geometry again. The cost is O(objects) + O(lights × screen pixels covered by each light volume).</p>
 
       <h2>G-Buffer layout</h2>
-      <p>A minimal G-buffer for Blinn-Phong lighting needs four channels of data per pixel:</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Only <code>SurfaceFormat::Color</code> constructs today.</strong> <code>Texture::ValidateFormat</code> throws <code>std::runtime_error</code> for every other <code>SurfaceFormat</code>, on every backend. Every G-buffer target must be RGBA8, which rules out a world-space position target outright &mdash; positions have unbounded range and cannot be squeezed into four bytes. Reconstruct position from a packed depth target instead. That is the approach production deferred renderers take anyway, so the constraint costs you nothing here.</p>
+      </div>
+
+      <p>A minimal G-buffer for Blinn-Phong lighting needs three colour targets plus a hardware depth buffer:</p>
       <div class="table-wrap">
       <table>
         <thead><tr><th>Target</th><th>Format</th><th>Contents</th></tr></thead>
         <tbody>
           <tr><td>RT0 — Albedo</td><td>Color (RGBA8)</td><td>Diffuse colour RGB, specular power A</td></tr>
-          <tr><td>RT1 — Normal</td><td>Rgba1010102 or HalfVector4</td><td>World-space normal XYZ (A unused)</td></tr>
-          <tr><td>RT2 — Position (optional)</td><td>Vector4 / HdrBlendable</td><td>World-space position XYZ (can be reconstructed from depth)</td></tr>
+          <tr><td>RT1 — Normal</td><td>Color (RGBA8)</td><td>World-space normal XYZ remapped from [−1,+1] to [0,1] (A unused)</td></tr>
+          <tr><td>RT2 — Depth</td><td>Color (RGBA8)</td><td>Clip-space depth packed across all four channels</td></tr>
           <tr><td>Depth buffer</td><td>Depth24Stencil8</td><td>Hardware depth + stencil for light volume masking</td></tr>
         </tbody>
       </table>
       </div>
-      <p>Storing world-space position is the simplest approach. In production, position is typically reconstructed from depth using the inverse view-projection matrix to save bandwidth.</p>
+      <p>Eight bits per normal axis is coarse and shows up as banding on smooth, slowly curving surfaces lit by a strong specular highlight. If that becomes visible, switch to octahedral encoding, which spends 16 bits on two channels for the same normal and leaves the remaining two free.</p>
 
       <h2>Geometry pass</h2>
       <p>The geometry pass draws every opaque object exactly once. The fragment shader writes to all three colour targets simultaneously using GLSL's <code>layout(location = N) out</code> syntax:</p>
       <pre><code class="language-glsl">// gbuffer.frag — Geometry pass output
-layout(location = 0) out vec4 gAlbedo;    // RT0
-layout(location = 1) out vec4 gNormal;    // RT1
-layout(location = 2) out vec4 gPosition;  // RT2
+layout(location = 0) out vec4 gAlbedo;  // RT0
+layout(location = 1) out vec4 gNormal;  // RT1
+layout(location = 2) out vec4 gDepth;   // RT2
 
 uniform sampler2D DiffuseTexture;
 uniform float     SpecularPower;
 
-in vec3 vWorldPos;
 in vec3 vWorldNormal;
 in vec2 vTexCoord;
 
+// Spread a float in [0,1] across four 8-bit channels.
+vec4 packDepth(float depth) {
+    const vec4 bitShift = vec4(1.0, 255.0, 65025.0, 16581375.0);
+    const vec4 bitMask  = vec4(1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0, 0.0);
+    vec4 res = fract(depth * bitShift);
+    res -= res.gbaa * bitMask;
+    return res;
+}
+
 void main() {
-    gAlbedo   = vec4(texture(DiffuseTexture, vTexCoord).rgb,
-                     SpecularPower / 255.0);
-    gNormal   = vec4(normalize(vWorldNormal) * 0.5 + 0.5, 1.0);
-    gPosition = vec4(vWorldPos, 1.0);
+    gAlbedo = vec4(texture(DiffuseTexture, vTexCoord).rgb,
+                   SpecularPower / 255.0);
+    gNormal = vec4(normalize(vWorldNormal) * 0.5 + 0.5, 1.0);
+    gDepth  = packDepth(gl_FragCoord.z);
 }</code></pre>
 
       <h2>CNA MRT support</h2>
-      <p>CNA exposes Multiple Render Targets through the <code>RenderTargetBinding</code> array overload of <code>GraphicsDevice::SetRenderTargets</code>:</p>
+      <p>CNA exposes Multiple Render Targets through <code>GraphicsDevice::SetRenderTargets</code>, which takes a <code>const std::vector&lt;RenderTargetBinding&gt;&amp;</code>. <code>RenderTargetBinding</code>'s constructor is <strong>explicit</strong> and takes a <code>Texture*</code>, so pass <code>.get()</code> and name the type at each element:</p>
       <pre><code class="language-cpp">// LoadContent — create the G-buffer targets
-auto& gd = getGraphicsDeviceProperty();
-int w = gd.getBackBufferWidth();
-int h = gd.getBackBufferHeight();
+auto&amp; gd = getGraphicsDeviceProperty();
+int w = gd.getBackBufferWidthProperty();
+int h = gd.getBackBufferHeightProperty();
 
-albedoRT_   = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h, false,
-                SurfaceFormat::Color, DepthFormat::Depth24Stencil8);
-normalRT_   = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h, false,
-                SurfaceFormat::Rgba1010102, DepthFormat::None);
-positionRT_ = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h, false,
-                SurfaceFormat::Vector4, DepthFormat::None);
+// SurfaceFormat::Color throughout — it is the only format that constructs.
+albedoRT_ = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h, false,
+              SurfaceFormat::Color, DepthFormat::Depth24Stencil8);
+normalRT_ = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h, false,
+              SurfaceFormat::Color, DepthFormat::None);
+depthRT_  = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h, false,
+              SurfaceFormat::Color, DepthFormat::None);
 
 // Bind all three as MRT — albedoRT_ owns the shared depth buffer
-RenderTargetBinding bindings[] = {
-    RenderTargetBinding(*albedoRT_),
-    RenderTargetBinding(*normalRT_),
-    RenderTargetBinding(*positionRT_)
-};
-// Store for use in Draw:
-gBufferBindings_ = std::vector&lt;RenderTargetBinding&gt;(
-    std::begin(bindings), std::end(bindings));</code></pre>
+gBufferBindings_ = std::vector&lt;RenderTargetBinding&gt;{
+    RenderTargetBinding(albedoRT_.get()),
+    RenderTargetBinding(normalRT_.get()),
+    RenderTargetBinding(depthRT_.get())
+};</code></pre>
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p>There is no <code>GraphicsCapabilities</code> type in CNA, so the maximum number of simultaneous attachments cannot be queried at runtime. Three or four targets is the safe ceiling to design against.</p>
+      </div>
+
+      <h2>Building the two shaders</h2>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Both passes are <code>ShaderEffect</code>s.</strong> <code>Content.Load&lt;Effect&gt;("effects/gbuffer")</code> for compiled <code>.fx</code> bytecode cannot work &mdash; <code>Effect(GraphicsDevice&amp;, const std::vector&lt;bytecs&gt;&amp;)</code> throws <code>NotImplementedException</code> unconditionally, and the XNB <code>EffectReader</code> is a registered placeholder that does the same. <code>ShaderEffect</code> takes shader <strong>source text</strong> and has no <code>Parameters</code> collection or techniques; uniforms go through <code>SetUniformXxx()</code> and textures through <code>SetTexture(unit, tex)</code>, always after <code>Apply()</code>. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+      </div>
+      <p>The constructor takes <strong>three</strong> arguments &mdash; the device and the two shader sources. The strings are the GLSL text itself, never a file path, so read the files yourself:</p>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+#include "System/IO/File.hpp"
+
+gBufferEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+    gd,
+    System::IO::File::ReadAllText("Content/effects/gbuffer.vert.glsl"),
+    System::IO::File::ReadAllText("Content/effects/gbuffer.frag.glsl"));
+lightEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+    gd,
+    System::IO::File::ReadAllText("Content/effects/lighting.vert.glsl"),
+    System::IO::File::ReadAllText("Content/effects/lighting.frag.glsl"));
+
+// Neither constructor throws on a compile failure -- this is the only signal.
+if (!gBufferEffect_-&gt;IsEffectValid() || !lightEffect_-&gt;IsEffectValid()) {
+    // The GLSL did not compile. Do not draw with it.
+}
+
+// Sampler unit assignments, set once. Apply() binds the program first;
+// SetUniformXxx() writes into whatever program is currently bound.
+gBufferEffect_-&gt;Apply();
+gBufferEffect_-&gt;SetUniformInt("DiffuseTexture", 0);
+
+lightEffect_-&gt;Apply();
+lightEffect_-&gt;SetUniformInt("GAlbedo", 0);
+lightEffect_-&gt;SetUniformInt("GNormal", 1);
+lightEffect_-&gt;SetUniformInt("GDepth",  2);</code></pre>
+      <p><code>ShaderEffect</code> has no matrix-typed uniform setter that takes a <code>Matrix</code> directly &mdash; <code>SetUniformMat4</code> wants raw column-major floats. One small helper keeps the call sites readable:</p>
+      <pre><code class="language-cpp">// ShaderEffect's matrix setter takes raw column-major floats.
+static void SetMat4(ShaderEffect&amp; fx, const char* name, const Matrix&amp; m) {
+    float cm[16];
+    m.ToColumnMajor(cm);
+    fx.SetUniformMat4(name, cm);
+}</code></pre>
 
       <h2>Lighting pass</h2>
       <p>After the geometry pass, restore the back buffer as the render target and draw a full-screen quad. The lighting shader reads the G-buffer textures and accumulates contributions from each light. For many lights, iterate in a loop inside the shader or call the quad draw once per light with additive blending:</p>
       <pre><code class="language-glsl">// lighting.frag — single point light contribution
 uniform sampler2D GAlbedo;
 uniform sampler2D GNormal;
-uniform sampler2D GPosition;
+uniform sampler2D GDepth;
+uniform mat4      InvViewProjection;
 uniform vec3      LightPos;
 uniform vec3      LightColor;
 uniform float     LightRadius;
@@ -159,10 +216,27 @@ uniform vec3      CameraPos;
 in vec2 vTexCoord;
 out vec4 fragColor;
 
+// Inverse of the geometry pass's packDepth().
+float unpackDepth(vec4 rgba) {
+    const vec4 bitShift = vec4(1.0,
+                               1.0 / 255.0,
+                               1.0 / 65025.0,
+                               1.0 / 16581375.0);
+    return dot(rgba, bitShift);
+}
+
+// Rebuild world-space position from packed depth and screen UV.
+vec3 reconstructWorldPos(vec2 uv, float depth) {
+    vec4 ndc   = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
+    vec4 world = InvViewProjection * ndc;
+    return world.xyz / world.w;
+}
+
 void main() {
-    vec4 albedoSpec = texture(GAlbedo,   vTexCoord);
-    vec3 normal     = texture(GNormal,   vTexCoord).xyz * 2.0 - 1.0;
-    vec3 worldPos   = texture(GPosition, vTexCoord).xyz;
+    vec4  albedoSpec = texture(GAlbedo, vTexCoord);
+    vec3  normal     = texture(GNormal, vTexCoord).xyz * 2.0 - 1.0;
+    float depth      = unpackDepth(texture(GDepth, vTexCoord));
+    vec3  worldPos   = reconstructWorldPos(vTexCoord, depth);
 
     vec3 albedo    = albedoSpec.rgb;
     float specPow  = albedoSpec.a * 255.0;
@@ -186,23 +260,32 @@ void main() {
 }</code></pre>
 
       <p>In C++, the full Draw sequence looks like this:</p>
-      <pre><code class="language-cpp">void Draw(const GameTime&) override {
-    auto& gd = getGraphicsDeviceProperty();
+      <pre><code class="language-cpp">void Draw(GameTime&amp;) override {
+    auto&amp; gd = getGraphicsDeviceProperty();
 
     // ── Geometry pass ──────────────────────────────────────
-    gd.SetRenderTargets(gBufferBindings_.data(),
-                        static_cast&lt;int&gt;(gBufferBindings_.size()));
+    gd.SetRenderTargets(gBufferBindings_);
     gd.Clear(ClearOptions::Target | ClearOptions::DepthBuffer,
              Color::Black, 1.0f, 0);
-    gBufferEffect_-&gt;CurrentTechnique().Passes[0].Apply();
-    for (auto& obj : scene_) {
+
+    // Apply() binds the program; SetUniformXxx() and SetTexture() write into
+    // whatever program is currently bound, so this order is mandatory.
+    gBufferEffect_-&gt;Apply();
+    SetMat4(*gBufferEffect_, "View",       view_);
+    SetMat4(*gBufferEffect_, "Projection", proj_);
+
+    for (auto&amp; obj : scene_) {
         gd.SetVertexBuffer(obj.vertexBuffer);
         gd.SetIndexBuffer(obj.indexBuffer);
-        gBufferEffect_-&gt;Parameters()["World"].SetValue(obj.world);
-        gBufferEffect_-&gt;Parameters()["View"].SetValue(view_);
-        gBufferEffect_-&gt;Parameters()["Projection"].SetValue(proj_);
-        gBufferEffect_-&gt;Parameters()["DiffuseTexture"].SetValue(obj.texture);
-        gBufferEffect_-&gt;CurrentTechnique().Passes[0].Apply();
+
+        // Per-object uniforms. The program is still bound from the Apply()
+        // above, so re-binding it once per object is unnecessary.
+        SetMat4(*gBufferEffect_, "World", obj.world);
+        gBufferEffect_-&gt;SetUniformFloat("SpecularPower", obj.specularPower);
+
+        // Unit 0 is where "DiffuseTexture" was pointed in LoadContent().
+        gBufferEffect_-&gt;SetTexture(0, *obj.texture);
+
         gd.DrawIndexedPrimitives(PrimitiveType::TriangleList,
                                  0, 0, obj.vertexCount,
                                  0, obj.primitiveCount);
@@ -212,24 +295,35 @@ void main() {
     gd.SetRenderTarget(nullptr);
     gd.Clear(Color::Black);
 
-    // Bind G-buffer textures
-    lightEffect_-&gt;Parameters()["GAlbedo"].SetValue(*albedoRT_);
-    lightEffect_-&gt;Parameters()["GNormal"].SetValue(*normalRT_);
-    lightEffect_-&gt;Parameters()["GPosition"].SetValue(*positionRT_);
-    lightEffect_-&gt;Parameters()["CameraPos"].SetValue(cameraPos_);
+    lightEffect_-&gt;Apply();
 
-    gd.BlendState = BlendState::Additive;
-    for (auto& light : lights_) {
-        lightEffect_-&gt;Parameters()["LightPos"].SetValue(light.position);
-        lightEffect_-&gt;Parameters()["LightColor"].SetValue(light.color.ToVector3());
-        lightEffect_-&gt;Parameters()["LightRadius"].SetValue(light.radius);
-        lightEffect_-&gt;CurrentTechnique().Passes[0].Apply();
+    // Bind the G-buffer on the units assigned in LoadContent().
+    // SetTexture takes a reference, and RenderTarget2D derives from Texture2D.
+    lightEffect_-&gt;SetTexture(0, *albedoRT_);
+    lightEffect_-&gt;SetTexture(1, *normalRT_);
+    lightEffect_-&gt;SetTexture(2, *depthRT_);
+
+    SetMat4(*lightEffect_, "InvViewProjection", Matrix::Invert(view_ * proj_));
+    lightEffect_-&gt;SetUniformVec3("CameraPos",
+                                  cameraPos_.X, cameraPos_.Y, cameraPos_.Z);
+
+    gd.setBlendStateProperty(BlendState::Additive);
+    for (auto&amp; light : lights_) {
+        const Vector3 lightColor = light.color.ToVector3();
+        lightEffect_-&gt;SetUniformVec3("LightPos",
+                                      light.position.X,
+                                      light.position.Y,
+                                      light.position.Z);
+        lightEffect_-&gt;SetUniformVec3("LightColor",
+                                      lightColor.X, lightColor.Y, lightColor.Z);
+        lightEffect_-&gt;SetUniformFloat("LightRadius", light.radius);
         DrawFullscreenQuad(gd);
     }
-    gd.BlendState = BlendState::Opaque;
+    gd.setBlendStateProperty(BlendState::Opaque);
 
     gd.Present();
 }</code></pre>
+      <p>Note what is <em>not</em> in that loop: there is no per-light <code>Apply()</code>. <code>Apply()</code> binds the compiled program, and the program stays bound across the whole light loop, so calling it again per light would only rebind what is already there. The uniforms change per iteration; the program does not.</p>
 
       <h2>Screen-space light volumes</h2>
       <p>Drawing a full-screen quad per light is wasteful when a light only illuminates a small region of the screen. A better approach is to draw a sphere mesh (for point lights) or cone mesh (for spot lights) that covers exactly the light's screen-space footprint. The stencil buffer can be used to avoid lighting pixels that the camera is inside the light volume from the wrong side.</p>
@@ -250,7 +344,7 @@ void main() {
         <div class="docs-pagination-prev">
           <a href="66-bloom.html" class="pagination-link pagination-prev">
             <span class="pagination-direction">&larr; Previous</span>
-            <span class="pagination-title">Tutorial 66: Bloom</span>
+            <span class="pagination-title">Tutorial 66: Post-Processing: Blur and Bloom</span>
           </a>
         </div>
         <div class="docs-pagination-next">

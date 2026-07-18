@@ -121,7 +121,7 @@
           </tbody>
         </table>
       </div>
-      <p>This call must be issued after binding both the per-vertex and per-instance vertex buffers via <code>setVertexBuffers</code>, as described below.</p>
+      <p>This call must be issued after binding both the per-vertex and per-instance vertex buffers via <code>SetVertexBuffers</code>, as described below.</p>
 
       <h2>Instance Data via a Second VertexBuffer</h2>
       <p>The per-instance data lives in a second <code>VertexBuffer</code> — one element per instance. You define a C++ struct for the per-instance data and register a <code>VertexDeclaration</code> that describes its layout to the GPU driver.</p>
@@ -134,10 +134,9 @@
       <p>The instance buffer is typically created with <code>BufferUsage::None</code> (allowing CPU updates each frame for dynamic instances) or <code>BufferUsage::WriteOnly</code> for static instance data that never changes.</p>
 
       <h2>VertexBufferBinding Array</h2>
-      <p>To tell CNA that two vertex buffers are active simultaneously — one per-vertex and one per-instance — use the overload of <code>setVertexBuffers</code> that takes an array of <code>VertexBufferBinding</code> structs:</p>
-      <pre><code class="language-cpp">void GraphicsDevice::setVertexBuffers(
-    VertexBufferBinding* bindings,
-    int                  count);</code></pre>
+      <p>To tell CNA that two vertex buffers are active simultaneously — one per-vertex and one per-instance — use <code>SetVertexBuffers</code> that takes an array of <code>VertexBufferBinding</code> structs:</p>
+      <pre><code class="language-cpp">void GraphicsDevice::SetVertexBuffers(
+    const std::vector&lt;VertexBufferBinding&gt;&amp; vertexBuffers);</code></pre>
       <p>Each <code>VertexBufferBinding</code> has three fields:</p>
       <ul>
         <li><strong>VertexBuffer pointer</strong> — the buffer to bind.</li>
@@ -190,8 +189,12 @@ void main() {
 
       <h2>Complete Example: 10,000 Grass Blades</h2>
       <p>The following example places 10,000 grass blade instances randomly across a 100 x 100 metre field. Each instance gets a random world translation and a slightly varied green tint. The mesh vertex buffer contains a single grass blade geometry (a few triangles), and the instance buffer holds the per-blade data. The entire field is rendered with one <code>DrawInstancedPrimitives</code> call.</p>
+      <p>The shader is a <code>ShaderEffect</code> built from GLSL source text &mdash; CNA has no working compiled-<code>.fx</code> path, and <code>ShaderEffect</code> has no <code>Parameters</code> collection, so uniforms are set with <code>SetUniformXxx()</code> after <code>Apply()</code>. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
 
-      <pre><code class="language-cpp">struct GrassInstance {
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+#include "System/IO/File.hpp"
+
+struct GrassInstance {
     // 4 rows of the world matrix (row-major, matches CNA Matrix layout)
     Vector4 row0, row1, row2, row3;
     // Per-blade colour tint
@@ -215,7 +218,7 @@ class GrassGame final : public Game {
     std::unique_ptr&lt;VertexBuffer&gt; meshVB_;       // grass blade geometry
     std::unique_ptr&lt;VertexBuffer&gt; instanceVB_;   // per-instance transforms
     std::unique_ptr&lt;IndexBuffer&gt;  meshIB_;
-    std::unique_ptr&lt;Effect&gt;       grassEffect_;
+    std::unique_ptr&lt;ShaderEffect&gt; grassEffect_;
     Camera                        camera_;
     int instanceCount_ = 10000;
     int triCount_      = 4; // triangles per grass blade
@@ -257,45 +260,61 @@ class GrassGame final : public Game {
             BufferUsage::None);
         instanceVB_-&gt;SetData(instances.data(), instanceCount_);
 
-        grassEffect_ = Content.Load&lt;Effect&gt;("effects/grass_instanced");
+        // ShaderEffect takes shader SOURCE TEXT, not a content name or a path.
+        // Compiled .fx bytecode is unsupported: Effect(device, effectCode) throws
+        // NotImplementedException unconditionally. See Tutorial 52.
+        grassEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+            gd,
+            System::IO::File::ReadAllText("Content/effects/grass_instanced.vert.glsl"),
+            System::IO::File::ReadAllText("Content/effects/grass_instanced.frag.glsl"));
+
+        // The constructor does not throw on a compile failure.
+        if (!grassEffect_-&gt;IsEffectValid()) {
+            // The GLSL did not compile. Do not draw with it.
+        }
     }
 
-    void Draw(const GameTime&) override {
+    void Draw(GameTime&) override {
         auto& gd = getGraphicsDeviceProperty();
         gd.Clear(Color::SkyBlue);
 
         // Bind mesh buffer (per-vertex, frequency 0) and
         // instance buffer (per-instance, frequency 1) together.
-        VertexBufferBinding bindings[2] = {
+        // GraphicsDevice::SetVertexBuffers takes a std::vector, not a raw array.
+        std::vector&lt;VertexBufferBinding&gt; bindings = {
             VertexBufferBinding(meshVB_.get(),     0, 0), // per-vertex
             VertexBufferBinding(instanceVB_.get(), 0, 1), // per-instance
         };
-        gd.setVertexBuffers(bindings, 2);
-        gd.setIndexBuffer(*meshIB_);
+        gd.SetVertexBuffers(bindings);
+        gd.SetIndexBuffer(meshIB_.get());
 
         // Set shared uniforms (view and projection; world comes from instance data).
-        grassEffect_-&gt;Parameters["u_view"].SetValue(camera_.View());
-        grassEffect_-&gt;Parameters["u_projection"].SetValue(camera_.Projection());
-        grassEffect_-&gt;Parameters["u_time"].SetValue(totalTime_);
+        // Apply() binds the compiled program; SetUniformXxx() writes into whatever
+        // program is currently bound, so this order is mandatory.
+        float viewCM[16], projCM[16];
+        camera_.View().ToColumnMajor(viewCM);
+        camera_.Projection().ToColumnMajor(projCM);
 
-        for (auto& pass : grassEffect_-&gt;getCurrentTechnique().Passes) {
-            pass.Apply();
-            gd.DrawInstancedPrimitives(
-                PrimitiveType::TriangleList,
-                /*baseVertex*/    0,
-                /*minVertexIdx*/  0,
-                /*numVertices*/   meshVB_-&gt;getVertexCount(),
-                /*startIndex*/    0,
-                /*primitiveCount*/triCount_,
-                /*instanceCount*/ instanceCount_);
-        }
+        grassEffect_-&gt;Apply();
+        grassEffect_-&gt;SetUniformMat4("u_view",       viewCM);
+        grassEffect_-&gt;SetUniformMat4("u_projection", projCM);
+        grassEffect_-&gt;SetUniformFloat("u_time",      totalTime_);
+
+        gd.DrawInstancedPrimitives(
+            PrimitiveType::TriangleList,
+            /*baseVertex*/    0,
+            /*minVertexIdx*/  0,
+            /*numVertices*/   meshVB_-&gt;getVertexCountProperty(),
+            /*startIndex*/    0,
+            /*primitiveCount*/triCount_,
+            /*instanceCount*/ instanceCount_);
 
         gd.Present();
     }
 
     float totalTime_ = 0.0f;
-    void Update(const GameTime& gt) override {
-        totalTime_ += (float)gt.getElapsedGameTime().TotalSeconds();
+    void Update(GameTime& gt) override {
+        totalTime_ += (float)gt.getElapsedGameTimeProperty().getTotalSecondsProperty();
         camera_.Update(gt);
     }
 };</code></pre>

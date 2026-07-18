@@ -115,7 +115,7 @@
             <tr><td><code>bool</code></td><td><code>bool</code></td><td>same</td></tr>
             <tr><td><code>byte</code></td><td><code>bytecs</code> (= <code>uint8_t</code>)</td><td>sharp-runtime alias</td></tr>
             <tr><td><code>string</code></td><td><code>std::string</code></td><td>no implicit conversions</td></tr>
-            <tr><td><code>List&lt;T&gt;</code></td><td><code>ListCS&lt;T&gt;</code></td><td>from sharp-runtime, or <code>std::vector&lt;T&gt;</code></td></tr>
+            <tr><td><code>List&lt;T&gt;</code></td><td><code>System::Collections::Generic::List&lt;T&gt;</code></td><td>from sharp-runtime, or <code>std::vector&lt;T&gt;</code>. Count is <code>getCountProperty()</code></td></tr>
             <tr><td><code>null</code></td><td><code>nullptr</code></td><td>pointer null</td></tr>
             <tr><td><code>?</code> nullable</td><td><code>std::optional&lt;T&gt;</code></td><td>or raw pointer</td></tr>
           </tbody>
@@ -133,15 +133,25 @@
 
         <h2>Content pipeline differences</h2>
         <p>
-          MonoGame uses <code>.xnb</code> binary files produced by the Content Pipeline. CNA does not use XNB
-          &mdash; load assets directly from source files:
+          MonoGame uses <code>.xnb</code> binary files produced by the Content Pipeline. <strong>CNA reads
+          those too.</strong> It implements the XNB container format, LZX decompression, and roughly 49
+          content type readers, all wired into <code>ContentManager</code>, so an existing
+          <code>ContentManager::Load&lt;T&gt;()</code> call over pre-built <code>.xnb</code> assets carries
+          across.
+        </p>
+        <p>
+          The one XNB payload CNA cannot consume is compiled <code>.fx</code> shader bytecode. If your content
+          folder contains built effects, those need replacing with GLSL for the backend you target.
+        </p>
+        <p>
+          CNA additionally lets you skip the pipeline and load assets straight from source files, which is
+          usually simpler for a new project:
         </p>
         <ul>
           <li><strong>Textures:</strong> <code>Texture2D("assets/logo.png", gd)</code> &mdash; PNG/JPG loaded via SDL3_image</li>
           <li><strong>Models:</strong> <code>Model::Load("assets/house.obj", gd)</code> &mdash; OBJ/FBX via the model loader</li>
-          <li><strong>Fonts:</strong> JSON-based <code>SpriteFont</code> descriptor instead of <code>.spritefont</code> XML + XNB</li>
+          <li><strong>Fonts:</strong> a JSON-based <code>SpriteFont</code> descriptor, as an alternative to <code>.spritefont</code> XML compiled to XNB</li>
         </ul>
-        <p>No <code>ContentManager.Load&lt;T&gt;()</code> XNB path is needed.</p>
 
         <h2>Audio (SoundEffect same, XACT now real)</h2>
         <p>
@@ -149,7 +159,7 @@
           <code>SoundEffect::FromFile("sound.wav")</code> loads OGG/WAV via SDL3_mixer. <code>Song</code>/
           <code>MediaPlayer</code> streaming is also fully implemented via SDL3_mixer. XACT
           (<code>.xap</code>-authored <code>AudioEngine</code>/<code>SoundBank</code>/<code>WaveBank</code>/<code>Cue</code>) is now a real,
-          ~97% functional runtime with a genuine <code>.xgs</code>/<code>.xsb</code>/<code>.xwb</code> parser &mdash; MonoGame
+          ~92% functional runtime with a genuine <code>.xgs</code>/<code>.xsb</code>/<code>.xwb</code> parser &mdash; MonoGame
           games that use XACT do not need to be rewritten to use <code>SoundEffect</code> directly, though it
           remains the simpler option for one-off sounds.
         </p>
@@ -158,9 +168,45 @@
         <p>A few MonoGame extensions are not present in CNA:</p>
         <ul>
           <li><code>VideoPlayer</code> &mdash; partial (see the Video Playback tutorial)</li>
-          <li><code>StorageContainer</code> &mdash; use standard C++ file I/O instead</li>
-          <li><code>MessageBox.Show</code> &mdash; no equivalent; use <code>SDL_ShowMessageBox</code> if needed</li>
         </ul>
+
+        <h3>Two things that are <em>not</em> missing</h3>
+        <p>
+          <strong>Storage works.</strong> <code>Microsoft::Xna::Framework::Storage</code> is fully functional:
+          <code>StorageDevice</code>, <code>StorageContainer</code>, and
+          <code>StorageDeviceNotConnectedException</code> are all implemented. <code>StorageContainer</code>
+          gives you <code>CreateFile()</code>, <code>OpenFile()</code>, <code>FileExists()</code>,
+          <code>DeleteFile()</code>, <code>GetFileNames()</code>, and the matching directory operations, with
+          file access returning a <code>std::unique_ptr&lt;System::IO::Stream&gt;</code>. Save-game code
+          written against XNA's storage API does not need rewriting to raw C++ file I/O.
+        </p>
+        <p>
+          <strong>Message boxes work.</strong> CNA provides <code>CNA::Devices::MessageBox</code>, which pops a
+          real native modal dialog through SDL. You do not need to call <code>SDL_ShowMessageBox</code>
+          yourself:
+        </p>
+<pre><code class="language-cpp">#include "CNA/Devices/MessageBox.hpp"
+#include "CNA/Devices/MessageBoxType.hpp"
+
+using CNA::Devices::MessageBox;
+using CNA::Devices::MessageBoxType;
+
+// Simple notification.
+MessageBox::ShowSimple(MessageBoxType::Error,
+                       "Save failed",
+                       "The save file could not be written.");
+
+// Multi-button prompt: returns the index of the clicked button,
+// or -1 if the dialog could not be shown.
+int choice = MessageBox::Show(MessageBoxType::Warning,
+                              "Unsaved changes",
+                              "Quit without saving?",
+                              {"Cancel", "Quit"});</code></pre>
+        <p>
+          <code>MessageBoxType</code> is <code>Error</code>, <code>Warning</code>, or
+          <code>Information</code>. Check <code>MessageBox::getIsSupportedProperty()</code> first if you target
+          a platform where a native dialog may not be available.
+        </p>
 
         <h2>Side-by-side: C# MonoGame vs C++ CNA</h2>
 <pre><code class="language-cpp">// ===== C# MonoGame =====
@@ -177,7 +223,7 @@
 //     }
 //
 //     public void Update(GameTime gt) {
-//         float dt = (float)gt.ElapsedGameTime.TotalSeconds;
+//         float dt = (float)gt.getElapsedGameTimeProperty().getTotalSecondsProperty();
 //         position.X += 100.0f * dt;
 //     }
 //
@@ -202,8 +248,8 @@ public:
         , position_(100.0f, 200.0f)
     {}
 
-    void Update(const GameTime& gt) {
-        float dt = static_cast&lt;float&gt;(gt.ElapsedGameTime.TotalSeconds());
+    void Update(GameTime& gt) {
+        float dt = static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty());
         position_.X += 100.0f * dt;
     }
 

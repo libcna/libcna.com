@@ -97,14 +97,57 @@ Matrix reflView = Matrix::CreateLookAt(reflPos, reflTarget,
       <h2>RenderTarget for reflection</h2>
       <p>Allocate a RenderTarget at half resolution to save bandwidth; the distortion from the normal map will hide the reduction in sharpness:</p>
       <pre><code class="language-cpp">// LoadContent
-auto& gd = getGraphicsDeviceProperty();
+auto&amp; gd = getGraphicsDeviceProperty();
 reflectionRT_ = std::make_unique&lt;RenderTarget2D&gt;(
     gd,
-    gd.getBackBufferWidth()  / 2,
-    gd.getBackBufferHeight() / 2,
+    gd.getBackBufferWidthProperty()  / 2,
+    gd.getBackBufferHeightProperty() / 2,
     false,
     SurfaceFormat::Color,
     DepthFormat::Depth24);</code></pre>
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p><code>SurfaceFormat::Color</code> is not a stylistic choice here &mdash; it is the only format that constructs. <code>Texture::ValidateFormat</code> throws <code>std::runtime_error</code> for every other <code>SurfaceFormat</code> on every backend, so the reflection target is RGBA8 whether you want it to be or not. For a reflection texture that is no loss: the result is LDR scene colour and gets distorted by the normal map anyway.</p>
+      </div>
+
+      <h2>Building the scene and water shaders</h2>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Both shaders are <code>ShaderEffect</code>s.</strong> <code>Content.Load&lt;Effect&gt;("effects/water")</code> for compiled <code>.fx</code> bytecode cannot work &mdash; <code>Effect(GraphicsDevice&amp;, const std::vector&lt;bytecs&gt;&amp;)</code> throws <code>NotImplementedException</code> unconditionally, and the XNB <code>EffectReader</code> is a registered placeholder that does the same. <code>ShaderEffect</code> takes shader <strong>source text</strong> and has no <code>Parameters</code> collection and no techniques or passes; uniforms go through <code>SetUniformXxx()</code> and textures through <code>SetTexture(unit, tex)</code>, always after <code>Apply()</code>. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+      </div>
+      <p>The constructor takes <strong>three</strong> arguments &mdash; the device and the two shader sources. The strings are the GLSL text itself, never a file path:</p>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+#include "System/IO/File.hpp"
+
+sceneEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+    gd,
+    System::IO::File::ReadAllText("Content/effects/reflect_scene.vert.glsl"),
+    System::IO::File::ReadAllText("Content/effects/reflect_scene.frag.glsl"));
+waterEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+    gd,
+    System::IO::File::ReadAllText("Content/effects/water.vert.glsl"),
+    System::IO::File::ReadAllText("Content/effects/water.frag.glsl"));
+
+// Neither constructor throws on a compile failure -- this is the only signal.
+if (!sceneEffect_-&gt;IsEffectValid() || !waterEffect_-&gt;IsEffectValid()) {
+    // The GLSL did not compile. Do not draw with it.
+}
+
+// The scrolling wave normal map is an ordinary texture asset.
+normalMap_ = getContentProperty().Load&lt;Texture2D&gt;("textures/water_normal");
+
+// Sampler unit assignments for the water shader, set once. Apply() binds the
+// program first; SetUniformXxx() writes into whatever program is bound.
+waterEffect_-&gt;Apply();
+waterEffect_-&gt;SetUniformInt("ReflectionTexture", 0);
+waterEffect_-&gt;SetUniformInt("NormalMap",         1);</code></pre>
+      <p><code>SetUniformMat4</code> takes raw column-major floats rather than a <code>Matrix</code>, so a small helper keeps the matrix call sites readable:</p>
+      <pre><code class="language-cpp">// ShaderEffect's matrix setter takes raw column-major floats.
+static void SetMat4(ShaderEffect&amp; fx, const char* name, const Matrix&amp; m) {
+    float cm[16];
+    m.ToColumnMajor(cm);
+    fx.SetUniformMat4(name, cm);
+}</code></pre>
 
       <h2>Clip plane in the reflection pass</h2>
       <p>When rendering the reflection, geometry <em>below</em> the water plane must be clipped away or it will appear in the reflection texture incorrectly. Pass a clip plane as a shader uniform and use <code>gl_ClipDistance[0]</code> in the vertex shader:</p>
@@ -119,25 +162,27 @@ void main() {
     gl_ClipDistance[0] = dot(worldPos, ClipPlane);
     // ... pass normals, texcoords
 }</code></pre>
-      <p>Set <code>ClipPlane = Vector4(0, 1, 0, -waterY)</code> for the reflection pass (keep only above-plane geometry). OpenGL must have <code>GL_CLIP_DISTANCE0</code> enabled; in CNA's EASYGL backend call the underlying GL function once at startup. For the main scene pass set <code>ClipPlane = Vector4(0, 0, 0, 0)</code> to effectively disable clipping.</p>
+      <p>Set the plane with <code>SetUniformVec4("ClipPlane", 0.0f, 1.0f, 0.0f, -waterY)</code> for the reflection pass (keep only above-plane geometry). OpenGL must have <code>GL_CLIP_DISTANCE0</code> enabled; in CNA's EASYGL backend call the underlying GL function once at startup. For the main scene pass set <code>ClipPlane = Vector4(0, 0, 0, 0)</code> to effectively disable clipping.</p>
 
       <h2>Reflection render pass</h2>
       <pre><code class="language-cpp">void DrawReflectionPass() {
-    auto& gd = getGraphicsDeviceProperty();
+    auto&amp; gd = getGraphicsDeviceProperty();
     gd.SetRenderTarget(reflectionRT_.get());
     gd.Clear(Color::CornflowerBlue);
 
+    // Apply() binds the program; SetUniformXxx() writes into whatever program
+    // is currently bound, so this order is mandatory.
+    sceneEffect_-&gt;Apply();
+
     // Set clip plane: keep pixels above water
-    sceneEffect_-&gt;Parameters()["ClipPlane"].SetValue(
-        Vector4(0.0f, 1.0f, 0.0f, -waterY_));
-    sceneEffect_-&gt;Parameters()["View"].SetValue(reflView_);
-    sceneEffect_-&gt;Parameters()["Projection"].SetValue(proj_);
+    sceneEffect_-&gt;SetUniformVec4("ClipPlane", 0.0f, 1.0f, 0.0f, -waterY_);
+    SetMat4(*sceneEffect_, "View",       reflView_);
+    SetMat4(*sceneEffect_, "Projection", proj_);
 
     DrawSceneGeometry();
 
-    // Disable clip plane for main pass
-    sceneEffect_-&gt;Parameters()["ClipPlane"].SetValue(
-        Vector4(0.0f, 0.0f, 0.0f, 0.0f));
+    // Disable clip plane for the main pass
+    sceneEffect_-&gt;SetUniformVec4("ClipPlane", 0.0f, 0.0f, 0.0f, 0.0f);
     gd.SetRenderTarget(nullptr);
 }</code></pre>
 
@@ -218,9 +263,10 @@ float fresnel  = R0 + (1.0 - R0) * pow(1.0 - cosTheta, 5.0);</code></pre>
       <p>In the water shader, use the Fresnel value to blend between the underwater/deep-water colour (or refraction texture) and the reflection texture.</p>
 
       <h2>Full per-frame sequence</h2>
-      <pre><code class="language-cpp">void Draw(const GameTime& gt) override {
-    auto& gd = getGraphicsDeviceProperty();
-    float t = static_cast&lt;float&gt;(gt.TotalGameTime.TotalSeconds());
+      <pre><code class="language-cpp">void Draw(GameTime&amp; gt) override {
+    auto&amp; gd = getGraphicsDeviceProperty();
+    float t = static_cast&lt;float&gt;(
+        gt.getTotalGameTimeProperty().getTotalSecondsProperty());
 
     // 1. Build reflection camera
     BuildReflectionView();
@@ -231,27 +277,34 @@ float fresnel  = R0 + (1.0 - R0) * pow(1.0 - cosTheta, 5.0);</code></pre>
     // 3. Render main scene to back buffer
     gd.SetRenderTarget(nullptr);
     gd.Clear(Color::CornflowerBlue);
-    sceneEffect_-&gt;Parameters()["View"].SetValue(view_);
+    sceneEffect_-&gt;Apply();
+    SetMat4(*sceneEffect_, "View", view_);
     DrawSceneGeometry();
 
     // 4. Draw water surface on top
-    waterEffect_-&gt;Parameters()["Time"].SetValue(t);
-    waterEffect_-&gt;Parameters()["ReflectionTexture"].SetValue(*reflectionRT_);
-    waterEffect_-&gt;Parameters()["View"].SetValue(view_);
-    waterEffect_-&gt;Parameters()["Projection"].SetValue(proj_);
-    waterEffect_-&gt;Parameters()["World"].SetValue(
-        Matrix::CreateTranslation(0.0f, waterY_, 0.0f));
-    waterEffect_-&gt;Parameters()["CameraPos"].SetValue(cameraPos_);
+    waterEffect_-&gt;Apply();
 
-    gd.BlendState = BlendState::AlphaBlend;
-    for (auto& pass : waterEffect_-&gt;CurrentTechnique().Passes) {
-        pass.Apply();
-        gd.SetVertexBuffer(*waterVB_);
-        gd.SetIndexBuffer(*waterIB_);
-        gd.DrawIndexedPrimitives(PrimitiveType::TriangleList,
-                                 0, 0, waterVerts_, 0, waterPrims_);
-    }
-    gd.BlendState = BlendState::Opaque;
+    // Units 0 and 1 are the ones the samplers were pointed at in LoadContent().
+    // SetTexture takes a reference, and RenderTarget2D derives from Texture2D.
+    waterEffect_-&gt;SetTexture(0, *reflectionRT_);
+    waterEffect_-&gt;SetTexture(1, *normalMap_);
+
+    waterEffect_-&gt;SetUniformFloat("Time", t);
+    SetMat4(*waterEffect_, "View",       view_);
+    SetMat4(*waterEffect_, "Projection", proj_);
+    SetMat4(*waterEffect_, "World",
+            Matrix::CreateTranslation(0.0f, waterY_, 0.0f));
+    waterEffect_-&gt;SetUniformVec3("CameraPos",
+                                  cameraPos_.X, cameraPos_.Y, cameraPos_.Z);
+
+    // A ShaderEffect has no techniques or passes to iterate -- Apply() above
+    // bound the one compiled program, so this is a single ordinary draw.
+    gd.setBlendStateProperty(BlendState::AlphaBlend);
+    gd.SetVertexBuffer(waterVB_.get());
+    gd.SetIndexBuffer(waterIB_.get());
+    gd.DrawIndexedPrimitives(PrimitiveType::TriangleList,
+                             0, 0, waterVerts_, 0, waterPrims_);
+    gd.setBlendStateProperty(BlendState::Opaque);
 
     gd.Present();
 }</code></pre>

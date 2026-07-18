@@ -77,7 +77,7 @@
       <h1>Tutorial 45: ContentManager and Asset Pipeline</h1>
         <p class="doc-meta">CNA &mdash; C++ XNA 4.0 reimplementation</p>
 
-        <p>CNA's <code>ContentManager</code> provides the same <code>Load&lt;T&gt;</code> interface as XNA 4.0, and it reads two kinds of content: compiled <code>.xnb</code> binaries, and open file formats such as PNG, OBJ, WAV, OGG and JSON descriptors. When both exist for an asset, the <code>.xnb</code> wins.</p>
+        <p>CNA's <code>ContentManager</code> provides the same <code>Load&lt;T&gt;</code> interface as XNA 4.0, and it reads two kinds of content: compiled <code>.xnb</code> binaries, and open file formats such as PNG, glTF, WAV, OGG and <code>.cnj</code> descriptors. When both exist for an asset, the <code>.xnb</code> wins.</p>
 
         <div class="callout callout--info">
           <span class="callout-icon">&#8505;</span>
@@ -92,12 +92,12 @@ using namespace Microsoft::Xna::Framework::Audio;
 
 // Inside Game::LoadContent():
 auto&amp; content = getContentProperty(); // returns ContentManager&amp;
-content.setRootDirectory("Content");  // relative to the executable
+content.setRootDirectoryProperty("Content");  // relative to the executable
 
 // Texture2D — loads PNG/JPG/BMP from Content/textures/player.png
 auto* tex = content.Load&lt;Texture2D&gt;("textures/player");
 
-// Model — loads via Content/models/ship.model.json
+// Model — resolves Content/models/ship.xnb, then .cnj, then .gltf/.glb
 auto* model = content.Load&lt;Model&gt;("models/ship");
 
 // SoundEffect — loads from Content/audio/explosion.wav
@@ -106,7 +106,7 @@ auto* sfx = content.Load&lt;SoundEffect&gt;("audio/explosion");
 // Song (streaming) — loads from Content/music/theme.ogg
 auto* song = content.Load&lt;Song&gt;("music/theme");
 
-// SpriteFont — loads from Content/fonts/arial20.font.json
+// SpriteFont — loads from Content/fonts/arial20.cnj
 auto* font = content.Load&lt;SpriteFont&gt;("fonts/arial20");</code></pre>
 
         <h2>Supported asset types</h2>
@@ -114,19 +114,23 @@ auto* font = content.Load&lt;SpriteFont&gt;("fonts/arial20");</code></pre>
         <table>
           <thead><tr><th>Type</th><th>File extension(s)</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr><td><code>Texture2D</code></td><td>.png .jpg .bmp .tga</td><td>Loaded via SDL3_image; all standard formats</td></tr>
-            <tr><td><code>Model</code></td><td>.model.json + referenced OBJ</td><td>JSON descriptor points to geometry files</td></tr>
-            <tr><td><code>SoundEffect</code></td><td>.wav</td><td>Loaded into memory; use for short clips</td></tr>
-            <tr><td><code>Song</code></td><td>.ogg .mp3</td><td>Streaming; only one Song plays at a time</td></tr>
-            <tr><td><code>SpriteFont</code></td><td>.font.json + .png atlas</td><td>Pre-rendered glyph atlas format</td></tr>
-            <tr><td><code>Effect</code></td><td>.effect.json</td><td>Built-in stock effects only. Compiled <code>.fx</code> bytecode is not supported, and the XNB <code>EffectReader</code> is a placeholder that always throws.</td></tr>
+            <tr><td><code>Texture2D</code></td><td>.png .jpg .jpeg .bmp .gif .tga .tif .tiff .qoi</td><td>The image file is loaded directly. There is no descriptor file.</td></tr>
+            <tr><td><code>Model</code></td><td>.xnb .cnj .gltf .glb</td><td>Tried in that order. <code>.cnj</code> is a JSON descriptor plus binary vertex/index sidecars, produced by the <code>gltf_to_cnj</code> tool. There is no OBJ loader.</td></tr>
+            <tr><td><code>SoundEffect</code></td><td>.wav</td><td>The WAV file is loaded directly into memory. There is no descriptor file. Use for short clips.</td></tr>
+            <tr><td><code>Song</code></td><td>.mp3 .ogg .wav .flac .opus .aac .wma</td><td>Streaming; only one Song plays at a time</td></tr>
+            <tr><td><code>SpriteFont</code></td><td>.cnj</td><td>A <code>.cnj</code> descriptor naming a glyph-atlas texture, which is itself loaded through <code>ContentManager</code>.</td></tr>
+            <tr><td><code>Effect</code></td><td>.cnj</td><td>A <code>.cnj</code> descriptor naming GLSL vertex and fragment sources, loaded as a <code>ShaderEffect</code>. Compiled <code>.fx</code> bytecode is not supported, and the XNB <code>EffectReader</code> is a placeholder that always throws.</td></tr>
+            <tr><td><code>TextureCube</code></td><td>.dds</td><td>&mdash;</td></tr>
+            <tr><td><code>Texture3D</code></td><td>.cnj</td><td>&mdash;</td></tr>
+            <tr><td><code>SkinnedModel</code></td><td>.skinnedmodel.json</td><td>&mdash;</td></tr>
+            <tr><td><code>Video</code></td><td>.mp4 .ogv .webm .mkv .avi .mov</td><td>&mdash;</td></tr>
           </tbody>
         </table>
         </div>
 
         <h2>ContentManager::RootDirectory</h2>
         <pre><code class="language-cpp">// Default is empty string (alongside the executable)
-content.setRootDirectory("Content");
+content.setRootDirectoryProperty("Content");
 
 // Nested managers per state (one content manager per game screen)
 ContentManager levelContent(getServicesProperty(), "Content/Level1");</code></pre>
@@ -139,45 +143,58 @@ levelContent.Unload();
 // Do NOT use any pointers obtained from levelContent after this point.</code></pre>
 
         <h2>JSON descriptor formats</h2>
-        <h3>.texture.json</h3>
-        <p>When you need to specify texture settings beyond defaults:</p>
-        <pre><code class="language-cpp">// Content/textures/terrain.texture.json
-{
-    "file": "terrain.png",
-    "generateMipmaps": true,
-    "addressU": "Wrap",
-    "addressV": "Wrap",
-    "filter": "Linear"
-}</code></pre>
+        <p>Only some content types have a descriptor. <code>Texture2D</code> and <code>SoundEffect</code> do not &mdash; the image or WAV file is read directly, and everything you might expect a descriptor to configure is set on the object in C++ instead. The types that do use one all share CNA's single <code>.cnj</code> document format, which carries a <code>cnjVersion</code> and a <code>type</code> that must match the C++ type you ask for.</p>
 
-        <h3>.model.json</h3>
-        <pre><code class="language-cpp">// Content/models/ship.model.json
+        <h3>Texture2D &mdash; no descriptor</h3>
+        <p>There is no <code>.texture.json</code>. <code>Load&lt;Texture2D&gt;</code> resolves the asset name against <code>.png</code>, <code>.jpg</code>, <code>.jpeg</code>, <code>.bmp</code>, <code>.gif</code>, <code>.tga</code>, <code>.tif</code>, <code>.tiff</code> and <code>.qoi</code>, and decodes whichever it finds. Sampling and wrapping are not asset properties in XNA at all &mdash; they are device state you set at draw time:</p>
+        <pre><code class="language-cpp">auto* tex = content.Load&lt;Texture2D&gt;("textures/terrain");
+
+// Wrapping and filtering are sampler state, not file metadata.
+gd.getSamplerStatesProperty()[0] = SamplerState::LinearWrap;</code></pre>
+
+        <h3>SoundEffect &mdash; no descriptor</h3>
+        <p>There is no <code>.sound.json</code>. <code>Load&lt;SoundEffect&gt;</code> reads a <code>.wav</code> file and nothing else. Volume, pitch and pan are per-playback values, so they are arguments to <code>Play</code> or properties of a <code>SoundEffectInstance</code>:</p>
+        <pre><code class="language-cpp">auto* sfx = content.Load&lt;SoundEffect&gt;("audio/explosion");
+
+// volume, pitch, pan — set at the call site, not in a file.
+sfx-&gt;Play(0.8f, 0.0f, 0.0f);</code></pre>
+
+        <h3>.cnj (Model)</h3>
+        <p>Geometry lives in the binary sidecars the descriptor names; the JSON just wires them together. Generate it with <code>gltf_to_cnj</code> rather than writing it by hand &mdash; see <a href="35-model-loading.html">Tutorial 35</a>.</p>
+        <pre><code class="language-json">// Content/models/ship.cnj
 {
+    "cnjVersion": 1,
+    "type": "Model",
     "meshes": [
-        { "file": "ship_body.obj",   "material": "textures/hull" },
-        { "file": "ship_engine.obj", "material": "textures/engine" }
+        { "name": "Hull",   "vertices": "ship_body_verts.bin",   "indices": "ship_body_idx.bin",   "vertexStride": 32, "effect": "BasicEffect" },
+        { "name": "Engine", "vertices": "ship_engine_verts.bin", "indices": "ship_engine_idx.bin", "vertexStride": 32, "effect": "BasicEffect" }
     ]
 }</code></pre>
 
-        <h3>.font.json</h3>
-        <pre><code class="language-cpp">// Content/fonts/arial20.font.json
+        <h3>.cnj (SpriteFont)</h3>
+        <p><code>texture</code> names the glyph atlas and is required &mdash; a descriptor without it raises a <code>ContentLoadException</code>. That name goes back through <code>ContentManager</code>, so the atlas is resolved and cached like any other texture. Each glyph carries <code>source</code> (its rectangle in the atlas), <code>crop</code> (the offset and size used when drawing), and <code>kerning</code> as XNA's three floats: left bearing, advance width, right bearing.</p>
+        <pre><code class="language-json">// Content/fonts/arial20.cnj
 {
-    "atlas":       "arial20.png",
-    "size":        20,
+    "cnjVersion": 1,
+    "type": "SpriteFont",
+    "texture": "fonts/arial20_atlas",
     "lineSpacing": 24,
+    "spacing": 0.0,
+    "defaultCharacter": "?",
     "glyphs": [
-        { "char": 32, "x": 0,  "y": 0,  "w": 6,  "h": 0, "xoff": 0, "yoff": 0, "advance": 6 },
-        { "char": 65, "x": 10, "y": 0,  "w": 14, "h": 20,"xoff": 0, "yoff": 0, "advance": 14 }
+        { "char": 32, "source": [0, 0, 6, 20],   "crop": [0, 0, 6, 20],  "kerning": [0.0, 6.0, 0.0] },
+        { "char": 65, "source": [10, 0, 14, 20], "crop": [0, 0, 14, 20], "kerning": [0.0, 14.0, 0.0] }
     ]
 }</code></pre>
 
-        <h3>.sound.json</h3>
-        <pre><code class="language-cpp">// Content/audio/explosion.sound.json (optional — plain .wav works too)
+        <h3>.cnj (Effect)</h3>
+        <p>The <code>Effect</code> descriptor has exactly two shader fields, <code>vertex</code> and <code>fragment</code>, each naming a GLSL source file relative to the descriptor. Missing either raises a <code>ContentLoadException</code>. Load it as <code>Effect</code> &mdash; the type the reader is registered for &mdash; then downcast to <code>ShaderEffect</code>. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+        <pre><code class="language-json">// Content/effects/wave.cnj
 {
-    "file": "explosion.wav",
-    "volume": 0.8,
-    "pitch": 0.0,
-    "pan": 0.0
+    "cnjVersion": 1,
+    "type": "Effect",
+    "vertex": "wave.vert",
+    "fragment": "wave.frag"
 }</code></pre>
 
         <h2>Code example: load multiple assets, unload on state change</h2>
@@ -196,7 +213,7 @@ protected:
     void LoadContent() override {
         // Menu assets use the global ContentManager
         auto&amp; shared = getContentProperty();
-        shared.setRootDirectory("Content");
+        shared.setRootDirectoryProperty("Content");
         menuFont_     = shared.Load&lt;SpriteFont&gt;("fonts/title");
         menuBg_       = shared.Load&lt;Texture2D&gt;("ui/menu_bg");
 
@@ -225,7 +242,7 @@ protected:
         }
     }
 
-    void Draw(const GameTime&amp;) override {
+    void Draw(GameTime&amp;) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color::Black);
         // ... draw based on state_ ...
@@ -255,7 +272,7 @@ private:
           <div class="docs-pagination-prev">
             <a href="44-bounding-volumes.html" class="pagination-link pagination-prev">
               <span class="pagination-direction">&larr; Previous</span>
-              <span class="pagination-title">Tutorial 44: Bounding Volumes</span>
+              <span class="pagination-title">Tutorial 44: Bounding Volumes and Spatial Queries</span>
             </a>
           </div>
           <div class="docs-pagination-next">

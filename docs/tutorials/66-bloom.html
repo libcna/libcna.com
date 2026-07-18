@@ -92,7 +92,7 @@
 
       <h2>Gaussian blur with two-pass (H + V)</h2>
       <p>A Gaussian kernel of radius 5 uses 11 samples (centre ±5). Because the kernel is symmetric we only need 6 unique weight values. The weights are pre-computed from the Gaussian formula and normalised so they sum to 1.</p>
-      <p>In the horizontal pass the sample offsets are along the X axis in texture-space: <code>vec2(offset * texelSize.x, 0.0)</code>. In the vertical pass the same shader runs again with offsets along the Y axis. CNA's Effect system allows you to set a uniform controlling the blur direction, so a single GLSL source covers both passes.</p>
+      <p>In the horizontal pass the sample offsets are along the X axis in texture-space: <code>vec2(offset * texelSize.x, 0.0)</code>. In the vertical pass the same shader runs again with offsets along the Y axis. A <code>vec2</code> uniform controlling the blur direction lets a single GLSL source cover both passes &mdash; set it with <code>SetUniformVec2</code> between the two draws.</p>
 
       <h2>RenderTarget chain</h2>
       <p>Bloom requires a chain of off-screen surfaces:</p>
@@ -104,9 +104,9 @@
       </ul>
       <p>Using half-resolution for the blur targets is an important optimisation: it halves the number of texture fetches per pass and the blurred result will be upsampled back to full resolution during the composite step anyway, so there is no visible quality loss.</p>
       <pre><code class="language-cpp">// LoadContent — allocate the RenderTarget chain
-auto& gd = getGraphicsDeviceProperty();
-int w = gd.getBackBufferWidth();
-int h = gd.getBackBufferHeight();
+auto&amp; gd = getGraphicsDeviceProperty();
+int w = gd.getBackBufferWidthProperty();
+int h = gd.getBackBufferHeightProperty();
 
 sceneRT_   = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h,
                false, SurfaceFormat::Color,
@@ -117,6 +117,37 @@ blurHRT_   = std::make_unique&lt;RenderTarget2D&gt;(gd, w/2, h/2,
                false, SurfaceFormat::Color, DepthFormat::None);
 blurVRT_   = std::make_unique&lt;RenderTarget2D&gt;(gd, w/2, h/2,
                false, SurfaceFormat::Color, DepthFormat::None);</code></pre>
+
+      <h2>Building the two post-process shaders</h2>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Both bloom shaders are <code>ShaderEffect</code>s.</strong> <code>Content.Load&lt;Effect&gt;("Shaders/gaussblur")</code> pointed at compiled <code>.fx</code> bytecode cannot work &mdash; <code>Effect(GraphicsDevice&amp;, const std::vector&lt;bytecs&gt;&amp;)</code> throws <code>NotImplementedException</code> unconditionally, and the XNB <code>EffectReader</code> is a registered placeholder that does the same. <code>ShaderEffect</code> takes shader <strong>source text</strong> and has no <code>Parameters</code> collection; uniforms go through <code>SetUniformXxx()</code> and textures through <code>SetTexture(unit, tex)</code>, always after <code>Apply()</code>. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+      </div>
+      <p>Both passes share one fullscreen vertex shader and differ only in the fragment stage. The constructor takes <strong>three</strong> arguments &mdash; the device and the two shader sources &mdash; and the strings are the source text itself, never a file path, so read the files yourself:</p>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+#include "System/IO/File.hpp"
+
+const std::string fullscreenVert =
+    System::IO::File::ReadAllText("Content/Shaders/fullscreen.vert.glsl");
+
+brightEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+    gd, fullscreenVert,
+    System::IO::File::ReadAllText("Content/Shaders/brightpass.frag.glsl"));
+blurEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+    gd, fullscreenVert,
+    System::IO::File::ReadAllText("Content/Shaders/gaussblur.frag.glsl"));
+
+// Neither constructor throws on a compile failure -- this is the only signal.
+if (!brightEffect_-&gt;IsEffectValid() || !blurEffect_-&gt;IsEffectValid()) {
+    // The GLSL did not compile. Do not draw with it.
+}
+
+// Sampler unit assignments, set once. Apply() binds the program first;
+// SetUniformXxx() writes into whatever program is currently bound.
+brightEffect_-&gt;Apply();
+brightEffect_-&gt;SetUniformInt("Texture", 0);
+blurEffect_-&gt;Apply();
+blurEffect_-&gt;SetUniformInt("Texture", 0);</code></pre>
 
       <h2>Bright-pass threshold shader</h2>
       <p>The bright-pass fragment shader computes the luminance of each pixel and discards those below a threshold. A smooth knee function (instead of a hard cut) avoids aliasing at the boundary:</p>
@@ -164,29 +195,41 @@ void main() {
     fragColor = result;
 }</code></pre>
 
-      <p>In the C++ Draw loop, apply the blur in two passes:</p>
-      <pre><code class="language-cpp">// Horizontal blur: brightRT -> blurHRT
-gd.setRenderTarget(blurHRT_.get());
-gd.Clear(Color::Black);
-blurEffect_-&gt;Parameters()["BlurDirection"].SetValue(Vector2(1.0f, 0.0f));
-blurEffect_-&gt;Parameters()["TexelSize"].SetValue(
-    Vector2(2.0f / gd.getBackBufferWidth(), 2.0f / gd.getBackBufferHeight()));
-blurEffect_-&gt;Parameters()["Texture"].SetValue(*brightRT_);
-blurEffect_-&gt;CurrentTechnique().Passes[0].Apply();
-DrawFullscreenQuad(gd);
+      <p>In the C++ Draw loop, apply the blur in two passes. Both write into whichever render target is currently bound, so wrap one pass in a helper and call it twice:</p>
+      <pre><code class="language-cpp">// Run one separable blur pass into the currently bound render target.
+// Apply() binds this effect's compiled program; SetUniformXxx() and
+// SetTexture() write into whatever program is bound, so the order is mandatory.
+void ApplyBlur(GraphicsDevice&amp; gd, Texture2D&amp; src, Vector2 direction) {
+    blurEffect_-&gt;Apply();
 
-// Vertical blur: blurHRT -> blurVRT
-gd.setRenderTarget(blurVRT_.get());
+    // SetTexture takes a reference; RenderTarget2D derives from Texture2D.
+    // Unit 0 is the one "Texture" was pointed at in LoadContent().
+    blurEffect_-&gt;SetTexture(0, src);
+
+    blurEffect_-&gt;SetUniformVec2("BlurDirection", direction.X, direction.Y);
+
+    // Both blur targets are half-resolution, so one texel size covers both passes.
+    blurEffect_-&gt;SetUniformVec2("TexelSize",
+                                 2.0f / gd.getBackBufferWidthProperty(),
+                                 2.0f / gd.getBackBufferHeightProperty());
+
+    DrawFullscreenQuad(gd);
+}
+
+// Horizontal blur: brightRT -&gt; blurHRT
+gd.SetRenderTarget(blurHRT_.get());
 gd.Clear(Color::Black);
-blurEffect_-&gt;Parameters()["BlurDirection"].SetValue(Vector2(0.0f, 1.0f));
-blurEffect_-&gt;Parameters()["Texture"].SetValue(*blurHRT_);
-blurEffect_-&gt;CurrentTechnique().Passes[0].Apply();
-DrawFullscreenQuad(gd);</code></pre>
+ApplyBlur(gd, *brightRT_, Vector2(1.0f, 0.0f));
+
+// Vertical blur: blurHRT -&gt; blurVRT
+gd.SetRenderTarget(blurVRT_.get());
+gd.Clear(Color::Black);
+ApplyBlur(gd, *blurHRT_, Vector2(0.0f, 1.0f));</code></pre>
 
       <h2>Additive blending composite</h2>
       <p>The final composite step draws the blurred bloom texture over the original scene using additive blending. CNA's <code>BlendState::Additive</code> sets <code>SourceBlend = One</code> and <code>DestinationBlend = One</code>, which simply adds the RGB values:</p>
       <pre><code class="language-cpp">// Composite: draw scene, then add bloom on top
-gd.setRenderTarget(nullptr);  // back buffer
+gd.SetRenderTarget(nullptr);  // back buffer
 gd.Clear(Color::Black);
 
 // Draw original scene
@@ -198,8 +241,8 @@ spriteBatch_-&gt;End();
 spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, BlendState::Additive);
 spriteBatch_-&gt;Draw(*blurVRT_,
     Rectangle(0, 0,
-              gd.getBackBufferWidth(),
-              gd.getBackBufferHeight()),
+              gd.getBackBufferWidthProperty(),
+              gd.getBackBufferHeightProperty()),
     Color::White);
 spriteBatch_-&gt;End();</code></pre>
 
@@ -211,12 +254,16 @@ vec3 hdr = sceneColor.rgb + bloomColor.rgb;
 vec3 ldr = hdr / (hdr + vec3(1.0));
 // Optional: gamma correction
 fragColor = vec4(pow(ldr, vec3(1.0 / 2.2)), 1.0);</code></pre>
-      <p>Without tone mapping, additively blended bloom will clip to white in LDR targets. For LDR pipelines keep the bloom intensity low (multiply the bloom texture by a factor of 0.3–0.8) to avoid over-brightening. A dedicated HDR RenderTarget (<code>SurfaceFormat::HdrBlendable</code> or <code>SurfaceFormat::Rgba64</code>) is recommended when accurate HDR bloom is needed.</p>
+      <p>Without tone mapping, additively blended bloom will clip to white in LDR targets. Keep the bloom intensity low (multiply the bloom texture by a factor of 0.3–0.8) to avoid over-brightening.</p>
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>A true HDR render target is not available.</strong> Only <code>SurfaceFormat::Color</code> constructs in CNA today &mdash; <code>Texture::ValidateFormat</code> throws <code>std::runtime_error</code> for every other <code>SurfaceFormat</code>, including <code>HdrBlendable</code> and <code>Rgba64</code>. Every stage of the bloom chain is therefore RGBA8. If you need headroom above 1.0, encode it: render the scene divided by a fixed exposure constant, run the bright-pass and blur in that reduced range, and multiply back during the final composite. The result is not true HDR bloom, but it avoids clipping the bright pass at the first step.</p>
+      </div>
 
       <h2>Putting it all together</h2>
       <p>A complete per-frame bloom Draw sequence looks like this:</p>
-      <pre><code class="language-cpp">void Draw(const GameTime& gameTime) override {
-    auto& gd = getGraphicsDeviceProperty();
+      <pre><code class="language-cpp">void Draw(GameTime&amp; gameTime) override {
+    auto&amp; gd = getGraphicsDeviceProperty();
 
     // 1. Render scene to off-screen target
     gd.SetRenderTarget(sceneRT_.get());
@@ -226,10 +273,10 @@ fragColor = vec4(pow(ldr, vec3(1.0 / 2.2)), 1.0);</code></pre>
     // 2. Bright-pass filter
     gd.SetRenderTarget(brightRT_.get());
     gd.Clear(Color::Black);
-    brightEffect_-&gt;Parameters()["Threshold"].SetValue(0.7f);
-    brightEffect_-&gt;Parameters()["Knee"].SetValue(0.1f);
-    brightEffect_-&gt;Parameters()["Texture"].SetValue(*sceneRT_);
-    brightEffect_-&gt;CurrentTechnique().Passes[0].Apply();
+    brightEffect_-&gt;Apply();          // bind the program before setting anything
+    brightEffect_-&gt;SetTexture(0, *sceneRT_);
+    brightEffect_-&gt;SetUniformFloat("Threshold", 0.7f);
+    brightEffect_-&gt;SetUniformFloat("Knee", 0.1f);
     DrawFullscreenQuad(gd);
 
     // 3. Horizontal Gaussian blur
@@ -250,7 +297,7 @@ fragColor = vec4(pow(ldr, vec3(1.0 / 2.2)), 1.0);</code></pre>
     spriteBatch_-&gt;End();
     spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, BlendState::Additive);
     spriteBatch_-&gt;Draw(*blurVRT_,
-        Rectangle(0, 0, gd.getBackBufferWidth(), gd.getBackBufferHeight()),
+        Rectangle(0, 0, gd.getBackBufferWidthProperty(), gd.getBackBufferHeightProperty()),
         Color::White * bloomIntensity_);
     spriteBatch_-&gt;End();
 
@@ -259,6 +306,10 @@ fragColor = vec4(pow(ldr, vec3(1.0 / 2.2)), 1.0);</code></pre>
 
       <nav class="docs-pagination" aria-label="Page navigation">
         <div class="docs-pagination-prev">
+          <a href="65-msaa.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&#8592; Previous</span>
+            <span class="pagination-title">Tutorial 65: MSAA Anti-Aliasing</span>
+          </a>
         </div>
         <div class="docs-pagination-next">
           <a href="67-deferred-rendering.html" class="pagination-link pagination-next">

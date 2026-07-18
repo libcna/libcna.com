@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 53: GLSL Uniforms and EffectParameter - CNA Tutorials</title>
-  <meta name="description" content="Learn how EffectParameter bridges C++ and GLSL uniforms in CNA, covering SetValue overloads, EffectParameterCollection, array passing, and UBO update patterns.">
+  <meta name="description" content="How GLSL uniforms are actually set in CNA: ShaderEffect&#39;s SetUniformXxx family for custom shaders, and EffectParameter/EffectParameterCollection for the stock effects.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/53-effect-parameter.html">
   <meta property="og:title"       content="Tutorial 53: GLSL Uniforms and EffectParameter - CNA Tutorials">
-  <meta property="og:description" content="Learn how EffectParameter bridges C++ and GLSL uniforms in CNA, covering SetValue overloads, EffectParameterCollection, array passing, and UBO update patterns.">
+  <meta property="og:description" content="How GLSL uniforms are actually set in CNA: ShaderEffect&#39;s SetUniformXxx family for custom shaders, and EffectParameter/EffectParameterCollection for the stock effects.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/53-effect-parameter.html">
@@ -78,31 +78,65 @@
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p>Custom <code>Effect</code> objects with <code>EffectParameter</code> require the <strong>EASYGL</strong> or <strong>VULKAN</strong> backend. The SDL_RENDERER backend does not support programmable shaders.</p>
+        <p><strong>Custom-shader uniforms do not go through <code>EffectParameter</code>.</strong> There is no way to obtain a custom <code>Effect</code> whose uniforms are reflected into a parameter collection: the <code>Effect(GraphicsDevice&amp;, const std::vector&lt;bytecs&gt;&amp;)</code> bytecode constructor throws <code>NotImplementedException</code> unconditionally, and CNA's only working custom-shader type, <a href="52-custom-shaders.html"><code>ShaderEffect</code></a>, exposes no <code>Parameters</code> collection at all. Its uniforms are set with the <code>SetUniformXxx()</code> family instead. <code>EffectParameter</code> is real, but it belongs to the stock effects — read the first half of this page for the custom path and the second half for what <code>EffectParameter</code> actually is.</p>
       </div>
 
-      <h2>The EffectParameter Class</h2>
-      <p>In CNA, an <code>Effect</code> represents a compiled GLSL shader program. Each <code>uniform</code> variable declared in the GLSL source has a corresponding <code>EffectParameter</code> on the C++ side. The <code>EffectParameter</code> is the bridge between your game logic and the GPU uniform slot — calling <code>SetValue()</code> on it schedules the upload so that when the effect's pass is applied, the uniform is correctly set in the shader program.</p>
-      <p>Every <code>Effect</code> in CNA is backed by a <code>.shader.json</code> descriptor file. This file declares the vertex and fragment shader source paths, the technique name, pass names, and the list of uniform names the effect exposes. During loading, CNA's effect system reflects the uniform locations from the compiled GLSL program and creates an <code>EffectParameter</code> entry for each one, storing it in the effect's <code>EffectParameterCollection</code>.</p>
-      <p>Parameters are owned by the effect. You retrieve them by name, store the reference if you access them frequently, and call <code>SetValue()</code> each frame (or whenever the value changes) before calling <code>pass.Apply()</code>. The lifetime of an <code>EffectParameter</code> reference is tied to its parent effect — do not hold references across effect reloads.</p>
+      <h2>Setting uniforms on a ShaderEffect</h2>
+      <p>A <code>ShaderEffect</code> is constructed from vertex and fragment shader <strong>source text</strong> — three arguments, and neither string is a file path. Its uniforms are then set by name through direct methods, each taking a <code>const char*</code>:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Method</th><th>GLSL uniform type</th></tr></thead>
+          <tbody>
+            <tr><td><code>SetUniformFloat(name, float)</code></td><td><code>float</code></td></tr>
+            <tr><td><code>SetUniformInt(name, int)</code></td><td><code>int</code> (also explicit sampler-unit binding)</td></tr>
+            <tr><td><code>SetUniformVec2(name, x, y)</code></td><td><code>vec2</code></td></tr>
+            <tr><td><code>SetUniformVec3(name, x, y, z)</code></td><td><code>vec3</code></td></tr>
+            <tr><td><code>SetUniformVec4(name, x, y, z, w)</code></td><td><code>vec4</code></td></tr>
+            <tr><td><code>SetUniformMat4(name, const float*)</code></td><td><code>mat4</code>, column-major</td></tr>
+            <tr><td><code>SetUniformFloatArray(name, const float*, count)</code></td><td><code>float[]</code> — <code>count</code> is the number of <em>scalar</em> elements</td></tr>
+            <tr><td><code>SetUniformVec2Array(name, const float*, count)</code></td><td><code>vec2[]</code> — <code>count</code> is the number of <em>vec2s</em>, so the buffer holds <code>count * 2</code> floats</td></tr>
+            <tr><td><code>SetTexture(int unit, Texture2D&amp;)</code></td><td><code>sampler2D</code> on an extra unit</td></tr>
+            <tr><td><code>SetTexture(int unit, TextureCube&amp;)</code></td><td><code>samplerCube</code> on an extra unit</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>Note the mismatch between the two array methods: <code>SetUniformFloatArray</code> counts scalars, <code>SetUniformVec2Array</code> counts elements. There is no <code>vec3</code>, <code>vec4</code> or <code>mat4</code> array setter — a bone palette has to be flattened and pushed through <code>SetUniformFloatArray</code>, or set one matrix at a time with indexed names such as <code>"u_bones[3]"</code>.</p>
+      <p>There is also no <code>Vector2</code>/<code>Vector3</code>/<code>Matrix</code> overload: these take loose floats and raw pointers, so unpack CNA's math types yourself.</p>
+      <pre><code class="language-cpp">// Apply() binds this effect's compiled program. SetUniformXxx() writes into
+// whatever program is currently bound, so this order is mandatory.
+fx_-&gt;Apply();
 
-      <h2>Getting Parameters with GetByName</h2>
-      <p>There are two syntactically equivalent ways to retrieve an <code>EffectParameter</code> from an effect:</p>
-      <pre><code class="language-cpp">// Subscript operator (preferred for brevity)
-EffectParameter&amp; p1 = effect-&gt;Parameters["u_time"];
+fx_-&gt;SetUniformFloat("u_time", elapsed);
+fx_-&gt;SetUniformVec2 ("u_resolution", 800.0f, 600.0f);
+fx_-&gt;SetUniformVec3 ("u_lightDir", dir.X, dir.Y, dir.Z);
+float mvpCM[16];
+mvp.ToColumnMajor(mvpCM);                     // SetUniformMat4 wants column-major
+fx_-&gt;SetUniformMat4("u_mvp", mvpCM);
+fx_-&gt;SetTexture(1, *normalMapTex_);           // unit 0 is usually the caller's
 
-// Explicit method (useful when the name is in a variable)
-std::string name = "u_resolution";
-EffectParameter&amp; p2 = effect-&gt;Parameters.GetByName(name);</code></pre>
-      <p>Both return a reference. Accessing a parameter that does not exist in the shader will throw a <code>std::out_of_range</code> exception in debug builds and exhibit undefined behaviour in release builds, so always ensure the uniform name matches exactly — including case — what is declared in the GLSL source. A common convention is to prefix all uniforms with <code>u_</code> to make them visually distinct from varyings and attributes.</p>
-      <p>For performance-sensitive code you can cache the parameter reference in a member variable. Because <code>EffectParameter</code> is returned by reference into the internal collection, caching is safe as long as the effect object is not destroyed:</p>
-      <pre><code class="language-cpp">// Cache at LoadContent time
-timeParam_       = &amp;waveEffect_-&gt;Parameters["u_time"];
-resolutionParam_ = &amp;waveEffect_-&gt;Parameters["u_resolution"];
+float weights[16] = { /* ... */ };
+fx_-&gt;SetUniformFloatArray("u_weights", weights, 16);   // 16 scalars</code></pre>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Call order matters.</strong> Uniform setters write directly to the currently bound shader program. Call <code>Apply()</code> first, <em>then</em> set uniforms, then draw. Setting uniforms before <code>Apply()</code> writes them into whichever program happened to be bound.</p>
+      </div>
+      <p>The constructor does not throw when the shader fails to compile. <code>IsEffectValid()</code> is the only signal — check it once after construction and treat <code>false</code> as a hard error.</p>
 
-// Use in Update() without string lookup overhead
-timeParam_-&gt;SetValue(elapsed);
-resolutionParam_-&gt;SetValue(Vector2(800.0f, 600.0f));</code></pre>
+      <h2>What EffectParameter actually is</h2>
+      <p><code>EffectParameter</code> is CNA's port of XNA's parameter-reflection surface, and it is populated by the <strong>stock</strong> effects that build a fixed parameter list at construction time — <code>AlphaTestEffect</code>, <code>DualTextureEffect</code>, <code>EnvironmentMapEffect</code>, <code>SkinnedEffect</code> and the PBR effects. It is not built from GLSL reflection, and nothing populates it for a <code>ShaderEffect</code> or a bare <code>BasicEffect</code>. Use it to inspect or drive a stock effect the XNA way; use <code>SetUniformXxx()</code> for anything you wrote yourself.</p>
+
+      <h2>Getting parameters by name</h2>
+      <p>The collection is reached through <code>getParametersProperty()</code>, and its string subscript returns a <strong>pointer</strong>, not a reference:</p>
+      <pre><code class="language-cpp">// Returns EffectParameter*, or nullptr if no such parameter exists.
+EffectParameter* p1 = effect-&gt;getParametersProperty()["DiffuseColor"];
+if (p1 != nullptr) {
+    p1-&gt;SetValue(Vector3(1.0f, 0.5f, 0.25f));
+}
+
+// The int subscript returns a reference, by position.
+EffectParameter&amp; first = effect-&gt;getParametersProperty()[0];</code></pre>
+      <p>There is no <code>GetByName</code> method, and a missing name does not throw — you get <code>nullptr</code>, so a typo in the name is a silent no-op unless you check. The one lookup helper that does exist is <code>GetParameterBySemantic(const std::string&amp;)</code>, which also returns a pointer or <code>nullptr</code>.</p>
+      <p>Pointers into the collection stay valid across later <code>Add()</code> calls — the elements are held behind <code>std::unique_ptr</code> precisely so that caching a pointer is safe — but only for the lifetime of the parent effect. Do not hold them across an effect reload.</p>
 
       <h2>SetValue() Overloads</h2>
       <p>The <code>EffectParameter::SetValue()</code> method is overloaded for every GLSL-compatible type that CNA supports. The correct overload is selected by the C++ type of the argument you pass. The table below lists each overload, the corresponding GLSL uniform type, and notes on usage:</p>
@@ -126,68 +160,77 @@ resolutionParam_-&gt;SetValue(Vector2(800.0f, 600.0f));</code></pre>
             <tr><td><code>Texture2D*</code></td>          <td><code>sampler2D</code></td>      <td>Binds the texture to the next available texture unit and sets the sampler uniform to that unit index.</td></tr>
             <tr><td><code>TextureCube*</code></td>        <td><code>samplerCube</code></td>    <td>Binds a cubemap to a texture unit and sets the sampler uniform.</td></tr>
             <tr><td><code>int</code></td>                 <td><code>int</code></td>            <td>Integer uniforms; also used for explicit sampler unit binding.</td></tr>
-            <tr><td><code>float*, int</code></td>         <td><code>float[N]</code></td>       <td>Uploads an array of floats. Used for bone matrices (as flat float arrays) and custom kernel weights.</td></tr>
-            <tr><td><code>Vector4*, int</code></td>       <td><code>vec4[N]</code></td>        <td>Uploads an array of vec4, e.g., a palette of colours or skinning data.</td></tr>
-            <tr><td><code>Matrix*, int</code></td>        <td><code>mat4[N]</code></td>        <td>Uploads an array of matrices. Essential for skeletal animation bone palettes.</td></tr>
+            <tr><td><code>Quaternion</code></td>          <td><code>vec4</code></td>           <td>Rotation as a quaternion.</td></tr>
+            <tr><td><code>std::string</code></td>         <td>—</td>                          <td>String-valued parameter; no GLSL equivalent, present for XNA parity.</td></tr>
+            <tr><td><code>std::vector&lt;T&gt;</code></td>      <td><code>T[N]</code></td>          <td>Array upload. There is a <code>std::vector</code> overload for every scalar and vector type above, plus <code>std::vector&lt;Matrix&gt;</code>.</td></tr>
           </tbody>
         </table>
       </div>
 
-      <p><strong>Matrix column-major note:</strong> CNA's <code>Matrix</code> is stored row-major in memory (matching XNA 4.0 convention) but is uploaded to GLSL as column-major using <code>glUniformMatrix4fv(..., GL_TRUE, ...)</code> with the transpose flag so the shader receives the correct layout. You do not need to transpose manually.</p>
+      <p>Note that arrays are passed as <code>std::vector</code>, not as a pointer-plus-count pair — there is no <code>SetValue(const float*, int)</code> or <code>SetValue(const Matrix*, int)</code> overload. Matrices additionally have <code>SetValueTranspose(const Matrix&amp;)</code> and <code>SetValueTranspose(const std::vector&lt;Matrix&gt;&amp;)</code> when the shader expects the opposite storage order.</p>
+      <p><strong>Texture note:</strong> the texture overloads take a <strong>pointer</strong> (<code>Texture*</code>, <code>Texture2D*</code>, <code>Texture3D*</code>, <code>TextureCube*</code>). Passing a dereferenced texture — <code>SetValue(*myTexture)</code> — does not compile against any overload.</p>
 
       <h2>EffectParameterCollection</h2>
-      <p>The <code>effect-&gt;Parameters</code> property exposes an <code>EffectParameterCollection</code>, which is an iterable container of all <code>EffectParameter</code> objects belonging to the effect. You can iterate over it to inspect or dump all parameters at runtime — useful during debugging:</p>
+      <p><code>getParametersProperty()</code> returns an <code>EffectParameterCollection</code>, an iterable container of all <code>EffectParameter</code> objects belonging to the effect. You can iterate over it to inspect or dump all parameters at runtime — useful during debugging:</p>
       <pre><code class="language-cpp">// Dump all parameter names for debugging
-for (const auto&amp; param : effect-&gt;Parameters) {
-    std::cout &lt;&lt; "  uniform: " &lt;&lt; param.getName()
-              &lt;&lt; "  type: "    &lt;&lt; (int)param.getParameterType()
-              &lt;&lt; "  rows: "    &lt;&lt; param.getRowCount()
-              &lt;&lt; "  cols: "    &lt;&lt; param.getColumnCount()
+for (const auto&amp; param : effect-&gt;getParametersProperty()) {
+    std::cout &lt;&lt; "  uniform: " &lt;&lt; param.getNameProperty()
+              &lt;&lt; "  type: "    &lt;&lt; (int)param.getParameterTypeProperty()
+              &lt;&lt; "  rows: "    &lt;&lt; param.getRowCountProperty()
+              &lt;&lt; "  cols: "    &lt;&lt; param.getColumnCountProperty()
               &lt;&lt; "\n";
 }</code></pre>
       <p>Each <code>EffectParameter</code> exposes the following metadata properties:</p>
       <ul>
-        <li><code>getName()</code> — the string name of the uniform as declared in GLSL.</li>
-        <li><code>getParameterType()</code> — an <code>EffectParameterType</code> enum value (<code>Single</code>, <code>Vector2</code>, <code>Matrix</code>, <code>Texture</code>, etc.).</li>
-        <li><code>getRowCount()</code> — number of rows (1 for scalars and vectors, 4 for mat4).</li>
-        <li><code>getColumnCount()</code> — number of columns (1 for scalars, 4 for vec4 and mat4).</li>
+        <li><code>getNameProperty()</code> — the string name of the uniform as declared in GLSL.</li>
+        <li><code>getParameterTypeProperty()</code> — an <code>EffectParameterType</code> enum value (<code>Single</code>, <code>Vector2</code>, <code>Matrix</code>, <code>Texture</code>, etc.).</li>
+        <li><code>getRowCountProperty()</code> — number of rows (1 for scalars and vectors, 4 for mat4).</li>
+        <li><code>getColumnCountProperty()</code> — number of columns (1 for scalars, 4 for vec4 and mat4).</li>
       </ul>
-      <p>The collection size reflects only the uniforms declared in the <code>.shader.json</code> descriptor, not all uniforms that may be present in the GLSL source. Uniforms not listed in the descriptor are not reflected and cannot be set from C++. Keep your descriptor in sync with your shader source.</p>
+      <p>The collection contains exactly the parameters the concrete effect class registered at construction time. It is not built by reflecting the compiled shader, so it is empty on any effect that does not build one — including every <code>ShaderEffect</code>.</p>
 
       <h2>Passing Arrays</h2>
-      <p>CNA provides <code>SetValue(const float* values, int count)</code> and <code>SetValue(const Matrix* matrices, int count)</code> overloads for uploading arrays to GLSL array uniforms. The GLSL side declares a fixed-size array:</p>
+      <p>The GLSL side declares a fixed-size array:</p>
       <pre><code class="language-glsl">// In vertex shader
 uniform float u_weights[16];  // e.g. blur kernel weights
 uniform mat4  u_bones[72];    // bone matrix palette for skinning</code></pre>
-      <p>On the C++ side you pass a pointer and an element count:</p>
-      <pre><code class="language-cpp">float weights[16] = { /* ... */ };
-effect-&gt;Parameters["u_weights"].SetValue(weights, 16);
+      <p>On a stock effect's <code>EffectParameter</code>, arrays go in as a <code>std::vector</code>:</p>
+      <pre><code class="language-cpp">std::vector&lt;float&gt; weights(16);
+// ... fill weights ...
+if (auto* p = effect-&gt;getParametersProperty()["u_weights"]) {
+    p-&gt;SetValue(weights);
+}
 
-std::vector&lt;Matrix&gt; boneMatrices(72, Matrix::Identity);
+std::vector&lt;Matrix&gt; boneMatrices(72, Matrix::getIdentityProperty());
 // ... populate matrices ...
-effect-&gt;Parameters["u_bones"].SetValue(boneMatrices.data(), (int)boneMatrices.size());</code></pre>
-      <p>The count must not exceed the array size declared in GLSL. Uploading fewer elements than the declared size is legal — the remaining array slots keep their last-set values. This is commonly used in skeletal animation where the active bone count is less than the maximum palette size of 72.</p>
+if (auto* p = effect-&gt;getParametersProperty()["u_bones"]) {
+    p-&gt;SetValue(boneMatrices);
+}</code></pre>
+      <p>On a <code>ShaderEffect</code> the equivalent is <code>SetUniformFloatArray</code>, whose <code>count</code> is the number of <em>scalar</em> floats:</p>
+      <pre><code class="language-cpp">fx_-&gt;Apply();
+fx_-&gt;SetUniformFloatArray("u_weights", weights.data(), 16);   // 16 floats</code></pre>
+      <p>There is no matrix-array setter on <code>ShaderEffect</code>, so a bone palette must be flattened to column-major floats and pushed through <code>SetUniformFloatArray</code>, or written one element at a time using indexed uniform names.</p>
+      <p>The count must not exceed the array size declared in GLSL. Uploading fewer elements than the declared size is legal — the remaining array slots keep their last-set values. This is commonly used in skeletal animation where the active bone count is less than the maximum palette size.</p>
 
-      <h2>ConstantBuffer / UBO Patterns</h2>
-      <p>Under the <strong>EASYGL</strong> backend, uniforms may be grouped into a Uniform Buffer Object (UBO) per effect pass, depending on how the <code>.shader.json</code> specifies the constant buffer layout. UBOs allow the driver to batch uniform uploads more efficiently than per-uniform <code>glUniform*</code> calls. Under the <strong>VULKAN</strong> backend, small uniform data (up to the push constant limit, typically 128 bytes) may be submitted as push constants, which avoids descriptor set allocation overhead entirely.</p>
-      <p>As a consequence of these batching strategies, the rule is: <strong>call all <code>SetValue()</code> calls before calling <code>pass.Apply()</code></strong>. Calling <code>SetValue()</code> after <code>Apply()</code> within the same draw call is legal but may cause a second UBO upload, which is wasteful. The recommended pattern is:</p>
-      <pre><code class="language-cpp">// Good pattern: set all values, then apply once
-effect-&gt;Parameters["u_time"].SetValue(t);
-effect-&gt;Parameters["u_resolution"].SetValue(res);
-effect-&gt;Parameters["u_mvp"].SetValue(mvp);
-for (auto&amp; pass : effect-&gt;getCurrentTechnique().Passes) {
-    pass.Apply();   // uploads all pending uniform values
-    gd.DrawPrimitives(PrimitiveType::TriangleList, 0, vertCount_);
+      <h2>Apply ordering</h2>
+      <p>The two effect families have <strong>opposite</strong> ordering rules, and mixing them up is the most common way to get a shader that silently renders with stale values.</p>
+      <p>On a stock effect, <code>SetValue()</code> marks state dirty and the pass upload happens inside <code>Apply()</code>, so set values <em>first</em>:</p>
+      <pre><code class="language-cpp">// Stock effect: set all values, then apply once. obj.Tint is a Vector3.
+for (auto&amp; obj : scene_) {
+    basicFx_-&gt;setWorldProperty(obj.World);
+    basicFx_-&gt;setDiffuseColorProperty(obj.Tint);
+    basicFx_-&gt;Apply();
+    gd.DrawPrimitives(PrimitiveType::TriangleList, 0, obj.TriCount);
 }</code></pre>
-      <p>Avoid calling <code>SetValue()</code> inside a tight loop between individual draw calls without also calling <code>Apply()</code> — each <code>Apply()</code> flushes the accumulated dirty uniform state. If multiple objects share the same effect with different parameter values, update and apply per object:</p>
-      <pre><code class="language-cpp">for (auto&amp; obj : scene_) {
-    effect-&gt;Parameters["u_mvp"].SetValue(obj.MVP);
-    effect-&gt;Parameters["u_color"].SetValue(obj.Color);
-    for (auto&amp; pass : effect-&gt;getCurrentTechnique().Passes) {
-        pass.Apply();
-        gd.DrawPrimitives(PrimitiveType::TriangleList, 0, obj.TriCount);
-    }
+      <p>On a <code>ShaderEffect</code>, <code>SetUniformXxx()</code> writes straight to the currently bound program, so <code>Apply()</code> must come <em>first</em>:</p>
+      <pre><code class="language-cpp">// ShaderEffect: apply (binds the program), then set uniforms, then draw.
+for (auto&amp; obj : scene_) {
+    fx_-&gt;setWorldProperty(obj.World);       // IEffectMatrices, forwarded by the device
+    fx_-&gt;Apply();
+    fx_-&gt;SetUniformVec4("u_color", obj.Tint.X, obj.Tint.Y, obj.Tint.Z, 1.0f);
+    gd.DrawPrimitives(PrimitiveType::TriangleList, 0, obj.TriCount);
 }</code></pre>
+      <p><code>ShaderEffect</code> implements <code>IEffectMatrices</code>, so <code>World</code>, <code>View</code> and <code>Projection</code> are set as properties rather than as uniforms; CNA forwards them to the backend, which binds them as uniforms of exactly those names on your program.</p>
 
       <h2>Complete Example: Wave Vertex Animation</h2>
       <p>The following example demonstrates a custom effect that animates vertex positions in the vertex shader using a sine-wave displacement driven by a time uniform. The fragment shader outputs a colour that shifts over time, demonstrating multiple uniform types in action.</p>
@@ -232,42 +275,43 @@ void main() {
 }</code></pre>
 
       <h3>C++ Game Class</h3>
-      <pre><code class="language-cpp">class WaveGame final : public Game {
-    std::unique_ptr&lt;Effect&gt;       waveEffect_;
+      <p>The shader source is read straight off disk and handed to the <code>ShaderEffect</code> constructor. There are no parameter handles to cache — uniform names are passed as string literals at the point of use.</p>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+#include "System/IO/File.hpp"
+
+class WaveGame final : public Game {
+    std::unique_ptr&lt;ShaderEffect&gt; waveEffect_;
     std::unique_ptr&lt;Texture2D&gt;   waveTex_;
     std::unique_ptr&lt;VertexBuffer&gt; vb_;
     int                           vertCount_ = 0;
-
-    // Cached parameter pointers for fast access
-    EffectParameter* timeParam_       = nullptr;
-    EffectParameter* resolutionParam_ = nullptr;
-    EffectParameter* mvpParam_        = nullptr;
-    EffectParameter* textureParam_    = nullptr;
+    float                         time_      = 0.0f;
 
     void LoadContent() override {
-        waveEffect_ = Content.Load&lt;Effect&gt;("shaders/wave");
-        waveTex_    = Content.Load&lt;Texture2D&gt;("textures/grid");
+        auto&amp; gd = getGraphicsDeviceProperty();
 
-        // Cache parameter references (valid for the lifetime of waveEffect_)
-        timeParam_       = &amp;waveEffect_-&gt;Parameters["u_time"];
-        resolutionParam_ = &amp;waveEffect_-&gt;Parameters["u_resolution"];
-        mvpParam_        = &amp;waveEffect_-&gt;Parameters["u_mvp"];
-        textureParam_    = &amp;waveEffect_-&gt;Parameters["u_texture"];
+        // Three arguments; the two strings are shader SOURCE, never a path.
+        waveEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+            gd,
+            System::IO::File::ReadAllText("Content/shaders/wave.vert.glsl"),
+            System::IO::File::ReadAllText("Content/shaders/wave.frag.glsl"));
 
-        // Bind the texture parameter once (does not change per frame)
-        textureParam_-&gt;SetValue(waveTex_.get());
+        // The constructor does not throw on a compile failure.
+        if (!waveEffect_-&gt;IsEffectValid()) {
+            // The GLSL did not compile. Do not draw with it.
+        }
+
+        waveTex_ = getContentProperty().Load&lt;Texture2D&gt;("textures/grid");
 
         // Build a subdivided grid mesh ...
         BuildGrid(32, 32);
     }
 
-    void Update(const GameTime&amp; gt) override {
-        float t = (float)gt.getTotalGameTime().TotalSeconds();
-        timeParam_-&gt;SetValue(t);
-        resolutionParam_-&gt;SetValue(Vector2(800.0f, 600.0f));
+    void Update(GameTime&amp; gt) override {
+        // Cache the value; uniforms are pushed in Draw(), after Apply().
+        time_ = (float)gt.getTotalGameTimeProperty().getTotalSecondsProperty();
     }
 
-    void Draw(const GameTime&amp;) override {
+    void Draw(GameTime&amp;) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color::Black);
 
@@ -275,19 +319,29 @@ void main() {
                    * Matrix::CreateTranslation(0, 0, -3.0f)
                    * camera_.View()
                    * camera_.Projection();
-        mvpParam_-&gt;SetValue(mvp);
+        float mvpCM[16];
+        mvp.ToColumnMajor(mvpCM);
 
-        gd.setVertexBuffer(*vb_);
-        for (auto&amp; pass : waveEffect_-&gt;getCurrentTechnique().Passes) {
-            pass.Apply();
-            gd.DrawPrimitives(PrimitiveType::TriangleList, 0, vertCount_);
-        }
+        // Apply() binds the program; every SetUniformXxx() below targets it.
+        waveEffect_-&gt;Apply();
+        waveEffect_-&gt;SetUniformFloat("u_time", time_);
+        waveEffect_-&gt;SetUniformVec2 ("u_resolution", 800.0f, 600.0f);
+        waveEffect_-&gt;SetUniformMat4 ("u_mvp", mvpCM);
+        waveEffect_-&gt;SetTexture(0, *waveTex_);
+
+        gd.SetVertexBuffer(vb_.get());
+        gd.DrawPrimitives(PrimitiveType::TriangleList, 0, vertCount_);
         gd.Present();
     }
 };</code></pre>
+      <p>The vertex shader above declares <code>u_mvp</code> rather than the <code>World</code>/<code>View</code>/<code>Projection</code> trio that <code>IEffectMatrices</code> binds automatically, so the matrix is uploaded by hand. If you name your uniforms <code>World</code>, <code>View</code> and <code>Projection</code> instead, set them with <code>setWorldProperty()</code>/<code>setViewProperty()</code>/<code>setProjectionProperty()</code> and CNA forwards them for you — see <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
 
       <nav class="docs-pagination" aria-label="Page navigation">
         <div class="docs-pagination-prev">
+          <a href="52-custom-shaders.html" class="pagination-link pagination-prev">
+            <span class="pagination-direction">&#8592; Previous</span>
+            <span class="pagination-title">Tutorial 52: Writing Custom Shaders (ShaderEffect)</span>
+          </a>
         </div>
         <div class="docs-pagination-next">
           <a href="54-alpha-test.html" class="pagination-link pagination-next">

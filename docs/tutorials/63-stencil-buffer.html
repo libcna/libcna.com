@@ -159,10 +159,10 @@ writeStencil.DepthBufferWriteEnable = true;
 BlendState noColorWrite = BlendState::Opaque;
 noColorWrite.ColorWriteChannels = ColorWriteChannels::None;
 
-gd.setDepthStencilState(writeStencil);
-gd.setBlendState(noColorWrite);
+gd.setDepthStencilStateProperty(writeStencil);
+gd.setBlendStateProperty(noColorWrite);
 drawMaskGeometry(gd);
-gd.setBlendState(BlendState::Opaque);</code></pre>
+gd.setBlendStateProperty(BlendState::Opaque);</code></pre>
 
       <h2>Masking with the Stencil Buffer</h2>
       <p>Once the stencil buffer contains the mask, draw the content that should only appear inside (or outside) the mask:</p>
@@ -175,7 +175,7 @@ testStencil.ReferenceStencil       = 1;
 testStencil.DepthBufferEnable      = true;
 testStencil.DepthBufferWriteEnable = true;
 
-gd.setDepthStencilState(testStencil);
+gd.setDepthStencilStateProperty(testStencil);
 drawContent(gd); // only pixels where buffer == 1 survive</code></pre>
 
       <h2>Object Outline / Silhouette Effect</h2>
@@ -183,12 +183,26 @@ drawContent(gd); // only pixels where buffer == 1 survive</code></pre>
       <p><strong>Pass 1</strong> — draw the object normally. Set <code>StencilPass = Replace</code> and <code>ReferenceStencil = 1</code> so every pixel covered by the object writes stencil=1. This also draws the object's normal appearance to the colour buffer.</p>
       <p><strong>Pass 2</strong> — draw the same object again but scaled up by a few percent (e.g. 1.05x). Set <code>StencilFunction = NotEqual</code>, <code>ReferenceStencil = 1</code>. Only pixels where the stencil is <em>not</em> 1 pass, i.e., only the thin ring of pixels that the scaled-up version covers but the original did not. Disable depth testing so the outline appears in front of all geometry.</p>
 
-      <pre><code class="language-cpp">class OutlineGame final : public Game {
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Custom shaders come from <code>ShaderEffect</code>, not <code>Content.Load&lt;Effect&gt;</code>.</strong> CNA cannot load compiled <code>.fx</code> bytecode: the <code>Effect(GraphicsDevice&amp;, const std::vector&lt;bytecs&gt;&amp;)</code> constructor throws <code>NotImplementedException</code> unconditionally. <code>ShaderEffect</code> takes shader <strong>source text</strong> and has no <code>Parameters</code> collection &mdash; uniforms are set with <code>SetUniformXxx()</code> after <code>Apply()</code>. See <a href="52-custom-shaders.html">Tutorial 52</a>. If you only need flat-shaded geometry for the outline pass, <code>BasicEffect</code> works too and needs no shader source at all.</p>
+      </div>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+#include "System/IO/File.hpp"
+
+class OutlineGame final : public Game {
     DepthStencilState writeStencil_;   // pass 1: write stencil
     DepthStencilState outlineStencil_; // pass 2: draw outline ring
 
-    std::unique_ptr&lt;Effect&gt; solidEffect_;
-    std::unique_ptr&lt;Effect&gt; outlineEffect_;
+    std::unique_ptr&lt;ShaderEffect&gt; solidEffect_;
+    std::unique_ptr&lt;ShaderEffect&gt; outlineEffect_;
+
+    // ShaderEffect's matrix setter takes raw column-major floats.
+    static void SetMat4(ShaderEffect&amp; fx, const char* name, const Matrix&amp; m) {
+        float cm[16];
+        m.ToColumnMajor(cm);
+        fx.SetUniformMat4(name, cm);
+    }
 
     void LoadContent() override {
         // Pass 1: draw object, write stencil=1 everywhere it covers
@@ -207,33 +221,49 @@ drawContent(gd); // only pixels where buffer == 1 survive</code></pre>
         outlineStencil_.DepthBufferEnable      = false; // always in front
         outlineStencil_.DepthBufferWriteEnable = false;
 
-        solidEffect_   = Content.Load&lt;Effect&gt;("effects/solid");
-        outlineEffect_ = Content.Load&lt;Effect&gt;("effects/flat_color");
+        // Three arguments: device, vertex source, fragment source. Not file paths.
+        auto&amp; gd = getGraphicsDeviceProperty();
+        solidEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+            gd,
+            System::IO::File::ReadAllText("Content/effects/solid.vert.glsl"),
+            System::IO::File::ReadAllText("Content/effects/solid.frag.glsl"));
+        outlineEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+            gd,
+            System::IO::File::ReadAllText("Content/effects/flat_color.vert.glsl"),
+            System::IO::File::ReadAllText("Content/effects/flat_color.frag.glsl"));
+
+        // Neither constructor throws on a compile failure -- check both.
+        if (!solidEffect_-&gt;IsEffectValid() || !outlineEffect_-&gt;IsEffectValid()) {
+            // The GLSL did not compile. Do not draw with it.
+        }
     }
 
-    void Draw(const GameTime&amp;) override {
+    void Draw(GameTime&amp;) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color::DarkSlateGray);
 
         // --- Pass 1: draw object + write stencil ---
-        gd.setDepthStencilState(writeStencil_);
-        solidEffect_-&gt;Parameters["u_world"].SetValue(objectWorld_);
-        solidEffect_-&gt;Parameters["u_view"].SetValue(camera_.View());
-        solidEffect_-&gt;Parameters["u_projection"].SetValue(camera_.Projection());
+        gd.setDepthStencilStateProperty(writeStencil_);
+        // Apply() binds the program; the uniform setters write into it.
+        solidEffect_-&gt;Apply();
+        SetMat4(*solidEffect_, "u_world",      objectWorld_);
+        SetMat4(*solidEffect_, "u_view",       camera_.View());
+        SetMat4(*solidEffect_, "u_projection", camera_.Projection());
         drawObjectMesh(gd, *solidEffect_);
 
         // --- Pass 2: draw scaled-up outline where stencil != 1 ---
-        gd.setDepthStencilState(outlineStencil_);
+        gd.setDepthStencilStateProperty(outlineStencil_);
         float scale = 1.05f;
         Matrix outlineWorld = Matrix::CreateScale(scale, scale, scale) * objectWorld_;
-        outlineEffect_-&gt;Parameters["u_world"].SetValue(outlineWorld);
-        outlineEffect_-&gt;Parameters["u_view"].SetValue(camera_.View());
-        outlineEffect_-&gt;Parameters["u_projection"].SetValue(camera_.Projection());
-        outlineEffect_-&gt;Parameters["u_color"].SetValue(Vector4(1.0f, 0.5f, 0.0f, 1.0f));
+        outlineEffect_-&gt;Apply();
+        SetMat4(*outlineEffect_, "u_world",      outlineWorld);
+        SetMat4(*outlineEffect_, "u_view",       camera_.View());
+        SetMat4(*outlineEffect_, "u_projection", camera_.Projection());
+        outlineEffect_-&gt;SetUniformVec4("u_color", 1.0f, 0.5f, 0.0f, 1.0f);
         drawObjectMesh(gd, *outlineEffect_);
 
         // Restore default state before drawing anything else
-        gd.setDepthStencilState(DepthStencilState::Default);
+        gd.setDepthStencilStateProperty(DepthStencilState::Default);
         gd.Present();
     }
 

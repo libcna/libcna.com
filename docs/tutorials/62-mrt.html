@@ -96,41 +96,52 @@
         <li><strong>OIT accumulation</strong> — order-independent transparency techniques that accumulate weighted colour and alpha into two separate targets.</li>
       </ul>
 
-      <h2>GraphicsDevice.SetRenderTargets()</h2>
-      <p>CNA exposes MRT through <code>GraphicsDevice::SetRenderTargets</code>:</p>
+      <h2>GraphicsDevice::SetRenderTargets()</h2>
+      <p>CNA exposes MRT through a single method on <code>GraphicsDevice</code>, which takes a vector, not a pointer and count:</p>
       <pre><code class="language-cpp">void GraphicsDevice::SetRenderTargets(
-    RenderTargetBinding* targets,
-    int                  count);</code></pre>
-      <p>Pass an array of <code>RenderTargetBinding</code> structs, one per attachment. The maximum number of simultaneous render targets depends on the GPU but is at least 4 on OpenGL 2.0+ hardware and at least 8 on most modern GPUs. Query the actual limit with <code>GraphicsDevice.GraphicsCapabilities.MaxMultipleRenderTargets</code>.</p>
-      <p>To restore the default back buffer as the only render target, pass <code>nullptr</code> and <code>0</code>:</p>
-      <pre><code class="language-cpp">gd.SetRenderTargets(nullptr, 0); // restore back buffer</code></pre>
-      <p>You can also use the single-target overload from previous tutorials for convenience when only one target is needed:</p>
+    const std::vector&lt;RenderTargetBinding&gt;&amp; renderTargets);
+
+std::vector&lt;RenderTargetBinding&gt; GraphicsDevice::GetRenderTargets() const;</code></pre>
+      <p><code>RenderTargetBinding</code> associates one render target texture with one output slot. Its two-argument constructor is <strong>explicit</strong> and takes a <code>Texture*</code> &mdash; a raw pointer, not a reference:</p>
+      <pre><code class="language-cpp">explicit RenderTargetBinding(Texture* renderTarget, int arraySlice = 0);
+RenderTargetBinding(Texture* renderTarget, CubeMapFace cubeMapFace);</code></pre>
+      <p>Because the constructor is explicit, brace-initialising a vector of bindings from bare pointers does not compile; name the type at each element.</p>
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p>CNA has no <code>GraphicsCapabilities</code> type, so there is no API for querying the maximum number of simultaneous render targets. Assume the conservative floor of four attachments that all MRT-capable hardware provides, and design your G-buffer to fit within it.</p>
+      </div>
+      <p>To restore the default back buffer as the only render target, call the single-target overload with <code>nullptr</code>:</p>
+      <pre><code class="language-cpp">gd.SetRenderTarget(nullptr); // restore back buffer</code></pre>
+      <p>The same single-target overload is the convenient form when only one target is needed:</p>
       <pre><code class="language-cpp">gd.SetRenderTarget(rtAlbedo_.get()); // single target</code></pre>
 
       <h2>RenderTarget2D Array for the G-Buffer</h2>
-      <p>Create one <code>RenderTarget2D</code> per G-buffer slot. Choose the surface format carefully to balance precision against memory usage:</p>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Only <code>SurfaceFormat::Color</code> constructs today.</strong> <code>Texture::ValidateFormat</code> throws <code>std::runtime_error</code> for every other <code>SurfaceFormat</code>, on every backend. Every G-buffer slot must therefore be RGBA8, and any quantity with a wider range than [0,1] &mdash; normals, linear depth, HDR emission &mdash; has to be encoded into those four bytes.</p>
+      </div>
+      <p>Create one <code>RenderTarget2D</code> per G-buffer slot. Since the format is fixed, the design question is not which format to pick but how to encode each quantity into RGBA8:</p>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>G-Buffer Slot</th><th>Contents</th><th>Recommended Format</th><th>Bytes/Pixel</th></tr>
+            <tr><th>G-Buffer Slot</th><th>Contents</th><th>Format</th><th>Encoding</th></tr>
           </thead>
           <tbody>
-            <tr><td>RT0 (Albedo)</td><td>RGB albedo colour + roughness in alpha</td><td><code>SurfaceFormat::Color</code></td><td>4</td></tr>
-            <tr><td>RT1 (Normal)</td><td>World-space XYZ normal + metalness in alpha</td><td><code>SurfaceFormat::Vector4</code> or <code>HalfVector4</code></td><td>16 or 8</td></tr>
-            <tr><td>RT2 (Depth)</td><td>Linear depth (or clip-space Z)</td><td><code>SurfaceFormat::Single</code> (32-bit float)</td><td>4</td></tr>
-            <tr><td>RT3 (Emission)</td><td>Emissive colour for HDR glow</td><td><code>SurfaceFormat::Color</code></td><td>4</td></tr>
+            <tr><td>RT0 (Albedo)</td><td>RGB albedo colour + roughness in alpha</td><td><code>SurfaceFormat::Color</code></td><td>Direct; albedo is already in [0,1].</td></tr>
+            <tr><td>RT1 (Normal)</td><td>World-space XYZ normal + metalness in alpha</td><td><code>SurfaceFormat::Color</code></td><td><code>n * 0.5 + 0.5</code> per channel. 8 bits per axis is visibly coarse on smooth surfaces; octahedral encoding into RG with metalness in B is a better use of the same four bytes.</td></tr>
+            <tr><td>RT2 (Depth)</td><td>Linear depth (or clip-space Z)</td><td><code>SurfaceFormat::Color</code></td><td>Pack a normalised float across all four channels &mdash; see the <code>packDepth</code>/<code>unpackDepth</code> pair in <a href="59-shadow-mapping.html">Tutorial 59</a>.</td></tr>
+            <tr><td>RT3 (Emission)</td><td>Emissive colour for glow</td><td><code>SurfaceFormat::Color</code></td><td>Direct, but LDR only. Store an exposure scale in alpha if you need values above 1.0.</td></tr>
           </tbody>
         </table>
       </div>
-      <p><code>HalfVector4</code> (16-bit half-float per channel) is preferred for the normal buffer on memory-constrained targets because normal vectors need less precision than positions. For desktop use, <code>SurfaceFormat::Vector4</code> (32-bit float per channel) provides maximum precision.</p>
-      <p>All render targets in a single MRT bind must have the same width and height. They can have different surface formats.</p>
+      <p>All render targets in a single MRT bind must have the same width and height. Today they also necessarily share the same surface format.</p>
 
       <h2>G-Buffer Pattern</h2>
       <p>The standard G-buffer for a PBR (Physically Based Rendering) deferred pipeline stores:</p>
       <ul>
         <li><strong>Albedo (RT0)</strong> — the base colour of the surface, RGB. The alpha channel can store roughness or AO factor to save a render target slot.</li>
-        <li><strong>Normal (RT1)</strong> — the world-space surface normal, XYZ. Normals are signed values in [−1, +1]; encode them to [0, 1] for storage in a <code>Color</code> format or store directly in a float format.</li>
-        <li><strong>Depth (RT2)</strong> — linear eye-space depth or the raw clip-space Z value from <code>gl_FragCoord.z</code>. Used by the lighting pass to reconstruct world-space position from the depth and the inverse view-projection matrix.</li>
+        <li><strong>Normal (RT1)</strong> — the world-space surface normal, XYZ. Normals are signed values in [−1, +1], so they must be remapped to [0, 1] on write and back on read.</li>
+        <li><strong>Depth (RT2)</strong> — the raw clip-space Z value from <code>gl_FragCoord.z</code>, packed across all four RGBA8 channels. Used by the lighting pass to reconstruct world-space position from the depth and the inverse view-projection matrix.</li>
       </ul>
       <p>The geometry pass renders every opaque mesh once. Alpha-tested surfaces can also be included in the geometry pass. Transparent surfaces must be rendered in a separate forward pass after the deferred lighting pass, since deferred renderers do not handle multiple transparent layers at a given pixel.</p>
 
@@ -152,6 +163,15 @@ layout(location = 0) out vec4 gAlbedo;       // RT0
 layout(location = 1) out vec4 gNormal;       // RT1
 layout(location = 2) out vec4 gLinearDepth;  // RT2
 
+// Every target is RGBA8, so depth is spread across all four channels.
+vec4 packDepth(float depth) {
+    const vec4 bitShift = vec4(1.0, 255.0, 65025.0, 16581375.0);
+    const vec4 bitMask  = vec4(1.0 / 255.0, 1.0 / 255.0, 1.0 / 255.0, 0.0);
+    vec4 res = fract(depth * bitShift);
+    res -= res.gbaa * bitMask;
+    return res;
+}
+
 void main() {
     // Sample surface albedo from texture
     vec4 albedo = texture(u_albedoTex, v_texcoord);
@@ -163,23 +183,38 @@ void main() {
     vec3 n = normalize(v_normal);
     gNormal = vec4(n * 0.5 + 0.5, u_metalness);
 
-    // RT2: linear depth (distance from camera) for position reconstruction
-    gLinearDepth = vec4(gl_FragCoord.z, 0.0, 0.0, 1.0);
+    // RT2: clip-space depth, packed into RGBA8 for position reconstruction
+    gLinearDepth = packDepth(gl_FragCoord.z);
 }</code></pre>
+      <p>Writing <code>vec4(gl_FragCoord.z, 0.0, 0.0, 1.0)</code> instead would quantise depth to the 256 levels an 8-bit red channel can hold, which is far too coarse to reconstruct world position from. The packing above is what makes an RGBA8 depth slot usable.</p>
 
       <h2>Complete Example: Deferred G-Buffer Setup</h2>
-      <pre><code class="language-cpp">class DeferredGame final : public Game {
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Both shaders are <code>ShaderEffect</code>s.</strong> <code>Content.Load&lt;Effect&gt;("effects/gbuffer_fill")</code> for compiled <code>.fx</code> bytecode cannot work &mdash; <code>Effect(GraphicsDevice&amp;, const std::vector&lt;bytecs&gt;&amp;)</code> throws <code>NotImplementedException</code> unconditionally, and the XNB <code>EffectReader</code> is a placeholder that does the same. <code>ShaderEffect</code> takes shader <strong>source text</strong> and has no <code>Parameters</code> collection; uniforms go through <code>SetUniformXxx()</code> and textures through <code>SetTexture(unit, tex)</code>, always after <code>Apply()</code>. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+      </div>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+#include "System/IO/File.hpp"
+
+class DeferredGame final : public Game {
     std::unique_ptr&lt;RenderTarget2D&gt; rtAlbedo_;   // RT0: albedo + roughness
     std::unique_ptr&lt;RenderTarget2D&gt; rtNormal_;   // RT1: normal + metalness
     std::unique_ptr&lt;RenderTarget2D&gt; rtDepth_;    // RT2: linear depth
-    std::unique_ptr&lt;Effect&gt;         geoEffect_;  // G-buffer fill shader
-    std::unique_ptr&lt;Effect&gt;         lightEffect_;// Deferred lighting shader
+    std::unique_ptr&lt;ShaderEffect&gt;   geoEffect_;  // G-buffer fill shader
+    std::unique_ptr&lt;ShaderEffect&gt;   lightEffect_;// Deferred lighting shader
     std::unique_ptr&lt;VertexBuffer&gt;   fullscreenVB_;
+
+    // ShaderEffect's matrix setter takes raw column-major floats.
+    static void SetMat4(ShaderEffect&amp; fx, const char* name, const Matrix&amp; m) {
+        float cm[16];
+        m.ToColumnMajor(cm);
+        fx.SetUniformMat4(name, cm);
+    }
 
     void LoadContent() override {
         auto&amp; gd = getGraphicsDeviceProperty();
-        int w = gd.getBackBufferWidth();
-        int h = gd.getBackBufferHeight();
+        int w = gd.getBackBufferWidthProperty();
+        int h = gd.getBackBufferHeightProperty();
 
         // Create G-buffer render targets.
         // Only RT0 needs a depth buffer (shared across the geometry pass).
@@ -188,63 +223,90 @@ void main() {
             SurfaceFormat::Color,
             DepthFormat::Depth24Stencil8);
 
+        // Every target is SurfaceFormat::Color - it is the only format that
+        // constructs. Normals are encoded to [0,1]; depth is packed to RGBA8.
         rtNormal_ = std::make_unique&lt;RenderTarget2D&gt;(
             gd, w, h, false,
-            SurfaceFormat::Vector4,   // higher precision for normals
+            SurfaceFormat::Color,
             DepthFormat::None);
 
         rtDepth_ = std::make_unique&lt;RenderTarget2D&gt;(
             gd, w, h, false,
-            SurfaceFormat::Single,    // 32-bit float depth
+            SurfaceFormat::Color,
             DepthFormat::None);
 
-        geoEffect_   = Content.Load&lt;Effect&gt;("effects/gbuffer_fill");
-        lightEffect_ = Content.Load&lt;Effect&gt;("effects/deferred_light");
+        // Three arguments: device, vertex source, fragment source. Not file paths.
+        geoEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+            gd,
+            System::IO::File::ReadAllText("Content/effects/gbuffer_fill.vert.glsl"),
+            System::IO::File::ReadAllText("Content/effects/gbuffer_fill.frag.glsl"));
+        lightEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+            gd,
+            System::IO::File::ReadAllText("Content/effects/deferred_light.vert.glsl"),
+            System::IO::File::ReadAllText("Content/effects/deferred_light.frag.glsl"));
+
+        // Neither constructor throws on a compile failure -- check both.
+        if (!geoEffect_-&gt;IsEffectValid() || !lightEffect_-&gt;IsEffectValid()) {
+            // The GLSL did not compile. Do not draw with it.
+        }
+
+        // Sampler unit assignments for the lighting pass, set once.
+        lightEffect_-&gt;Apply();
+        lightEffect_-&gt;SetUniformInt("u_albedo", 0);
+        lightEffect_-&gt;SetUniformInt("u_normal", 1);
+        lightEffect_-&gt;SetUniformInt("u_depth",  2);
 
         buildFullscreenTriangle(gd, fullscreenVB_);
     }
 
-    void Draw(const GameTime&amp;) override {
+    void Draw(GameTime&amp;) override {
         auto&amp; gd = getGraphicsDeviceProperty();
 
         // ---- Geometry pass: fill the G-buffer -------------------------
-        RenderTargetBinding targets[3] = {
+        // RenderTargetBinding's constructor is explicit and takes a Texture*,
+        // so each element has to be named; SetRenderTargets takes a vector.
+        const std::vector&lt;RenderTargetBinding&gt; targets = {
             RenderTargetBinding(rtAlbedo_.get()),
             RenderTargetBinding(rtNormal_.get()),
             RenderTargetBinding(rtDepth_.get()),
         };
-        gd.SetRenderTargets(targets, 3);
+        gd.SetRenderTargets(targets);
         gd.Clear(Color::Black);
 
-        geoEffect_-&gt;Parameters["u_view"].SetValue(camera_.View());
-        geoEffect_-&gt;Parameters["u_projection"].SetValue(camera_.Projection());
+        // Apply() binds the program; SetUniformXxx() writes into whatever program
+        // is currently bound, so this order is mandatory.
+        geoEffect_-&gt;Apply();
+        SetMat4(*geoEffect_, "u_view",       camera_.View());
+        SetMat4(*geoEffect_, "u_projection", camera_.Projection());
         drawSceneGeometry(gd, *geoEffect_);
 
         // ---- Lighting pass: deferred shading on fullscreen triangle ---
-        gd.SetRenderTargets(nullptr, 0); // restore back buffer
+        gd.SetRenderTarget(nullptr);     // restore back buffer
         gd.Clear(Color::Black);
 
-        // Bind G-buffer textures as inputs to the lighting shader
-        lightEffect_-&gt;Parameters["u_albedo"].SetValue(rtAlbedo_.get());
-        lightEffect_-&gt;Parameters["u_normal"].SetValue(rtNormal_.get());
-        lightEffect_-&gt;Parameters["u_depth"].SetValue(rtDepth_.get());
+        const Vector3 eye      = camera_.Position();
+        const Vector3 lightDir = Vector3::Normalize(Vector3(-1.0f, -2.0f, -1.0f));
+
+        lightEffect_-&gt;Apply();
+
+        // Bind G-buffer textures on the units assigned in LoadContent().
+        // SetTexture takes a reference, and RenderTarget2D derives from Texture2D.
+        lightEffect_-&gt;SetTexture(0, *rtAlbedo_);
+        lightEffect_-&gt;SetTexture(1, *rtNormal_);
+        lightEffect_-&gt;SetTexture(2, *rtDepth_);
 
         // Camera parameters needed to reconstruct world positions from depth
-        lightEffect_-&gt;Parameters["u_invViewProj"].SetValue(
-            Matrix::Invert(camera_.View() * camera_.Projection()));
-        lightEffect_-&gt;Parameters["u_cameraPos"].SetValue(camera_.Position());
+        SetMat4(*lightEffect_, "u_invViewProj",
+                Matrix::Invert(camera_.View() * camera_.Projection()));
+        lightEffect_-&gt;SetUniformVec3("u_cameraPos", eye.X, eye.Y, eye.Z);
 
         // Submit light data (example: one directional light)
-        lightEffect_-&gt;Parameters["u_lightDir"].SetValue(
-            Vector3::Normalize(Vector3(-1.0f, -2.0f, -1.0f)));
-        lightEffect_-&gt;Parameters["u_lightColor"].SetValue(
-            Vector3(1.0f, 0.95f, 0.85f));
+        lightEffect_-&gt;SetUniformVec3("u_lightDir",
+                                      lightDir.X, lightDir.Y, lightDir.Z);
+        lightEffect_-&gt;SetUniformVec3("u_lightColor", 1.0f, 0.95f, 0.85f);
 
-        gd.setVertexBuffer(*fullscreenVB_);
-        for (auto&amp; pass : lightEffect_-&gt;getCurrentTechnique().Passes) {
-            pass.Apply();
-            gd.DrawPrimitives(PrimitiveType::TriangleList, 0, 1);
-        }
+        gd.SetVertexBuffer(fullscreenVB_.get());
+        gd.DrawPrimitives(PrimitiveType::TriangleList, 0, 1);
 
         gd.Present();
     }
@@ -268,6 +330,15 @@ uniform vec3  u_lightColor;
 
 out vec4 fragColor;
 
+// Inverse of the geometry pass's packDepth().
+float unpackDepth(vec4 rgba) {
+    const vec4 bitShift = vec4(1.0,
+                               1.0 / 255.0,
+                               1.0 / 65025.0,
+                               1.0 / 16581375.0);
+    return dot(rgba, bitShift);
+}
+
 // Reconstruct world-space position from depth texture and NDC coords.
 vec3 reconstructWorldPos(vec2 uv, float depth) {
     vec4 ndc = vec4(uv * 2.0 - 1.0, depth * 2.0 - 1.0, 1.0);
@@ -279,7 +350,7 @@ void main() {
     // Sample G-buffer
     vec4  albedoRough = texture(u_albedo, v_texcoord);
     vec4  normalMetal = texture(u_normal, v_texcoord);
-    float rawDepth    = texture(u_depth,  v_texcoord).r;
+    float rawDepth    = unpackDepth(texture(u_depth, v_texcoord));
 
     vec3 albedo    = albedoRough.rgb;
     float roughness = albedoRough.a;

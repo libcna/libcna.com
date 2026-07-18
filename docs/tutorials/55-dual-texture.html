@@ -90,12 +90,12 @@ fragColor     = albedo * lightmap * u_diffuseColor;</code></pre>
       <h2>Texture and Texture2 Properties</h2>
       <p>The two textures are set via separate setter methods:</p>
       <ul>
-        <li><strong><code>setTexture(Texture2D*)</code></strong> — the primary (albedo) texture. Sampled using the first UV channel (<code>v_texcoord1</code> from <code>TextureCoordinate</code> in the vertex struct). This should be a tiling, detail-rich albedo map.</li>
-        <li><strong><code>setTexture2(Texture2D*)</code></strong> — the secondary (lightmap) texture. Sampled using the second UV channel (<code>v_texcoord2</code> from <code>TextureCoordinate2</code>). This is a unique (non-tiling) atlas per mesh or per room, produced by an offline lightmapper.</li>
+        <li><strong><code>setTextureProperty(Texture2D*)</code></strong> — the primary (albedo) texture. Sampled using the first UV channel (<code>v_texcoord1</code> from <code>TextureCoordinate</code> in the vertex struct). This should be a tiling, detail-rich albedo map.</li>
+        <li><strong><code>setTexture2Property(Texture2D*)</code></strong> — the secondary (lightmap) texture. Sampled using the second UV channel (<code>v_texcoord2</code> from <code>TextureCoordinate2</code>). This is a unique (non-tiling) atlas per mesh or per room, produced by an offline lightmapper.</li>
       </ul>
       <p>Both textures use their own independent UV sets stored in the vertex buffer. The albedo UV typically tiles across the surface (a brick texture repeated many times), while the lightmap UV covers the [0, 1] range exactly once across the entire mesh, ensuring each texel in the lightmap corresponds to a unique surface point.</p>
-      <pre><code class="language-cpp">dualEffect_-&gt;setTexture(diffuseTex_.get());    // albedo (tiling)
-dualEffect_-&gt;setTexture2(lightmapTex_.get());  // lightmap (unique UV)</code></pre>
+      <pre><code class="language-cpp">dualEffect_-&gt;setTextureProperty(diffuseTex_.get());    // albedo (tiling)
+dualEffect_-&gt;setTexture2Property(lightmapTex_.get());  // lightmap (unique UV)</code></pre>
 
       <h2>VertexPositionDualTexture</h2>
       <p><code>VertexPositionDualTexture</code> is the vertex struct required by <code>DualTextureEffect</code>. It carries three fields:</p>
@@ -128,7 +128,7 @@ vb-&gt;SetData(verts, 4);</code></pre>
         <li><strong>Model your scene</strong> in Blender (or any DCC tool). Ensure all static geometry has a second UV channel (<em>UV2</em>) that is "unwrapped for lightmapping" — no overlapping faces, each polygon occupies a unique region of [0,1] texture space.</li>
         <li><strong>Bake the lightmap</strong> using Blender's Cycles bake system (or a dedicated lightmapper such as The Lightmapper, Bakery, or xatlas + custom ray tracer). Bake to an RGBA image at 1024×1024 or 2048×2048 depending on scene scale. Save as PNG.</li>
         <li><strong>Export assets</strong> — export the mesh with both UV channels to OBJ or FBX. Export the baked lightmap PNG.</li>
-        <li><strong>Import into CNA</strong> — the content pipeline ingests the mesh and preserves the second UV channel as <code>TextureCoordinate2</code> in the vertex data. Load the lightmap texture normally via <code>Content.Load&lt;Texture2D&gt;</code>.</li>
+        <li><strong>Import into CNA</strong> — the content pipeline ingests the mesh and preserves the second UV channel as <code>TextureCoordinate2</code> in the vertex data. Load the lightmap texture normally via <code>getContentProperty().Load&lt;Texture2D&gt;</code>.</li>
       </ol>
       <p>A common mistake is to use overlapping UVs in the lightmap channel (the same UV layout as the albedo, which tiles). This causes every surface that shares the same albedo UV region to also share the same lightmap texel, producing incorrect lighting where every face appears to have identical shadow patterns. Always create a dedicated non-overlapping UV unwrap for the lightmap channel.</p>
 
@@ -145,7 +145,11 @@ result *= v_vertexColor;
 #endif
 
 fragColor = result;</code></pre>
-      <p>The lightmap values are typically in the range [0, 1], where 0 represents full shadow and 1 represents maximum direct illumination. Values can exceed 1 if the lightmap is encoded in HDR format (<code>SurfaceFormat::HdrBlendable</code>), which requires tone mapping before display. For LDR pipelines, clamp the lightmap to [0, 1] during export from the baking tool.</p>
+      <p>The lightmap values are typically in the range [0, 1], where 0 represents full shadow and 1 represents maximum direct illumination. Clamp the lightmap to [0, 1] during export from the baking tool.</p>
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>HDR lightmaps are not available.</strong> Only <code>SurfaceFormat::Color</code> constructs in CNA today &mdash; <code>Texture::ValidateFormat</code> throws <code>std::runtime_error</code> for every other <code>SurfaceFormat</code>, including <code>HdrBlendable</code>. If your baking tool produces values above 1.0, encode them into RGBA8 before import: divide by a known exposure constant, or use an RGBM-style scheme storing a shared multiplier in the alpha channel and undoing it in the shader.</p>
+      </div>
       <p>A common refinement is to store ambient occlusion in the lightmap's alpha channel and multiply it separately, giving you AO as a distinct scalar at no additional texture cost.</p>
 
       <h2>Limitations</h2>
@@ -173,20 +177,20 @@ fragColor = result;</code></pre>
     void LoadContent() override {
         auto&amp; gd = getGraphicsDeviceProperty();
 
-        diffuseTex_  = Content.Load&lt;Texture2D&gt;("textures/brick_albedo");
-        lightmapTex_ = Content.Load&lt;Texture2D&gt;("textures/room_lightmap");
+        diffuseTex_  = getContentProperty().Load&lt;Texture2D&gt;("textures/brick_albedo");
+        lightmapTex_ = getContentProperty().Load&lt;Texture2D&gt;("textures/room_lightmap");
 
         dualEffect_ = std::make_unique&lt;DualTextureEffect&gt;(gd);
-        dualEffect_-&gt;setTexture(diffuseTex_.get());
-        dualEffect_-&gt;setTexture2(lightmapTex_.get());
-        dualEffect_-&gt;setVertexColorEnabled(false);
-        dualEffect_-&gt;setDiffuseColor(Vector3(1.0f, 1.0f, 1.0f));
+        dualEffect_-&gt;setTextureProperty(diffuseTex_.get());
+        dualEffect_-&gt;setTexture2Property(lightmapTex_.get());
+        dualEffect_-&gt;setVertexColorEnabledProperty(false);
+        dualEffect_-&gt;setDiffuseColorProperty(Vector3(1.0f, 1.0f, 1.0f));
 
         // Enable fog for depth cueing
-        dualEffect_-&gt;setFogEnabled(true);
-        dualEffect_-&gt;setFogColor(Vector3(0.1f, 0.1f, 0.12f));
-        dualEffect_-&gt;setFogStart(15.0f);
-        dualEffect_-&gt;setFogEnd(50.0f);
+        dualEffect_-&gt;setFogEnabledProperty(true);
+        dualEffect_-&gt;setFogColorProperty(Vector3(0.1f, 0.1f, 0.12f));
+        dualEffect_-&gt;setFogStartProperty(15.0f);
+        dualEffect_-&gt;setFogEndProperty(50.0f);
 
         BuildRoomGeometry(gd);
     }
@@ -230,17 +234,17 @@ fragColor = result;</code></pre>
         roomIB_-&gt;SetData(indices.data(), (int)indices.size());
     }
 
-    void Draw(const GameTime&amp;) override {
+    void Draw(GameTime&amp;) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color::Black);
 
-        dualEffect_-&gt;setWorld(Matrix::Identity);
-        dualEffect_-&gt;setView(camera_.View());
-        dualEffect_-&gt;setProjection(camera_.Projection());
+        dualEffect_-&gt;setWorldProperty(Matrix::Identity);
+        dualEffect_-&gt;setViewProperty(camera_.View());
+        dualEffect_-&gt;setProjectionProperty(camera_.Projection());
 
-        gd.setVertexBuffer(*roomVB_);
-        gd.setIndexBuffer(*roomIB_);
-        for (auto&amp; pass : dualEffect_-&gt;getCurrentTechnique().Passes) {
+        gd.SetVertexBuffer(roomVB_.get());
+        gd.SetIndexBuffer(roomIB_.get());
+        for (auto&amp; pass : dualEffect_-&gt;getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
             pass.Apply();
             gd.DrawIndexedPrimitives(
                 PrimitiveType::TriangleList, 0, 0,

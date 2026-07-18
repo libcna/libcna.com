@@ -91,48 +91,56 @@ SetRenderTarget(nullptr);   DrawFullScreen(sceneRT, postFxShader);
 Present();
 </code></pre>
 
-      <h2>Grayscale shader in .shader.json + GLSL</h2>
-      <p>CNA shader effects are described by a <code>.shader.json</code> descriptor that references GLSL source files. Place these in your <code>assets/Shaders/</code> folder:</p>
+      <h2>Grayscale shader as a ShaderEffect</h2>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Compiled <code>.fx</code> is not supported.</strong> <code>Content.Load&lt;Effect&gt;("Shaders/grayscale")</code> pointed at XNA effect bytecode cannot work: the <code>Effect(GraphicsDevice&amp;, const std::vector&lt;bytecs&gt;&amp;)</code> constructor throws <code>NotImplementedException</code> unconditionally, and the XNB <code>EffectReader</code> is a registered placeholder that does the same. Post-processing in CNA goes through <code>ShaderEffect</code>, which is built from shader <strong>source text</strong>. See <a href="52-custom-shaders.html">Tutorial 52</a> for the full API.</p>
+      </div>
+      <p>Write the two shader stages as ordinary GLSL files under <code>Content/Shaders/</code>. A <code>.cnj</code> descriptor lets <code>ContentManager</code> read them for you &mdash; it has exactly two shader fields, and missing either one raises a <code>ContentLoadException</code>:</p>
 
-      <pre><code class="language-cpp">// assets/Shaders/grayscale.shader.json
-{
-  "name": "Grayscale",
-  "vertex":   "grayscale.vert.glsl",
-  "fragment": "grayscale.frag.glsl",
-  "parameters": [
-    { "name": "Intensity", "type": "float", "default": 1.0 }
-  ]
+      <pre><code class="language-json">{
+  "cnjVersion": 1,
+  "type": "Effect",
+  "vertex": "grayscale.vert.glsl",
+  "fragment": "grayscale.frag.glsl"
 }
 </code></pre>
+      <p>There is no <code>"parameters"</code> block. A <code>ShaderEffect</code> has no <code>Parameters</code> collection at all &mdash; uniforms are set by name with <code>SetUniformFloat</code>/<code>Vec2</code>/<code>Vec3</code>/<code>Vec4</code>/<code>Mat4</code>/<code>Int</code>, and extra textures with <code>SetTexture(unit, tex)</code>.</p>
 
-      <pre><code class="language-cpp">// assets/Shaders/grayscale.vert.glsl
+      <pre><code class="language-glsl">// Content/Shaders/grayscale.vert.glsl
 #version 300 es
 precision highp float;
 
-in  vec4 a_position;
-in  vec2 a_texCoord;
-out vec2 v_texCoord;
+// Matches CNA's SpriteBatch vertex layout exactly.
+layout(location = 0) in vec2 aPos;        // position, in pixel coordinates
+layout(location = 1) in vec2 aTexCoord;
+layout(location = 2) in vec4 aColor;
 
-uniform mat4 MatrixTransform;   // provided by SpriteBatch
+out vec2 v_texCoord;
+out vec4 v_color;
+
+uniform mat4 projection;   // SpriteBatch sets this on whichever program is bound
 
 void main() {
-    gl_Position = MatrixTransform * a_position;
-    v_texCoord  = a_texCoord;
+    gl_Position = projection * vec4(aPos, 0.0, 1.0);
+    v_texCoord  = aTexCoord;
+    v_color     = aColor;
 }
 </code></pre>
 
-      <pre><code class="language-cpp">// assets/Shaders/grayscale.frag.glsl
+      <pre><code class="language-glsl">// Content/Shaders/grayscale.frag.glsl
 #version 300 es
 precision mediump float;
 
-in  vec2      v_texCoord;
-out vec4      FragColor;
+in  vec2 v_texCoord;
+in  vec4 v_color;
+out vec4 FragColor;
 
-uniform sampler2D Texture;
-uniform float     Intensity;   // 0.0 = full colour, 1.0 = full grayscale
+uniform sampler2D texture1;   // defaults to unit 0, where SpriteBatch binds the sprite
+uniform float     Intensity;  // 0.0 = full colour, 1.0 = full grayscale
 
 void main() {
-    vec4 colour = texture(Texture, v_texCoord);
+    vec4 colour = texture(texture1, v_texCoord) * v_color;
 
     // Perceptual luminance weights (ITU-R BT.709)
     float luma = dot(colour.rgb, vec3(0.2126, 0.7152, 0.0722));
@@ -151,7 +159,8 @@ void main() {
 #include "Microsoft/Xna/Framework/Graphics/GraphicsDeviceManager.hpp"
 #include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
 #include "Microsoft/Xna/Framework/Graphics/RenderTarget2D.hpp"
-#include "Microsoft/Xna/Framework/Graphics/Effect.hpp"
+#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+#include "System/IO/File.hpp"
 
 using namespace Microsoft::Xna::Framework;
 using namespace Microsoft::Xna::Framework::Graphics;
@@ -159,22 +168,31 @@ using namespace Microsoft::Xna::Framework::Graphics;
 class PostFxDemo final : public Game {
 public:
     PostFxDemo() : graphics_(this) {
-        graphics_.setPreferredBackBufferWidth(800);
-        graphics_.setPreferredBackBufferHeight(600);
+        graphics_.setPreferredBackBufferWidthProperty(800);
+        graphics_.setPreferredBackBufferHeightProperty(600);
     }
 
 protected:
     void LoadContent() override {
         auto&amp; gd = getGraphicsDeviceProperty();
         spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(gd);
-        worldTex_    = Content.Load&lt;Texture2D&gt;("Sprites/world");
+        worldTex_    = getContentProperty().Load&lt;Texture2D&gt;("Sprites/world");
 
         // Create a full-res render target for the scene
         sceneRT_ = std::make_unique&lt;RenderTarget2D&gt;(
             gd, 800, 600, false, SurfaceFormat::Color, DepthFormat::None);
 
-        // Load the grayscale shader
-        grayFx_ = Content.Load&lt;Effect&gt;("Shaders/grayscale");
+        // Build the grayscale shader from source text. The two strings are the
+        // shader source itself -- never a file path -- so read them yourself:
+        grayFx_ = std::make_unique&lt;ShaderEffect&gt;(
+            gd,
+            System::IO::File::ReadAllText("Content/Shaders/grayscale.vert.glsl"),
+            System::IO::File::ReadAllText("Content/Shaders/grayscale.frag.glsl"));
+
+        // The constructor does not throw on a compile failure -- this is the only signal.
+        if (!grayFx_-&gt;IsEffectValid()) {
+            // The GLSL did not compile. Do not draw with it.
+        }
     }
 
     void Update(GameTime&amp; gt) override {
@@ -184,11 +202,11 @@ protected:
         // Hold G to toggle grayscale intensity
         Single target = kb.IsKeyDown(Keys::G) ? 1.0f : 0.0f;
         intensity_ += (target - intensity_) * 5.0f *
-                      (Single)gt.getElapsedGameTime().TotalSeconds();
+                      (Single)gt.getElapsedGameTimeProperty().getTotalSecondsProperty();
         intensity_ = std::clamp(intensity_, 0.0f, 1.0f);
     }
 
-    void Draw(const GameTime&amp;) override {
+    void Draw(GameTime&amp;) override {
         auto&amp; gd = getGraphicsDeviceProperty();
 
         // --- Scene pass ---
@@ -204,11 +222,14 @@ protected:
         // --- Post-process pass ---
         gd.Clear(Color::Black);
 
-        // Set shader parameter
-        grayFx_-&gt;Parameters["Intensity"].SetValue(intensity_);
+        // Apply() binds this effect's compiled program; SetUniformXxx() writes into
+        // whatever program is currently bound, so the order matters. SpriteBatch then
+        // binds that same program for the batch, so the value survives to the draw.
+        grayFx_-&gt;Apply();
+        grayFx_-&gt;SetUniformFloat("Intensity", intensity_);
 
         spriteBatch_-&gt;Begin(SpriteSortMode::Deferred,
-                             &amp;BlendState::Opaque,
+                             BlendState::Opaque,
                              nullptr, nullptr, nullptr,
                              grayFx_.get());   // &lt;-- shader here
         spriteBatch_-&gt;Draw(*sceneRT_,
@@ -224,7 +245,7 @@ private:
     std::unique_ptr&lt;SpriteBatch&gt;    spriteBatch_;
     std::unique_ptr&lt;Texture2D&gt;      worldTex_;
     std::unique_ptr&lt;RenderTarget2D&gt; sceneRT_;
-    std::unique_ptr&lt;Effect&gt;         grayFx_;
+    std::unique_ptr&lt;ShaderEffect&gt;   grayFx_;
     Single                           intensity_ = 0.0f;
 };
 
@@ -240,16 +261,16 @@ int main() { PostFxDemo game; game.Run(); }
         <li><strong>Composite pass</strong> — additively blend the blurred bright-pass onto the original scene.</li>
       </ol>
 
-      <pre><code class="language-cpp">// assets/Shaders/bloom_threshold.frag.glsl
+      <pre><code class="language-glsl">// Content/Shaders/bloom_threshold.frag.glsl
 #version 300 es
 precision mediump float;
 in vec2 v_texCoord;
 out vec4 FragColor;
-uniform sampler2D Texture;
-uniform float Threshold;   // e.g. 0.7
+uniform sampler2D texture1;
+uniform float Threshold;   // set with fx-&gt;SetUniformFloat("Threshold", 0.7f)
 
 void main() {
-    vec4 c = texture(Texture, v_texCoord);
+    vec4 c = texture(texture1, v_texCoord);
     float luma = dot(c.rgb, vec3(0.2126, 0.7152, 0.0722));
     // Extract only bright pixels
     FragColor = (luma &gt; Threshold) ? c : vec4(0.0);
@@ -259,17 +280,17 @@ void main() {
       <h2>Vignette effect</h2>
       <p>A vignette darkens the edges of the screen. It can be applied as a final composite pass or baked into the grayscale shader:</p>
 
-      <pre><code class="language-cpp">// assets/Shaders/vignette.frag.glsl
+      <pre><code class="language-glsl">// Content/Shaders/vignette.frag.glsl
 #version 300 es
 precision mediump float;
 in vec2 v_texCoord;
 out vec4 FragColor;
-uniform sampler2D Texture;
-uniform float Strength;   // e.g. 0.5
-uniform float Softness;   // e.g. 0.45
+uniform sampler2D texture1;
+uniform float Strength;   // fx-&gt;SetUniformFloat("Strength", 0.5f)
+uniform float Softness;   // fx-&gt;SetUniformFloat("Softness", 0.45f)
 
 void main() {
-    vec4 colour = texture(Texture, v_texCoord);
+    vec4 colour = texture(texture1, v_texCoord);
 
     // Distance from centre (0,0)
     vec2  uv   = v_texCoord - 0.5;
@@ -295,10 +316,11 @@ ApplyEffect(sceneRT_.get(),  *grayFx_);
 gd.SetRenderTarget(nullptr);
 ApplyEffect(pingRT_.get(),   *vignetteFx_);
 
-// Helper function
-void ApplyEffect(Texture2D* src, Effect&amp; fx) {
+// Helper function -- each ShaderEffect owns its own compiled program, so keep
+// both alive for the lifetime of the game rather than rebuilding them per frame.
+void ApplyEffect(Texture2D* src, ShaderEffect&amp; fx) {
     spriteBatch_-&gt;Begin(SpriteSortMode::Deferred,
-                         &amp;BlendState::Opaque,
+                         BlendState::Opaque,
                          nullptr, nullptr, nullptr, &amp;fx);
     spriteBatch_-&gt;Draw(*src, Rectangle(0,0,800,600), Color::White);
     spriteBatch_-&gt;End();
@@ -317,13 +339,13 @@ void ApplyEffect(Texture2D* src, Effect&amp; fx) {
         <div class="docs-pagination-prev">
           <a href="23-render-targets.html" class="pagination-link pagination-prev">
             <span class="pagination-direction">&#8592; Previous</span>
-            <span class="pagination-title">Tutorial 23: Render Targets</span>
+            <span class="pagination-title">Tutorial 23: Render Targets for Off-Screen Rendering</span>
           </a>
         </div>
         <div class="docs-pagination-next">
           <a href="25-sprite-sort-mode.html" class="pagination-link pagination-next">
             <span class="pagination-direction">Next &#8594;</span>
-            <span class="pagination-title">Tutorial 25: SpriteSortMode</span>
+            <span class="pagination-title">Tutorial 25: SpriteSortMode and Layering</span>
           </a>
         </div>
       </nav>

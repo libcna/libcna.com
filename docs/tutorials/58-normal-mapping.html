@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 58: Normal Mapping - CNA Tutorials</title>
-  <meta name="description" content="Implement per-pixel normal mapping in CNA using a custom GLSL shader with TBN matrix construction, tangent-space normal decoding, and EffectParameter texture binding.">
+  <meta name="description" content="Implement per-pixel normal mapping in CNA using a custom GLSL shader with TBN matrix construction, tangent-space normal decoding, and ShaderEffect uniform and texture binding.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/58-normal-mapping.html">
   <meta property="og:title"       content="Tutorial 58: Normal Mapping - CNA Tutorials">
-  <meta property="og:description" content="Implement per-pixel normal mapping in CNA using a custom GLSL shader with TBN matrix construction, tangent-space normal decoding, and EffectParameter texture binding.">
+  <meta property="og:description" content="Implement per-pixel normal mapping in CNA using a custom GLSL shader with TBN matrix construction, tangent-space normal decoding, and ShaderEffect uniform and texture binding.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/58-normal-mapping.html">
@@ -78,7 +78,7 @@
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p>CNA does not have a built-in <code>NormalMapEffect</code>. Normal mapping requires a <strong>custom GLSL shader</strong> loaded via a <code>.shader.json</code> descriptor and bound through <code>Effect</code> + <code>EffectParameter</code>. This tutorial requires the <strong>EASYGL</strong> or <strong>VULKAN</strong> backend.</p>
+        <p>CNA does not have a built-in <code>NormalMapEffect</code>. Normal mapping requires a <strong>custom GLSL shader</strong> compiled through <code>ShaderEffect</code>, whose constructor takes the vertex and fragment <strong>source text</strong>, with uniforms set by name via <code>SetUniformXxx()</code>. This tutorial requires the <strong>EASYGL</strong> or <strong>VULKAN</strong> backend.</p>
       </div>
 
       <p>Normal mapping is a per-pixel shading technique that replaces the interpolated geometric normal at each fragment with a normal sampled from a texture. Because the normal governs how the surface responds to lighting, a flat quad can appear to have bumps, grooves, and rivets without any additional geometry. The key to its visual richness is that it works at the full resolution of the screen — every pixel computes its own lighting response — while the geometry cost stays constant.</p>
@@ -147,35 +147,24 @@ vec3 color  = albedo.rgb * u_lightColor * diff
 fragColor   = vec4(color, albedo.a);</code></pre>
 
       <h2>Custom Shader Approach in CNA</h2>
-      <p>Since CNA does not include a built-in <code>NormalMapEffect</code>, you must author a custom shader and a <code>.shader.json</code> descriptor. A minimal descriptor for a normal-mapped surface looks like this:</p>
-      <pre><code class="language-cpp">// shaders/normal_map.shader.json
-{
-  "technique": "NormalMap",
-  "passes": [
-    {
-      "name": "P0",
-      "vertex":   "shaders/normal_map.vert",
-      "fragment": "shaders/normal_map.frag"
-    }
-  ],
-  "parameters": [
-    { "name": "u_world",        "type": "Matrix" },
-    { "name": "u_view",         "type": "Matrix" },
-    { "name": "u_projection",   "type": "Matrix" },
-    { "name": "u_normalMatrix", "type": "Matrix3" },
-    { "name": "u_diffuse",      "type": "Texture2D" },
-    { "name": "u_normalMap",    "type": "Texture2D" },
-    { "name": "u_lightDir",     "type": "Vector3" },
-    { "name": "u_lightColor",   "type": "Vector3" },
-    { "name": "u_specularColor","type": "Vector3" },
-    { "name": "u_shininess",    "type": "Single" },
-    { "name": "u_cameraPos",    "type": "Vector3" }
-  ]
+      <p>Since CNA does not include a built-in <code>NormalMapEffect</code>, you author the two GLSL shaders yourself and hand their source to <code>ShaderEffect</code>. There is no shader descriptor listing techniques, passes, or typed parameters &mdash; the constructor takes three arguments and the two strings are the shader source code itself, not file paths:</p>
+      <pre><code class="language-cpp">// Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp
+NOXNA ShaderEffect(GraphicsDevice&amp; device,
+                   const std::string&amp; vertSrc,
+                   const std::string&amp; fragSrc);</code></pre>
+      <p>The uniforms below are therefore not declared anywhere ahead of time. They are the ones the GLSL itself declares, and you push values into them by name with <code>SetUniformMat4</code>, <code>SetUniformVec3</code>, <code>SetUniformFloat</code>, and <code>SetUniformInt</code> after calling <code>Apply()</code>. Keeping the source in plain <code>.glsl</code> files and reading them with <code>System::IO::File::ReadAllText</code>, as the C++ section below does, is the simplest arrangement.</p>
+      <p>If you would rather have <code>ContentManager</code> do the reading, CNA does have a real <code>.cnj</code> <code>Effect</code> descriptor. It carries exactly two shader fields, each naming a file relative to the descriptor &mdash; no parameter list:</p>
+      <pre><code class="language-json">{
+  "cnjVersion": 1,
+  "type": "Effect",
+  "vertex": "normal_map.vert.glsl",
+  "fragment": "normal_map.frag.glsl"
 }</code></pre>
+      <p>Load that as a <code>std::shared_ptr&lt;Effect&gt;</code> and downcast to <code>ShaderEffect*</code>. See <a href="52-custom-shaders.html">Tutorial 52</a> for the full treatment.</p>
 
       <h2>Complete GLSL Shaders</h2>
 
-      <h3>Vertex Shader (normal_map.vert)</h3>
+      <h3>Vertex Shader (normal_map.vert.glsl)</h3>
       <pre><code class="language-glsl">#version 300 es
 precision highp float;
 
@@ -188,20 +177,24 @@ layout(location = 4) in float a_tangentW;   // handedness: +1 or -1
 uniform mat4 u_world;
 uniform mat4 u_view;
 uniform mat4 u_projection;
-uniform mat3 u_normalMatrix;   // transpose(inverse(mat3(u_world)))
+// Declared mat4, not mat3: ShaderEffect has SetUniformMat4 but no mat3 setter,
+// so the normal matrix is uploaded as a 4x4 and truncated here.
+uniform mat4 u_normalMatrix;   // transpose(inverse(u_world))
 
 out vec3 v_worldPos;
 out vec2 v_texcoord;
 out mat3 v_TBN;
 
 void main() {
+    mat3 normalMat = mat3(u_normalMatrix);
+
     vec4 worldPos = u_world * vec4(a_position, 1.0);
     v_worldPos    = worldPos.xyz;
     v_texcoord    = a_texcoord;
 
     // Build TBN in world space
-    vec3 N = normalize(u_normalMatrix * a_normal);
-    vec3 T = normalize(u_normalMatrix * a_tangent);
+    vec3 N = normalize(normalMat * a_normal);
+    vec3 T = normalize(normalMat * a_tangent);
     // Gram-Schmidt re-orthogonalisation
     T      = normalize(T - dot(T, N) * N);
     vec3 B = cross(N, T) * a_tangentW;
@@ -211,7 +204,7 @@ void main() {
     gl_Position = u_projection * u_view * worldPos;
 }</code></pre>
 
-      <h3>Fragment Shader (normal_map.frag)</h3>
+      <h3>Fragment Shader (normal_map.frag.glsl)</h3>
       <pre><code class="language-glsl">#version 300 es
 precision highp float;
 
@@ -250,56 +243,93 @@ void main() {
     fragColor = vec4(color, albedo.a);
 }</code></pre>
 
-      <h2>C++ Setup: Loading and Binding the Normal Map Shader</h2>
-      <pre><code class="language-cpp">class NormalMapGame final : public Game {
-    std::unique_ptr&lt;Effect&gt;       nmEffect_;
+      <h2>C++ Setup: Building and Binding the Normal Map Shader</h2>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>There is no compiled-<code>.fx</code> path.</strong> <code>Content.Load&lt;Effect&gt;("shaders/normal_map")</code> pointed at XNA effect bytecode throws: the <code>Effect(GraphicsDevice&amp;, const std::vector&lt;bytecs&gt;&amp;)</code> constructor raises <code>NotImplementedException</code> unconditionally. Use <code>ShaderEffect</code>, which takes the vertex and fragment shader <strong>source text</strong> as its second and third arguments. Uniforms are set with <code>SetUniformXxx()</code> — there is no <code>Parameters</code> collection on it. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+      </div>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+#include "System/IO/File.hpp"
+
+class NormalMapGame final : public Game {
+    std::unique_ptr&lt;ShaderEffect&gt; nmEffect_;
     std::unique_ptr&lt;Texture2D&gt;   diffuseTex_;
     std::unique_ptr&lt;Texture2D&gt;   normalMapTex_;
     std::unique_ptr&lt;VertexBuffer&gt; meshVB_;
     std::unique_ptr&lt;IndexBuffer&gt;  meshIB_;
-    int   indexCount_ = 0;
+    int   indexCount_  = 0;
+    int   vertexCount_ = 0;
     Camera camera_;
     Vector3 lightDir_ = Vector3::Normalize(Vector3(1.0f, -2.0f, -1.0f));
 
     void LoadContent() override {
-        diffuseTex_    = Content.Load&lt;Texture2D&gt;("textures/stone_albedo");
-        normalMapTex_  = Content.Load&lt;Texture2D&gt;("textures/stone_normal");
-        nmEffect_      = Content.Load&lt;Effect&gt;("shaders/normal_map");
+        auto&amp; gd = getGraphicsDeviceProperty();
 
-        // Bind static parameters once
-        nmEffect_-&gt;Parameters["u_diffuse"     ].SetValue(diffuseTex_.get());
-        nmEffect_-&gt;Parameters["u_normalMap"   ].SetValue(normalMapTex_.get());
-        nmEffect_-&gt;Parameters["u_lightColor"  ].SetValue(Vector3(1.0f, 0.95f, 0.85f));
-        nmEffect_-&gt;Parameters["u_specularColor"].SetValue(Vector3(0.6f, 0.6f, 0.6f));
-        nmEffect_-&gt;Parameters["u_shininess"   ].SetValue(64.0f);
+        diffuseTex_   = getContentProperty().Load&lt;Texture2D&gt;("textures/stone_albedo");
+        normalMapTex_ = getContentProperty().Load&lt;Texture2D&gt;("textures/stone_normal");
+
+        // Three arguments: device, vertex source, fragment source. Not file paths.
+        nmEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+            gd,
+            System::IO::File::ReadAllText("Content/shaders/normal_map.vert.glsl"),
+            System::IO::File::ReadAllText("Content/shaders/normal_map.frag.glsl"));
+
+        // The constructor does not throw on a compile failure.
+        if (!nmEffect_-&gt;IsEffectValid()) {
+            // The GLSL did not compile. Do not draw with it.
+        }
+
+        // Apply() binds the program; the uniform setters below write into it.
+        nmEffect_-&gt;Apply();
+        nmEffect_-&gt;SetUniformInt("u_diffuse",   0);   // sampler unit assignments
+        nmEffect_-&gt;SetUniformInt("u_normalMap", 1);
+        nmEffect_-&gt;SetUniformVec3("u_lightColor",    1.0f, 0.95f, 0.85f);
+        nmEffect_-&gt;SetUniformVec3("u_specularColor", 0.6f, 0.6f,  0.6f);
+        nmEffect_-&gt;SetUniformFloat("u_shininess", 64.0f);
 
         LoadMesh();
     }
 
-    void Draw(const GameTime&amp;) override {
+    void Draw(GameTime&amp;) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color(30, 30, 40, 255));
 
-        Matrix world = Matrix::Identity;
-        Matrix3 normalMatrix = Matrix3::Transpose(Matrix3::Invert(Matrix3(world)));
+        Matrix world        = Matrix::getIdentityProperty();
+        Matrix normalMatrix = Matrix::Transpose(Matrix::Invert(world));
 
-        nmEffect_-&gt;Parameters["u_world"       ].SetValue(world);
-        nmEffect_-&gt;Parameters["u_view"        ].SetValue(camera_.View());
-        nmEffect_-&gt;Parameters["u_projection"  ].SetValue(camera_.Projection());
-        nmEffect_-&gt;Parameters["u_normalMatrix"].SetValue(normalMatrix);
-        nmEffect_-&gt;Parameters["u_lightDir"    ].SetValue(-lightDir_);  // negate: points to light
-        nmEffect_-&gt;Parameters["u_cameraPos"   ].SetValue(camera_.Position());
+        float worldCM[16], viewCM[16], projCM[16], normalCM[16];
+        world.ToColumnMajor(worldCM);
+        camera_.View().ToColumnMajor(viewCM);
+        camera_.Projection().ToColumnMajor(projCM);
+        normalMatrix.ToColumnMajor(normalCM);
 
-        gd.setVertexBuffer(*meshVB_);
-        gd.setIndexBuffer(*meshIB_);
-        for (auto&amp; pass : nmEffect_-&gt;getCurrentTechnique().Passes) {
-            pass.Apply();
-            gd.DrawIndexedPrimitives(
-                PrimitiveType::TriangleList, 0, 0, indexCount_ / 3);
-        }
+        const Vector3 toLight = -lightDir_;      // negate: points to light
+        const Vector3 eye     = camera_.Position();
+
+        // Bind the program first, then push this effect's uniforms and textures.
+        nmEffect_-&gt;Apply();
+        nmEffect_-&gt;SetUniformMat4("u_world",        worldCM);
+        nmEffect_-&gt;SetUniformMat4("u_view",         viewCM);
+        nmEffect_-&gt;SetUniformMat4("u_projection",   projCM);
+        nmEffect_-&gt;SetUniformMat4("u_normalMatrix", normalCM);
+        nmEffect_-&gt;SetUniformVec3("u_lightDir",  toLight.X, toLight.Y, toLight.Z);
+        nmEffect_-&gt;SetUniformVec3("u_cameraPos", eye.X, eye.Y, eye.Z);
+        nmEffect_-&gt;SetTexture(0, *diffuseTex_);
+        nmEffect_-&gt;SetTexture(1, *normalMapTex_);
+
+        gd.SetVertexBuffer(meshVB_.get());
+        gd.setIndicesProperty(meshIB_.get());
+        gd.DrawIndexedPrimitives(
+            PrimitiveType::TriangleList,
+            0,               // baseVertex
+            0,               // minVertexIndex
+            vertexCount_,    // numVertices
+            0,               // startIndex
+            indexCount_ / 3);
         gd.Present();
     }
 };</code></pre>
+      <p>Note that <code>u_world</code>/<code>u_view</code>/<code>u_projection</code> are pushed by hand here because of their names. Name them <code>World</code>, <code>View</code> and <code>Projection</code> instead and you can set them through <code>ShaderEffect</code>'s <code>IEffectMatrices</code> properties — <code>setWorldProperty()</code> and friends — which CNA forwards to the backend automatically.</p>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>

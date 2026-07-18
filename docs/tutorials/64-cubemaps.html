@@ -110,12 +110,12 @@
       <h2>Loading via the Content System</h2>
       <p>The CNA content manager loads a <code>TextureCube</code> from a DDS cubemap file or from six PNG files following a naming convention:</p>
       <pre><code class="language-cpp">// Option A: load from a DDS cubemap file (preferred)
-auto skyTex = Content.Load&lt;TextureCube&gt;("skybox/sky"); // loads sky.dds
+auto skyTex = getContentProperty().Load&lt;TextureCube&gt;("skybox/sky"); // loads sky.dds
 
 // Option B: load from six separate images
 // Content system looks for: sky_px.png, sky_nx.png, sky_py.png,
 //                           sky_ny.png, sky_pz.png, sky_nz.png
-auto skyTex = Content.Load&lt;TextureCube&gt;("skybox/sky");</code></pre>
+auto skyTex = getContentProperty().Load&lt;TextureCube&gt;("skybox/sky");</code></pre>
       <p>You can also create a <code>TextureCube</code> programmatically and upload pixel data face by face using <code>SetData</code>:</p>
       <pre><code class="language-cpp">int size = 512;
 auto sky = std::make_unique&lt;TextureCube&gt;(gd, size, false, SurfaceFormat::Color);
@@ -182,9 +182,16 @@ void main() {
 }</code></pre>
 
       <h2>Complete C++ Skybox Example</h2>
-      <pre><code class="language-cpp">class SkyboxGame final : public Game {
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>The skybox shader is a <code>ShaderEffect</code>.</strong> CNA has no compiled-<code>.fx</code> path &mdash; <code>Effect(GraphicsDevice&amp;, const std::vector&lt;bytecs&gt;&amp;)</code> throws <code>NotImplementedException</code> unconditionally, so <code>Content.Load&lt;Effect&gt;("effects/skybox")</code> pointed at bytecode cannot work. <code>ShaderEffect</code> takes shader <strong>source text</strong>, has no <code>Parameters</code> collection, and binds a cube texture with the <code>SetTexture(int unit, TextureCube&amp;)</code> overload. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+      </div>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+#include "System/IO/File.hpp"
+
+class SkyboxGame final : public Game {
     std::unique_ptr&lt;TextureCube&gt;  skyTex_;
-    std::unique_ptr&lt;Effect&gt;       skyEffect_;
+    std::unique_ptr&lt;ShaderEffect&gt; skyEffect_;
     std::unique_ptr&lt;VertexBuffer&gt; skyboxVB_;
     std::unique_ptr&lt;IndexBuffer&gt;  skyboxIB_;
     Camera                        camera_;
@@ -193,15 +200,29 @@ void main() {
         auto&amp; gd = getGraphicsDeviceProperty();
 
         // Load cubemap texture
-        skyTex_    = Content.Load&lt;TextureCube&gt;("skybox/sky");
-        skyEffect_ = Content.Load&lt;Effect&gt;("effects/skybox");
+        skyTex_ = getContentProperty().Load&lt;TextureCube&gt;("skybox/sky");
+
+        // Three arguments: device, vertex source, fragment source. Not file paths.
+        skyEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+            gd,
+            System::IO::File::ReadAllText("Content/effects/skybox.vert.glsl"),
+            System::IO::File::ReadAllText("Content/effects/skybox.frag.glsl"));
+
+        // The constructor does not throw on a compile failure.
+        if (!skyEffect_-&gt;IsEffectValid()) {
+            // The GLSL did not compile. Do not draw with it.
+        }
+
+        // Tell the samplerCube which unit to read from, once.
+        skyEffect_-&gt;Apply();
+        skyEffect_-&gt;SetUniformInt("u_skybox", 0);
 
         // Build an inverted (inside-facing) unit cube.
         // 8 unique corner positions, 36 indices (12 triangles).
         buildInvertedCube(gd, skyboxVB_, skyboxIB_);
     }
 
-    void Draw(const GameTime&amp;) override {
+    void Draw(GameTime&amp;) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color::Black);
 
@@ -217,31 +238,36 @@ void main() {
         view.M43 = 0.0f; // remove Z translation
 
         // Depth read (no write) so scene geometry stays in front
-        gd.setDepthStencilState(DepthStencilState::DepthRead);
+        gd.setDepthStencilStateProperty(DepthStencilState::DepthRead);
         // Inward-facing cube: cull clockwise (which is the outside)
-        gd.setRasterizerState(RasterizerState::CullClockwise);
+        gd.setRasterizerStateProperty(RasterizerState::CullClockwise);
 
-        skyEffect_-&gt;Parameters["u_skybox"].SetValue(skyTex_.get());
-        skyEffect_-&gt;Parameters["u_view"].SetValue(view);
-        skyEffect_-&gt;Parameters["u_projection"].SetValue(camera_.Projection());
+        float viewCM[16], projCM[16];
+        view.ToColumnMajor(viewCM);
+        camera_.Projection().ToColumnMajor(projCM);
 
-        gd.setVertexBuffer(*skyboxVB_);
-        gd.setIndexBuffer(*skyboxIB_);
+        // Apply() binds the program; SetUniformXxx()/SetTexture() write into
+        // whatever program is currently bound, so this order is mandatory.
+        skyEffect_-&gt;Apply();
+        skyEffect_-&gt;SetUniformMat4("u_view",       viewCM);
+        skyEffect_-&gt;SetUniformMat4("u_projection", projCM);
+        // TextureCube overload of SetTexture; takes a reference, not a pointer.
+        skyEffect_-&gt;SetTexture(0, *skyTex_);
 
-        for (auto&amp; pass : skyEffect_-&gt;getCurrentTechnique().Passes) {
-            pass.Apply();
-            gd.DrawIndexedPrimitives(
-                PrimitiveType::TriangleList,
-                /*baseVertex*/    0,
-                /*minVertexIndex*/0,
-                /*numVertices*/   8,
-                /*startIndex*/    0,
-                /*primitiveCount*/12); // 12 triangles = 6 faces x 2
-        }
+        gd.SetVertexBuffer(skyboxVB_.get());
+        gd.SetIndexBuffer(skyboxIB_.get());
+
+        gd.DrawIndexedPrimitives(
+            PrimitiveType::TriangleList,
+            /*baseVertex*/    0,
+            /*minVertexIndex*/0,
+            /*numVertices*/   8,
+            /*startIndex*/    0,
+            /*primitiveCount*/12); // 12 triangles = 6 faces x 2
 
         // Restore defaults before drawing transparent geometry, HUD, etc.
-        gd.setDepthStencilState(DepthStencilState::Default);
-        gd.setRasterizerState(RasterizerState::CullCounterClockwise);
+        gd.setDepthStencilStateProperty(DepthStencilState::Default);
+        gd.setRasterizerStateProperty(RasterizerState::CullCounterClockwise);
         gd.Present();
     }
 };</code></pre>

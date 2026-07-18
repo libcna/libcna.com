@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 97: Networking and Multiplayer Basics - CNA</title>
-  <meta name="description" content="CNA has no networking API. Add multiplayer using BSD sockets, ASIO, ENet, or SDL3_net. Lockstep vs client-server, state serialization, and latency hiding.">
+  <meta name="description" content="CNA ships Microsoft::Xna::Framework::Net: NetworkSession, LocalNetworkGamer, PacketReader/PacketWriter over real ENet UDP. Hosting, LAN discovery, packet send/receive, and the honest limits.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/97-networking.html">
   <meta property="og:title"       content="Tutorial 97: Networking and Multiplayer Basics - CNA">
-  <meta property="og:description" content="CNA has no networking API. Add multiplayer using BSD sockets, ASIO, ENet, or SDL3_net. Lockstep vs client-server, state serialization, and latency hiding.">
+  <meta property="og:description" content="CNA ships Microsoft::Xna::Framework::Net: NetworkSession, LocalNetworkGamer, PacketReader/PacketWriter over real ENet UDP. Hosting, LAN discovery, packet send/receive, and the honest limits.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/97-networking.html">
@@ -77,112 +77,336 @@
       <h1>Tutorial 97: Networking and Multiplayer Basics</h1>
         <p class="doc-meta">CNA &mdash; C++ XNA 4.0 reimplementation</p>
 
-        <h2>CNA has no networking API</h2>
+        <h2>CNA ships an XNA-compatible networking API</h2>
         <p>
-          CNA is a rendering, input, and audio framework. Networking is outside its scope. This tutorial shows
-          how to add multiplayer to your CNA game using popular C++ networking libraries. All networking code
-          lives outside the CNA API &mdash; it integrates through your <code>Game::Update()</code> method.
+          You do not need to bolt a third-party socket library onto your CNA game. CNA implements
+          <code>Microsoft::Xna::Framework::Net</code> &mdash; the same namespace XNA 4.0 exposed &mdash; with
+          23 public types under <code>include/Microsoft/Xna/Framework/Net/</code>, backed by roughly 1,880
+          lines of implementation (of which <code>NetworkSession.cpp</code> alone is 1,036 lines) and covered
+          by 260 unit tests, including a genuine two-process loopback test that spawns a host and a client as
+          separate OS processes and makes them exchange packets.
+        </p>
+        <p>
+          The transport is real. CNA vendors ENet in <code>third_party/enet</code> and wraps it behind the XNA
+          API surface, so <code>NetworkSession</code> is reliable/unreliable UDP with packet sequencing, not a
+          stub. LAN session discovery is a real broadcast protocol on UDP port <code>61190</code>, and the
+          <code>QualityOfService</code> attached to a discovered session carries a genuinely measured
+          round-trip time, sampled from the wall-clock delay between the discovery query and the host's reply.
         </p>
 
-        <h2>TCP/UDP with BSD sockets or ASIO</h2>
-        <p>
-          For simple games, raw BSD sockets work. For production code, use Asio (standalone header-only C++
-          networking library, part of Boost or as standalone).
-        </p>
-<pre><code class="language-cpp">// Simple UDP sender (BSD sockets)
-#include &lt;sys/socket.h&gt;
-#include &lt;netinet/in.h&gt;
-#include &lt;arpa/inet.h&gt;
-#include &lt;unistd.h&gt;
+        <div class="callout callout--note">
+          <span class="callout-icon">&#9432;</span>
+          <p><strong>If you have read older advice</strong> telling you to hand-roll BSD sockets or to
+          <code>FetchContent</code> ENet from GitHub for a CNA game, disregard it. ENet is already vendored and
+          already wrapped; pulling a second copy in gives you two ENet builds in one process and none of the
+          XNA API compatibility.</p>
+        </div>
 
-class UDPSender {
+        <h2>Enabling networking in your build</h2>
+        <p>
+          The CMake option <code>CNA_ENABLE_NET</code> defaults to <code>ON</code>, so networking is built
+          unless you explicitly turn it off. Link your game against the networking libraries:
+        </p>
+<pre><code class="language-cmake">target_link_libraries(MyGame PRIVATE
+    CNA
+    CNA_GamerServices   # SignedInGamer, GamerServicesDispatcher
+    CNA_Net             # NetworkSession, PacketReader/Writer, ...
+    SHARP_RUNTIME)</code></pre>
+        <p>
+          <code>CNA_GamerServices</code> is not optional: every session is created for one or more
+          <code>SignedInGamer</code> instances, and those come from the GamerServices layer.
+        </p>
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p>CNA's own networking demos are gated on <code>CNA_ENABLE_NET AND NOT EMSCRIPTEN</code>. The Net
+          library itself builds under Emscripten, but the demos that open real UDP sockets are excluded there,
+          because a browser page cannot open one.</p>
+        </div>
+
+        <h2>Signing in a local gamer</h2>
+        <p>
+          Before any session call, populate <code>Gamer::SignedInGamers</code> by initializing the
+          GamerServices dispatcher. <code>GamerServicesDispatcher::Initialize()</code> takes an
+          <code>System::IServiceProvider&amp;</code> but never dereferences it, so a null implementation is
+          sufficient:
+        </p>
+<pre><code class="language-cpp">#include "Microsoft/Xna/Framework/GamerServices/Gamer.hpp"
+#include "Microsoft/Xna/Framework/GamerServices/GamerServicesDispatcher.hpp"
+#include "Microsoft/Xna/Framework/GamerServices/SignedInGamerCollection.hpp"
+#include "System/IServiceProvider.hpp"
+
+using namespace Microsoft::Xna::Framework;
+using Microsoft::Xna::Framework::GamerServices::SignedInGamer;
+
+class NullServiceProvider : public System::IServiceProvider {
 public:
-    UDPSender(const char* ip, uint16_t port) {
-        fd_ = socket(AF_INET, SOCK_DGRAM, 0);
-        addr_.sin_family      = AF_INET;
-        addr_.sin_port        = htons(port);
-        addr_.sin_addr.s_addr = inet_addr(ip);
+    [[nodiscard]] void* GetService(const std::type_info&amp;) const override {
+        return nullptr;
     }
-    ~UDPSender() { if (fd_ &gt;= 0) close(fd_); }
+};
 
-    void Send(const void* data, int len) {
-        sendto(fd_, data, len, 0,
-               reinterpret_cast&lt;sockaddr*&gt;(&amp;addr_), sizeof(addr_));
-    }
-private:
-    int fd_;
-    sockaddr_in addr_{};
-};</code></pre>
+NullServiceProvider services;
+GamerServices::GamerServicesDispatcher::Initialize(services);
+SignedInGamer* localGamer =
+    (*GamerServices::Gamer::getSignedInGamersProperty())[0];</code></pre>
 
-        <h2>ENet library for UDP</h2>
+        <h2>Hosting a session</h2>
         <p>
-          ENet provides reliable UDP with packet sequencing on top of raw UDP. It is the networking layer
-          used in many indie games.
+          <code>NetworkSession::Create()</code> returns a raw <code>NetworkSession*</code> that
+          <em>you</em> own. Call <code>Dispose()</code> when you are done with it &mdash; that is what tears
+          down the ENet host and frees every gamer object the session created.
         </p>
-<pre><code class="language-cpp"># Add ENet to CMake:
-find_package(ENet REQUIRED)
-# Or: FetchContent_Declare(enet GIT_REPOSITORY https://github.com/lsalzman/enet.git)
-target_link_libraries(MyGame PRIVATE enet)</code></pre>
-<pre><code class="language-cpp">#include &lt;enet/enet.h&gt;
-#include &lt;functional&gt;
-#include &lt;cstdint&gt;
-#include &lt;cstddef&gt;
+<pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Net/NetworkSession.hpp"
+#include "Microsoft/Xna/Framework/Net/LocalNetworkGamer.hpp"
 
-class NetworkManager {
-public:
-    bool InitHost(uint16_t port) {
-        if (enet_initialize() != 0) return false;
-        ENetAddress address;
-        address.host = ENET_HOST_ANY;
-        address.port = port;
-        host_ = enet_host_create(&amp;address, 32, 2, 0, 0);
-        return host_ != nullptr;
-    }
+using namespace Microsoft::Xna::Framework::Net;
 
-    bool Connect(const char* ip, uint16_t port) {
-        if (enet_initialize() != 0) return false;
-        host_ = enet_host_create(nullptr, 1, 2, 0, 0);
-        ENetAddress address;
-        enet_address_set_host(&amp;address, ip);
-        address.port = port;
-        peer_ = enet_host_connect(host_, &amp;address, 2, 0);
-        return peer_ != nullptr;
-    }
+// sessionType, maxLocalGamers, maxGamers
+NetworkSession* session =
+    NetworkSession::Create(NetworkSessionType::SystemLink, 1, 8);
 
-    void PollEvents(std::function&lt;void(const uint8_t*, size_t)&gt; onReceive) {
-        ENetEvent event;
-        while (enet_host_service(host_, &amp;event, 0) &gt; 0) {
-            if (event.type == ENET_EVENT_TYPE_RECEIVE) {
-                onReceive(event.packet-&gt;data, event.packet-&gt;dataLength);
-                enet_packet_destroy(event.packet);
-            }
+LocalNetworkGamer* me = session-&gt;getLocalGamersProperty()[0];
+
+// ... later, exactly once:
+session-&gt;Dispose();</code></pre>
+        <p>
+          There are richer <code>Create()</code> overloads taking <code>privateGamerSlots</code> and a
+          <code>NetworkSessionProperties</code> to advertise, plus an overload taking an explicit
+          <code>std::vector&lt;SignedInGamer*&gt;</code>. Each has a matching
+          <code>BeginCreate()</code>/<code>EndCreate()</code> asynchronous pair.
+        </p>
+
+        <h2>Finding and joining a session</h2>
+        <p>
+          <code>NetworkSession::Find()</code> performs the real LAN broadcast and returns an
+          <code>AvailableNetworkSessionCollection</code>. Discovery is a UDP request/reply exchange, so a
+          single call can legitimately return nothing &mdash; poll it.
+        </p>
+        <div class="callout callout--note">
+          <span class="callout-icon">&#9432;</span>
+          <p><code>AvailableNetworkSessionCollection</code> is a read-only collection. Its
+          <em>non-const</em> <code>operator[]</code> is the mutating accessor and throws
+          <code>NotSupportedException</code>; only the const overload returns a usable reference. Bind a
+          <code>const&amp;</code> to the collection before indexing it.</p>
+        </div>
+<pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Net/AvailableNetworkSessionCollection.hpp"
+#include "Microsoft/Xna/Framework/Net/NetworkSessionProperties.hpp"
+#include &lt;chrono&gt;
+#include &lt;thread&gt;
+
+AvailableNetworkSessionCollection available = NetworkSession::Find(
+    NetworkSessionType::SystemLink, 1, NetworkSessionProperties{});
+
+for (int attempt = 0; attempt &lt; 100 &amp;&amp; available.getCountProperty() == 0; ++attempt) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    available = NetworkSession::Find(
+        NetworkSessionType::SystemLink, 1, NetworkSessionProperties{});
+}
+
+if (available.getCountProperty() == 0) {
+    // No host is running on this LAN.
+    return;
+}
+
+const AvailableNetworkSessionCollection&amp; found = available;   // const overload
+NetworkSession* session = NetworkSession::Join(&amp;found[0]);</code></pre>
+        <p>
+          Every <code>AvailableNetworkSession</code> exposes <code>HostGamertag</code>,
+          <code>CurrentGamerCount</code>, <code>OpenPublicGamerSlots</code>,
+          <code>OpenPrivateGamerSlots</code>, its advertised <code>SessionProperties</code>, and a
+          <code>QualityOfService</code>. Use them to build a server browser:
+        </p>
+<pre><code class="language-cpp">const AvailableNetworkSession&amp; s = found[i];
+const QualityOfService&amp; qos = s.getQualityOfServiceProperty();
+
+double pingMs = qos.getAverageRoundtripTimeProperty()
+                   .getTotalMillisecondsProperty();
+
+// "Host (2/8) - 3 ms"
+std::printf("%s (%d/%d) - %.0f ms\n",
+            s.getHostGamertagProperty().c_str(),
+            s.getCurrentGamerCountProperty(),
+            s.getCurrentGamerCountProperty() + s.getOpenPublicGamerSlotsProperty(),
+            pingMs);</code></pre>
+        <p>
+          <code>NetworkSession::Join()</code> deliberately has no overload taking an explicit gamer list
+          &mdash; matching real XNA, it always draws from <code>Gamer::SignedInGamers</code>. Only
+          <code>Create()</code> accepts an explicit list.
+        </p>
+
+        <h2>Sending and receiving packets</h2>
+        <p>
+          <code>PacketWriter</code> derives from <code>System::IO::BinaryWriter</code> and adds overloads for
+          the XNA math types: <code>Color</code>, <code>Matrix</code>, <code>Quaternion</code>,
+          <code>Vector2</code>, <code>Vector3</code>, <code>Vector4</code>, plus <code>float</code> and
+          <code>double</code>. All of <code>BinaryWriter</code>'s other <code>Write()</code> overloads remain
+          available. <code>PacketReader</code> is the symmetric <code>BinaryReader</code>. Every one of these
+          round-trips is covered by <code>cna_demo_packet_roundtrip</code>.
+        </p>
+        <p>
+          You send through a <code>LocalNetworkGamer</code>, not through the session, and you pump the session
+          once per frame with <code>Update()</code>:
+        </p>
+<pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Net/PacketReader.hpp"
+#include "Microsoft/Xna/Framework/Net/PacketWriter.hpp"
+
+void MyGame::Update(GameTime&amp; gameTime) {
+    session_-&gt;Update();          // pumps ENet, raises queued events
+
+    // Broadcast our position to everyone else in the session.
+    PacketWriter writer;
+    writer.Write(localPosition_);                    // Vector2 overload
+    local_-&gt;SendData(writer, SendDataOptions::InOrder);
+
+    // Drain everything that arrived since the last frame.
+    PacketReader reader;
+    NetworkGamer* sender = nullptr;
+    while (local_-&gt;getIsDataAvailableProperty()) {
+        local_-&gt;ReceiveData(reader, sender);
+        if (sender != nullptr &amp;&amp; !sender-&gt;getIsLocalProperty()) {
+            remotePositions_[sender] = reader.ReadVector2();
         }
     }
-
-    void Send(const void* data, size_t len, bool reliable = true) {
-        if (!peer_) return;
-        ENetPacket* pkt = enet_packet_create(data, len,
-            reliable ? ENET_PACKET_FLAG_RELIABLE : 0);
-        enet_peer_send(peer_, 0, pkt);
-    }
-
-    ~NetworkManager() {
-        if (host_) enet_host_destroy(host_);
-        enet_deinitialize();
-    }
-
-private:
-    ENetHost* host_ = nullptr;
-    ENetPeer* peer_ = nullptr;
-};</code></pre>
-
-        <h2>SDL3_net option</h2>
+}</code></pre>
         <p>
-          SDL3_net provides a thin, cross-platform socket abstraction that pairs naturally with CNA (since
-          CNA already uses SDL3). It supports TCP streams and UDP datagrams.
+          The <code>sender</code> out-parameter can point at your own local gamer &mdash; a broadcast is
+          delivered to every gamer in the session including the originator &mdash; so the
+          <code>getIsLocalProperty()</code> check above is not optional.
         </p>
-<pre><code class="language-cpp">find_package(SDL3_net REQUIRED)
-target_link_libraries(MyGame PRIVATE SDL3_net::SDL3_net)</code></pre>
+        <p><code>SendDataOptions</code> has five members:</p>
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>Value</th><th>Guarantee</th></tr></thead>
+          <tbody>
+            <tr><td><code>None</code></td><td>May be dropped or reordered. Cheapest; right for per-frame position updates.</td></tr>
+            <tr><td><code>Reliable</code></td><td>Guaranteed to arrive, order unspecified.</td></tr>
+            <tr><td><code>InOrder</code></td><td>Guaranteed in order relative to other in-order packets.</td></tr>
+            <tr><td><code>ReliableInOrder</code></td><td>Guaranteed to arrive, in order. Right for one-shot events like "player fired".</td></tr>
+            <tr><td><code>Chat</code></td><td>Marks the packet as chat data.</td></tr>
+          </tbody>
+        </table>
+        </div>
+        <p>
+          XNA marked this enum <code>[Flags]</code>, but its members use plain sequential values, not
+          power-of-two bits &mdash; <code>ReliableInOrder</code> is a discrete member, not
+          <code>Reliable | InOrder</code>. CNA ports it as a plain enum with no bitwise operators, matching
+          the actual runtime behaviour.
+        </p>
+        <p>
+          <code>SendData()</code> also has overloads taking a raw
+          <code>std::vector&lt;SharpRuntime::bytecs&gt;</code>, an offset/count pair, and a target
+          <code>NetworkGamer*</code> recipient for point-to-point delivery instead of broadcast.
+        </p>
+
+        <h2>Session events</h2>
+        <p>
+          <code>NetworkSession</code> exposes <code>GamerJoined</code>, <code>GamerLeft</code>,
+          <code>GameStarted</code>, <code>GameEnded</code>, <code>HostChanged</code>, and
+          <code>SessionEnded</code>. Events are raised from <code>Update()</code>, never spontaneously.
+        </p>
+<pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Net/GamerJoinedEventArgs.hpp"
+#include "Microsoft/Xna/Framework/Net/GamerLeftEventArgs.hpp"
+#include "Microsoft/Xna/Framework/Net/NetworkSessionEndedEventArgs.hpp"
+
+session-&gt;GamerJoined += [this](System::Object*, const GamerJoinedEventArgs&amp; e) {
+    NetworkGamer* g = e.getGamerProperty();
+    if (!g-&gt;getIsLocalProperty()) {
+        remotePositions_[g] = Vector2(300.0f, 300.0f);
+    }
+};
+
+session-&gt;GamerLeft += [this](System::Object*, const GamerLeftEventArgs&amp; e) {
+    remotePositions_.erase(e.getGamerProperty());
+};
+
+session-&gt;SessionEnded += [](System::Object*, const NetworkSessionEndedEventArgs&amp;) {
+    // Host quit, you were removed, or the connection dropped.
+};
+
+session-&gt;Update();   // required: delivers the initial local-gamer join events</code></pre>
+        <div class="callout callout--note">
+          <span class="callout-icon">&#9432;</span>
+          <p><strong>Call <code>Update()</code> once immediately after subscribing.</strong> The local gamers
+          established by <code>Create()</code>/<code>Join()</code> are queued at construction time &mdash; you
+          could not possibly have subscribed yet, since the session pointer does not exist until the factory
+          returns. Real XNA replayed <code>GamerJoined</code> on subscription; C++ has no equivalent hook, so
+          the one extra <code>Update()</code> is the intended, permanent pattern, not a workaround.</p>
+        </div>
+
+        <h2>Lobby, game start, and game end</h2>
+        <p>
+          A session is in one of three <code>NetworkSessionState</code> values: <code>Lobby</code>,
+          <code>Playing</code>, or <code>Ended</code>. Gamers signal readiness with
+          <code>NetworkGamer::IsReady</code>; the host polls <code>IsEveryoneReady</code> and calls
+          <code>StartGame()</code>.
+        </p>
+<pre><code class="language-cpp">if (session-&gt;getIsHostProperty() &amp;&amp; session-&gt;getIsEveryoneReadyProperty()) {
+    session-&gt;StartGame();
+    session-&gt;Update();           // raises GameStarted, moves to Playing
+}
+
+// ... when the round is over:
+session-&gt;EndGame();
+session-&gt;Update();               // raises GameEnded
+session-&gt;ResetReady();           // clears every gamer's IsReady flag</code></pre>
+        <p>
+          Note that <code>EndGame()</code> returns the session to <code>Lobby</code>, not to
+          <code>Ended</code>. <code>Ended</code> is reached when the local gamer actually leaves the session.
+        </p>
+
+        <h2>What works, and what does not</h2>
+        <p>
+          The networking layer is real, but it is not complete. These limits are all verified against the
+          source, and it is better to design around them now than to discover them mid-project.
+        </p>
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>Area</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><code>NetworkSessionType::SystemLink</code></td>
+              <td><strong>Real transport.</strong> This is the only session type that opens an ENet host and puts bytes on the wire.</td>
+            </tr>
+            <tr>
+              <td><code>NetworkSessionType::Local</code></td>
+              <td>Fully functional as a single-process session: gamers, events, state transitions, and the local packet queue all work. No sockets involved.</td>
+            </tr>
+            <tr>
+              <td><code>PlayerMatch</code>, <code>Ranked</code></td>
+              <td>Create and behave as sessions, but no networking is started. Correctly so &mdash; matchmaking and ranked play required Xbox Live, which has no open replacement.</td>
+            </tr>
+            <tr>
+              <td>Voice chat</td>
+              <td>No-op by design. <code>EnableSendVoice()</code> and <code>SendPartyInvites()</code> have empty bodies; <code>HasVoice</code>/<code>IsTalking</code> never become true.</td>
+            </tr>
+            <tr>
+              <td><code>NetworkMachine::RemoveFromSession()</code></td>
+              <td>Throws <code>NotImplementedException</code>, matching FNA's own stub. Remove gamers through the session instead.</td>
+            </tr>
+            <tr>
+              <td><code>QualityOfService</code> bandwidth</td>
+              <td><code>BytesPerSecondUpstream</code> and <code>BytesPerSecondDownstream</code> are hardcoded to <code>0</code>. Discovery is connectionless UDP with no established peer to measure throughput from. The round-trip time fields <em>are</em> genuinely measured.</td>
+            </tr>
+            <tr>
+              <td><code>AllowHostMigration</code></td>
+              <td>Stored and readable, but migration is not implemented. If the host leaves, the session ends.</td>
+            </tr>
+            <tr>
+              <td><code>SimulatedLatency</code>, <code>SimulatedPacketLoss</code></td>
+              <td>Stored and readable, but not wired to any delay queue or synthetic drop. Setting them changes no observable network behaviour. This matches FNA's non-functional reference stub.</td>
+            </tr>
+            <tr>
+              <td>Leaderboards / TrueSkill</td>
+              <td>The <code>WriteArbitratedLeaderboard</code>, <code>WriteUnarbitratedLeaderboard</code>, and <code>WriteTrueSkill</code> delegates are wired and can be raised, but nothing in CNA ever raises them.</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+        <p>
+          In short: build LAN multiplayer on <code>SystemLink</code>, prototype single-process logic on
+          <code>Local</code>, and do not plan around voice, host migration, matchmaking, or simulated network
+          conditions.
+        </p>
 
         <h2>Lockstep vs client-server</h2>
         <p>
@@ -194,42 +418,45 @@ target_link_libraries(MyGame PRIVATE SDL3_net::SDL3_net)</code></pre>
         </p>
 
         <h2>Serialization of game state</h2>
-        <p>Simple peer-to-peer position sync skeleton:</p>
-<pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Vector2.hpp"
-#include &lt;unordered_map&gt;
-#include &lt;cstdint&gt;
+        <p>
+          Do not reinterpret-cast packed structs across the wire. <code>PacketWriter</code> already gives you
+          a portable, length-prefixed encoding for every type you need, and <code>PacketReader</code> reads
+          them back in the same order. Write a small, explicit encode/decode pair per message type:
+        </p>
+<pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Net/PacketReader.hpp"
+#include "Microsoft/Xna/Framework/Net/PacketWriter.hpp"
+#include "Microsoft/Xna/Framework/Vector2.hpp"
 
 using namespace Microsoft::Xna::Framework;
+using namespace Microsoft::Xna::Framework::Net;
 
-// Compact player state packet
-#pragma pack(push, 1)
+enum class MessageId : SharpRuntime::bytecs { PlayerState = 1, Fired = 2 };
+
 struct PlayerState {
-    uint8_t  playerId;
-    float    x, y;
-    float    velX, velY;
-    uint32_t sequenceNumber;
+    Vector2 position;
+    Vector2 velocity;
+    SharpRuntime::intcs sequenceNumber;
 };
-#pragma pack(pop)
 
-void SendPlayerState(NetworkManager&amp; net, uint8_t id,
-                     const Vector2&amp; pos, const Vector2&amp; vel,
-                     uint32_t seq) {
-    PlayerState pkt;
-    pkt.playerId       = id;
-    pkt.x              = pos.X;
-    pkt.y              = pos.Y;
-    pkt.velX           = vel.X;
-    pkt.velY           = vel.Y;
-    pkt.sequenceNumber = seq;
-    net.Send(&amp;pkt, sizeof(pkt), false);   // unreliable UDP for position
+void WritePlayerState(PacketWriter&amp; w, const PlayerState&amp; s) {
+    w.Write(static_cast&lt;SharpRuntime::bytecs&gt;(MessageId::PlayerState));
+    w.Write(s.position);          // Vector2 overload
+    w.Write(s.velocity);
+    w.Write(s.sequenceNumber);    // BinaryWriter's int overload
 }
 
-void OnReceiveState(const uint8_t* data, size_t len,
-                    std::unordered_map&lt;uint8_t, Vector2&gt;&amp; remotePositions) {
-    if (len &lt; sizeof(PlayerState)) return;
-    const PlayerState* pkt = reinterpret_cast&lt;const PlayerState*&gt;(data);
-    remotePositions[pkt-&gt;playerId] = Vector2(pkt-&gt;x, pkt-&gt;y);
+PlayerState ReadPlayerState(PacketReader&amp; r) {
+    PlayerState s;
+    s.position       = r.ReadVector2();
+    s.velocity       = r.ReadVector2();
+    s.sequenceNumber = r.ReadInt32();
+    return s;
 }</code></pre>
+        <p>
+          Reading the leading <code>MessageId</code> byte first lets one packet stream carry several message
+          types. Because a broadcast is delivered to the sender too, dispatch only after checking
+          <code>sender-&gt;getIsLocalProperty()</code>.
+        </p>
 
         <h2>Latency hiding</h2>
         <p>
@@ -245,17 +472,37 @@ Vector2 InterpolateRemote(const Vector2&amp; prev, const Vector2&amp; next,
     return Vector2::Lerp(prev, next, alpha);
 }</code></pre>
 
+        <h2>Working code to read next</h2>
+        <p>
+          Everything on this page is drawn from CNA's own networking demos. They compile and run against the
+          current source, so they are the authoritative reference when this page and the code disagree:
+        </p>
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>Demo target</th><th>What it demonstrates</th></tr></thead>
+          <tbody>
+            <tr><td><code>cna_demo_net_client_server_arena</code></td><td>Two processes, real <code>SystemLink</code> host and client, per-frame position sync with <code>PacketWriter</code>/<code>PacketReader</code>. The best starting point.</td></tr>
+            <tr><td><code>cna_demo_session_browser</code></td><td>LAN discovery via <code>Find()</code>, a selectable session list, and joining the highlighted entry.</td></tr>
+            <tr><td><code>cna_demo_packet_roundtrip</code></td><td>Every <code>PacketWriter</code>/<code>PacketReader</code> type pair, written and read back with the result verified.</td></tr>
+            <tr><td><code>cna_demo_session_lifecycle_events</code></td><td>Console-only, <code>NetworkSessionType::Local</code>: <code>StartGame()</code>/<code>EndGame()</code> and the resulting state transitions and events.</td></tr>
+            <tr><td><code>cna_demo_qos_probe</code></td><td>Measured <code>QualityOfService</code> round-trip times and live <code>NetworkGamer::RoundtripTime</code>.</td></tr>
+            <tr><td><code>cna_demo_net_avatar_sync</code></td><td>Synchronising richer per-gamer state than a bare position.</td></tr>
+            <tr><td><code>cna_demo_simulated_network_conditions</code></td><td>The <code>SimulatedLatency</code>/<code>SimulatedPacketLoss</code> dials &mdash; and honest output showing they do not affect the measured RTT.</td></tr>
+          </tbody>
+        </table>
+        </div>
+
         <nav class="docs-pagination" aria-label="Page navigation">
           <div class="docs-pagination-prev">
             <a href="96-physics.html" class="pagination-link pagination-prev">
               <span class="pagination-direction">&larr; Prev</span>
-              <span class="pagination-title">Tutorial 96: Physics Integration</span>
+              <span class="pagination-title">Tutorial 96: Physics Integration (Box2D / Bullet)</span>
             </a>
           </div>
           <div class="docs-pagination-next">
             <a href="98-localization.html" class="pagination-link pagination-next">
               <span class="pagination-direction">Next &rarr;</span>
-              <span class="pagination-title">Tutorial 98: Localization</span>
+              <span class="pagination-title">Tutorial 98: Localization and Multiple Languages</span>
             </a>
           </div>
         </nav>

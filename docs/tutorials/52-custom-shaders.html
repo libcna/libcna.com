@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 52: Writing Custom Shaders (ShaderEffect) - CNA</title>
-  <meta name="description" content="Write GLSL custom shaders in CNA using ShaderEffect, .shader.json descriptors, Apply(), and the EASYGL and Vulkan backend pipeline.">
+  <meta name="description" content="Write custom shaders in CNA with ShaderEffect: pass GLSL source text to the constructor, set uniforms with SetUniformXxx, and load source from a .cnj descriptor.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/52-custom-shaders.html">
   <meta property="og:title"       content="Tutorial 52: Writing Custom Shaders (ShaderEffect) - CNA">
-  <meta property="og:description" content="Write GLSL custom shaders in CNA using ShaderEffect, .shader.json descriptors, Apply(), and the EASYGL and Vulkan backend pipeline.">
+  <meta property="og:description" content="Write custom shaders in CNA with ShaderEffect: pass GLSL source text to the constructor, set uniforms with SetUniformXxx, and load source from a .cnj descriptor.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/52-custom-shaders.html">
@@ -76,235 +76,240 @@
 
       <h1>Tutorial 52: Writing Custom Shaders (ShaderEffect)</h1>
         <p class="doc-meta">CNA &mdash; C++ XNA 4.0 reimplementation</p>
-
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
-          <p><strong>Backend availability.</strong> <code>ShaderEffect</code> is supported on the <strong>EASYGL</strong> (OpenGL ES 3.0 / OpenGL 3.0+) and <strong>VULKAN</strong> backends. It is <strong>not</strong> available on <code>SDL_RENDERER</code> or <code>bgfx</code> backends. Always check your <code>CMakeLists.txt</code> backend selection before using custom shaders.</p>
+          <p><strong><code>ShaderEffect</code> is NOXNA.</strong> It is a CNA extension, not part of the XNA 4.0 API &mdash; its header carries the <code>NOXNA</code> marker on the class and on nearly every one of its methods. Real XNA had no such type; you shipped compiled <code>.fx</code> bytecode instead. Code written against <code>ShaderEffect</code> will not port back to XNA or MonoGame unchanged.</p>
         </div>
 
-        <h2>ShaderEffect class</h2>
-        <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
-using namespace Microsoft::Xna::Framework::Graphics;
+        <h2>Why this exists: compiled .fx is not supported</h2>
+        <p>XNA's custom-shader story was HLSL compiled to bytecode by the Content Pipeline's <code>EffectProcessor</code>, then handed to <code>new Effect(device, effectCode)</code>. CNA has that constructor, and it throws:</p>
+        <pre><code class="language-cpp">// Microsoft/Xna/Framework/Graphics/Effect.hpp
+Effect(GraphicsDevice&amp; device, const std::vector&lt;SharpRuntime::bytecs&gt;&amp; effectCode);
+// throws System::NotImplementedException -- always.</code></pre>
+        <p>The exception message says why: CNA has no MojoShader-equivalent bytecode parser or translator, and full <code>.fx</code> bytecode support is tracked as separate future work. Until that lands there are exactly two ways to get pixels on screen &mdash; one of the built-in stock effects (<code>BasicEffect</code>, <code>AlphaTestEffect</code>, <code>DualTextureEffect</code>, <code>EnvironmentMapEffect</code>, <code>SkinnedEffect</code>, <code>SpriteEffect</code>), or a hand-authored <code>ShaderEffect</code>. This tutorial covers the second.</p>
 
-// Load from a .shader.json descriptor in the content directory
-auto effect = std::make_unique&lt;ShaderEffect&gt;(
-    getGraphicsDeviceProperty(),
-    "Content/shaders/tinted"); // no extension — ContentManager adds .shader.json
+        <h2>The constructor takes source text, not a path</h2>
+        <p>This is the single most important fact on this page. <code>ShaderEffect</code> takes <strong>three</strong> arguments, and the two strings are the shader source code itself:</p>
+        <pre><code class="language-cpp">// Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp
+NOXNA ShaderEffect(GraphicsDevice&amp; device,
+                   const std::string&amp; vertSrc,   // contents of the vertex shader (not a file path)
+                   const std::string&amp; fragSrc);  // contents of the fragment shader (not a file path)</code></pre>
+        <p>The header comment spells out "not a file path" for both parameters. Passing <code>"Content/shaders/tinted"</code> will not load anything &mdash; that string is handed to the backend as shader source, fails to compile, and leaves you with an invalid effect.</p>
+        <p>The constructor does <strong>not</strong> throw on a compile failure. This is how you find out:</p>
+        <pre><code class="language-cpp">NOXNA [[nodiscard]] bool IsEffectValid() const;</code></pre>
+        <p>Treat a <code>false</code> here as a hard error during development. There is nothing else that will tell you.</p>
 
-// Set uniform values
-effect-&gt;Parameters["World"]-&gt;SetValue(worldMatrix);
-effect-&gt;Parameters["View"]-&gt;SetValue(viewMatrix);
-effect-&gt;Parameters["Projection"]-&gt;SetValue(projMatrix);
-effect-&gt;Parameters["TintColor"]-&gt;SetValue(Vector4(1.0f, 0.5f, 0.0f, 1.0f));
-effect-&gt;Parameters["MainTexture"]-&gt;SetValue(texture_.get());
-
-// Bind vertex buffer, then apply + draw for each pass
-gd.setVertexBuffer(*vb_);
-for (auto&amp; pass : effect-&gt;getCurrentTechnique().Passes) {
-    pass.Apply(); // binds the GLSL program and uploads uniforms
-    gd.DrawPrimitives(PrimitiveType::TriangleList, 0, primitiveCount_);
-}</code></pre>
-
-        <h2>.shader.json descriptor</h2>
-        <p>The descriptor lives in your <code>Content/shaders/</code> directory. It names the vertex and fragment shader source files and declares the uniforms your C++ code will set.</p>
-        <pre><code class="language-cpp">// Content/shaders/tinted.shader.json
-{
-    "name": "TintedShader",
-    "techniques": [
-        {
-            "name": "Default",
-            "passes": [
-                {
-                    "name": "Pass0",
-                    "vertexShader":   "shaders/tinted_vert.glsl",
-                    "fragmentShader": "shaders/tinted_frag.glsl",
-                    "vulkanVertexSpirv":   "shaders/tinted_vert.spv",
-                    "vulkanFragmentSpirv": "shaders/tinted_frag.spv"
-                }
-            ]
-        }
-    ],
-    "parameters": [
-        { "name": "World",        "type": "Matrix" },
-        { "name": "View",         "type": "Matrix" },
-        { "name": "Projection",   "type": "Matrix" },
-        { "name": "TintColor",    "type": "Vector4" },
-        { "name": "MainTexture",  "type": "Texture2D", "slot": 0 }
-    ]
-}</code></pre>
-
-        <h2>Vertex shader — GLSL (EASYGL backend)</h2>
-        <pre><code class="language-glsl">// Content/shaders/tinted_vert.glsl
-#version 300 es
+        <h2>A minimal working shader pair</h2>
+        <p>The most direct place to put source is a raw string literal. This pair matches CNA's SpriteBatch vertex layout exactly: location 0 is the position in pixel coordinates, location 1 the texture coordinate, location 2 the vertex colour. SpriteBatch itself sets the <code>projection</code> uniform on whatever program is bound.</p>
+        <pre><code class="language-glsl">#version 300 es
 precision highp float;
 
-// Vertex attributes — must match the VertexDeclaration
-in vec3 aPosition;
-in vec3 aNormal;
-in vec2 aTexCoord0;
+layout(location = 0) in vec2 aPos;
+layout(location = 1) in vec2 aTexCoord;
+layout(location = 2) in vec4 aColor;
 
-// Uniforms declared in .shader.json
-uniform mat4 World;
-uniform mat4 View;
-uniform mat4 Projection;
+out vec2 TexCoord;
+out vec4 Color;
 
-// Outputs to fragment shader
-out vec2 vTexCoord;
-out vec3 vWorldNormal;
+uniform mat4 projection;
 
-void main() {
-    mat4 wvp = Projection * View * World;
-    gl_Position = wvp * vec4(aPosition, 1.0);
-
-    vTexCoord   = aTexCoord0;
-    // Transform normal to world space (use inverse-transpose for non-uniform scale)
-    vWorldNormal = normalize(mat3(World) * aNormal);
+void main()
+{
+    gl_Position = projection * vec4(aPos, 0.0, 1.0);
+    TexCoord = aTexCoord;
+    Color = aColor;
 }</code></pre>
-
-        <h2>Fragment shader — GLSL (EASYGL backend)</h2>
-        <pre><code class="language-glsl">// Content/shaders/tinted_frag.glsl
-#version 300 es
+        <pre><code class="language-glsl">#version 300 es
 precision mediump float;
 
-in vec2 vTexCoord;
-in vec3 vWorldNormal;
+in vec2 TexCoord;
+in vec4 Color;
 
-uniform sampler2D MainTexture;
-uniform vec4      TintColor;
+out vec4 FragColor;
 
-out vec4 fragColor;
+uniform sampler2D texture1;
 
-void main() {
-    vec4 texSample = texture(MainTexture, vTexCoord);
-
-    // Simple diffuse: dot with a hard-coded upward light direction
-    vec3  lightDir  = normalize(vec3(0.3, 1.0, 0.5));
-    float diffuse   = max(dot(vWorldNormal, lightDir), 0.15);
-
-    // Multiply texture colour by tint and light
-    fragColor = texSample * TintColor * vec4(vec3(diffuse), 1.0);
+void main()
+{
+    vec4 t = texture(texture1, TexCoord);
+    FragColor = vec4(t.r, 0.0, 0.0, t.a);   // keep only the red channel
 }</code></pre>
+        <p>The <code>sampler2D texture1</code> uniform defaults to texture unit 0, which is where SpriteBatch binds the sprite texture &mdash; so for this shader no explicit sampler binding is needed at all.</p>
 
-        <h2>Vulkan: SPIR-V shaders</h2>
-        <p>For the Vulkan backend, compile the GLSL sources to SPIR-V with <code>glslangValidator</code> or <code>glslc</code>:</p>
-        <pre><code class="language-cpp">// Command-line compilation (run once, ship the .spv files as assets)
-// glslc shaders/tinted_vert.glsl -o shaders/tinted_vert.spv
-// glslc shaders/tinted_frag.glsl -o shaders/tinted_frag.spv
-
-// The .shader.json vulkanVertex/FragmentSpirv fields point to these .spv files.
-// CNA picks GLSL or SPIR-V automatically based on the active backend.</code></pre>
-
-        <h2>Complete C++ usage — loading and drawing</h2>
-        <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Game.hpp"
-#include "Microsoft/Xna/Framework/Graphics/GraphicsDeviceManager.hpp"
-#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
-#include "Microsoft/Xna/Framework/Graphics/VertexBuffer.hpp"
-#include "Microsoft/Xna/Framework/Graphics/VertexPositionNormalTexture.hpp"
+        <h2>Using it with SpriteBatch</h2>
+        <p>The six-argument <code>Begin()</code> overload takes an <code>Effect*</code> as its last parameter. Pass the <code>ShaderEffect</code> there and it replaces the built-in sprite shader for that batch:</p>
+        <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+#include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
 
 using namespace Microsoft::Xna::Framework;
 using namespace Microsoft::Xna::Framework::Graphics;
 
-class TintedShaderDemo final : public Game {
-public:
-    TintedShaderDemo() : graphics_(this) {
-        graphics_.setPreferredBackBufferWidth(800);
-        graphics_.setPreferredBackBufferHeight(600);
+static const char* kVertSrc = R"(#version 300 es
+// ... vertex source as above ...
+)";
+
+static const char* kFragSrc = R"(#version 300 es
+// ... fragment source as above ...
+)";
+
+void Initialize() override
+{
+    Game::Initialize();
+    auto&amp; device = getGraphicsDeviceProperty();
+
+    sb_ = std::make_unique&lt;SpriteBatch&gt;(device);
+    fx_ = std::make_unique&lt;ShaderEffect&gt;(device, kVertSrc, kFragSrc);
+
+    if (!fx_-&gt;IsEffectValid()) {
+        // The GLSL did not compile. Do not draw with it.
     }
+}
 
-protected:
-    void LoadContent() override {
-        auto&amp; content = getContentProperty();
-        content.setRootDirectory("Content");
+void Draw(const GameTime&amp;) override
+{
+    auto&amp; device = getGraphicsDeviceProperty();
+    device.Clear(Color(0, 255, 0, 255));
 
-        // Load texture
-        texture_ = content.Load&lt;Texture2D&gt;("textures/crate");
+    sb_-&gt;Begin(SpriteSortMode::Deferred, BlendState::AlphaBlend,
+               nullptr, nullptr, nullptr, fx_.get());
+    sb_-&gt;Draw(tex_, Rectangle(64, 64, 128, 128),
+              Rectangle(0, 0, 1, 1), Color::White);
+    sb_-&gt;End();
+}</code></pre>
+        <p>Build the effect once and keep it alive. Constructing one per frame recompiles the shader program every frame.</p>
 
-        // Load custom ShaderEffect from descriptor
-        effect_ = std::make_unique&lt;ShaderEffect&gt;(
-            getGraphicsDeviceProperty(), "shaders/tinted");
-
-        // Build a quad (two triangles, positions + normals + texcoords)
-        VertexPositionNormalTexture quad[] = {
-            { Vector3(-1, -1, 0), Vector3::Backward, Vector2(0, 1) },
-            { Vector3(-1,  1, 0), Vector3::Backward, Vector2(0, 0) },
-            { Vector3( 1,  1, 0), Vector3::Backward, Vector2(1, 0) },
-            { Vector3(-1, -1, 0), Vector3::Backward, Vector2(0, 1) },
-            { Vector3( 1,  1, 0), Vector3::Backward, Vector2(1, 0) },
-            { Vector3( 1, -1, 0), Vector3::Backward, Vector2(1, 1) },
-        };
-        vb_ = std::make_unique&lt;VertexBuffer&gt;(
-            getGraphicsDeviceProperty(),
-            VertexPositionNormalTexture::VertexDeclaration,
-            6, BufferUsage::None);
-        vb_-&gt;SetData(quad, 6);
-    }
-
-    void Update(GameTime&amp; gameTime) override {
-        float t = static_cast&lt;float&gt;(gameTime.TotalGameTime.TotalSeconds());
-        // Pulse the tint colour between orange and white
-        float pulse = (std::sin(t * 2.0f) + 1.0f) * 0.5f;
-        tintColor_ = Vector4(1.0f, 0.4f + pulse * 0.6f, pulse, 1.0f);
-    }
-
-    void Draw(const GameTime&amp; gameTime) override {
-        auto&amp; gd = getGraphicsDeviceProperty();
-        gd.Clear(Color::Black);
-
-        float t = static_cast&lt;float&gt;(gameTime.TotalGameTime.TotalSeconds());
-        Matrix world = Matrix::CreateRotationY(t * 0.5f);
-        Matrix view  = Matrix::CreateLookAt(
-            Vector3(0, 0, 3), Vector3::Zero, Vector3::Up);
-        Matrix proj  = Matrix::CreatePerspectiveFieldOfView(
-            MathHelper::PiOver4, 800.0f / 600.0f, 0.1f, 100.0f);
-
-        // Set uniforms
-        effect_-&gt;Parameters["World"]-&gt;SetValue(world);
-        effect_-&gt;Parameters["View"]-&gt;SetValue(view);
-        effect_-&gt;Parameters["Projection"]-&gt;SetValue(proj);
-        effect_-&gt;Parameters["TintColor"]-&gt;SetValue(tintColor_);
-        effect_-&gt;Parameters["MainTexture"]-&gt;SetValue(texture_);
-
-        gd.setVertexBuffer(*vb_);
-        for (auto&amp; pass : effect_-&gt;getCurrentTechnique().Passes) {
-            pass.Apply();
-            gd.DrawPrimitives(PrimitiveType::TriangleList, 0, 2);
-        }
-        gd.Present();
-    }
-
-private:
-    GraphicsDeviceManager          graphics_;
-    std::unique_ptr&lt;ShaderEffect&gt;  effect_;
-    std::unique_ptr&lt;VertexBuffer&gt;  vb_;
-    Texture2D*                     texture_   = nullptr;
-    Vector4                        tintColor_ = Vector4::One;
-};
-
-int main() { TintedShaderDemo game; game.Run(); }</code></pre>
-
-        <h2>Uniform types supported by Parameters</h2>
+        <h2>Setting uniforms</h2>
+        <p>There is no <code>Parameters[...]</code> collection on <code>ShaderEffect</code>. Uniforms are set by name through a family of direct methods, each taking a <code>const char*</code> name:</p>
         <div class="table-wrap">
         <table>
-          <thead><tr><th>SetValue overload</th><th>GLSL uniform type</th></tr></thead>
+          <thead><tr><th>Method</th><th>Uniform type</th></tr></thead>
           <tbody>
-            <tr><td><code>SetValue(float)</code></td><td><code>float</code></td></tr>
-            <tr><td><code>SetValue(Vector2)</code></td><td><code>vec2</code></td></tr>
-            <tr><td><code>SetValue(Vector3)</code></td><td><code>vec3</code></td></tr>
-            <tr><td><code>SetValue(Vector4)</code></td><td><code>vec4</code></td></tr>
-            <tr><td><code>SetValue(Matrix)</code></td><td><code>mat4</code></td></tr>
-            <tr><td><code>SetValue(int)</code></td><td><code>int</code> / <code>sampler2D</code> slot</td></tr>
-            <tr><td><code>SetValue(Texture2D*)</code></td><td><code>sampler2D</code></td></tr>
-            <tr><td><code>SetValue(bool)</code></td><td><code>bool</code></td></tr>
+            <tr><td><code>SetUniformMat4(const char* name, const float* matrix)</code></td><td><code>mat4</code>, column-major</td></tr>
+            <tr><td><code>SetUniformVec4(const char* name, float x, float y, float z, float w)</code></td><td><code>vec4</code></td></tr>
+            <tr><td><code>SetUniformVec3(const char* name, float x, float y, float z)</code></td><td><code>vec3</code></td></tr>
+            <tr><td><code>SetUniformVec2(const char* name, float x, float y)</code></td><td><code>vec2</code></td></tr>
+            <tr><td><code>SetUniformFloat(const char* name, float value)</code></td><td><code>float</code></td></tr>
+            <tr><td><code>SetUniformInt(const char* name, int value)</code></td><td><code>int</code></td></tr>
+            <tr><td><code>SetUniformFloatArray(const char* name, const float* values, int count)</code></td><td><code>float[]</code> &mdash; <code>count</code> is the number of scalar elements</td></tr>
+            <tr><td><code>SetUniformVec2Array(const char* name, const float* values, int count)</code></td><td><code>vec2[]</code> &mdash; <code>count</code> is the number of vec2s, so <code>values</code> holds <code>count * 2</code> floats</td></tr>
           </tbody>
         </table>
         </div>
+        <p>Note the difference between the last two rows: <code>SetUniformFloatArray</code> counts scalars, <code>SetUniformVec2Array</code> counts elements. Both are documented that way in the header, and it is easy to get wrong.</p>
+        <p>Textures beyond unit 0 are bound with <code>SetTexture</code>, which has a <code>Texture2D</code> overload and a <code>TextureCube</code> overload for shaders declaring a <code>samplerCube</code>:</p>
+        <pre><code class="language-cpp">NOXNA void SetTexture(int unit, Texture2D&amp; texture);
+NOXNA void SetTexture(int unit, TextureCube&amp; texture);</code></pre>
+        <p>Unit 0 is normally driven by the caller &mdash; SpriteBatch's own texture parameter, for instance &mdash; so these are for the extra units a custom shader samples directly, the equivalent of XNA's <code>GraphicsDevice.Textures[unit] = tex</code>.</p>
+
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>Call order matters.</strong> <code>SetUniformXxx()</code> and <code>SetTexture()</code> write directly to whatever shader program is currently bound. Call <code>Apply()</code> first to bind this effect's program, <em>then</em> set the uniforms, then draw. Setting uniforms before <code>Apply()</code> writes them into whichever program happened to be bound.</p>
+        </div>
+
+        <h2>Driving a real 3D draw call</h2>
+        <p><code>ShaderEffect</code> implements <code>IEffectMatrices</code>, the same interface every stock effect implements. <code>World</code>, <code>View</code>, and <code>Projection</code> are therefore set as properties, and CNA forwards them to the backend, which binds them as uniforms of exactly those names on your compiled program &mdash; matching the naming convention the original XNA samples' own <code>.fx</code> sources already used.</p>
+        <pre><code class="language-cpp">auto* fx = dynamic_cast&lt;ShaderEffect*&gt;(fxBase_.get());
+
+fx-&gt;setWorldProperty(world);
+fx-&gt;setViewProperty(Matrix::CreateLookAt(Vector3(0.0f, 0.0f, 3.0f),
+                                         Vector3::Zero,
+                                         Vector3(0.0f, 1.0f, 0.0f)));
+fx-&gt;setProjectionProperty(Matrix::CreatePerspectiveFieldOfView(
+    MathHelper::PiOver4, vp.getAspectRatioProperty(), 0.1f, 100.0f));
+
+// Bind the program first, then push this effect's own uniforms.
+fx-&gt;Apply();
+fx-&gt;SetTexture(0, whiteTex_);
+fx-&gt;SetUniformVec3("uLightDir", 0.0f, 0.0f, 1.0f);
+fx-&gt;SetUniformVec3("uDiffuseColor", 200.0f / 255.0f, 100.0f / 255.0f, 50.0f / 255.0f);
+
+device.SetVertexBuffer(vb_.get());
+device.setIndicesProperty(ib_.get());
+device.DrawIndexedPrimitives(PrimitiveType::TriangleList, 0, 0, 4, 0, 2);</code></pre>
+        <p>The matching vertex shader declares those three uniforms and an attribute layout that matches the vertex stride you are drawing with &mdash; here <code>VertexPositionNormalTexture</code>, stride 32:</p>
+        <pre><code class="language-glsl">#version 300 es
+precision highp float;
+
+layout(location = 0) in vec3 aPosition;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec2 aTexCoord;
+
+out vec3 vWorldNormal;
+out vec2 vTexCoord;
+
+uniform mat4 World;
+uniform mat4 View;
+uniform mat4 Projection;
+
+void main() {
+    vec4 worldPos = World * vec4(aPosition, 1.0);
+    gl_Position = Projection * View * worldPos;
+    vWorldNormal = mat3(World) * aNormal;
+    vTexCoord = aTexCoord;
+}</code></pre>
+
+        <h2>Where the source actually lives</h2>
+        <p>The constructor wants strings, so the text has to come from somewhere. There are three practical options.</p>
+        <p><strong>Raw string literals</strong>, as above, keep the shader in the binary: no runtime file dependency, no way for the asset to go missing. The cost is that changing a shader means recompiling the game, and no editor will syntax-highlight GLSL inside a C++ literal.</p>
+        <p><strong>Read the file yourself</strong> and pass the result straight in. Nothing in <code>ShaderEffect</code> requires <code>ContentManager</code> involvement:</p>
+        <pre><code class="language-cpp">#include "System/IO/File.hpp"
+
+const std::string vert = System::IO::File::ReadAllText("Content/shaders/lit3d.vert.glsl");
+const std::string frag = System::IO::File::ReadAllText("Content/shaders/lit3d.frag.glsl");
+
+ShaderEffect fx(device, vert, frag);</code></pre>
+        <p><strong>A <code>.cnj</code> descriptor</strong> lets <code>ContentManager</code> do the reading. CNA's content pipeline has a real <code>Effect</code> reader for this. The descriptor has exactly two shader fields, <code>vertex</code> and <code>fragment</code>, each naming a file relative to the descriptor:</p>
+        <pre><code class="language-json">{
+  "cnjVersion": 1,
+  "type": "Effect",
+  "vertex": "lit3d.vert.glsl",
+  "fragment": "lit3d.frag.glsl"
+}</code></pre>
+        <p>Missing either field raises a <code>ContentLoadException</code>. Load it as a <code>std::shared_ptr&lt;Effect&gt;</code> &mdash; that, not <code>ShaderEffect</code>, is the type the reader is registered for &mdash; then downcast:</p>
+        <pre><code class="language-cpp">getContentProperty().setRootDirectoryProperty("Content");
+
+std::shared_ptr&lt;Effect&gt; fxBase =
+    getContentProperty().Load&lt;std::shared_ptr&lt;Effect&gt;&gt;("lit3d");
+
+auto* fx = dynamic_cast&lt;ShaderEffect*&gt;(fxBase.get());
+if (fx == nullptr || !fx-&gt;IsEffectValid()) {
+    // Descriptor loaded, but the shader did not compile.
+}</code></pre>
+
+        <h2>Backends and the shading language</h2>
+        <p>The header documents these strings as GLSL, and GLSL is what the reference backend expects &mdash; but the constructor does not parse them. It forwards them to whichever graphics backend is compiled in, and different backends want different things:</p>
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>Backend</th><th>What the source strings must contain</th></tr></thead>
+          <tbody>
+            <tr><td>EasyGL</td><td>GLSL, compiled by the GL driver. The reference path &mdash; CNA's shader examples target it.</td></tr>
+            <tr><td>SDL_GPU</td><td>GLSL, compiled to SPIR-V in-process via shaderc.</td></tr>
+            <tr><td>Software, Headless</td><td>GLSL, handled by their own effect backends.</td></tr>
+            <tr><td>Vulkan</td><td>SPIR-V <em>bytes</em>, not GLSL text. The string goes straight to <code>vkCreateShaderModule</code> and its length must be a multiple of 4. Pre-compile with <code>glslc</code> or <code>glslangValidator</code>.</td></tr>
+            <tr><td>D3D9 / D3D11 / D3D12</td><td>HLSL, compiled with <code>D3DCompile</code>. The entry point must be named <code>main</code>. D3D9 targets <code>vs_2_0</code>/<code>ps_2_0</code> on Reach and <code>vs_3_0</code>/<code>ps_3_0</code> on HiDef.</td></tr>
+            <tr><td>bgfx</td><td>Not supported. Its effect backend's <code>CompileProgram</code> returns <code>false</code> unconditionally, so <code>IsEffectValid()</code> is always <code>false</code>.</td></tr>
+          </tbody>
+        </table>
+        </div>
+        <p>The practical consequence, stated plainly: a single shader source string is <strong>not</strong> portable across all of CNA's backends. Shipping on more than one shading language means authoring one source variant per language and selecting it at build or run time. <code>IsEffectValid()</code> is what tells you whether the one you picked worked.</p>
+        <p>Pre-compiling GLSL to SPIR-V for the Vulkan backend is an ordinary offline step:</p>
+        <pre><code class="language-bash">glslc -fshader-stage=vert lit3d.vert.glsl -o lit3d.vert.spv
+glslc -fshader-stage=frag lit3d.frag.glsl -o lit3d.frag.spv</code></pre>
+        <p>Read those <code>.spv</code> files as bytes and pass their contents as the two strings.</p>
+
+        <h2>Cloning</h2>
+        <p><code>Clone()</code> on a <code>ShaderEffect</code> recompiles a new backend program from the same source strings rather than sharing the original's compiled program. This is a deliberate deviation from the stock effects, which share GPU state implicitly because CNA caches their pipelines globally by state rather than per instance. A <code>ShaderEffect</code> uniquely owns its compiled program, so cloning costs a real recompile &mdash; do not do it per frame.</p>
 
         <h2>Summary</h2>
         <ul>
-          <li><code>ShaderEffect</code> wraps a GLSL (or SPIR-V) shader program behind the familiar XNA <code>Effect</code> API.</li>
-          <li>The <code>.shader.json</code> descriptor declares techniques, passes, and uniform names so CNA can bind them automatically.</li>
-          <li>Only the <strong>EASYGL</strong> and <strong>VULKAN</strong> backends support <code>ShaderEffect</code>; <code>SDL_RENDERER</code> and <code>bgfx</code> do not.</li>
-          <li>For Vulkan, pre-compile GLSL to SPIR-V with <code>glslc</code> and reference the <code>.spv</code> files in the descriptor.</li>
+          <li><code>ShaderEffect</code> is a NOXNA CNA extension, and it is the only working custom-shader path: <code>Effect(device, effectCode)</code> throws <code>NotImplementedException</code> for compiled <code>.fx</code> bytecode.</li>
+          <li>The constructor takes <strong>three</strong> arguments &mdash; the device, and the vertex and fragment shader <strong>source text</strong>. Not a file path.</li>
+          <li>It does not throw on a compile failure. Check <code>IsEffectValid()</code>.</li>
+          <li>Uniforms are set with <code>SetUniformMat4</code>/<code>Vec4</code>/<code>Vec3</code>/<code>Vec2</code>/<code>Float</code>/<code>Int</code>/<code>FloatArray</code>/<code>Vec2Array</code> by name, and textures with <code>SetTexture(unit, tex)</code>. There is no <code>Parameters</code> collection.</li>
+          <li>Call <code>Apply()</code> before setting uniforms &mdash; they write to the currently bound program.</li>
+          <li><code>World</code>/<code>View</code>/<code>Projection</code> come from <code>IEffectMatrices</code> and are bound as uniforms of those names automatically.</li>
+          <li>Keep source in a raw string literal, read it yourself, or reference it from a <code>.cnj</code> <code>Effect</code> descriptor with <code>"vertex"</code> and <code>"fragment"</code> fields.</li>
+          <li>The expected shading language is backend-dependent: GLSL on EasyGL/SDL_GPU, SPIR-V bytes on Vulkan, HLSL on the D3D backends, and nothing at all on bgfx.</li>
         </ul>
 
         <nav class="docs-pagination" aria-label="Page navigation">
@@ -314,7 +319,12 @@ int main() { TintedShaderDemo game; game.Run(); }</code></pre>
               <span class="pagination-title">Tutorial 51: Custom Vertex Types</span>
             </a>
           </div>
-          <div class="docs-pagination-next"></div>
+          <div class="docs-pagination-next">
+          <a href="53-effect-parameter.html" class="pagination-link pagination-next">
+            <span class="pagination-direction">Next &#8594;</span>
+            <span class="pagination-title">Tutorial 53: GLSL Uniforms and EffectParameter</span>
+          </a>
+        </div>
         </nav>
       </article>
     </div>
