@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 105: Browser-Native Renderers - CNA Tutorials</title>
+  <meta name="description" content="CANVAS, HTML_DOM and SVG_DOM draw with the browser's own 2D primitives instead of WebGL. Which one to pick, the backbuffer readback that only one of them has, and the one capability CNA answers by asking the live browser.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/105-browser-renderers.html">
+  <meta property="og:title"       content="Tutorial 105: Browser-Native Renderers - CNA Tutorials">
+  <meta property="og:description" content="CANVAS, HTML_DOM and SVG_DOM draw with the browser's own 2D primitives instead of WebGL. Which one to pick, the backbuffer readback that only one of them has, and the one capability CNA answers by asking the live browser.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/105-browser-renderers.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 105: Browser-Native Renderers",
+  "url": "https://libcna.com/docs/tutorials/105-browser-renderers.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Intermediate"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 105</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 105: Browser-Native Renderers</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Renderers</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>What <code>CANVAS</code>, <code>HTML_DOM</code> and <code>SVG_DOM</code> actually put on the page, and how to choose between them.</li>
+          <li>The one thing <code>CANVAS</code> can do that the other two cannot, and the one performance shape that inverts the ranking.</li>
+          <li>The only capability in CNA whose answer is a live browser query &mdash; and the only place a renderer degrades silently.</li>
+          <li>The three web traps that apply no matter which browser renderer you pick.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="81-emscripten.html">Tutorial 81: Building for the Web</a> covers the Emscripten toolchain these three renderers require.</p>
+      </div>
+
+      <p>Alongside <code>WEBGL1</code> and <code>WEBGL2</code>, CNA has three browser renderers that do not use WebGL at all. They draw with the browser's own 2D primitives: a Canvas 2D context, CSS-composited DOM elements, or real SVG nodes.</p>
+
+      <p>All three are <strong>Emscripten-only</strong> and refuse to configure for a native target with a <code>FATAL_ERROR</code>, because a <code>CanvasRenderingContext2D</code>, an <code>HTMLDivElement</code> and the SVG namespace only exist inside a browser. All three are <strong>2D-only</strong>: every 3D entry point they override throws deterministically rather than silently doing nothing.</p>
+
+      <h2 id="what-they-emit">What each one puts on the page</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Renderer</th><th>How a sprite is drawn</th></tr></thead>
+        <tbody>
+          <tr><td><code>CANVAS</code></td><td>A <code>drawImage</code> call into a <code>CanvasRenderingContext2D</code>. Each <code>Texture2D</code> owns a private off-screen canvas; uploads are a single synchronous <code>putImageData</code>.</td></tr>
+          <tr><td><code>HTML_DOM</code></td><td>A pooled <code>&lt;div&gt;</code> inside one root element, carrying a CSS <code>transform</code> list for position/rotation/scale/flip, a <code>background-image</code> data URL for the texture, and <code>opacity</code> for tint alpha. Draw order is DOM document order.</td></tr>
+          <tr><td><code>SVG_DOM</code></td><td>A pooled <code>&lt;g&gt;</code> inside one <code>&lt;svg&gt;</code> root: a nested <code>&lt;svg&gt;</code> cropping an <code>&lt;image&gt;</code>, or a <code>&lt;pattern&gt;</code>-filled <code>&lt;rect&gt;</code> for tiled draws. Tint is a native <code>feColorMatrix</code> filter.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>In all three cases SDL3 still owns the real <code>&lt;canvas&gt;</code> element &mdash; it stays in the layout, hidden, because SDL keeps sizing it and delivering input through it. The DOM and SVG renderers create their own surface over the top of it.</p>
+
+      <h2 id="readback">The decisive difference: backbuffer readback</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong><code>HTML_DOM</code> and <code>SVG_DOM</code> cannot read the backbuffer.</strong> <code>GetBackBufferData()</code> throws on both, and the exception says why: no browser API rasterises a live DOM or SVG subtree to pixels synchronously. <code>CANVAS</code> can &mdash; it is a real, synchronous <code>getImageData</code> call.</p>
+      </div>
+
+      <p>The workaround is the same on both: render into a <code>RenderTarget2D</code> and read <em>that</em>. Render targets on both renderers are backed by a real off-screen canvas, so their readback is a genuine <code>getImageData</code>. If your game takes screenshots, runs a pixel-comparison test, or samples the frame for any reason, plan for that indirection &mdash; or choose <code>CANVAS</code>.</p>
+
+      <h2 id="performance">Performance shapes, not a ranking</h2>
+
+      <p><code>HTML_DOM</code> exists because CSS <code>transform</code> and <code>opacity</code> are compositor-only properties: a frame in which sprites merely move triggers no layout and no repaint. Sprite <em>n</em> of a frame always lands on pool element <em>n</em>, each element caches its last applied style values, and a whole batch crosses the WebAssembly-to-JavaScript boundary in one call. A frame in which nothing changes performs zero CSS property writes.</p>
+
+      <p>The cost sits somewhere else entirely:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Workload</th><th>How <code>HTML_DOM</code> behaves</th></tr></thead>
+        <tbody>
+          <tr><td>Moving, rotating, scaling or fading sprites</td><td>Fast &mdash; one <code>transform</code> or <code>opacity</code> write each, composited on the GPU.</td></tr>
+          <tr><td>Large sprite counts that stay stable frame to frame</td><td>Fast.</td></tr>
+          <tr><td>Uploading <em>and drawing</em> texture pixels every frame</td><td>Slow. Each texture/tint/address-mode variant needs a PNG data URL, encoded lazily on first draw and then cached. Fine once at load time; expensive every frame.</td></tr>
+          <tr><td>Animating a sprite's tint RGB every frame</td><td>Slow &mdash; a new cached variant per distinct colour, capped by an LRU.</td></tr>
+          <tr><td>Very high sprite counts</td><td>Each pooled sprite carries its own compositor layer, so memory grows with the sprite count. This targets normal 2D games, not particle storms.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>The rule of thumb: <code>HTML_DOM</code> rewards static sprite sheets and moving sprites, and punishes dynamic pixel data. If your game calls <code>Texture2D::SetData</code> every frame on a texture it also draws, use <code>CANVAS</code> or a WebGL profile instead.</p>
+
+      <h2 id="additive">The one live capability query in CNA</h2>
+
+      <p><code>HTML_DOM</code> and <code>SVG_DOM</code> report <code>false</code> for every <code>GraphicsCapability</code> except one. <code>AdditiveBlending</code> is answered by asking the running browser, once, whether it supports the CSS value these renderers map <code>BlendState::Additive</code> onto:</p>
+
+      <pre><code class="language-cpp">// Answers from a memoised CSS.supports('mix-blend-mode', 'plus-lighter')
+if (device.SupportsCapability(CNA::GraphicsCapability::AdditiveBlending))
+    DrawGlowPass();
+else
+    DrawGlowFallback();</code></pre>
+
+      <p>That matters because of what happens otherwise:</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>This is the one place a CNA renderer degrades silently.</strong> On a browser engine without <code>mix-blend-mode: plus-lighter</code>, the CSS value is simply ignored before any CNA code can observe it, and <code>Additive</code> renders as ordinary source-over blending &mdash; no exception, just a different picture. Support arrived in Chromium 108, Safari 16.4 and Firefox 122. Query the capability rather than assuming.</p>
+      </div>
+
+      <p>Every other blend behaviour on these renderers fails loudly instead: only the four standard presets exist in CSS compositing, so any custom <code>BlendState</code> throws, as does a non-default <code>ColorWriteChannels</code> or <code>MultiSampleMask</code>.</p>
+
+      <h2 id="alpha">A real divergence worth knowing</h2>
+
+      <p>For <code>NonPremultiplied</code> and <code>Additive</code>, XNA's own blend equation squares the source alpha's contribution to the result alpha. CSS compositing has no per-channel blend-factor model that can reproduce that. The consequence is precise and bounded:</p>
+
+      <ul>
+        <li><strong>Colour channels are always exact</strong> on both renderers.</li>
+        <li><strong>The alpha channel is exact only when the source is fully opaque</strong>, where the squared and unsquared formulas coincide.</li>
+      </ul>
+
+      <p>You will never see this drawing opaque sprites to the screen. You will see it if you draw translucent content into a <code>RenderTarget2D</code> and read the raw RGBA back. It is a documented architectural limit, measured against real translucent data rather than assumed.</p>
+
+      <h2 id="svg">Where SVG_DOM differs</h2>
+
+      <p><code>SVG_DOM</code> shares the DOM renderers' shape but draws a narrower boundary in one place: an out-of-bounds source rectangle under <code>TextureAddressMode::Clamp</code>, and mixed per-axis addressing, both throw. <code>Wrap</code> and symmetric <code>Mirror</code> work through a <code>&lt;pattern&gt;</code> fill. <code>HTML_DOM</code> handles the Clamp overflow case with a cached edge-extended texture variant; <code>SVG_DOM</code> has not built that yet and refuses rather than cropping silently.</p>
+
+      <p>What <code>SVG_DOM</code> gives you in exchange is a genuinely vector output tree: real, inspectable SVG nodes with real clip paths, which is useful when the page itself is the artefact.</p>
+
+      <h2 id="testing">How much of this is actually exercised in a browser</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Renderer</th><th>Browser verification</th></tr></thead>
+        <tbody>
+          <tr><td><code>HTML_DOM</code></td><td><strong>Real, automatic CI.</strong> <code>htmldom-ci.yml</code> runs on every push and pull request on <code>ubuntu-24.04</code>, driving several PASS/FAIL pages in headless Chromium via <code>scripts/run-htmldom-test-suite.sh</code>, with real DOM inspection, real <code>RenderTarget2D</code> readbacks and real screenshots.</td></tr>
+          <tr><td><code>SVG_DOM</code></td><td>A real Playwright plus headless-Chromium harness exists (<code>scripts/run-svgdom-browser-test.sh</code>, with <code>smoke</code>, <code>pixel</code> and <code>scissor-order</code> pages) and a native host-contract suite that needs no Emscripten SDK &mdash; but it is not wired into a CI workflow.</td></tr>
+          <tr><td><code>CANVAS</code></td><td>No browser run at all in CNA's development environment: the Node-based test runner provides no <code>CanvasRenderingContext2D</code>. Its status is &ldquo;implemented, reviewed, and covered by structural C++ tests&rdquo;, with a written manual browser checklist. Verify your own output visually.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>That difference is worth respecting when choosing. <code>HTML_DOM</code> is the browser renderer whose behaviour is continuously re-checked against a real engine.</p>
+
+      <h2 id="traps">Three traps that apply to all three</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Heap-allocate your <code>Game</code>.</strong> <code>emscripten_set_main_loop</code> with an infinite-loop simulation is implemented as a raw JavaScript <code>throw</code>, and CNA compiles with native WebAssembly exception handling, so the cleanup landing pad generated for a stack-local object with a non-trivial destructor genuinely catches it. A stack-allocated <code>Game</code> therefore has its destructor run immediately at the <code>emscripten_set_main_loop</code> call site, deleting the real <code>GraphicsDeviceManager</code> and leaving a dangling pointer that faults frames later. Use <code>new</code>, and deliberately never <code>delete</code> &mdash; correct for a page-lifetime application object.</p>
+      </div>
+
+      <p><strong>There is no save persistence on the web.</strong> <code>SDL_GetPrefPath</code> under Emscripten resolves to volatile MEMFS; CNA mounts no IDBFS and never calls <code>FS.syncfs</code>. Every save is silently discarded on page reload.</p>
+
+      <p><strong>There is no video.</strong> The video translation units are excluded from web builds, so <code>Video</code> and <code>VideoPlayer</code> compile against their still-present headers and then fail to link.</p>
+
+      <h2 id="building">Building</h2>
+
+      <pre><code class="language-bash">emcmake cmake -S . -B build-canvas  -DCNA_GRAPHICS_RENDERER=CANVAS
+emcmake cmake -S . -B build-htmldom -DCNA_GRAPHICS_RENDERER=HTML_DOM
+emcmake cmake -S . -B build-svgdom  -DCNA_GRAPHICS_RENDERER=SVG_DOM
+
+cmake --build build-htmldom -j3
+
+# Drive the HTML_DOM browser suite in headless Chromium
+scripts/run-htmldom-test-suite.sh build-htmldom</code></pre>
+
+      <h2 id="choosing">Choosing between them</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>You need</th><th>Pick</th></tr></thead>
+        <tbody>
+          <tr><td>Backbuffer readback, or per-frame texture uploads</td><td><code>CANVAS</code></td></tr>
+          <tr><td>Many sprites that move but do not change pixels, and continuously tested behaviour</td><td><code>HTML_DOM</code></td></tr>
+          <tr><td>A real, inspectable vector output tree</td><td><code>SVG_DOM</code></td></tr>
+          <tr><td>3D, custom shaders, or anything past the 2D boundary</td><td><code>WEBGL2</code> &mdash; see <a href="102-opengl-family.html">Tutorial 102</a></td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="81-emscripten.html">Tutorial 81: Building for the Web</a></li>
+        <li><a href="102-opengl-family.html">Tutorial 102: The OpenGL family</a></li>
+        <li><a href="106-vector-renderers.html">Tutorial 106: 2D vector renderers</a></li>
+        <li><a href="101-renderer-capabilities.html">Tutorial 101: Querying renderer capabilities</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

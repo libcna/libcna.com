@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 125: Headless and Pixel Testing, and the XNA Oracle Corpus - CNA Tutorials</title>
+  <meta name="description" content="How CNA verifies rendering with no GPU and no human: the HEADLESS and STUB renderers, GetBackBufferData pixel assertions, and the 39-scene XNA 4.0 oracle corpus - including why 'pixel-exact' is a statement about the DIRECTX9 renderer specifically.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/125-pixel-testing.html">
+  <meta property="og:title"       content="Tutorial 125: Headless and Pixel Testing, and the XNA Oracle Corpus - CNA Tutorials">
+  <meta property="og:description" content="How CNA verifies rendering with no GPU and no human: the HEADLESS and STUB renderers, GetBackBufferData pixel assertions, and the 39-scene XNA 4.0 oracle corpus - including why 'pixel-exact' is a statement about the DIRECTX9 renderer specifically.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/125-pixel-testing.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 125: Headless and Pixel Testing, and the XNA Oracle Corpus",
+  "url": "https://libcna.com/docs/tutorials/125-pixel-testing.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Advanced"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 125</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 125: Headless and Pixel Testing, and the XNA Oracle Corpus</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Verification</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>What the <code>HEADLESS</code> and <code>STUB</code> renderers prove &mdash; and, just as important, what they cannot.</li>
+          <li><code>GetBackBufferData()</code> pixel readback, which is how the overwhelming majority of CNA's rendering is verified.</li>
+          <li>The 39-scene XNA oracle corpus, captured from real XNA 4.0, and why &ldquo;pixel-exact&rdquo; is a statement about <em>one</em> renderer.</li>
+          <li>What one-renderer-per-build costs you when you want to verify more than one.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="99-unit-testing.html">Tutorial 99: Unit Testing CNA Game Logic</a> covers GoogleTest, separating logic from rendering, and running CNA's own suite. This tutorial picks up where that stops: verifying the part that actually draws.</p>
+      </div>
+
+      <p>Testing game logic is a solved problem &mdash; keep it away from <code>GraphicsDevice</code> and assert on it like any other C++. Testing <em>rendering</em> is the hard half, and it is where CNA has invested most: proving that a draw call produced the right pixels, on a machine with no GPU, with no human looking at the screen.</p>
+
+      <p>CNA does this in three tiers, and they are very unevenly sized. Understanding the proportions is the fastest way to understand how the project actually verifies itself.</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Tier</th><th>Technique</th><th>Scale</th></tr></thead>
+        <tbody>
+          <tr><td>No pixels at all</td><td><code>HEADLESS</code> / <code>STUB</code> renderers &mdash; API bookkeeping and validation</td><td>Whole-suite; runs anywhere</td></tr>
+          <tr><td><strong>Hand-coded pixel assertions</strong></td><td><code>GetBackBufferData()</code>, then assert exact colours at chosen coordinates</td><td><strong>Dominant.</strong> Over 800 source files, more than 1,400 call sites</td></tr>
+          <tr><td>Image comparison</td><td>Diff against a committed reference PNG</td><td>The smallest tier &mdash; 17 golden images, plus the 39-scene oracle corpus</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>That middle row is the one to notice. Hand-coded pixel assertions vastly outnumber golden-image comparisons in CNA, and that is a deliberate choice rather than an accident of history: an assertion that says &ldquo;the pixel at (4,4) must be exactly <code>(140,140,140)</code>, because the glyph bitmap's row 4 is on and the cell averaged to that grey&rdquo; explains itself when it fails. A golden-image diff says only that 37 pixels changed.</p>
+
+      <h2 id="no-pixel-renderers">HEADLESS and STUB: rendering nothing, on purpose</h2>
+
+      <p>Every real CNA renderer needs a window and a graphics context to run at all, which makes them unsuitable for fast logic tests: a CI container with no display server cannot run them, and even with a virtual display, standing one up per test run is slow relative to what a logic test needs to prove.</p>
+
+      <p>Two renderers exist precisely to remove that dependency.</p>
+
+      <pre><code class="language-bash">cmake -S . -B build-headless -DCNA_GRAPHICS_RENDERER=HEADLESS -DCNA_BUILD_TESTS=ON
+cmake --build build-headless -j3</code></pre>
+
+      <p><code>HEADLESS</code> implements CNA's entire renderer interface without touching a GPU or a window &mdash; SDL's video subsystem is never initialised and no window is ever created &mdash; while doing real bookkeeping: argument validation, resource lifecycle tracking, draw-call and state-change counters. It needs no extra dependencies at all.</p>
+
+      <p>It has one runtime dial rather than three separate builds, selected by environment variable or programmatically before <code>Game::Run()</code>:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th><code>CNA_HEADLESS_MODE</code></th><th>Behaviour</th></tr></thead>
+        <tbody>
+          <tr><td><code>Fast</code></td><td>Counters only; skips all argument and bounds validation. For runs that just need the loop to execute.</td></tr>
+          <tr><td><code>Validation</code> (default)</td><td>Full argument validation on top. Throws for the same misuse a real renderer would reject &mdash; out-of-range draws, oversized <code>SetData()</code>, texturing enabled with no texture bound.</td></tr>
+          <tr><td><code>Trace</code></td><td>Everything <code>Validation</code> does, plus an in-memory structured call log (method, argument summary, frame index).</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <pre><code class="language-bash">CNA_HEADLESS_MODE=Fast ./build-headless/MyGameTests</code></pre>
+
+      <p><code>STUB</code> is the other end of the same idea: the smallest possible complete renderer implementation. Every method does nothing or returns a trivial value, it keeps no bookkeeping whatsoever, and it has no external dependencies. It is useful as a dependency-free build target and as a reference for anyone writing a new renderer.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Neither renderer makes any pixel-fidelity claim.</strong> <code>HEADLESS</code> proves &ldquo;this code path ran, with these arguments, this many times, and nothing leaked or misused the API&rdquo;. It proves nothing about whether the result <em>looks</em> right. Calling <code>GetBackBufferData()</code> on either is rejected with <code>System::NotSupportedException</code> &mdash; a documented capability boundary, not a bug.</p>
+      </div>
+
+      <h2 id="readback">GetBackBufferData: the technique that does the work</h2>
+
+      <p>When you do need to know what was drawn, you read the back buffer and assert on it. There are three overloads:</p>
+
+      <pre><code class="language-cpp">void GetBackBufferData(Color* data, int elementCount);
+void GetBackBufferData(Color* data, int startIndex, int elementCount);
+void GetBackBufferData(const Rectangle* rect, Color* data, int startIndex, int elementCount);</code></pre>
+
+      <p>The pattern CNA uses throughout looks like this. Note that the scene is composed into an ordinary <code>RenderTarget2D</code> first, so the test controls the exact resolution and never depends on the window manager giving it the size it asked for:</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Game.hpp"
+#include "Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp"
+#include "Microsoft/Xna/Framework/Graphics/RenderTarget2D.hpp"
+#include "System/NotSupportedException.hpp"
+
+using namespace Microsoft::Xna::Framework;
+using namespace Microsoft::Xna::Framework::Graphics;
+
+void Draw(const GameTime&amp;) override
+{
+    auto&amp; device = getGraphicsDeviceProperty();
+    constexpr int kSize = 64;
+
+    RenderTarget2D scene(device, kSize, kSize);
+    device.SetRenderTarget(&amp;scene);
+    device.Clear(Color(140, 140, 140, 255));
+    device.SetRenderTarget(nullptr);
+
+    DrawTheThingUnderTest(scene);
+
+    std::vector&lt;Color&gt; pixels(kSize * kSize);
+    try
+    {
+        device.GetBackBufferData(pixels.data(), static_cast&lt;int&gt;(pixels.size()));
+    }
+    catch (const System::NotSupportedException&amp;)
+    {
+        // HEADLESS / STUB have no back buffer to read. Skip, do not fail.
+        std::exit(77);
+    }
+
+    const Color&amp; c = pixels[4 * kSize + 4];
+    Check(c.getRProperty() == 140 &amp;&amp; c.getGProperty() == 140 &amp;&amp; c.getBProperty() == 140,
+          "cell centre reads the exact foreground colour");
+}</code></pre>
+
+      <p>Two conventions in that snippet are worth adopting in your own tests.</p>
+
+      <p><strong>Exit code 77 means &ldquo;skipped&rdquo;.</strong> CNA registers its renderer tests with CTest's <code>SKIP_RETURN_CODE</code> set to 77, so a test that discovers it is running on a renderer without the capability it needs reports <em>skipped</em> rather than failing. That is what keeps one test source file usable across renderers with genuinely different capability sets. Tests that need real 3D guard on <code>GraphicsDevice::SupportsCapability(GraphicsCapability::ThreeD)</code> and skip the same way &mdash; though see <a href="101-renderer-capabilities.html">Tutorial 101</a> first, because that query fails open and is not trustworthy on its own.</p>
+
+      <p><strong>Choose coordinates you can justify.</strong> Pick a resolution where one source pixel maps onto one output pixel with no stretch or interpolation ambiguity, then assert at points whose expected value you derived by hand <em>before</em> running anything. A test that samples wherever the output happened to land is a test that will be adjusted until it passes.</p>
+
+      <h2 id="golden">Image comparison: the smaller tier</h2>
+
+      <p>Where a scene is too complex to describe in a handful of point assertions, CNA falls back to comparing against a committed reference image &mdash; but sparingly. There are <strong>17 golden PNGs</strong> in the tree, all for the shared GL implementation, covering the stock effects, PBR, blend and depth-stencil state, rasterizer cull mode, texture filtering and sprite rotation.</p>
+
+      <p>Seventeen is a small number next to more than 1,400 hand-written readback assertions, and that ratio is the point: golden images are used where they earn their keep, not as the default.</p>
+
+      <h2 id="oracle">The XNA oracle corpus</h2>
+
+      <p>The most interesting verification asset in the project is not a test of CNA against itself. It is a test of CNA against <strong>real XNA 4.0</strong>.</p>
+
+      <p>The corpus is <strong>39 declarative scenes</strong>. Each is a small, line-oriented <code>key=value</code> text file &mdash; back-buffer size, clear colour, which of the five stock effects to construct, vertex data, light and fog settings, sprite draws. Two programs parse that same file identically: <code>Oracle.cs</code>, compiled against the genuine XNA 4.0 assemblies and run under Wine, and <code>CnaOracleRender.cpp</code>, built against CNA's real public <code>Game</code>/<code>GraphicsDevice</code> API. Each renders the scene to a PNG. The two PNGs are diffed.</p>
+
+      <p>Everything about the design is aimed at removing places for the harness to lie to itself:</p>
+
+      <ul>
+        <li><strong>The scene is authored once.</strong> Both sides parse the same file, so the two implementations cannot drift apart through hand-transcription.</li>
+        <li><strong>Unknown keys are a hard error on both sides.</strong> A typo fails loudly instead of quietly changing what &ldquo;a match&rdquo; means.</li>
+        <li><strong>DXVK must be installed into the XNA side's Wine prefix too.</strong> Otherwise real XNA runs on WineD3D while CNA runs on DXVK, and the diff silently measures a <em>driver</em> difference and blames CNA for it.</li>
+        <li><strong>The 39 reference PNGs are committed.</strong> They were captured once, by hand, against the real runtime. A CTest re-renders every scene through CNA and diffs against them &mdash; without needing the XNA prefix at all.</li>
+        <li><strong>The diff tool is mutation-verified.</strong> A deliberately one-byte-mutated copy of a passing image is correctly reported as failing, and correctly passes again at tolerance 1 &mdash; so the tool is known to discriminate, not merely to print &ldquo;PASS&rdquo;.</li>
+      </ul>
+
+      <pre><code class="language-bash">python3 scripts/xna-diff.py xna_out.png cna_out.png --diff-out diff.png</code></pre>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong><code>--tolerance</code> defaults to 0, and that default is the whole point.</strong> Raising it to turn a red comparison green, without a documented per-scene reason, is exactly how an authenticity project quietly becomes an approximation project. The tool's own documentation says so in those terms.</p>
+      </div>
+
+      <h3>&ldquo;Pixel-exact&rdquo; is a DIRECTX9 statement</h3>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>The corpus has been run through four renderers, and they do not agree. <strong>Never write, or believe, &ldquo;CNA is pixel-perfect against XNA&rdquo; without naming the renderer.</strong></p>
+      </div>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Renderer</th><th>Scenes matching at tolerance 0</th></tr></thead>
+        <tbody>
+          <tr><td><code>DIRECTX9</code></td><td><strong>39 of 39</strong></td></tr>
+          <tr><td><code>OPENGLES1</code></td><td>11 of 39</td></tr>
+          <tr><td>EasyGL (the shared GL implementation)</td><td>10 of 39</td></tr>
+          <tr><td><code>FNA3D</code></td><td>10 of 39</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>The gap is not evidence that the other three renderers are broken. Direct3D 9 is the API real XNA itself ran on, and CNA's <code>DIRECTX9</code> renderer executes through the same DXVK implementation the oracle does, so an exact match is achievable there in a way it simply is not across a different graphics API with different rasterization rules and different floating-point behaviour. What the table does establish is that the phrase &ldquo;pixel-exact&rdquo; belongs to one renderer, and that the corpus is a genuine, discriminating measurement rather than a rubber stamp.</p>
+
+      <p>It is also the strongest gate in the repository &mdash; and it runs in <strong>no CI workflow at all</strong>. If you are relying on it, you are running it yourself.</p>
+
+      <h2 id="one-renderer">What one-renderer-per-build costs</h2>
+
+      <p>CNA compiles <strong>exactly one renderer per build</strong>, chosen at configure time. There is no runtime switching. For verification, that has a direct consequence: exercising <em>n</em> renderers means <em>n</em> full configure, build and test cycles.</p>
+
+      <p>The numbers make the shape clear. CNA registers <strong>1,621</strong> renderer pixel, smoke and integration tests with CMake across the tree, spread over 42 renderer families &mdash; but any single build registers at most <strong>293</strong> of them, because only one family compiled. Which ones you get is entirely determined by your <code>CNA_GRAPHICS_RENDERER</code> value.</p>
+
+      <pre><code class="language-bash"># One renderer, one build directory, one test run. Repeat per renderer.
+cmake -S . -B build-gles3 -DCNA_GRAPHICS_RENDERER=OPENGLES3
+cmake --build build-gles3 -j3
+ctest --test-dir build-gles3 -L OPENGLES3 --output-on-failure</code></pre>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>CTest labels follow the current renderer names.</strong> <code>ctest -L DIRECTX9</code> works; <code>ctest -L D3D9</code> matches nothing. And <code>cmake --build ... --target CNA</code> no longer works at all &mdash; <code>CNA</code> is an interface library with no sources. Build <code>CnaTests</code>, a demo target, or just the whole build directory.</p>
+      </div>
+
+      <h3>Most GPU tests need a real display</h3>
+
+      <p>The renderer tests that create a window bake an explicit environment into their CTest registration: <code>SDL_VIDEODRIVER=x11</code> together with a <code>DISPLAY</code> value. That value comes from the <code>CNA_TEST_DISPLAY</code> cache variable, which defaults to <code>:0</code> &mdash; your real desktop session.</p>
+
+      <p>On a headless machine, point it at a virtual display instead:</p>
+
+      <pre><code class="language-bash">Xvfb :99 -screen 0 1280x1024x24 &amp;
+cmake -S . -B build-gles3 -DCNA_GRAPHICS_RENDERER=OPENGLES3 -DCNA_TEST_DISPLAY=:99
+cmake --build build-gles3 -j3
+ctest --test-dir build-gles3 --output-on-failure</code></pre>
+
+      <p>This is the practical reason the <code>HEADLESS</code> and <code>STUB</code> renderers exist: they are the only two that need none of this.</p>
+
+      <h2 id="your-game">Applying this to your own game</h2>
+
+      <ol>
+        <li><strong>Build your logic tests against <code>HEADLESS</code>.</strong> They run anywhere, need no display, and <code>Validation</code> mode will catch API misuse a real renderer would have rejected.</li>
+        <li><strong>Compose into a <code>RenderTarget2D</code> at a resolution you chose</strong>, not the window's. One source pixel per output pixel removes every interpolation argument from your assertions.</li>
+        <li><strong>Assert exact colours at hand-derived coordinates.</strong> Write down why each expected value is what it is, in a comment, before you run the test.</li>
+        <li><strong>Catch <code>NotSupportedException</code> around the readback and skip</strong>, so the same test source survives a renderer switch.</li>
+        <li><strong>Reach for a reference image only when point assertions genuinely cannot express the check</strong> &mdash; and diff at tolerance 0 unless you can write down why not.</li>
+        <li><strong>Verify on the renderer you ship.</strong> Green on <code>OPENGLES3</code> says nothing about <code>WEBGL1</code>, which really does lack MRT, instancing and <code>Texture3D</code>.</li>
+      </ol>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>What none of this tells you.</strong> CNA's <strong>433 test source files</strong> contain <strong>6,818 GoogleTest case definitions</strong>, and <strong>1,621</strong> renderer tests are registered tree-wide. Those are counts of what <em>exists</em>. Nobody can tell you the pass rate without running the suite on your machine, and CNA's own CI &mdash; which now spans Linux, macOS and headless-browser jobs &mdash; does <strong>not</strong> gate the full unit suite or the GPU pixel suites. Run it and read the output.</p>
+      </div>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="99-unit-testing.html">Tutorial 99: Unit Testing CNA Game Logic</a></li>
+        <li><a href="101-renderer-capabilities.html">Tutorial 101: Querying renderer capabilities</a> &mdash; and why the query fails open</li>
+        <li><a href="72-backend-selection.html">Tutorial 72: Choosing a renderer</a></li>
+        <li><a href="79-debugging.html">Tutorial 79: Debugging CNA games</a></li>
+        <li><a href="../verification.html">Verification &amp; Known Issues</a> and <a href="../xna-compatibility.html">XNA Compatibility reference</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

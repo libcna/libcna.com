@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 83: Migrating from MonoGame/FNA - CNA</title>
-  <meta name="description" content="Step-by-step guide to migrating a MonoGame or FNA C# game to CNA C++. Covers namespace changes, C# to C++ type mapping, memory management, content pipeline, and audio.">
+  <meta name="description" content="Step-by-step guide to migrating a MonoGame or FNA C# game to CNA C++. Covers namespace changes, C# to C++ type mapping, memory management, read-side XNB support, and audio.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/83-migrate-monogame.html">
   <meta property="og:title"       content="Tutorial 83: Migrating from MonoGame/FNA - CNA">
-  <meta property="og:description" content="Step-by-step guide to migrating a MonoGame or FNA C# game to CNA C++. Covers namespace changes, C# to C++ type mapping, memory management, content pipeline, and audio.">
+  <meta property="og:description" content="Step-by-step guide to migrating a MonoGame or FNA C# game to CNA C++. Covers namespace changes, C# to C++ type mapping, memory management, read-side XNB support, and audio.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/83-migrate-monogame.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 83: Migrating from MonoGame/FNA to CNA",
   "url": "https://libcna.com/docs/tutorials/83-migrate-monogame.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-07-18",
+  "dateModified": "2026-08-11",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -60,6 +60,7 @@
       <a href="../../contact.html"       class="nav-link">Contact</a>
       <a href="../../search.html" class="nav-link">Search</a>
       <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
     </div>
   </div>
 </nav>
@@ -85,7 +86,7 @@
           <ul>
             <li>The namespace and type mappings from C# MonoGame to C++ CNA.</li>
             <li>What changes about memory management once there is no GC.</li>
-            <li>Content pipeline and audio differences.</li>
+            <li>Content loading and audio differences.</li>
             <li>Which APIs have no CNA equivalent yet.</li>
           </ul>
           <p><strong>Before you start</strong> &mdash; <a href="01-introduction.html">Tutorial 01: Introduction to CNA</a> &mdash; it covers the C++-versus-C# differences this builds on. Prior MonoGame or FNA experience is assumed; no earlier tutorial is strictly required.</p>
@@ -145,38 +146,61 @@
           separate <code>Dispose()</code>.
         </p>
 
-        <h2>Content pipeline differences</h2>
+        <h2>Content loading differences</h2>
         <p>
-          MonoGame uses <code>.xnb</code> binary files produced by the Content Pipeline. <strong>CNA reads
-          those too.</strong> It implements the XNB container format, LZX decompression, and roughly 49
-          content type readers, all wired into <code>ContentManager</code>, so an existing
-          <code>ContentManager::Load&lt;T&gt;()</code> call over pre-built <code>.xnb</code> assets carries
+          MonoGame uses <code>.xnb</code> binary files produced by the XNA content pipeline. <strong>CNA reads
+          those too.</strong> It implements the XNB container format, LZX decompression, and <strong>50 built-in
+          content type readers</strong> (49 when FFmpeg is absent, which drops <code>VideoReader</code>), so an
+          existing <code>ContentManager::Load&lt;T&gt;()</code> call over pre-built <code>.xnb</code> assets carries
           across.
         </p>
         <p>
-          The one XNB payload CNA cannot consume is compiled <code>.fx</code> shader bytecode. If your content
-          folder contains built effects, those need replacing with GLSL for the backend you target.
+          Note the direction: this is <strong>read-side XNB support</strong>, not a content pipeline. CNA has no
+          <code>ContentCompiler</code>, <code>ContentImporter</code> or <code>ContentProcessor</code> and never will
+          &mdash; authoring stays on the XNA/MonoGame/FNA side, or moves to CNA's own formats.
+        </p>
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>Readers are not auto-registered.</strong> Call <code>RegisterAllBuiltInXnbReaders()</code> once at
+          startup or every <code>.xnb</code> load fails. It currently lives in an <code>Internal</code> header, which is
+          a known ergonomics gap.</p>
+          <p>The one XNB payload CNA cannot consume is compiled <code>.fx</code> shader bytecode &mdash; the single
+          largest XNA gap. <code>EffectReader</code> throws a <code>ContentLoadException</code> before reading a byte,
+          and no HLSL or DXBC parser exists. If your content folder contains built effects, they must be rewritten by
+          hand as a <code>ShaderEffect</code>, in the language your selected renderer expects: GLSL on the GL family,
+          SPIR-V on <code>VULKAN</code>/<code>SDL_GPU</code>, HLSL compiled at runtime on the Direct3D renderers. The
+          five stock effects are a separate, working path and need none of this.</p>
+        </div>
+        <p>
         </p>
         <p>
-          CNA additionally lets you skip the pipeline and load assets straight from source files, which is
-          usually simpler for a new project:
+          CNA additionally lets you skip <code>.xnb</code> entirely and load assets straight from source files,
+          which is usually simpler for a new project. <code>Load&lt;T&gt;</code> tries <code>.xnb</code> first, then
+          CNA's own <code>.cnj</code> JSON format, then the older loose-file <code>.model.json</code>:
         </p>
         <ul>
           <li><strong>Textures:</strong> <code>Texture2D("assets/logo.png", gd)</code> &mdash; PNG/JPG loaded via SDL3_image</li>
-          <li><strong>Models:</strong> <code>Model::Load("assets/house.obj", gd)</code> &mdash; OBJ/FBX via the model loader</li>
+          <li><strong>Models:</strong> <code>Model::Load("assets/house.obj", gd)</code> via the model loader &mdash; and, newer and more useful for a migration, <strong>runtime glTF 2.0</strong>: drop a <code>.gltf</code> or <code>.glb</code> in the content root and <code>Content.Load&lt;Model&gt;("name")</code> loads it with no tooling step, including skeletal animation and morph targets</li>
           <li><strong>Fonts:</strong> a JSON-based <code>SpriteFont</code> descriptor, as an alternative to <code>.spritefont</code> XML compiled to XNB</li>
         </ul>
 
         <h2>Audio (SoundEffect same, XACT now real)</h2>
         <p>
           <code>SoundEffect</code> and <code>SoundEffectInstance</code> APIs are identical to MonoGame.
-          <code>SoundEffect("sound.wav")</code> (the NOXNA assetName constructor) loads OGG/WAV via SDL3_mixer. <code>Song</code>/
+          <code>SoundEffect("sound.wav")</code> (the CNAEXT assetName constructor) loads OGG/WAV via SDL3_mixer. <code>Song</code>/
           <code>MediaPlayer</code> streaming is also fully implemented via SDL3_mixer. XACT
           (<code>.xap</code>-authored <code>AudioEngine</code>/<code>SoundBank</code>/<code>WaveBank</code>/<code>Cue</code>) is now a real,
-          ~92% functional runtime with a genuine <code>.xgs</code>/<code>.xsb</code>/<code>.xwb</code> parser &mdash; MonoGame
+          largely functional runtime with a genuine <code>.xgs</code>/<code>.xsb</code>/<code>.xwb</code> parser &mdash; MonoGame
           games that use XACT do not need to be rewritten to use <code>SoundEffect</code> directly, though it
           remains the simpler option for one-off sounds.
         </p>
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p>Two audio gaps to check your assets against. A WaveBank containing XMA or WMA content does <strong>not</strong>
+          throw &mdash; it logs to stderr and returns <code>nullptr</code>, so the sound is simply missing. (The XNB
+          <code>SoundEffectReader</code> path <em>does</em> throw.) And <code>.m4a</code>/<code>.aac</code> are unplayable:
+          SDL3_mixer has no AAC decoder.</p>
+        </div>
 
         <h2>Missing APIs</h2>
         <p>A few MonoGame extensions are not present in CNA:</p>
@@ -300,7 +324,7 @@ private:
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -317,7 +341,7 @@ private:
           <li><a href="../getting-started.html">Getting Started</a></li>
           <li><a href="../building.html">Building</a></li>
           <li><a href="../platforms.html">Platforms</a></li>
-          <li><a href="../rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
           <li><a href="../faq.html">FAQ</a></li>
         </ul>
       </div>

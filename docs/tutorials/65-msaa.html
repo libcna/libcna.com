@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 65: MSAA Anti-Aliasing - CNA Tutorials</title>
-  <meta name="description" content="Enable MSAA anti-aliasing in CNA via GraphicsDeviceManager.PreferMultiSampling, choose sample counts, and implement FXAA as a post-process alternative for unsupported backends.">
+  <meta name="description" content="Enable MSAA anti-aliasing in CNA via GraphicsDeviceManager.PreferMultiSampling, choose sample counts, understand how renderers that cannot honour the request clamp it, and implement FXAA as a post-process alternative.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/65-msaa.html">
   <meta property="og:title"       content="Tutorial 65: MSAA Anti-Aliasing - CNA Tutorials">
-  <meta property="og:description" content="Enable MSAA anti-aliasing in CNA via GraphicsDeviceManager.PreferMultiSampling, choose sample counts, and implement FXAA as a post-process alternative for unsupported backends.">
+  <meta property="og:description" content="Enable MSAA anti-aliasing in CNA via GraphicsDeviceManager.PreferMultiSampling, choose sample counts, understand how renderers that cannot honour the request clamp it, and implement FXAA as a post-process alternative.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/65-msaa.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 65: MSAA Anti-Aliasing",
   "url": "https://libcna.com/docs/tutorials/65-msaa.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-07-18",
+  "dateModified": "2026-08-11",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -60,6 +60,7 @@
       <a href="../../contact.html"       class="nav-link">Contact</a>
       <a href="../../search.html" class="nav-link">Search</a>
       <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
     </div>
   </div>
 </nav>
@@ -84,13 +85,13 @@
         <ul>
           <li>What multisampling actually smooths, and what it does not.</li>
           <li>Requesting it via <code>PreferMultiSampling</code> and <code>MultiSampleCount</code> on <code>GraphicsDeviceManager</code>.</li>
-          <li>Which backends honour the request and which silently ignore it.</li>
+          <li>Which renderers honour the request, and what the ones that cannot do instead.</li>
           <li>FXAA as a post-process alternative, and when to prefer it.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> &mdash; the settings are configured on the manager set up there. Backend support differs sharply: <code>EASYGL</code> and <code>VULKAN</code> implement MSAA, while <code>SDL_RENDERER</code> accepts the flag and ignores it.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> &mdash; the settings are configured on the manager set up there. Renderer support differs sharply: <code>OPENGLES3</code> and <code>VULKAN</code> implement MSAA, while <code>SDL_RENDERER</code> accepts the flag and ignores it.</p>
       </div>
 
-      <p>Aliasing — the "staircase" jagged edge effect on geometry silhouettes — is one of the most immediately visible quality issues in 3D rendering. This tutorial covers Multi-Sample Anti-Aliasing (MSAA), CNA's primary hardware-accelerated AA mode, and the FXAA post-process alternative for backends and devices where MSAA is unavailable or too expensive.</p>
+      <p>Aliasing — the "staircase" jagged edge effect on geometry silhouettes — is one of the most immediately visible quality issues in 3D rendering. This tutorial covers Multi-Sample Anti-Aliasing (MSAA), CNA's primary hardware-accelerated AA mode, and the FXAA post-process alternative for renderers and devices where MSAA is unavailable or too expensive.</p>
 
       <h2>What is MSAA?</h2>
       <p>Multi-Sample Anti-Aliasing (MSAA) works by rendering each pixel at multiple sub-pixel <em>sample positions</em> and averaging the results. For a 4x MSAA framebuffer, the GPU maintains four samples per pixel, each with an independent depth and stencil value. The fragment shader runs once per pixel (not once per sample), but the coverage test runs per-sample. At pixels where a triangle edge crosses, only some of the four samples fall inside the triangle; those samples get the triangle's colour and the others keep the background colour. When the frame is displayed, the four samples are averaged ("resolved"), producing a smooth anti-aliased edge.</p>
@@ -105,7 +106,7 @@
       </ul>
 
       <h2>PreferMultiSampling Flag</h2>
-      <p>In CNA, MSAA is enabled by setting <code>PreferMultiSampling</code> on the <code>GraphicsDeviceManager</code> before <code>Run()</code> is called. This tells the backend to request a multisampled swap chain or framebuffer from the OS/driver:</p>
+      <p>In CNA, MSAA is enabled by setting <code>PreferMultiSampling</code> on the <code>GraphicsDeviceManager</code> before <code>Run()</code> is called. This tells the renderer to request a multisampled swap chain or framebuffer from the OS/driver:</p>
       <pre><code class="language-cpp">class MyGame final : public Game {
 public:
     MyGame() : graphics_(this) {
@@ -155,14 +156,15 @@ graphics_.setMultiSampleCountProperty(4);</code></pre>
     (void)actualSamples;
 }</code></pre>
 
-      <h2>Backend Support</h2>
+      <h2>Renderer Support</h2>
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>SDL_RENDERER backend:</strong> <code>setPreferMultiSamplingProperty(true)</code> is accepted but silently ignored. SDL2's 2D renderer does not expose MSAA control. Use FXAA (see below) as a post-process alternative when targeting this backend.</p>
+        <p><strong>A renderer that cannot do MSAA clamps your request to 1.</strong> The requested <code>multiSampleCount</code> is handed to the renderer at construction, and the interface documents plainly that renderers without MSAA support silently clamp it. Nothing throws. <code>SDL_RENDERER</code> is the common case: <code>setPreferMultiSamplingProperty(true)</code> is accepted and has no effect, because SDL's 2D renderer exposes no MSAA control. Use FXAA (below) there.</p>
+        <p>Ask <code>GraphicsDevice::SupportsCapability(GraphicsCapability::MultiSampleAntiAliasing)</code> rather than guessing &mdash; but note the query <em>fails open</em>: the base implementation returns <code>true</code> for every capability except <code>MultiStreamVertexInput</code>, and <code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code> and <code>SDL_GPU</code> supply no override at all. Reading back the achieved sample count, as the example below does, is the only answer you can fully trust.</p>
       </div>
       <ul>
-        <li><strong>EasyGL backend</strong> — enables MSAA via <code>SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1)</code> and <code>SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, count)</code>, then calls <code>glEnable(GL_MULTISAMPLE)</code> after context creation. The actual sample count is confirmed with <code>glGetIntegerv(GL_SAMPLES, &amp;actual)</code>.</li>
-        <li><strong>Vulkan backend</strong> — creates the swap chain images with the requested <code>VkSampleCountFlagBits</code> (e.g., <code>VK_SAMPLE_COUNT_4_BIT</code>) and sets up a multisample resolve attachment in the render pass. Uses <code>vkGetPhysicalDeviceProperties</code> to query <code>framebufferColorSampleCounts</code> for hardware limits.</li>
+        <li><strong>The GL family (internally EasyGL)</strong> — enables MSAA via <code>SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1)</code> and <code>SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, count)</code>, then calls <code>glEnable(GL_MULTISAMPLE)</code> after context creation. The actual sample count is confirmed with <code>glGetIntegerv(GL_SAMPLES, &amp;actual)</code>.</li>
+        <li><strong>The <code>VULKAN</code> renderer</strong> — creates the swap chain images with the requested <code>VkSampleCountFlagBits</code> (e.g., <code>VK_SAMPLE_COUNT_4_BIT</code>) and sets up a multisample resolve attachment in the render pass. Uses <code>vkGetPhysicalDeviceProperties</code> to query <code>framebufferColorSampleCounts</code> for hardware limits.</li>
       </ul>
 
       <h2>Complete MSAA Example</h2>
@@ -261,7 +263,7 @@ int main() {
       <h2>FXAA: A Post-Process Alternative</h2>
       <p>Fast Approximate Anti-Aliasing (FXAA) is a screen-space post-processing technique that detects high-contrast edges in the final colour image and blurs them slightly. It runs as a single fullscreen fragment shader pass on the resolved (non-MSAA) framebuffer. Key properties:</p>
       <ul>
-        <li>Works on any backend, including SDL_RENDERER.</li>
+        <li>Works on any renderer with render-target support, including <code>SDL_RENDERER</code>.</li>
         <li>No additional memory for multi-sample buffers.</li>
         <li>Detects edges from colour contrast, so it can also smooth texture edges and alpha-tested geometry.</li>
         <li>Introduces a small amount of blurring on fine detail (e.g., text, thin lines) as a side effect.</li>
@@ -400,7 +402,7 @@ void Draw(const GameTime&amp;) override {
             <tr><td>Fine detail preservation</td><td>Perfect</td><td>Slightly blurry</td></tr>
             <tr><td>Memory overhead</td><td>4x framebuffer</td><td>1x (one RenderTarget2D)</td></tr>
             <tr><td>Shader overhead</td><td>Minimal</td><td>One fullscreen pass</td></tr>
-            <tr><td>Backend requirement</td><td>EasyGL or Vulkan</td><td>Any backend</td></tr>
+            <tr><td>Renderer requirement</td><td>A renderer that honours <code>multiSampleCount</code></td><td>Any renderer with render targets</td></tr>
             <tr><td>Deferred rendering compatible</td><td>Complex</td><td>Yes (post-lighting)</td></tr>
           </tbody>
         </table>
@@ -430,7 +432,7 @@ void Draw(const GameTime&amp;) override {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -447,7 +449,7 @@ void Draw(const GameTime&amp;) override {
           <li><a href="../../docs/getting-started.html">Getting Started</a></li>
           <li><a href="../../docs/building.html">Building</a></li>
           <li><a href="../../docs/platforms.html">Platforms</a></li>
-          <li><a href="../../docs/rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../../docs/rendering-backends.html">Renderers</a></li>
           <li><a href="../../docs/faq.html">FAQ</a></li>
         </ul>
       </div>

@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 121: Video Playback with VideoPlayer - CNA Tutorials</title>
+  <meta name="description" content="Decoding and drawing video in CNA through FFmpeg: PTS-driven pacing, the video's own audio track, multi-track selection, and the two platform facts that decide whether video is in your build at all.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/121-video-playback.html">
+  <meta property="og:title"       content="Tutorial 121: Video Playback with VideoPlayer - CNA Tutorials">
+  <meta property="og:description" content="Decoding and drawing video in CNA through FFmpeg: PTS-driven pacing, the video's own audio track, multi-track selection, and the two platform facts that decide whether video is in your build at all.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/121-video-playback.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 121: Video Playback with VideoPlayer",
+  "url": "https://libcna.com/docs/tutorials/121-video-playback.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Intermediate"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 121</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 121: Video Playback with VideoPlayer</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Media</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>Loading and playing a video, and drawing its frames with <code>SpriteBatch</code>.</li>
+          <li>That the video&rsquo;s own audio track plays, and how to choose between tracks.</li>
+          <li><strong>The two platform facts that decide whether video exists in your build at all.</strong></li>
+          <li>How to recognise an unsupported pixel format on sight.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="21-spritebatch.html">Tutorial 21: SpriteBatch in Depth</a> covers the drawing call you will use for every frame.</p>
+      </div>
+
+      <p>CNA&rsquo;s <code>VideoPlayer</code> is a real decoder, not a placeholder. It opens the file through FFmpeg, decodes video frames and audio, paces playback against presentation timestamps rather than a fixed frame counter, plays the file&rsquo;s <em>own</em> audio track, and lets you switch between tracks in a multi-track file. What it is not is universally available &mdash; and that is the first thing to settle, because it is a build-time question, not a runtime one.</p>
+
+      <h2 id="platforms">Start here: is video in your build?</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Two hard platform facts.</strong></p>
+        <ol>
+          <li><strong>On Linux and macOS, FFmpeg is a required dependency.</strong> There is no CMake option to turn it off. A configure without the development packages for <code>libavcodec</code>, <code>libavformat</code>, <code>libavutil</code> and <code>libswresample</code> fails outright.</li>
+          <li><strong>On Windows, Emscripten and Android, video is excluded from the build.</strong> The three video translation units are filtered out of the source list. The headers are still there, so code calling <code>Video</code> or <code>VideoPlayer</code> <em>compiles</em> &mdash; and then fails to <strong>link</strong>, with undefined symbols.</li>
+        </ol>
+      </div>
+
+      <p>The second point is the one that catches people. There is no runtime &ldquo;is video available&rdquo; query to branch on, because the symbols simply are not in the binary. Guard at build time with your own macro:</p>
+
+      <pre><code class="language-cpp">#if !defined(_WIN32) &amp;&amp; !defined(__EMSCRIPTEN__) &amp;&amp; !defined(__ANDROID__)
+    #define GAME_HAS_VIDEO 1
+#endif</code></pre>
+
+      <p>On Debian and Ubuntu the prerequisites are:</p>
+
+      <pre><code class="language-bash">sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswresample-dev</code></pre>
+
+      <p>See <a href="124-web-gotchas.html">Tutorial 124: WebAssembly gotchas</a> for the web side of this, alongside the two other things that behave differently in the browser.</p>
+
+      <h2 id="loading">Loading a video</h2>
+
+      <p>There are two routes. Through the content manager, if the file lives in your content root:</p>
+
+      <pre><code class="language-cpp">// Content/videos/intro.mp4
+Media::Video intro = Content.Load&lt;Media::Video&gt;("videos/intro");</code></pre>
+
+      <p>The loose-file reader recognises <code>.mp4</code>, <code>.ogv</code>, <code>.webm</code>, <code>.mkv</code>, <code>.avi</code> and <code>.mov</code>, tried in that order when you omit the extension. Note that the reader is registered only on the platforms where video is compiled in.</p>
+
+      <p>Or construct one directly from a path, which is often more convenient for a video that is not a shipped asset:</p>
+
+      <pre><code class="language-cpp">CNAEXT Video(std::string fileName, Graphics::GraphicsDevice* device);</code></pre>
+
+      <p>This constructor probes the file immediately and throws <code>System::IO::FileNotFoundException</code> if there is nothing there. A second, seven-argument constructor exists for the XNB path, where duration, dimensions, frame rate and soundtrack type come from the asset metadata rather than the file.</p>
+
+      <h2 id="playing">Playing and drawing</h2>
+
+      <p><code>VideoPlayer</code> hands you a <code>Texture2D*</code> for the current frame. Call <code>GetTexture()</code> every frame you draw &mdash; it is the call that advances decoding, so skipping it stalls playback.</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Media/Video/Video.hpp"
+#include "Microsoft/Xna/Framework/Media/Video/VideoPlayer.hpp"
+
+using namespace Microsoft::Xna::Framework;
+using namespace Microsoft::Xna::Framework::Media;
+
+class IntroScreen
+{
+    Video       intro_;
+    VideoPlayer player_;
+
+    void Start()
+    {
+        player_.setIsLoopedProperty(false);
+        player_.setVolumeProperty(1.0f);
+        player_.Play(&amp;intro_);
+    }
+
+    void Draw(Graphics::GraphicsDevice&amp; device, Graphics::SpriteBatch&amp; spriteBatch)
+    {
+        Graphics::Texture2D* frame = player_.GetTexture();
+        if (frame == nullptr)
+        {
+            return;   // nothing decoded yet
+        }
+
+        const auto&amp; viewport = device.getViewportProperty();
+        const Rectangle destination(0, 0,
+                                    viewport.getWidthProperty(),
+                                    viewport.getHeightProperty());
+
+        spriteBatch.Begin();
+        spriteBatch.Draw(*frame, destination, Color::White);
+        spriteBatch.End();
+    }
+};</code></pre>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#10003;</span>
+        <p><code>GetTexture()</code> returns <code>nullptr</code> before you have ever called <code>Play()</code>, so the null check above is not defensive padding &mdash; it is the documented first-frame state. Note also that <code>SpriteBatch::Draw</code> takes a <code>const Texture2D&amp;</code>, hence the dereference.</p>
+      </div>
+
+      <p>Watch for the end of playback in your update, not your draw:</p>
+
+      <pre><code class="language-cpp">if (player_.getStateProperty() == MediaState::Stopped)
+{
+    GoToMainMenu();
+}</code></pre>
+
+      <p><code>MediaState</code> has three values: <code>Stopped</code>, <code>Playing</code> and <code>Paused</code>.</p>
+
+      <h2 id="pacing">How pacing works</h2>
+
+      <p>Playback is driven by a wall clock, not by how often you happen to call <code>GetTexture()</code>. Each call compares the elapsed play time against the presentation timestamp of the last decoded frame, and decodes forward until it has caught up. A frame that arrives late is skipped rather than shown late, so a stutter in your render loop costs you frames rather than desynchronising the audio.</p>
+
+      <p>Consequently, calling <code>GetTexture()</code> more often than the video&rsquo;s frame rate is free &mdash; you simply get the same texture back &mdash; and calling it less often makes the player skip. Paused and stopped players return the existing texture without decoding anything.</p>
+
+      <h2 id="audio">The video&rsquo;s own audio</h2>
+
+      <p>This is genuinely implemented, and it is worth stating plainly because it is the part most often stubbed out elsewhere: the audio stream inside your video file is decoded, resampled and played, in sync with the frames.</p>
+
+      <pre><code class="language-cpp">player_.setVolumeProperty(0.7f);   // documented range [0, 1]
+player_.setIsMutedProperty(true);  // mutes without stopping</code></pre>
+
+      <p>Pausing the player pauses the audio device stream too, so there is no drift on resume. At the end of a non-looping video the player waits for the queued audio to drain before it reports <code>Stopped</code>, which is why the transition can lag the last visible frame by a moment.</p>
+
+      <h3 id="tracks">Multi-track selection (CNAEXT)</h3>
+
+      <p>Files with several audio streams &mdash; a localised release with one track per language, or a commentary track &mdash; are addressable by index:</p>
+
+      <pre><code class="language-cpp">CNAEXT void SetAudioTrackEXT(SharpRuntime::intcs track);
+CNAEXT void SetVideoTrackEXT(SharpRuntime::intcs track);</code></pre>
+
+      <pre><code class="language-cpp">player_.SetAudioTrackEXT(1);   // second audio stream
+player_.Play(&amp;intro_);</code></pre>
+
+      <p>Set the track <em>before</em> <code>Play()</code> and the preference is applied as the decoder opens. Set it during playback and the player switches, reconfiguring only the output that actually changed. <code>Video</code> carries the same two methods and forwards them to its player.</p>
+
+      <p>These are extensions &mdash; real XNA has no track selection &mdash; so they will not compile under <code>-DCNA_STRICT_XNA_API=ON</code>.</p>
+
+      <h2 id="magenta">Magenta means &ldquo;pixel format not handled&rdquo;</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>If a video plays as <strong>solid magenta</strong>, the decoder produced a pixel format CNA&rsquo;s converter does not handle. It does not throw and it does not log &mdash; it fills the frame with magenta so the failure is impossible to miss.</p>
+      </div>
+
+      <p>RGBA, RGB24, NV12 and the common planar 8-, 10- and 12-bit YUV layouts convert normally. Anything else lands on the fallback. The fix is on the encoding side: re-encode to a mainstream format, most simply H.264 in <code>yuv420p</code>.</p>
+
+      <pre><code class="language-bash">ffmpeg -i exotic.mkv -pix_fmt yuv420p -c:v libx264 -c:a aac intro.mp4</code></pre>
+
+      <h2 id="api">The rest of the surface</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Member</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>Play(Video*)</code></td><td>Also throws <code>System::InvalidOperationException</code> if the <code>Video</code>&rsquo;s declared width, height or frame rate disagrees with what the file actually reports.</td></tr>
+          <tr><td><code>Stop()</code>, <code>Pause()</code>, <code>Resume()</code></td><td>All throw <code>System::ObjectDisposedException</code> after <code>Dispose()</code>.</td></tr>
+          <tr><td><code>getPlayPositionProperty()</code></td><td>Read-only &mdash; there is <strong>no seek</strong>. You cannot set the play position.</td></tr>
+          <tr><td><code>get/setIsLoopedProperty</code></td><td>Loops by seeking back to the start at EOF.</td></tr>
+          <tr><td><code>get/setIsMutedProperty</code>, <code>get/setVolumeProperty</code></td><td>Applied to the audio device stream directly.</td></tr>
+          <tr><td><code>getVideoProperty()</code></td><td>The <code>Video*</code> currently loaded, or none.</td></tr>
+          <tr><td><code>getStateProperty()</code></td><td><code>MediaState</code>.</td></tr>
+          <tr><td><code>getIsDisposedProperty()</code>, <code>Dispose()</code></td><td>Standard disposal.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>On <code>Video</code> itself: <code>getWidthProperty()</code>, <code>getHeightProperty()</code>, <code>getFramesPerSecondProperty()</code>, <code>getDurationProperty()</code> and <code>getVideoSoundtrackTypeProperty()</code>, which returns one of <code>Music</code>, <code>Dialog</code> or <code>MusicAndDialog</code>.</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>No seeking.</strong> There is no way to jump to a timestamp &mdash; only play, pause, resume, stop and loop. Design your cutscenes as linear playback with a skip that stops the player, rather than as a scrubbable timeline.</p>
+      </div>
+
+      <h2 id="checklist">Before you ship a video</h2>
+      <ul>
+        <li>Is every <code>VideoPlayer</code> reference behind a build-time guard, so Windows and web builds still link?</li>
+        <li>Does the video actually play, rather than showing magenta?</li>
+        <li>Can the player skip it, and does the skip stop the player rather than just hiding it?</li>
+        <li>Does your build machine have the four FFmpeg dev packages, and does your CI?</li>
+        <li>Have you tested what happens on a machine with no audio device?</li>
+      </ul>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="122-media-library.html">Tutorial 122: MediaLibrary and audio visualization</a></li>
+        <li><a href="124-web-gotchas.html">Tutorial 124: WebAssembly gotchas</a></li>
+        <li><a href="21-spritebatch.html">Tutorial 21: SpriteBatch in Depth</a></li>
+        <li><a href="../video-playback.html">Video Playback reference</a></li>
+        <li><a href="../platforms.html">Platform support reference</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

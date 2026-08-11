@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 111: The CNJ Format and the gltf_to_cnj Tool - CNA Tutorials</title>
+  <meta name="description" content="CNJ is CNA&#39;s own JSON asset descriptor - every file carries cnjVersion and type. Covers when the offline cna_tool_gltf_to_cnj converter is required, every file it emits, and the root-relative path rule that decides where sidecars must live.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/111-cnj-pipeline.html">
+  <meta property="og:title"       content="Tutorial 111: The CNJ Format and the gltf_to_cnj Tool - CNA Tutorials">
+  <meta property="og:description" content="CNJ is CNA&#39;s own JSON asset descriptor - every file carries cnjVersion and type. Covers when the offline cna_tool_gltf_to_cnj converter is required, every file it emits, and the root-relative path rule that decides where sidecars must live.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/111-cnj-pipeline.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 111: The CNJ Format and the gltf_to_cnj Tool",
+  "url": "https://libcna.com/docs/tutorials/111-cnj-pipeline.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Intermediate"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 111</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 111: The CNJ Format and the gltf_to_cnj Tool</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; 3D Content</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>What a <code>.cnj</code> file is, and the two fields every single one of them carries.</li>
+          <li>When you actually need <code>cna_tool_gltf_to_cnj</code>, and when the runtime path is enough.</li>
+          <li>Every file a conversion emits, and how the loader stitches them back together.</li>
+          <li>The one path-resolution rule that decides where your sidecars have to live.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="110-gltf-models.html">Tutorial 110: Loading glTF 2.0 Models at Runtime</a>. This tutorial is the offline half of the same story, and assumes you already know why the runtime path exists.</p>
+      </div>
+
+      <p>CNJ is CNA&rsquo;s own content format. It is not a compiled binary container and it is not a content pipeline: a <code>.cnj</code> file is a plain JSON document that <em>describes</em> an asset, referring to bulk data (vertices, indices, skeletons, textures) in small binary sidecar files beside it. You can open one in a text editor, diff it in a code review, and generate it from a script.</p>
+
+      <p><code>cna_tool_gltf_to_cnj</code> is the converter that turns a glTF 2.0 file into that shape. It is built unconditionally with the project &mdash; there is no CMake option, so it is already sitting in your build tree.</p>
+
+      <h2 id="formats">Formats CNA can read side by side</h2>
+
+      <p>A single content root can hold all of these at once. <code>ContentManager</code> resolves them per asset name, not per project.</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Form</th><th>Direction</th><th>What it is</th></tr></thead>
+        <tbody>
+          <tr><td><code>.xnb</code></td><td>Read-only</td><td>The compiled XNA container, produced by XNA, MonoGame or FNA. CNA reads it and will never write it &mdash; there is no <code>ContentImporter</code> or <code>ContentProcessor</code> anywhere in the project.</td></tr>
+          <tr><td><code>.cnj</code></td><td>Read and write</td><td>CNA&rsquo;s own JSON descriptor. One shared extension for every asset type; the <code>"type"</code> field inside says what it is.</td></tr>
+          <tr><td>Native files</td><td>Read-only</td><td>Ordinary formats loaded straight by extension &mdash; <code>.png</code>, <code>.jpg</code>, <code>.bmp</code>, <code>.dds</code>, <code>.wav</code>, <code>.gltf</code>, <code>.glb</code>, and the audio and video containers.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>The one shared <code>.cnj</code> extension is deliberate, and it is the same trade original XNA made: one physical file per logical asset name, with the type resolved from the content rather than from the filename. The cost is opacity &mdash; a folder of <code>.cnj</code> files tells you nothing until you open one &mdash; exactly as a folder of <code>.xnb</code> files told you nothing.</p>
+
+      <p>Here is the current reader-extension map. Every one of these types also accepts a <code>.cnj</code>, because <code>.cnj</code> is tried ahead of a reader&rsquo;s own native extensions for <em>every</em> registered type:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Type</th><th>Native extensions</th></tr></thead>
+        <tbody>
+          <tr><td><code>Model</code></td><td><code>.cnj</code>, <code>.gltf</code>, <code>.glb</code></td></tr>
+          <tr><td><code>Texture2D</code></td><td><code>.png</code>, <code>.jpg</code>, <code>.jpeg</code>, <code>.bmp</code>, <code>.gif</code>, <code>.tga</code>, <code>.tif</code>, <code>.tiff</code>, <code>.qoi</code></td></tr>
+          <tr><td><code>TextureCube</code></td><td><code>.dds</code></td></tr>
+          <tr><td><code>SoundEffect</code></td><td><code>.wav</code></td></tr>
+          <tr><td><code>Song</code></td><td><code>.mp3</code>, <code>.ogg</code>, <code>.wav</code>, <code>.flac</code>, <code>.opus</code>, <code>.aac</code>, <code>.wma</code></td></tr>
+          <tr><td><code>Video</code></td><td><code>.mp4</code>, <code>.ogv</code>, <code>.webm</code>, <code>.mkv</code>, <code>.avi</code>, <code>.mov</code></td></tr>
+          <tr><td><code>SpriteFont</code>, <code>Effect</code>, <code>Texture3D</code>, <code>Curve</code>, <code>AnimationClip</code></td><td><code>.cnj</code> only &mdash; these have no native file form</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2 id="envelope">The envelope: every .cnj carries cnjVersion and type</h2>
+
+      <p>Whatever else is in the document, the top level always has these two fields:</p>
+
+      <pre><code class="language-json">{
+  "cnjVersion": 1,
+  "type": "SpriteFont"
+}</code></pre>
+
+      <ul>
+        <li><strong><code>cnjVersion</code></strong> versions the <em>envelope</em>, not the per-type schema. It must be an integer inside the range that type understands, and the check is strict: a value of <code>1.5</code> is rejected rather than truncated to <code>1</code>.</li>
+        <li><strong><code>type</code></strong> is a cross-check, not the dispatch key. The dispatch key is still the <code>T</code> you name at the <code>Load&lt;T&gt;()</code> call site, exactly as in XNA. <code>type</code> exists so that asking for a <code>SpriteFont</code> and getting a <code>Model</code> fails with a clear message instead of a confusing field-parsing error &mdash; and so that tooling with no compile-time <code>T</code> (validators, editors, migration scripts) can still tell what a file is.</li>
+      </ul>
+
+      <p><code>Model</code> is the one type that has reached <code>cnjVersion</code> 2. Version 2 added the <code>"bones"</code> array and the per-mesh <code>"parentBone"</code> index, so that a converted asset rebuilds the same <code>ModelBone</code> tree the runtime glTF path builds directly. Every other type still accepts version 1 only &mdash; which means an unknown future version stays a hard error everywhere it has not been defined.</p>
+
+      <p>Each of these produces a <code>ContentLoadException</code> naming the file:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Problem</th><th>Message names</th></tr></thead>
+        <tbody>
+          <tr><td>Not valid JSON, or the root is not an object</td><td>the parse failure</td></tr>
+          <tr><td><code>cnjVersion</code> missing</td><td>the required field</td></tr>
+          <tr><td><code>cnjVersion</code> out of range, or not an integer</td><td>the value and the supported range</td></tr>
+          <tr><td><code>type</code> missing</td><td>the required field</td></tr>
+          <tr><td><code>type</code> present but wrong</td><td>both the found and the requested type</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2 id="sourcefile">Self-contained documents versus metadata sidecars</h2>
+
+      <p>A <code>.cnj</code> plays one of two roles. Either it is a complete descriptor, or it carries an optional <code>"sourceFile"</code> field and acts as a metadata layer over an ordinary native file that keeps its own decoder.</p>
+
+      <p>That second role is why <code>.cnj</code> is checked <em>before</em> native extensions. <code>Textures/hero.png</code> can live entirely on its own; add <code>Textures/hero.cnj</code> beside it and you can attach metadata the PNG format cannot carry, without giving up native PNG decoding for the pixels.</p>
+
+      <pre><code class="language-json">{
+  "cnjVersion": 1,
+  "type": "Texture2D",
+  "sourceFile": "Textures/hero.png",
+  "colorKey": [255, 0, 255]
+}</code></pre>
+
+      <p>Not every reader accepts <code>sourceFile</code>, and the ones that do not reject it loudly rather than ignoring it:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Reader</th><th><code>sourceFile</code></th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>Texture2D</code></td><td><span class="status-badge status-done">Supported</span></td><td>Plus <code>colorKey</code> metadata.</td></tr>
+          <tr><td><code>SoundEffect</code></td><td><span class="status-badge status-done">Supported</span></td><td>Delegates to the native <code>.wav</code> decoder.</td></tr>
+          <tr><td><code>TextureCube</code></td><td><span class="status-badge status-done">Supported</span></td><td>Delegates to the DDS decoder.</td></tr>
+          <tr><td><code>SpriteFont</code></td><td><span class="status-badge status-partial">Rejected</span></td><td>Self-contained; the atlas is named by its own <code>"texture"</code> field.</td></tr>
+          <tr><td><code>Effect</code></td><td><span class="status-badge status-partial">Rejected</span></td><td>Self-contained; shader sources are named by <code>"vertex"</code>/<code>"fragment"</code>.</td></tr>
+          <tr><td><code>Model</code></td><td><span class="status-badge status-partial">Rejected</span></td><td>Self-contained; geometry is named by the <code>"meshes"</code> entries.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2 id="when">When you need the converter</h2>
+
+      <p>Tutorial 110 covered the runtime path: drop a <code>.glb</code> in the content root, call <code>Load&lt;Model&gt;()</code>, done. Reach for the offline converter only when one of these two things is true.</p>
+
+      <p><strong>1. The file contains more than one mesh group.</strong> The runtime importer reads the first group and stops. The converter writes every group as its own <code>Model</code> asset.</p>
+
+      <p>A mesh group is not "a mesh" &mdash; it is <em>a set of mesh instances that share one skin</em>. Every mesh node bound to the same skin lands in one group; every unskinned mesh node in the file lands together in a single further group. So an exported scene containing a rigged hero, a rigged enemy and a pile of static scenery is three groups, not three hundred.</p>
+
+      <p><strong>2. The file is not authored in metres.</strong> glTF mandates metres, and plenty of exporters ignore that. The runtime path hardcodes a unit scale of 1.0; the converter takes an explicit multiplier and applies it uniformly to every position and every bone translation &mdash; including the translation keys inside animation clips, so an animated bone cannot jump back into unscaled space mid-clip.</p>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#8505;</span>
+        <p>Neither reason is about speed. The converter does not make loading meaningfully faster &mdash; it makes loading <em>possible</em> for content the zero-configuration path deliberately does not handle.</p>
+      </div>
+
+      <h2 id="running">Running the converter</h2>
+
+      <pre><code class="language-bash"># cna_tool_gltf_to_cnj &lt;input.gltf|.glb&gt; &lt;outputDir&gt; &lt;baseName&gt; [unitScale]
+
+# A single-group model, straight into the content root
+cna_tool_gltf_to_cnj art/hero.glb Content hero
+
+# A centimetre-authored scene, scaled down by 100
+cna_tool_gltf_to_cnj art/city.glb Content city 0.01</code></pre>
+
+      <p>Both container forms are accepted. Only <code>asset.version</code> <code>2.0</code> is allowed; anything else is refused outright. A <code>unitScale</code> that is not a positive number is refused too, with its own message. The output directory is created if it does not exist.</p>
+
+      <p>When the file holds several groups, the base name is suffixed so each group gets a distinct asset name:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Group</th><th>Emitted asset name</th></tr></thead>
+        <tbody>
+          <tr><td>Only one group in the file</td><td><code>&lt;baseName&gt;</code> &mdash; no suffix at all</td></tr>
+          <tr><td>The unskinned group</td><td><code>&lt;baseName&gt;_static</code></td></tr>
+          <tr><td>A skinned group</td><td><code>&lt;baseName&gt;_&lt;skinName&gt;</code>, or <code>&lt;baseName&gt;_skinN</code> if the skin is unnamed</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>The tool prints a line per group summarising mesh parts, bone count and clip count, then any warnings it collected. Warnings are worth reading: they cover things such as a PBR map sampling from a different <code>TEXCOORD</code> set than the base colour texture, which CNA cannot currently honour because its PBR effects sample every map from one shared UV channel.</p>
+
+      <h2 id="emitted">What a conversion emits</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>File</th><th>Contents</th><th>When</th></tr></thead>
+        <tbody>
+          <tr><td><code>&lt;name&gt;.cnj</code></td><td>The <code>Model</code> descriptor &mdash; bones, meshes, materials, references to everything below.</td><td>One per mesh group.</td></tr>
+          <tr><td><code>&lt;name&gt;_meshN_verts.bin</code></td><td>Raw interleaved vertex bytes.</td><td>One per mesh part.</td></tr>
+          <tr><td><code>&lt;name&gt;_meshN_idx.bin</code></td><td>Raw index buffer.</td><td>One per mesh part.</td></tr>
+          <tr><td><code>&lt;name&gt;.skeleton.bin</code></td><td>Bone parents, bind poses, inverse bind poses, and the per-root prefix that carries the joints&rsquo; scene ancestry.</td><td>Skinned groups only.</td></tr>
+          <tr><td><code>&lt;name&gt;_&lt;clip&gt;.cnj</code></td><td>A standalone <code>AnimationClip</code> document, one per animation.</td><td>Skinned groups only.</td></tr>
+          <tr><td><code>&lt;name&gt;_meshN_morph.bin</code></td><td>Per-target position and normal deltas.</td><td>Mesh parts with morph targets.</td></tr>
+          <tr><td><code>&lt;name&gt;_texN.&lt;ext&gt;</code></td><td>Textures extracted verbatim from the glTF, PNG or JPEG.</td><td>As referenced; shared textures are written once.</td></tr>
+          <tr><td><code>&lt;name&gt;_texoccN.&lt;ext&gt;</code></td><td>An occlusion texture rewritten for the dual-texture lightmap convention.</td><td>Only on the <code>DualTextureEffect</code> path.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>The descriptor that ties them together looks like this &mdash; trimmed, but the field names are real:</p>
+
+      <pre><code class="language-json">{
+  "cnjVersion": 2,
+  "type": "Model",
+  "skeleton": "hero.skeleton.bin",
+  "bones": [
+    { "name": "Root", "parent": -1, "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] },
+    { "name": "Hips", "parent": 0,  "transform": [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] }
+  ],
+  "animations": [
+    { "name": "Walk", "clip": "hero_Walk.cnj" }
+  ],
+  "meshes": [
+    {
+      "vertices": "hero_mesh0_verts.bin",
+      "indices": "hero_mesh0_idx.bin",
+      "vertexStride": 68,
+      "effect": "SkinnedPbrEffect",
+      "parentBone": 0,
+      "texture": "hero_tex0.png",
+      "normalMap": "hero_tex1.png",
+      "metallicRoughnessMap": "hero_tex2.png",
+      "metallicFactor": 1,
+      "roughnessFactor": 1,
+      "emissiveFactor": [0, 0, 0]
+    }
+  ]
+}</code></pre>
+
+      <p>Note the <code>"effect"</code> field. The converter picks it from the source material, and the choice also fixes the vertex layout written into the <code>.bin</code>:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Source material</th><th>Effect chosen</th></tr></thead>
+        <tbody>
+          <tr><td>Skinned, with a normal or metallic-roughness map</td><td><code>SkinnedPbrEffect</code></td></tr>
+          <tr><td>Unskinned, with a normal or metallic-roughness map</td><td><code>PbrEffect</code></td></tr>
+          <tr><td>Skinned, without those maps</td><td><code>SkinnedEffect</code></td></tr>
+          <tr><td>Unskinned, with both a base colour and an occlusion texture</td><td><code>DualTextureEffect</code></td></tr>
+          <tr><td>Everything else</td><td><code>BasicEffect</code></td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>That last row is the trap covered in <a href="114-pbr-materials.html">Tutorial 114</a>: a material that expresses itself purely as numbers, with no texture maps at all, is not treated as PBR content and loses its material properties.</p>
+
+      <h2 id="paths">Where the sidecars have to live</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>Every path inside a <code>Model</code> <code>.cnj</code> &mdash; <code>skeleton</code>, <code>vertices</code>, <code>indices</code>, <code>texture</code>, <code>clip</code>, <code>morphTargets</code> &mdash; is resolved <strong>relative to the ContentManager&rsquo;s root directory</strong>, not relative to the <code>.cnj</code> file&rsquo;s own folder.</p>
+      </div>
+
+      <p>The converter writes bare filenames with no directory component. That is exactly right if you convert straight into the content root:</p>
+
+      <pre><code class="language-bash">cna_tool_gltf_to_cnj art/hero.glb Content hero
+# Content/hero.cnj references "hero_mesh0_verts.bin"
+# ContentManager looks for Content/hero_mesh0_verts.bin   -- found</code></pre>
+
+      <p>If you convert into a subfolder instead, the descriptor still names bare files, and the loader still looks for them at the root &mdash; so the load fails:</p>
+
+      <pre><code class="language-bash">cna_tool_gltf_to_cnj art/hero.glb Content/models hero
+# Content/models/hero.cnj references "hero_mesh0_verts.bin"
+# ContentManager looks for Content/hero_mesh0_verts.bin    -- not there</code></pre>
+
+      <p>You have two clean fixes: convert into the content root, or convert into the subfolder and then rewrite the sidecar names in the JSON to be root-relative (<code>"models/hero_mesh0_verts.bin"</code>). A one-line script is enough, and it is easy precisely because the descriptor is text.</p>
+
+      <p>Paths that escape the content root are rejected outright, and so are absolute paths. That check is deliberate: a content file is untrusted input, and a <code>.cnj</code> must not be able to name <code>../../etc/passwd</code>.</p>
+
+      <h2 id="loading">Loading the result</h2>
+
+      <p>Nothing changes at the call site. Drop the extension, as always:</p>
+
+      <pre><code class="language-cpp">// Content/hero.cnj plus its sidecars on disk
+Model* hero = Content-&gt;Load&lt;Model&gt;("hero");
+hero-&gt;Draw(world, view, projection);</code></pre>
+
+      <p>Because a <code>.cnj</code> outranks a same-named <code>.gltf</code>/<code>.glb</code>, you can keep the source file beside the converted one and the converted one keeps winning. That is the same "sidecar always wins" convention every other native format follows &mdash; and it means switching a single asset from the runtime path to the converted path is a matter of dropping the <code>.cnj</code> in, not renaming anything.</p>
+
+      <p>The clip documents are standalone. They are not tied to the model that shipped them, so a clip can be loaded on its own and shared between rigs with a matching bone layout:</p>
+
+      <pre><code class="language-cpp">using Microsoft::Xna::Framework::Graphics::AnimationClip;
+
+AnimationClip walk = Content-&gt;Load&lt;AnimationClip&gt;("hero_Walk");</code></pre>
+
+      <h2 id="custom">Your own .cnj types</h2>
+
+      <p>The format is not reserved for CNA&rsquo;s own types. A game can register a factory keyed by the <code>"type"</code> string, which is how two differently-shaped documents can both deserialize into one C++ type:</p>
+
+      <pre><code class="language-cpp">// Both produce a GameData, chosen by the document's own "type" field.
+Content-&gt;RegisterCnjLoader&lt;GameData&gt;("EnemyDefinition",
+    [](const std::string&amp; cnjJson, ContentManager&amp; cm) { return ParseEnemy(cnjJson, cm); });
+
+Content-&gt;RegisterCnjLoader&lt;GameData&gt;("LootTable",
+    [](const std::string&amp; cnjJson, ContentManager&amp; cm) { return ParseLoot(cnjJson, cm); });</code></pre>
+
+      <p>Registration fails fast and never silently replaces anything: an empty type name or factory is rejected, registering the same <code>(T, typeName)</code> pair twice throws, and so does registering a loader for a <code>T</code> that already has an ordinary reader &mdash; because that reader would win and your factory would never be consulted. Two <em>different</em> type names for the same <code>T</code> are the whole point, and stay fully supported.</p>
+
+      <p>This is a different mechanism from <code>RegisterTypeReader&lt;T&gt;()</code>, which allows exactly one reader per <code>T</code>. See <a href="46-content-reader.html">Tutorial 46</a> for that one.</p>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="112-gltf-animation.html">Tutorial 112: Skeletal Animation from glTF</a> &mdash; playing the clips this tool emits.</li>
+        <li><a href="114-pbr-materials.html">Tutorial 114: PBR Materials</a> &mdash; what <code>PbrEffect</code> does with those maps and factors.</li>
+        <li><a href="45-content-manager.html">Tutorial 45: The Content Manager</a></li>
+        <li><a href="../model-loading.html">Model Loading reference</a></li>
+      </ul>
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

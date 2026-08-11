@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 120: XACT: AudioEngine, SoundBank, WaveBank and Cue - CNA Tutorials</title>
+  <meta name="description" content="CNA's XACT support is a real binary parser for the XGS, XWB and XSB formats with genuine RPC curves and categories. How to wire it up, plus the three caveats that matter when porting.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/120-xact.html">
+  <meta property="og:title"       content="Tutorial 120: XACT: AudioEngine, SoundBank, WaveBank and Cue - CNA Tutorials">
+  <meta property="og:description" content="CNA's XACT support is a real binary parser for the XGS, XWB and XSB formats with genuine RPC curves and categories. How to wire it up, plus the three caveats that matter when porting.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/120-xact.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 120: XACT: AudioEngine, SoundBank, WaveBank and Cue",
+  "url": "https://libcna.com/docs/tutorials/120-xact.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Advanced"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 120</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 120: XACT: AudioEngine, SoundBank, WaveBank and Cue</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Audio</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>Wiring up <code>AudioEngine</code>, <code>WaveBank</code> and <code>SoundBank</code>, and why they do <em>not</em> go through <code>ContentManager</code>.</li>
+          <li>Playing cues, both fire-and-forget and held.</li>
+          <li>Driving mixes with categories, global variables and RPC curves.</li>
+          <li><strong>Three honest caveats</strong> &mdash; including one that makes a sound go missing without any error at all.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="14-sound-effects.html">Tutorial 14: Playing Sound Effects</a> covers the simpler <code>SoundEffect</code> path. If you are starting a new project with no existing XACT content, that path is the one you want; XACT is for porting titles that already have it.</p>
+      </div>
+
+      <p>XACT was XNA&rsquo;s data-driven audio system: a sound designer authored cues, categories, variation tables and parameter curves in the XACT tool, and the game triggered them by name. Most reimplementations stub it out. CNA does not &mdash; <code>AudioEngine</code>, <code>WaveBank</code> and <code>SoundBank</code> contain a <strong>genuine binary parser</strong> for the XGS, XWB and XSB formats, and <code>Cue</code> plays the parsed result back through SDL3_mixer using FACT&rsquo;s own volume formula, real RPC curve evaluation, real per-track filters and real instance limits.</p>
+
+      <p>That is worth being precise about, because it is the difference between &ldquo;your project builds&rdquo; and &ldquo;your project sounds right&rdquo;. It is also worth being precise about the three places where it stops, which is the second half of this page.</p>
+
+      <h2 id="content">The three file types</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>File</th><th>Contents</th><th>Loaded by</th></tr></thead>
+        <tbody>
+          <tr><td><code>.xgs</code></td><td>Global settings: categories, variables, RPC curves</td><td><code>AudioEngine</code></td></tr>
+          <tr><td><code>.xwb</code></td><td>Wave bank: the actual encoded audio</td><td><code>WaveBank</code></td></tr>
+          <tr><td><code>.xsb</code></td><td>Sound bank: cues, sounds, tracks, events, variations</td><td><code>SoundBank</code></td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>These are loaded by file path, not through <code>ContentManager</code>.</strong> There is no <code>Content.Load&lt;SoundBank&gt;()</code>. Each constructor takes a plain <code>std::string</code> path, and it is your job to make sure your content directory ships alongside the executable.</p>
+      </div>
+
+      <p>CNA cannot author these files &mdash; it only reads them. They come from Microsoft&rsquo;s XACT3 authoring tool. <code>AudioEngine::ContentVersion</code> is the constant <code>46</code>, the XACT content version CNA targets.</p>
+
+      <h2 id="setup">Setting it up</h2>
+
+      <p>Order matters: the engine first, then the wave banks that hold the audio, then the sound banks that reference them.</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Audio/AudioEngine.hpp"
+#include "Microsoft/Xna/Framework/Audio/SoundBank.hpp"
+#include "Microsoft/Xna/Framework/Audio/WaveBank.hpp"
+
+using namespace Microsoft::Xna::Framework::Audio;
+
+class MyGame : public Microsoft::Xna::Framework::Game
+{
+    std::unique_ptr&lt;AudioEngine&gt; audioEngine_;
+    std::unique_ptr&lt;WaveBank&gt;   waveBank_;
+    std::unique_ptr&lt;SoundBank&gt;  soundBank_;
+
+    void LoadContent() override
+    {
+        audioEngine_ = std::make_unique&lt;AudioEngine&gt;("Content/Audio/Demo.xgs");
+        waveBank_    = std::make_unique&lt;WaveBank&gt;(audioEngine_.get(), "Content/Audio/Waves.xwb");
+        soundBank_   = std::make_unique&lt;SoundBank&gt;(audioEngine_.get(), "Content/Audio/Sounds.xsb");
+    }
+};</code></pre>
+
+      <p>Destroy them in the reverse order. The engine keeps registries of its banks and cascades disposal, so a bank never outlives the engine and a cue never outlives its bank &mdash; but explicit reverse-order teardown keeps the intent obvious.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Call <code>audioEngine_-&gt;Update()</code> once per frame.</strong> This is the same contract XNA games already follow. It reconciles cue state, sweeps finished fire-and-forget cues, and &mdash; the audible part &mdash; ticks authored fade-outs so they ramp smoothly instead of jumping to silence the next time something happens to query them.</p>
+      </div>
+
+      <pre><code class="language-cpp">void Update(const GameTime&amp; gameTime) override
+{
+    Game::Update(gameTime);
+    audioEngine_-&gt;Update();
+}</code></pre>
+
+      <h2 id="cues">Playing cues</h2>
+
+      <p>There are two ways, and the difference is who owns the cue.</p>
+
+      <p><strong>Fire and forget</strong> &mdash; the bank owns it, plays it, and sweeps it away when it finishes. Use this for one-shots:</p>
+
+      <pre><code class="language-cpp">soundBank_-&gt;PlayCue("Explosion");
+
+// Positioned in 3D at the moment it starts:
+soundBank_-&gt;PlayCue("Explosion", listener, emitter);</code></pre>
+
+      <p><strong>Held</strong> &mdash; you get a <code>Cue*</code> you own and control. Use this for anything you need to pause, stop, re-position or drive with a variable:</p>
+
+      <pre><code class="language-cpp">Cue* engine = soundBank_-&gt;GetCue("EngineLoop");
+engine-&gt;Play();
+
+// ... later ...
+engine-&gt;SetVariable("RPM", 4200.0f);
+engine-&gt;Apply3D(listener, emitter);
+
+// ... eventually ...
+engine-&gt;Stop(AudioStopOptions::AsAuthored);
+engine-&gt;Dispose();
+delete engine;</code></pre>
+
+      <p><code>GetCue</code> throws <code>System::InvalidOperationException</code> for a name that is not in the bank, <code>System::ObjectDisposedException</code> if the bank is gone, and <code>System::ArgumentNullException</code> for an empty name. <code>PlayCue</code> throws the same three.</p>
+
+      <p>You are responsible for disposing a cue you obtained from <code>GetCue</code>. If the bank is disposed first, it force-stops and disposes any cue still associated with it, so a cue can never outlive its bank &mdash; but the memory is still yours to free.</p>
+
+      <h3 id="cue-state">Cue state</h3>
+
+      <p><code>Cue</code> exposes the full XACT state set as separate boolean properties rather than one enum:</p>
+
+      <pre><code class="language-cpp">[[nodiscard]] bool getIsCreatedProperty()   const;
+[[nodiscard]] bool getIsPreparingProperty() const;
+[[nodiscard]] bool getIsPreparedProperty()  const;
+[[nodiscard]] bool getIsPlayingProperty()   const;
+[[nodiscard]] bool getIsPausedProperty()    const;
+[[nodiscard]] bool getIsStoppingProperty()  const;
+[[nodiscard]] bool getIsStoppedProperty()   const;
+[[nodiscard]] bool getIsDisposedProperty()  const;</code></pre>
+
+      <p><code>IsStopping</code> is the one that earns its keep: a cue told to stop <em>as authored</em> spends its fade-out there, and only then becomes <code>IsStopped</code>.</p>
+
+      <pre><code class="language-cpp">cue-&gt;Stop(AudioStopOptions::AsAuthored);  // honour the authored fade-out
+cue-&gt;Stop(AudioStopOptions::Immediate);   // cut now</code></pre>
+
+      <h2 id="categories">Categories</h2>
+
+      <p>Categories are the mix buses your sound designer authored in the XGS file. Fetch one by name and operate on every cue in it at once:</p>
+
+      <pre><code class="language-cpp">AudioCategory music = audioEngine_-&gt;GetCategory("Music");
+music.SetVolume(0.4f);
+music.Pause();
+music.Resume();
+music.Stop(AudioStopOptions::AsAuthored);</code></pre>
+
+      <p>Categories carry more than a volume: each one parses a parent index, an instance limit, fade-in and fade-out durations, and a max-instance behaviour. CNA implements the limit checks, including the eviction and fade behaviour FACT applies when a category is already at capacity. Cue-level instance limits are checked as well, before the category&rsquo;s.</p>
+
+      <h2 id="variables">Variables and RPC curves</h2>
+
+      <p>This is where XACT earns its complexity. A designer binds a parameter &mdash; volume, pitch, filter cutoff, filter Q &mdash; to a variable through a curve, and the game just writes the variable.</p>
+
+      <p>Variables come in two genuinely separate scopes, and CNA keeps them separate exactly as real XACT does:</p>
+
+      <pre><code class="language-cpp">// Engine-global variables
+audioEngine_-&gt;SetGlobalVariable("Tension", 0.8f);
+float t = audioEngine_-&gt;GetGlobalVariable("Tension");
+
+// Cue-scoped variables, per cue instance
+cue-&gt;SetVariable("RPM", 4200.0f);
+float rpm = cue-&gt;GetVariable("RPM");</code></pre>
+
+      <p>A variable is one or the other, never both &mdash; that is a property of how the XGS file declares it, not a CNA restriction. A cue-scoped variable that was never explicitly set reads back the authored initial value.</p>
+
+      <p>The curves themselves are real. Each RPC control point carries an interpolation shape &mdash; linear, fast, slow, or sine &mdash; and CNA evaluates them continuously, once per <code>AudioEngine::Update()</code>, retargeting volume, pitch and filter parameters live rather than sampling once at play time.</p>
+
+      <h2 id="caveats">Three honest caveats</h2>
+
+      <h3 id="caveat-playwave">1. Only the first PlayWave per track is honoured</h3>
+
+      <p>When CNA parses a track&rsquo;s event list, it walks the events until it finds the first <code>PlayWave</code>-family event and stops there. A track authored with several sequenced waves plays only the first of them.</p>
+
+      <p>Variation tables are a different mechanism and <em>are</em> supported &mdash; weighted selection across a candidate list, in all five authored modes (ordered, ordered-from-random, random, random-no-repeats and shuffle). What is not supported is a single track that fires several waves in sequence.</p>
+
+      <h3 id="caveat-xma">2. XMA and WMA go missing silently</h3>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>An XMA/XMA2 or WMA wave-bank entry does not throw.</strong> CNA writes a diagnostic to <code>stderr</code> naming the bank, the wave index and the format, then returns no sound at all. Playback continues. Your cue triggers, and nothing is heard.</p>
+      </div>
+
+      <p>This is the caveat most likely to cost you an afternoon, because there is no exception to catch and no return code to check &mdash; only a line on standard error that is easy to miss behind a game&rsquo;s own logging. If a ported title is missing specific sounds, check the console first.</p>
+
+      <p>A wave bank entry is one of four formats. Two decode and two do not:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>XWB format</th><th>Status</th></tr></thead>
+        <tbody>
+          <tr><td>PCM, 8-bit and 16-bit</td><td><span class="status-badge status-done">Decodes</span></td></tr>
+          <tr><td>MS-ADPCM</td><td><span class="status-badge status-done">Decodes</span></td></tr>
+          <tr><td>XMA / XMA2</td><td><span class="status-badge status-partial">Logs to stderr, sound is missing</span></td></tr>
+          <tr><td>WMA</td><td><span class="status-badge status-partial">Logs to stderr, sound is missing</span></td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>The fix is to re-encode the affected waves to PCM or MS-ADPCM in the XACT tool and rebuild the bank. Loop regions authored on a wave entry are parsed and applied, so an intro-then-loop wave keeps its loop points through the re-encode.</p>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#10003;</span>
+        <p><strong>Note the asymmetry with the XNB path.</strong> A <code>SoundEffect</code> loaded from an <code>.xnb</code> asset whose format is XMA2 <em>does</em> throw &mdash; the XNB <code>SoundEffectReader</code> rejects it outright. The two paths behave differently for the same codec, so do not generalise from one to the other.</p>
+      </div>
+
+      <h3 id="caveat-reverb">3. Reverb is a deliberate no-op</h3>
+
+      <p>An authored reverb send is accepted and does nothing. SDL3_mixer has no auxiliary send/return bus &mdash; no equivalent of the shared reverb voice XACT routes into &mdash; so there is nowhere for the wet signal to go. This is a documented limitation of the backing library, not a gap waiting to be filled.</p>
+
+      <p>Everything else in the DSP chain is real: per-track low-pass, band-pass and high-pass filters are implemented with the same state-variable filter algorithm FAudio uses, with the authored frequency and Q converted through FAudio&rsquo;s own formulas, and live RPC retargeting of both.</p>
+
+      <h2 id="3d">3D cues</h2>
+
+      <p><code>Cue::Apply3D(listener, emitter)</code> behaves exactly like the <code>SoundEffectInstance</code> version, with the same single-listener restriction. See <a href="119-3d-audio.html">Tutorial 119</a> for the attenuation curve, the Doppler model, and what <code>Apply3D</code> takes over once you call it.</p>
+
+      <h2 id="streaming">Streaming wave banks</h2>
+
+      <p>The second <code>WaveBank</code> constructor takes the streaming form, matching XNA&rsquo;s:</p>
+
+      <pre><code class="language-cpp">WaveBank(AudioEngine* audioEngine,
+         const std::string&amp; streamingWaveBankFilename,
+         SharpRuntime::intcs offset,
+         SharpRuntime::shortcs packetSize);</code></pre>
+
+      <p>Two read-only properties tell you where a bank stands: <code>getIsPreparedProperty()</code> reports whether it has finished loading and is ready for playback, and <code>getIsInUseProperty()</code> whether any cue is currently playing audio sourced from it.</p>
+
+      <h2 id="should-you">Should you use XACT at all?</h2>
+
+      <p>If you are porting a title that already has XACT content, yes &mdash; that is the whole point, and the alternative is re-authoring your audio. If you are starting fresh, <code>SoundEffect</code> and <code>SoundEffectInstance</code> are simpler, integrate with <code>ContentManager</code>, and have none of the caveats above. You can always build the data-driven layer you actually want on top of them.</p>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="119-3d-audio.html">Tutorial 119: 3D positional audio</a></li>
+        <li><a href="118-dynamic-audio.html">Tutorial 118: Procedural audio</a></li>
+        <li><a href="84-migrate-xna.html">Tutorial 84: Migrating from XNA</a></li>
+        <li><a href="../audio.html">Audio reference</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

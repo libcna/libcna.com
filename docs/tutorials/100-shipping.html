@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 100: Shipping Your CNA Game - CNA</title>
-  <meta name="description" content="Release builds, asset bundling, Windows NSIS/WiX installer, Linux AppImage/Flatpak, web deployment, Android Play Store, license compliance, and CPack packaging.">
+  <meta name="description" content="Release builds, asset bundling, Windows installers, Linux AppImage, web deployment, Android Play Store, licence compliance and CPack — plus the per-platform gaps you must ship around.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/100-shipping.html">
   <meta property="og:title"       content="Tutorial 100: Shipping Your CNA Game - CNA">
-  <meta property="og:description" content="Release builds, asset bundling, Windows NSIS/WiX installer, Linux AppImage/Flatpak, web deployment, Android Play Store, license compliance, and CPack packaging.">
+  <meta property="og:description" content="Release builds, asset bundling, Windows installers, Linux AppImage, web deployment, Android Play Store, licence compliance and CPack — plus the per-platform gaps you must ship around.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/100-shipping.html">
@@ -19,9 +19,10 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "Tutorial 100: Shipping Your CNA Game",
+  "description": "Release builds, per-platform packaging, licence compliance and a final checklist — including the platform gaps (no web saves, no video off Linux/macOS) you have to ship around.",
   "url": "https://libcna.com/docs/tutorials/100-shipping.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-07-18",
+  "dateModified": "2026-08-11",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -60,6 +61,7 @@
       <a href="../../contact.html"       class="nav-link">Contact</a>
       <a href="../../search.html" class="nav-link">Search</a>
       <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
     </div>
   </div>
 </nav>
@@ -86,22 +88,67 @@
             <li>Producing a stripped release build and bundling assets.</li>
             <li>Packaging per platform: Windows installer, Linux AppImage/Flatpak, web, and Play Store.</li>
             <li>Meeting the licence obligations of Ms-PL, SDL3 and the other dependencies.</li>
+            <li>The per-platform gaps you must design around before you ship.</li>
             <li>A final pre-release checklist.</li>
           </ul>
           <p><strong>Before you start</strong> &mdash; <a href="20-build-run.html">Tutorial 20: Building and Running Your Game</a> (the release build) and <a href="80-cross-platform.html">Tutorial 80: Cross-Platform Build Guide</a> (per-platform packaging starts from those toolchains).</p>
         </div>
 
+        <h2>Platform gaps to ship around</h2>
+        <p>Four of these are easy to miss until a player reports them. Settle each one before you cut a release build.</p>
+        <div class="table-wrap">
+        <table>
+          <thead><tr><th>Gap</th><th>Where it bites</th><th>What to do</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>No save persistence on the web</strong></td>
+              <td>Emscripten builds only</td>
+              <td><code>SDL_GetPrefPath</code> resolves to volatile MEMFS; CNA mounts no IDBFS and never calls <code>FS.syncfs</code>, so every save is silently discarded on reload. Implement persistence yourself (<code>localStorage</code> / IndexedDB via <code>EM_JS</code>) or ship the web build as a demo without saves. See <a href="81-emscripten.html">Tutorial 81</a>.</td>
+            </tr>
+            <tr>
+              <td><strong>No video</strong></td>
+              <td>Windows, Web and Android</td>
+              <td>The video translation units are excluded from those builds. Headers still exist, so code using <code>Video</code>/<code>VideoPlayer</code> <em>compiles</em> and then <strong>fails to link</strong>. Guard it out per platform, or drop cutscenes from those targets.</td>
+            </tr>
+            <tr>
+              <td><strong>FFmpeg is a hard requirement</strong></td>
+              <td>Linux and macOS builds</td>
+              <td>No option disables it &mdash; configure fails without the dev packages. Your shipped Linux binary therefore links FFmpeg runtime libraries, so bundle them (AppImage handles this) and account for their licences.</td>
+            </tr>
+            <tr>
+              <td><strong><code>Game</code> must be heap-allocated on the web</strong></td>
+              <td>Emscripten builds only</td>
+              <td>A stack-allocated <code>Game</code> is silently corrupted and fails frames later as an indirect-call fault. Allocate with <code>new</code>/<code>std::make_unique</code>.</td>
+            </tr>
+          </tbody>
+        </table>
+        </div>
+        <p>Two more worth knowing before you commit to a target. <strong>iOS and tvOS are not supported at any level</strong> &mdash; there is no toolchain file, and the <code>METAL</code> gate states plainly that both remain unvalidated. And <strong>compiled <code>.fx</code> shader bytecode is unsupported on every renderer</strong>: if your game depends on hand-written shaders, they go through <code>ShaderEffect</code> in the language your selected renderer expects (see <a href="52-custom-shaders.html">Tutorial 52</a>), and note that <code>BGFX</code> accepts one and silently ignores it.</p>
+
         <h2>Release CMake build</h2>
-<pre><code class="language-cpp"># Release build with maximum optimization
+<pre><code class="language-bash"># Release build with maximum optimization
 cmake -S . -B build-release \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCNA_GRAPHICS_BACKEND=EASYGL \
+  -DCNA_GRAPHICS_RENDERER=OPENGLES3 \
   -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=ON   # LTO
 
-cmake --build build-release -j$(nproc)</code></pre>
+cmake --build build-release</code></pre>
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>Do not pass <code>--target CNA</code>.</strong> <code>CNA</code> is an <code>add_library(CNA INTERFACE)</code>
+          umbrella with no sources of its own, so it is not a buildable target. Build your own game target, or the whole
+          build directory.</p>
+          <p><strong>CNA ships no <code>install()</code>, <code>export()</code> or CPack rules.</strong> There is nothing for
+          <code>find_package(CNA)</code> to find &mdash; consumers <code>add_subdirectory</code> the CNA tree. The CPack
+          configuration later on this page packages <em>your</em> game, not CNA.</p>
+          <p><strong>Pick a renderer deliberately.</strong> Exactly one is compiled per build, chosen at configure time, and
+          the value must be one of the 46 current names &mdash; <code>EASYGL</code>, <code>D3D9</code>, <code>D3D11</code>,
+          <code>D3D12</code>, <code>DX3</code> and <code>ASCII</code> all fail the configure today. See
+          <a href="72-backend-selection.html">Tutorial 72</a>.</p>
+        </div>
 
         <h2>Stripping debug symbols</h2>
-<pre><code class="language-cpp"># Linux: strip symbols to reduce binary size
+<pre><code class="language-bash"># Linux: strip symbols to reduce binary size
 strip --strip-unneeded build-release/MyGame
 
 # Keep debug symbols separately for crash reports:
@@ -115,7 +162,7 @@ objcopy --add-gnu-debuglink=MyGame.debug build-release/MyGame</code></pre>
           builds, preload via Emscripten. For compressed bundles, use a simple ZIP archive (extract at
           first run) or a custom pack format.
         </p>
-<pre><code class="language-cpp"># Copy assets to build output directory
+<pre><code class="language-cmake"># Copy assets to build output directory
 add_custom_command(TARGET MyGame POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
             ${CMAKE_SOURCE_DIR}/assets
@@ -124,7 +171,7 @@ add_custom_command(TARGET MyGame POST_BUILD
 )</code></pre>
 
         <h2>Windows installer (NSIS/WiX)</h2>
-<pre><code class="language-cpp"># CPack NSIS installer (Windows)
+<pre><code class="language-cmake"># CPack NSIS installer (Windows)
 set(CPACK_GENERATOR "NSIS")
 set(CPACK_PACKAGE_NAME "MyGame")
 set(CPACK_PACKAGE_VERSION "1.0.0")
@@ -139,7 +186,7 @@ install(DIRECTORY assets DESTINATION .)
 include(CPack)</code></pre>
 
         <h2>Linux AppImage/Flatpak</h2>
-<pre><code class="language-cpp"># Create AppImage with linuxdeploy
+<pre><code class="language-bash"># Create AppImage with linuxdeploy
 wget https://github.com/linuxdeploy/linuxdeploy/releases/latest/download/linuxdeploy-x86_64.AppImage
 chmod +x linuxdeploy-x86_64.AppImage
 ./linuxdeploy-x86_64.AppImage \
@@ -148,7 +195,7 @@ chmod +x linuxdeploy-x86_64.AppImage
   --desktop-file mygame.desktop \
   --icon-file mygame.png \
   --output appimage</code></pre>
-<pre><code class="language-cpp"># mygame.desktop
+<pre><code class="language-ini"># mygame.desktop
 [Desktop Entry]
 Type=Application
 Name=My Game
@@ -157,11 +204,16 @@ Icon=mygame
 Categories=Game;</code></pre>
 
         <h2>Web deployment (GitHub Pages / itch.io)</h2>
-<pre><code class="language-cpp"># Build for web
+<pre><code class="language-bash"># Build for web. OPENGLES3 is NOT valid here — it is gated to non-Emscripten
+# targets. The Emscripten renderers are WEBGL2 (default), WEBGL1, CANVAS,
+# HTML_DOM and SVG_DOM.
 cmake -S . -B build-wasm \
   -DCMAKE_TOOLCHAIN_FILE=$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake \
-  -DCNA_GRAPHICS_BACKEND=EASYGL -DCMAKE_BUILD_TYPE=Release
-cmake --build build-wasm -j$(nproc)
+  -DCNA_GRAPHICS_RENDERER=WEBGL2 -DCMAKE_BUILD_TYPE=Release
+cmake --build build-wasm
+
+# CNA ships a "web" preset that configures exactly this:
+#   cmake --preset web
 
 # Deploy to GitHub Pages (gh-pages branch):
 git checkout gh-pages
@@ -175,7 +227,7 @@ butler push docs/ yourstudio/mygame:html5</code></pre>
 
         <h2>Android Play Store</h2>
         <p>Build and sign a release APK:</p>
-<pre><code class="language-cpp"># 1. Build release APK
+<pre><code class="language-bash"># 1. Build release APK
 cd android/
 ./gradlew assembleRelease
 
@@ -207,7 +259,7 @@ zipalign -v 4 app-release-unsigned.apk my-game-release.apk
           All permissive &mdash; no copyleft restrictions. Include a <code>LICENSES.txt</code> in your
           distribution:
         </p>
-<pre><code class="language-cpp">CNA -- Microsoft Public License (Ms-PL)
+<pre><code class="language-none">CNA -- Microsoft Public License (Ms-PL)
 SDL3 -- zlib License, Copyright (C) 1997-2024 Sam Lantinga
 SDL3_image -- zlib License
 SDL3_mixer -- zlib License
@@ -215,7 +267,7 @@ SDL3_mixer -- zlib License
 
         <h2>Final checklist</h2>
         <p>CPack CMakeLists.txt for multi-platform packaging:</p>
-<pre><code class="language-cpp">cmake_minimum_required(VERSION 3.20)
+<pre><code class="language-cmake">cmake_minimum_required(VERSION 3.20)
 project(MyGame CXX)
 set(CMAKE_CXX_STANDARD 23)
 
@@ -248,18 +300,23 @@ include(CPack)
 
 # Build package: cmake --build build-release --target package</code></pre>
 
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>CNA's own CI will not have caught your platform for you.</strong> Six workflows run automatically on push and pull request &mdash; Linux general tests, input, devices and sensors, 32-bit arithmetic, HTML_DOM browser tests and the METAL macOS build &mdash; and two Windows MSVC workflows are manual-dispatch only. Roughly 36 of the 46 renderers are covered by no workflow at all, Android has none, and the Windows Direct3D renderers are routinely verified through Wine with DXVK/vkd3d-proton rather than on real Windows hardware. Test on the platforms you actually ship to.</p>
+        </div>
+
         <p>Shipping checklist:</p>
         <ul>
           <li>Release build compiled with -O2/-O3 and LTO enabled</li>
           <li>Debug symbols stripped from release binary (separate .debug file kept)</li>
           <li>All assets copied to distribution directory</li>
-          <li>4,845 CNA unit tests pass on target platform</li>
+          <li>CNA's test suite run on the target platform &mdash; 433 test source files containing 6,818 GoogleTest case definitions, plus whichever of the 1,621 registered renderer tests apply to the renderer you configured. Run it and read the output; do not assume a pass rate.</li>
           <li>Game runs without crash on fresh OS install (no missing DLLs / .so files)</li>
-          <li>Audio tested (SoundEffect, background music)</li>
+          <li>Audio tested (SoundEffect, background music). Note <code>.m4a</code>/<code>.aac</code> are unplayable &mdash; SDL3_mixer has no AAC decoder &mdash; and a WaveBank with XMA/WMA content logs to stderr and returns <code>nullptr</code> rather than throwing, so the sound is simply missing.</li>
           <li>Input tested (keyboard, controller if supported)</li>
           <li>Window resizing and fullscreen toggle tested</li>
           <li>LICENSES.txt included in distribution</li>
-          <li>Web build tested in Chrome and Firefox</li>
+          <li>Web build tested in Chrome and Firefox &mdash; including a page reload, to confirm you are not relying on saves that do not persist</li>
           <li>Android APK signed with release keystore</li>
         </ul>
 
@@ -287,7 +344,7 @@ include(CPack)
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -304,7 +361,7 @@ include(CPack)
           <li><a href="../getting-started.html">Getting Started</a></li>
           <li><a href="../building.html">Building</a></li>
           <li><a href="../platforms.html">Platforms</a></li>
-          <li><a href="../rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
           <li><a href="../faq.html">FAQ</a></li>
         </ul>
       </div>

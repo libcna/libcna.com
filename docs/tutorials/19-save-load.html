@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 19: Saving and Loading Data - CNA Tutorials</title>
-  <meta name="description" content="Save and load game data in CNA using StorageDevice, StorageContainer, and JSON serialization across Linux, Windows, Android, and Web.">
+  <meta name="description" content="Save and load game data in CNA using StorageDevice, StorageContainer, and JSON serialization on Linux, Windows, macOS and Android — plus why web builds have no save persistence at all.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/19-save-load.html">
   <meta property="og:title"       content="Tutorial 19: Saving and Loading Data - CNA Tutorials">
-  <meta property="og:description" content="Save and load game data in CNA using StorageDevice, StorageContainer, and JSON serialization across Linux, Windows, Android, and Web.">
+  <meta property="og:description" content="Save and load game data in CNA using StorageDevice, StorageContainer, and JSON serialization on Linux, Windows, macOS and Android — plus why web builds have no save persistence at all.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/19-save-load.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 19: Saving and Loading Data",
   "url": "https://libcna.com/docs/tutorials/19-save-load.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-07-18",
+  "dateModified": "2026-08-11",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -60,6 +60,7 @@
       <a href="../../contact.html"       class="nav-link">Contact</a>
       <a href="../../search.html" class="nav-link">Search</a>
       <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
     </div>
   </div>
 </nav>
@@ -86,10 +87,15 @@
           <li>Where save data actually lands on each platform.</li>
           <li>Serialising game state to JSON and managing multiple save slots.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="04-game-lifecycle.html">Tutorial 04: The Game Class Lifecycle</a> &mdash; saving is normally triggered from a lifecycle callback such as <code>OnExiting</code>. Web builds store data differently; the page covers that separately.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="04-game-lifecycle.html">Tutorial 04: The Game Class Lifecycle</a> &mdash; saving is normally triggered from a lifecycle callback such as <code>OnExiting</code>. Read the web warning below before you plan any save feature for an Emscripten build.</p>
       </div>
 
-      <p>CNA implements the XNA 4.0 <code>StorageDevice</code> / <code>StorageContainer</code> API for reading and writing save data. The API abstracts over platform-specific paths: on Linux it writes to <code>~/.local/share/&lt;GameName&gt;</code>, on Windows to <code>%APPDATA%\&lt;GameName&gt;</code>, on Android to the app's internal files directory, and on Web to Emscripten's persistent file system (backed by IndexedDB).</p>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>There is no save persistence on the web.</strong> Under Emscripten, <code>SDL_GetPrefPath</code> returns a path inside the volatile in-memory MEMFS. CNA mounts no IDBFS and never calls <code>FS.syncfs</code>, so every file a web build writes is <strong>silently discarded when the page reloads</strong>. Nothing throws and nothing warns &mdash; the write appears to succeed. If your game targets the browser and needs to remember anything at all, you have to arrange your own persistence (for example by calling into <code>localStorage</code> or IndexedDB from JavaScript). Everything on this page applies to desktop and Android builds.</p>
+      </div>
+
+      <p>CNA implements the XNA 4.0 <code>StorageDevice</code> / <code>StorageContainer</code> API for reading and writing save data. The API abstracts over platform-specific paths, which it derives from <code>SDL_GetPrefPath</code>: on Linux that is under <code>~/.local/share/</code>, on Windows under <code>%APPDATA%</code>, on macOS under <code>~/Library/Application Support/</code>, and on Android the app's internal files directory.</p>
 
       <h2>StorageDevice overview</h2>
       <p><code>StorageDevice</code> represents a physical or virtual storage medium. In XNA on Xbox 360 this was the memory unit or hard drive; in CNA it maps to the current platform's writable area. You obtain a <code>StorageDevice</code> asynchronously via <code>StorageDevice::BeginShowSelector()</code> (desktop platforms auto-select the default device).</p>
@@ -121,17 +127,17 @@ std::string savePath = container-&gt;getPathProperty();
           <tr><td>Linux</td><td><code>~/.local/share/&lt;GameName&gt;/</code></td></tr>
           <tr><td>Windows</td><td><code>%APPDATA%\&lt;GameName&gt;\</code></td></tr>
           <tr><td>Android</td><td><code>/data/data/&lt;package&gt;/files/&lt;GameName&gt;/</code></td></tr>
-          <tr><td>Web (Emscripten)</td><td><code>/persistent/&lt;GameName&gt;/</code> (IndexedDB-backed)</td></tr>
           <tr><td>macOS</td><td><code>~/Library/Application Support/&lt;GameName&gt;/</code></td></tr>
+          <tr><td>Web (Emscripten)</td><td>A volatile MEMFS path. <strong>Not persistent</strong> &mdash; discarded on page reload</td></tr>
         </tbody>
       </table>
 
-      <p>CNA sets the game name from <code>Game::setTitleProperty()</code> or, if not set, falls back to the executable name. Paths are created automatically on first write.</p>
+      <p>CNA sets the game name from <code>Game::setTitleProperty()</code> or, if not set, falls back to the executable name. The exact root comes from <code>SDL_GetPrefPath</code>, which also creates the directory on first use.</p>
 
       <h2>StorageDevice::BeginOpenContainer</h2>
       <p>The XNA async pattern uses <code>IAsyncResult</code>. CNA implements this but also provides a synchronous shortcut for simpler use:</p>
 
-      <pre><code class="language-cpp">// Async (XNA-compatible):
+      <pre><code class="language-cpp">// Async-shaped (XNA-compatible):
 IAsyncResult* ar = device-&gt;BeginOpenContainer("SaveSlot1", nullptr, nullptr);
 // ... do other work ...
 auto container = device-&gt;EndOpenContainer(ar);
@@ -139,6 +145,11 @@ auto container = device-&gt;EndOpenContainer(ar);
 // Synchronous shortcut (CNA extension — not in original XNA):
 auto container = device-&gt;OpenContainer("SaveSlot1");
 </code></pre>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>The <code>Begin*</code>/<code>End*</code> pair is not actually asynchronous.</strong> The work happens inline, and any callback you pass runs <em>before</em> <code>Begin*</code> returns &mdash; there is no background thread and no "do other work" window to exploit. This is faithful to XNA, whose storage async was also largely fake, but it does mean the async form buys you nothing over the synchronous shortcut except source compatibility with existing XNA code.</p>
+      </div>
 
       <h2>JSON serialization pattern</h2>
       <p>CNA does not bundle a JSON library, but C++23's standard library makes it easy to write lightweight JSON manually. For production use, bundle a header-only library such as nlohmann/json or rapidjson.</p>
@@ -309,7 +320,13 @@ int main() { SaveDemo game; game.Run(); }
 </code></pre>
 
       <h2>Web platform notes</h2>
-      <p>On Emscripten, writes to <code>/persistent/</code> must be followed by a call to <code>EM_ASM(FS.syncfs(false, function(){}))</code> to flush IndexedDB. CNA handles this automatically when a <code>StorageContainer</code> is closed (goes out of scope or is explicitly closed). Do not hold containers open across frames longer than necessary on Web targets.</p>
+      <p>Emscripten builds get a working <code>StorageDevice</code> and <code>StorageContainer</code> &mdash; files are created, written and read back correctly <em>within a single page session</em>. What they do not get is durability. <code>SDL_GetPrefPath</code> lands in MEMFS, CNA mounts no IDBFS, and nothing ever calls <code>FS.syncfs</code>, so the whole tree evaporates on reload.</p>
+      <p>If you need saves in the browser, do the persistence yourself. The usual approach is to keep the serialisation code above unchanged, then push the resulting JSON string into <code>localStorage</code> (or IndexedDB, for larger payloads) from an <code>EM_ASM</code> block, and read it back at startup instead of opening a container. Treat the CNA storage path as a scratch area on that platform, not a save location.</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>Test your own save code.</strong> The storage module is one of the more thinly tested parts of CNA &mdash; <code>StorageContainer</code> in particular has no tests of its own. The API works, but do not assume edge cases such as unusual container names, concurrent opens or partial writes have been exercised for you.</p>
+      </div>
 
       <nav class="docs-pagination" aria-label="Page navigation">
         <div class="docs-pagination-prev">
@@ -334,7 +351,7 @@ int main() { SaveDemo game; game.Run(); }
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends. Works on Linux, Windows, Web, and Android.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly. Works on Linux, Windows, Web, and Android.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

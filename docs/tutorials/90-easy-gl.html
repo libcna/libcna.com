@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 90: Integration with easy-gl Directly - CNA</title>
-  <meta name="description" content="When and how to bypass CNA and call easy-gl (OpenGL ES 3.0/3.2 wrapper) directly for custom render paths, compute shaders, and interop with CNA render state.">
+  <meta name="description" content="When and how to bypass CNA and call easy-gl directly for custom render paths and compute shaders — and how the five GL profile identities all resolve to this one implementation.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/90-easy-gl.html">
   <meta property="og:title"       content="Tutorial 90: Integration with easy-gl Directly - CNA">
-  <meta property="og:description" content="When and how to bypass CNA and call easy-gl (OpenGL ES 3.0/3.2 wrapper) directly for custom render paths, compute shaders, and interop with CNA render state.">
+  <meta property="og:description" content="When and how to bypass CNA and call easy-gl directly for custom render paths and compute shaders — and how the five GL profile identities all resolve to this one implementation.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/90-easy-gl.html">
@@ -19,9 +19,10 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "Tutorial 90: Integration with easy-gl Directly",
+  "description": "easy-gl is the shared internal implementation behind CNA's five GL renderer identities. When bypassing CNA to call it directly is justified, and how to do it safely.",
   "url": "https://libcna.com/docs/tutorials/90-easy-gl.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-07-18",
+  "dateModified": "2026-08-11",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -60,6 +61,7 @@
       <a href="../../contact.html"       class="nav-link">Contact</a>
       <a href="../../search.html" class="nav-link">Search</a>
       <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
     </div>
   </div>
 </nav>
@@ -83,19 +85,24 @@
           <span class="callout-icon">&#8505;</span>
           <p><strong>What you&rsquo;ll learn</strong></p>
           <ul>
-            <li>What easy-gl is and how CNA's <code>EASYGL</code> backend sits on top of it.</li>
+            <li>What easy-gl is, and how CNA's five GL renderer identities all sit on top of this one implementation.</li>
             <li>When bypassing CNA and calling easy-gl directly is justified.</li>
             <li>Keeping CNA's render state consistent when you mix the two.</li>
             <li>The hazards of mixed rendering, illustrated with a compute shader.</li>
           </ul>
-          <p><strong>Before you start</strong> &mdash; <a href="72-backend-selection.html">Tutorial 72: Choosing the Right Rendering Backend</a> (easy-gl is what the <code>EASYGL</code> backend wraps) and <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (mixed rendering means writing GL by hand). Applies only when the <code>EASYGL</code> backend is selected.</p>
+          <p><strong>Before you start</strong> &mdash; <a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a> (easy-gl is what the GL family wraps) and <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (mixed rendering means writing GL by hand). Applies only when one of the five GL renderer identities is selected.</p>
         </div>
 
         <h2>What is easy-gl?</h2>
-        <p><code>easy-gl</code> is CNA's OpenGL ES 3.0/3.2 abstraction layer. It lives in the sibling <code>../easy-gl</code> repository. CNA's EASYGL backend uses easy-gl for all GPU calls. easy-gl wraps raw OpenGL calls in a typed C++ API &mdash; <code>EasyGL::Texture</code>, <code>EasyGL::Shader</code>, <code>EasyGL::Framebuffer</code>, <code>EasyGL::ComputeShader</code> &mdash; to reduce boilerplate and catch common mistakes at compile time.</p>
+        <p><code>easy-gl</code> is a toolkit-independent C++20 wrapper over OpenGL and OpenGL ES. It lives in the sibling <code>../easy-gl</code> repository (which itself needs <code>../meta-gl</code>), is developed separately from CNA, and carries smoke-test coverage rather than a full test framework. It wraps raw GL calls in a typed C++ API &mdash; <code>EasyGL::Texture</code>, <code>EasyGL::Shader</code>, <code>EasyGL::Framebuffer</code>, <code>EasyGL::ComputeShader</code> &mdash; to reduce boilerplate and catch common mistakes at compile time.</p>
+        <p><strong>"EasyGL" is an implementation name, not a renderer you can select.</strong> Five of CNA's 46 renderer identities &mdash; <code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL1</code> and <code>WEBGL2</code> &mdash; all compile this same implementation. Selecting any of them emits <code>CNA_RENDERER_EASYGL</code> plus a <code>CNA_GL_PROFILE_&lt;NAME&gt;</code> define naming the profile. Passing <code>-DCNA_GRAPHICS_RENDERER=EASYGL</code> is a configure error; pick a profile by name instead.</p>
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>The profiles are not cosmetic.</strong> <code>OPENGLES2</code> and <code>WEBGL1</code> genuinely lose multiple render targets, occlusion queries, <code>Texture3D</code>, instancing and multi-stream vertex input. Anything you write against easy-gl on <code>OPENGLES3</code> may have no equivalent on those two.</p>
+        </div>
 
         <h2>OpenGL ES 3.0/3.2 wrapper</h2>
-        <p>easy-gl targets OpenGL ES 3.0 as its minimum (available everywhere: Linux, Android, WebGL 2). On desktop Linux it transparently uses the full OpenGL 4.x feature set when available. Compute shaders require OpenGL ES 3.2 or desktop OpenGL 4.3+.</p>
+        <p>The <code>OPENGLES3</code> profile targets OpenGL ES 3.0, which is available on desktop Linux through Mesa, on Android, and in the browser as WebGL 2. <code>OPENGL33</code> selects a desktop OpenGL 3.3 core profile instead. Compute shaders require OpenGL ES 3.2 or desktop OpenGL 4.3+, and are not part of the XNA API surface at all &mdash; reaching them is exactly the kind of thing this page is for.</p>
 
         <h2>When to bypass CNA and use easy-gl directly</h2>
         <ul>
@@ -121,8 +128,10 @@
 #include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
 #include "Microsoft/Xna/Framework/Graphics/RenderTarget2D.hpp"
 
-// easy-gl headers (only available when EASYGL backend is active)
-#ifdef CNA_BACKEND_EASYGL
+// easy-gl headers (only available when a GL profile identity is selected).
+// CNA_RENDERER_EASYGL is emitted by all five: OPENGLES2, OPENGLES3,
+// OPENGL33, WEBGL1 and WEBGL2.
+#ifdef CNA_RENDERER_EASYGL
 #include "easy-gl/ComputeShader.hpp"
 #include "easy-gl/Texture2D.hpp"
 #include "easy-gl/SSBO.hpp"
@@ -148,7 +157,7 @@ protected:
             false, SurfaceFormat::Color,
             DepthFormat::None);
 
-#ifdef CNA_BACKEND_EASYGL
+#ifdef CNA_RENDERER_EASYGL
         // Particle positions: N particles, each (x,y,vx,vy)
         const int N = 10000;
         std::vector&lt;float&gt; particles(N * 4);
@@ -183,7 +192,7 @@ protected:
     }
 
     void Update(GameTime&amp;) override {
-#ifdef CNA_BACKEND_EASYGL
+#ifdef CNA_RENDERER_EASYGL
         // Dispatch compute shader to update particle positions on GPU
         ssbo_-&gt;Bind(0);
         computeShader_-&gt;Dispatch((particleCount_ + 63) / 64, 1, 1);
@@ -207,7 +216,7 @@ private:
     GraphicsDeviceManager                  graphics_;
     std::unique_ptr&lt;SpriteBatch&gt;           spriteBatch_;
     std::unique_ptr&lt;RenderTarget2D&gt;        renderTarget_;
-#ifdef CNA_BACKEND_EASYGL
+#ifdef CNA_RENDERER_EASYGL
     std::unique_ptr&lt;EasyGL::ComputeShader&gt; computeShader_;
     std::unique_ptr&lt;EasyGL::SSBO&gt;          ssbo_;
     int                                    particleCount_ = 0;
@@ -243,7 +252,7 @@ int main() { ComputeDemo game; game.Run(); }</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -260,7 +269,7 @@ int main() { ComputeDemo game; game.Run(); }</code></pre>
           <li><a href="../getting-started.html">Getting Started</a></li>
           <li><a href="../building.html">Building</a></li>
           <li><a href="../platforms.html">Platforms</a></li>
-          <li><a href="../rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
           <li><a href="../faq.html">FAQ</a></li>
         </ul>
       </div>

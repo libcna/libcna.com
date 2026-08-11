@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 109: Metal on macOS - CNA Tutorials</title>
+  <meta name="description" content="CNA's native Metal renderer: macOS-only by a hard CMake gate, SDL supplies only the window and CAMetalLayer, and its capability surface is deliberately narrow. What works, what throws, and why.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/109-metal-macos.html">
+  <meta property="og:title"       content="Tutorial 109: Metal on macOS - CNA Tutorials">
+  <meta property="og:description" content="CNA's native Metal renderer: macOS-only by a hard CMake gate, SDL supplies only the window and CAMetalLayer, and its capability surface is deliberately narrow. What works, what throws, and why.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/109-metal-macos.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 109: Metal on macOS",
+  "url": "https://libcna.com/docs/tutorials/109-metal-macos.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Advanced"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 109</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 109: Metal on macOS</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Renderers</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>How to build CNA's native Metal renderer, and why CMake refuses anywhere but macOS.</li>
+          <li>Exactly how much SDL is involved &mdash; the window and the layer, and nothing else.</li>
+          <li>The renderer's current capability surface, which is narrower than you may expect, and why.</li>
+          <li>What its automatic macOS CI job does, and what it does not yet prove.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="80-cross-platform.html">Tutorial 80: Cross-Platform Build Guide</a> covers CNA's per-platform build story; this tutorial is the macOS chapter of it.</p>
+      </div>
+
+      <p><code>METAL</code> is CNA's direct native Metal renderer. It is not SDL_Renderer with a Metal backend, not SDL_GPU, and not a third-party graphics abstraction that happens to target Metal: draws go through <code>MTLDevice</code>, <code>MTLCommandQueue</code>, <code>MTLRenderCommandEncoder</code> and <code>CAMetalLayer</code> directly, in Objective-C++.</p>
+
+      <p>It is also the renderer where CNA is most visibly conservative about what it advertises. Several capabilities that the code contains an implementation for are reported <code>false</code> and refuse at runtime, because the evidence that they work has not been re-established since the renderer was adapted to CNA's current interfaces. That policy is the most useful thing to understand before you build against it, so this tutorial says what works, what refuses, and why the line is drawn where it is.</p>
+
+      <h2 id="platform-gate">macOS only, enforced by a hard error</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>Configuring <code>METAL</code> anywhere other than macOS fails immediately:</p>
+        <p><code>CNA: METAL renderer is currently supported only on macOS; iOS and tvOS remain unvalidated.</code></p>
+      </div>
+
+      <p>This is a <code>FATAL_ERROR</code> in CMake, raised <em>before</em> Objective-C++ is enabled or any <code>.mm</code> source is collected &mdash; so a Linux or Windows configure stops with a clear message rather than producing an obscure compile failure later. It is the same hard-gate shape CNA uses for its Windows-only and Emscripten-only renderers.</p>
+
+      <p>The wording matters. <strong>iOS and tvOS are not supported at any level</strong>: there is no toolchain file, and the platforms have never been validated. Metal being Apple's API across all of them does not make CNA's Metal renderer an iOS renderer, and treating it as an almost-working starting point would be a mistake. CNA also sets no explicit macOS deployment target, so compatibility below whatever SDK and deployment defaults your successful build used is simply not established.</p>
+
+      <h2 id="sdl-boundary">What SDL does, and where Metal takes over</h2>
+
+      <p>The division of labour is unusually clean, and worth knowing if you are debugging a window-level problem:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>SDL3 provides</th><th>Metal owns</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>The window itself, plus <code>SDL_Metal_CreateView()</code> and <code>SDL_Metal_GetLayer()</code> to obtain a <code>CAMetalLayer</code>.</td>
+            <td>Device and command-queue creation, every render pass and encoder, all resource allocation, the drawable, and presentation.</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>The Metal selection branch adds <code>SDL_WINDOW_METAL | SDL_WINDOW_HIGH_PIXEL_DENSITY</code> to the window flags &mdash; the high-density flag is requested deliberately, so a Retina display gets a full-resolution drawable rather than an upscaled one. Other renderers' window flags are untouched by this.</p>
+
+      <p>Shaders are Metal Shading Language embedded in the renderer's own Objective-C++ source and compiled at runtime with <code>newLibraryWithSource:</code>. There is no offline <code>.metallib</code> step in the build, and no shader asset to ship.</p>
+
+      <p>One detail that shapes the code: the Objective-C++ file uses <strong>manual retain/release</strong> rather than ARC. Objects returned by create-rule calls carry exactly one owning reference; borrowed layer, command-buffer, encoder and drawable results are retained only when they outlive the acquiring call. A constructor exception rolls back every partially acquired native object and destroys the SDL Metal view after drawable and layer use has ended. You do not have to think about this to use the renderer, but it explains why the source looks the way it does.</p>
+
+      <h2 id="building">Building it</h2>
+
+      <pre><code class="language-bash">cmake -S . -B build-metal \
+  -DCNA_GRAPHICS_RENDERER=METAL \
+  -DCNA_BUILD_TESTS=ON \
+  -DCNA_USE_CCACHE=ON \
+  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+cmake --build build-metal --parallel 3
+
+# Run the renderer's tests with Metal's own validation layers switched on
+MTL_SHADER_VALIDATION=1 MTL_DEBUG_LAYER=1 \
+  ctest --test-dir build-metal -R '^Metal' --output-on-failure --parallel 3</code></pre>
+
+      <p>Nothing is fetched at configure time &mdash; Metal ships with the OS. Like every CNA build you still need the <code>sharp-runtime</code> sibling checkout beside <code>cna/</code>, and FFmpeg's development libraries, which on macOS is a <code>brew install ffmpeg</code> away.</p>
+
+      <h2 id="ci">It has its own automatic CI job</h2>
+
+      <p>Most of CNA's 46 renderers have no continuous integration at all. <code>METAL</code> is one of the few with a dedicated, <strong>automatically triggered</strong> workflow &mdash; <code>metal-macos-ci.yml</code>, running on a <code>macos-14</code> runner. It fires on pull requests, on pushes that touch the files which can affect the renderer, and on manual dispatch.</p>
+
+      <p>The job does four things: checks out CNA and the <code>sharp-runtime</code> sibling, configures with <code>-DCNA_GRAPHICS_RENDERER=METAL</code>, builds with three parallel jobs, and runs the supported Metal contract tests <strong>with Metal's shader validation and debug layer enabled</strong>. A separate step re-runs the renderer compile-definition control so the build cannot drift into claiming to be a different renderer.</p>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>Real macOS hardware in CI is a genuine advantage here.</strong> CNA's Windows Direct3D renderers are routinely verified through Wine with DXVK and vkd3d-proton on Linux rather than on real Windows; the Metal renderer builds and runs on an actual Apple runner every time the relevant files change. That said, CI across CNA as a whole remains thin, and this job gates the renderer's own contract tests rather than the full unit suite &mdash; see <a href="../verification.html">Verification</a>.</p>
+      </div>
+
+      <h2 id="capabilities">The current capability contract</h2>
+
+      <p>Every one of CNA's 13 capabilities is answered explicitly on Metal. There is <strong>no permissive default</strong> here &mdash; which, given that the shared default returns <code>true</code> for almost everything, is itself worth noticing. This table is the renderer's actual contract:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Capability</th><th>Reported</th><th>Boundary</th></tr></thead>
+        <tbody>
+          <tr><td><code>ThreeD</code></td><td>true</td><td>Built-in fixed-layout Metal pipelines only.</td></tr>
+          <tr><td><code>DepthStencilBuffer</code></td><td>true</td><td>Native combined depth/stencil attachments.</td></tr>
+          <tr><td><code>StencilBuffer</code></td><td>true</td><td>Native stencil plane and state mapping.</td></tr>
+          <tr><td><code>AnisotropicFiltering</code></td><td>true</td><td>Native sampler-state mapping.</td></tr>
+          <tr><td><code>WireFrame</code></td><td>true</td><td><code>FillMode::WireFrame</code> maps to Metal's lines fill mode.</td></tr>
+          <tr><td><code>Texture3D</code></td><td>true</td><td>Colour-format native 3D textures.</td></tr>
+          <tr><td><code>AdditiveBlending</code></td><td>true</td><td>Native blend factors and operations.</td></tr>
+          <tr><td><code>MultiSampleAntiAliasing</code></td><td><strong>false</strong></td><td>Every requested sample count is clamped to zero.</td></tr>
+          <tr><td><code>MultipleRenderTargets</code></td><td><strong>false</strong></td><td>More than one descriptor is rejected before any binding state changes.</td></tr>
+          <tr><td><code>OcclusionQuery</code></td><td><strong>false</strong></td><td>Creation throws.</td></tr>
+          <tr><td><code>CustomEffects</code></td><td><strong>false</strong></td><td>Effect creation and non-null <code>SpriteBatch</code> custom effects both throw.</td></tr>
+          <tr><td><code>MultiStreamVertexInput</code></td><td><strong>false</strong></td><td>More than one per-vertex stream is rejected.</td></tr>
+          <tr><td><code>Instancing</code></td><td><strong>false</strong></td><td>Instance streams and instance counts other than one are rejected.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>Six of the thirteen are <code>false</code>. As <a href="101-renderer-capabilities.html">Tutorial 101</a> explains, an authored <code>false</code> is the most trustworthy answer this API gives &mdash; somebody looked at that capability on this renderer and decided to say no. Take these at face value and branch on them.</p>
+
+      <h2 id="shader-effect">ShaderEffect throws on Metal</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Constructing a <code>ShaderEffect</code> under <code>METAL</code> raises <code>System::NotSupportedException</code>:</strong> <em>&ldquo;Metal custom effects are disabled until the adapted renderer has passing macOS shader and pixel evidence.&rdquo;</em> This is not a construction that quietly yields an invalid effect &mdash; it is a throw.</p>
+      </div>
+
+      <p>The refusal is complete and consistent rather than partial: effect creation throws, a non-null custom effect handed to <code>SpriteBatch</code> throws, and an ordinary 3D draw carrying a custom effect is rejected before submission. There <em>is</em> dormant MSL scaffolding for a SpriteBatch-scoped custom-effect path in the source, but it is unreachable and explicitly not a public contract; it must not be re-enabled by flipping a capability bit.</p>
+
+      <p>So on Metal you are on the stock-effect path. Guard the branch rather than catching the exception:</p>
+
+      <pre><code class="language-cpp">#include "CNA/GraphicsCapability.hpp"
+
+using CNA::GraphicsCapability;
+
+void MyGame::LoadContent()
+{
+    auto&amp; device = getGraphicsDeviceProperty();
+
+    // A `false` here is authored. Do not construct the effect at all.
+    if (device.SupportsCapability(GraphicsCapability::CustomEffects))
+        gradeEffect_ = std::make_unique&lt;ShaderEffect&gt;(device, kVertexSrc, kFragmentSrc);
+
+    // Metal lands here: BasicEffect and friends, which are fully supported.
+    basicEffect_ = std::make_unique&lt;BasicEffect&gt;(device);
+}</code></pre>
+
+      <h2 id="deterministic">Deterministic refusals, not silent degradation</h2>
+
+      <p>The consistent design choice across this renderer is that an unsupported request <em>fails</em>. It never renders something plausible-but-wrong and never returns fabricated data:</p>
+
+      <ul>
+        <li><strong>Back-buffer readback throws.</strong> <code>GetBackBufferData()</code> raises <code>System::NotSupportedException</code> rather than returning known-wrong pixels. This is the one to plan around if you write pixel tests &mdash; on Metal you cannot. Use <code>SOFTWARE</code> for image-level assertions, as <a href="107-cpu-renderers.html">Tutorial 107</a> describes.</li>
+        <li><strong>MSAA reports zero and allocates single-sample attachments</strong>, on the back buffer and on render targets alike, instead of reporting a sample count it does not deliver. See <a href="65-msaa.html">Tutorial 65</a> for the portable pattern.</li>
+        <li><strong>Render-target binding accepts zero descriptors</strong> (restore the back buffer) <strong>or exactly one</strong> normalised 2D or cube-face descriptor. An MRT set throws. Array slices are rejected. See <a href="62-mrt.html">Tutorial 62</a>.</li>
+        <li><strong>Malformed stream metadata throws <code>std::invalid_argument</code></strong>; multi-stream input and instancing throw <code>System::NotSupportedException</code>.</li>
+        <li><strong><code>TextureCube</code>, <code>Texture3D</code> and render targets accept only <code>SurfaceFormat::Color</code></strong>; any other format throws.</li>
+        <li><strong>Non-default per-target colour-write masks, multisample coverage masks, sampler maximum mip level and sampler LOD bias all throw</strong> rather than being accepted and ignored.</li>
+      </ul>
+
+      <p>One behaviour is a deliberate non-error: if Metal cannot hand over a drawable &mdash; the window is minimised or in the background &mdash; the renderer makes one attempt and then skips that logical frame. Clear, draws, markers and present do nothing for that frame and nothing retries; off-screen render-target work still proceeds. Presentation resets availability for the next frame. Your game loop keeps running rather than throwing on a backgrounded window.</p>
+
+      <h2 id="why-narrow">Why the surface is this narrow</h2>
+
+      <p>It is worth understanding, because the answer is a policy rather than a set of missing features.</p>
+
+      <p>An earlier macOS CI run did build the historical Metal renderer successfully with Metal validation enabled and exercised its test set. Seven checks could not demonstrate their result: six read back only the frame's clear colour after real draws &mdash; among them the custom-effect, MRT, MSAA and user-primitives tests &mdash; and a seventh applied a sample count of four but produced an edge that was still binary. The capability check in that run did not fail &mdash; but it asserted only a small boolean set, and did not prove the rendering paths those booleans advertised.</p>
+
+      <p>The renderer has since been adapted to CNA's current graphics interfaces, and a source audit during that adaptation found and fixed a substantial list of real defects: a cached drawable held without an owned reference, a partially constructed renderer with no rollback, a doubly retained device, draws that selected pipelines by vertex stride alone and could reinterpret same-stride layouts, unchecked cube and volume transfers, viewport and scissor state lost when an encoder was recreated, render-target uploads that silently did nothing, and swapped channels on BGRA targets. Those are fixed in the source. What does not yet exist is a fresh macOS run proving the <em>adapted</em> renderer's pixels.</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>So the capabilities without that evidence were switched off rather than left advertised.</strong> That is the whole rationale: a capability bit is a promise to callers, and advertising an unverified historical path would make it part of the supported API. Enabling <code>CustomEffects</code> again is defined as one coherent change that supplies a successful build, clean Metal validation, a native test proving output without relying on the known-broken readback path, and tests for uniform slots, texture binding, blend state, render-target use and effect lifetime.</p>
+      </div>
+
+      <p>Read the <code>false</code>s on this page as &ldquo;not yet demonstrated on the current source&rdquo;, not as &ldquo;impossible&rdquo;. The distinction is exactly the one <a href="../verification.html">CNA's verification page</a> makes throughout.</p>
+
+      <h2 id="what-works">What you can build on today</h2>
+
+      <p>Inside that contract the renderer is a real one, not a placeholder. Ordinary 3D draws consume the current vertex-stream metadata with one valid per-vertex stream; pipeline selection uses the effect's own flags and canonical stride rather than guessing from stride alone; fog uses the FNA-compatible four-component fog-vector contract. Requested viewport and scissor state is kept independent of the attachment extent and survives both a <code>Clear</code> and an encoder recreation &mdash; a fresh encoder re-applies the requested viewport unchanged and intersects only an enabled scissor with the current target, and a logically empty enabled scissor installs a legal placeholder while suppressing draws.</p>
+
+      <p>Texture transfers validate face, mip level, coordinates, extents and length before any native work, use a macOS-safe 256-byte staging row alignment, and de-pad on the way back. A <code>SetData</code> call preserves untouched subresources and swaps in a completed replacement, so a prior draw cannot sample a half-written texture. Every used sampler slot binds either a real texture or an owned white / flat-normal / white-cube fallback, so output cannot become draw-order dependent through a stale binding.</p>
+
+      <p>Practically, that means: <strong>forward rendering with the stock effects, one render target at a time, no MSAA, no instancing, and no pixel readback.</strong> A 2D game or a straightforward 3D scene fits comfortably. A deferred renderer, a hardware-instanced crowd or a custom post-processing chain does not &mdash; not on Metal, today.</p>
+
+      <h2 id="portable">Keeping a Metal build in a portable codebase</h2>
+
+      <p>Because exactly one renderer is compiled into a build, a macOS Metal build is a separate configuration from your Linux or Windows one. The capability queries are what keep a single source tree honest across all of them:</p>
+
+      <pre><code class="language-cpp">// Resolve once at startup and cache the answers; do not query per frame.
+struct RenderPathPlan
+{
+    bool deferred      = false;
+    bool antialiased   = false;
+    bool instancedCrowd = false;
+};
+
+RenderPathPlan PlanRenderPath(GraphicsDevice&amp; device)
+{
+    RenderPathPlan plan;
+    plan.deferred       = device.SupportsCapability(GraphicsCapability::MultipleRenderTargets);
+    plan.antialiased    = device.SupportsCapability(GraphicsCapability::MultiSampleAntiAliasing);
+    plan.instancedCrowd = device.SupportsCapability(GraphicsCapability::Instancing);
+    return plan;   // On METAL: all three false, and all three answers are authored.
+}</code></pre>
+
+      <p>Two habits pay off. Log <code>device.GetGraphicsRendererName()</code> at startup &mdash; it is a compile-time constant matching the <code>CNA_GRAPHICS_RENDERER</code> value exactly, so a bug report from a Mac user tells you immediately which renderer produced it. And keep your image-level regression tests on a CPU renderer rather than on the platform renderer, so a Metal build failing to read back pixels never becomes a gap in your coverage.</p>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="101-renderer-capabilities.html">Tutorial 101: Querying Renderer Capabilities</a></li>
+        <li><a href="107-cpu-renderers.html">Tutorial 107: CPU-Only Renderers</a> &mdash; where to run the pixel tests Metal cannot</li>
+        <li><a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a></li>
+        <li><a href="80-cross-platform.html">Tutorial 80: Cross-Platform Build Guide</a></li>
+        <li><a href="../platforms.html">Platforms reference</a>, <a href="../rendering-backends.html">Renderers reference</a> and <a href="../verification.html">Verification</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

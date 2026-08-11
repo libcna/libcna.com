@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 118: Procedural Audio with DynamicSoundEffectInstance - CNA Tutorials</title>
+  <meta name="description" content="Generate audio at runtime and stream it into CNA: submitting raw 16-bit PCM buffers, the BufferNeeded event and what pumps it, buffer sizing, and CNA's float-submission extension.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/118-dynamic-audio.html">
+  <meta property="og:title"       content="Tutorial 118: Procedural Audio with DynamicSoundEffectInstance - CNA Tutorials">
+  <meta property="og:description" content="Generate audio at runtime and stream it into CNA: submitting raw 16-bit PCM buffers, the BufferNeeded event and what pumps it, buffer sizing, and CNA's float-submission extension.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/118-dynamic-audio.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 118: Procedural Audio with DynamicSoundEffectInstance",
+  "url": "https://libcna.com/docs/tutorials/118-dynamic-audio.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Intermediate"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 118</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 118: Procedural Audio with DynamicSoundEffectInstance</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Audio</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>Generating audio sample-by-sample and pushing it into <code>DynamicSoundEffectInstance</code>.</li>
+          <li>What the <code>BufferNeeded</code> event actually is, and what pumps it.</li>
+          <li>Why <code>PendingBufferCount</code> does not drop the moment you submit.</li>
+          <li>CNA&rsquo;s float-buffer extension, and the one way to make it throw.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="14-sound-effects.html">Tutorial 14: Playing Sound Effects</a> covers <code>SoundEffect</code> and <code>SoundEffectInstance</code>, which this class derives from.</p>
+      </div>
+
+      <p>Everything in <a href="14-sound-effects.html">Tutorial 14</a> starts from a file on disk. <code>DynamicSoundEffectInstance</code> starts from nothing: you hand it raw PCM sample data, frame after frame, for as long as you want it to keep playing. That makes it the class you reach for when the sound does not exist until the game runs &mdash; a synthesised engine note that tracks RPM, a wind layer driven by the weather simulation, a chiptune generated from a tracker pattern, or audio arriving from a decoder or network stream that CNA itself does not know about.</p>
+
+      <h2 id="creating">Creating an instance</h2>
+
+      <p>There is no <code>Content.Load</code> path here. You construct the instance directly, fixing its sample rate and channel layout for its whole lifetime:</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Audio/DynamicSoundEffectInstance.hpp"
+
+using namespace Microsoft::Xna::Framework::Audio;
+
+// 44.1 kHz stereo. Both values are fixed for the life of the instance.
+DynamicSoundEffectInstance tone(44100, AudioChannels::Stereo);</code></pre>
+
+      <p><code>AudioChannels</code> has exactly two values, <code>Mono</code> and <code>Stereo</code>. The instance is non-copyable and non-movable, so hold it by value in a member, or in a <code>std::unique_ptr</code> if its lifetime is dynamic.</p>
+
+      <h2 id="submitting">Submitting sample data</h2>
+
+      <p>Audio goes in through <code>SubmitBuffer</code>, which takes a byte vector:</p>
+
+      <pre><code class="language-cpp">void SubmitBuffer(const std::vector&lt;SharpRuntime::bytecs&gt;&amp; buffer);
+void SubmitBuffer(const std::vector&lt;SharpRuntime::bytecs&gt;&amp; buffer,
+                  SharpRuntime::intcs offset,
+                  SharpRuntime::intcs count);</code></pre>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>The bytes must be <strong>headerless, little-endian, signed 16-bit PCM</strong>, with channels interleaved. Not a WAV file, not an OGG file, not an XNB asset. Passing a whole file&rsquo;s bytes here makes its container header get mixed as if it were audio &mdash; you get a burst of noise, not a clean error.</p>
+      </div>
+
+      <p>Here is a complete generator for a stereo sine tone. Note the interleaving and the little-endian split, which you have to do by hand:</p>
+
+      <pre><code class="language-cpp">#include &lt;cmath&gt;
+#include &lt;vector&gt;
+
+static constexpr int kSampleRate = 44100;
+static double phase = 0.0;
+
+std::vector&lt;SharpRuntime::bytecs&gt; MakeTone(double frequencyHz, int frameCount)
+{
+    // 2 channels x 2 bytes per sample
+    std::vector&lt;SharpRuntime::bytecs&gt; pcm(static_cast&lt;std::size_t&gt;(frameCount) * 4);
+
+    const double step = 2.0 * 3.14159265358979 * frequencyHz / kSampleRate;
+
+    for (int i = 0; i &lt; frameCount; ++i)
+    {
+        const auto sample = static_cast&lt;std::int16_t&gt;(std::sin(phase) * 0.25 * 32767.0);
+        phase += step;
+
+        const auto lo = static_cast&lt;SharpRuntime::bytecs&gt;(sample &amp; 0xFF);
+        const auto hi = static_cast&lt;SharpRuntime::bytecs&gt;((sample &gt;&gt; 8) &amp; 0xFF);
+
+        pcm[i * 4 + 0] = lo;  // left,  low byte
+        pcm[i * 4 + 1] = hi;  // left,  high byte
+        pcm[i * 4 + 2] = lo;  // right, low byte
+        pcm[i * 4 + 3] = hi;  // right, high byte
+    }
+    return pcm;
+}</code></pre>
+
+      <p>Keeping <code>phase</code> outside the function matters. Restarting it at zero for every buffer puts a discontinuity at each seam, which you will hear as a click at your buffer rate.</p>
+
+      <h2 id="buffer-needed">BufferNeeded, and what pumps it</h2>
+
+      <p><code>BufferNeeded</code> is a plain <code>System::EventHandler&lt;System::EventArgs&gt;</code>. Subscribe with <code>+=</code>, exactly as XNA code does with <code>+=</code> on a C# event:</p>
+
+      <pre><code class="language-cpp">tone.BufferNeeded += [this](System::Object* sender, const System::EventArgs&amp;)
+{
+    auto* instance = static_cast&lt;DynamicSoundEffectInstance*&gt;(sender);
+    instance-&gt;SubmitBuffer(MakeTone(currentFrequency_, 1024));
+};
+
+tone.SubmitBuffer(MakeTone(currentFrequency_, 1024)); // prime it
+tone.Play();</code></pre>
+
+      <p>The event does not fire on its own. It is raised from <code>DynamicSoundEffectInstance::Update()</code>, and that is driven by <code>FrameworkDispatcher::Update()</code>, which walks every dynamic instance currently playing. <code>Play()</code> adds the instance to that list; stopping or disposing removes it.</p>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#10003;</span>
+        <p><strong>Inside a <code>Game</code> subclass this is already wired for you.</strong> <code>Game::Update()</code> calls <code>FrameworkDispatcher::Update()</code> at the end of its own update pass, so as long as your override calls the base <code>Game::Update(gameTime)</code>, dynamic audio pumps automatically. Outside a <code>Game</code> &mdash; a tool, a test, a custom loop &mdash; you must call <code>FrameworkDispatcher::Update()</code> yourself once per frame, or the sound stops after your primed buffers run out.</p>
+      </div>
+
+      <p>The starvation rule is exact, and worth knowing because it governs how much work your handler does per frame. <code>Update()</code> raises <code>BufferNeeded</code> once for each buffer you are short of a minimum of <strong>three</strong> pending buffers. With one buffer pending it fires twice; with three or more it does not fire at all.</p>
+
+      <h2 id="pending">PendingBufferCount lags on purpose</h2>
+
+      <pre><code class="language-cpp">SharpRuntime::intcs pending = tone.getPendingBufferCountProperty();</code></pre>
+
+      <p>A submitted chunk stays counted until the audio stream reports that it no longer holds that many bytes queued &mdash; that is, until it has genuinely been consumed by playback, not merely handed over to the mixer. So the count does not drop the instant you call <code>SubmitBuffer</code>, and that is what makes the three-buffer rule a real measure of how close you are to running dry.</p>
+
+      <h2 id="sizing">Sizing your buffers</h2>
+
+      <p>Two helpers convert between bytes and time for this instance&rsquo;s own format, so you do not have to redo the sample-rate arithmetic:</p>
+
+      <pre><code class="language-cpp">System::TimeSpan     GetSampleDuration(SharpRuntime::intcs sizeInBytes) const;
+SharpRuntime::intcs  GetSampleSizeInBytes(System::TimeSpan duration) const;</code></pre>
+
+      <pre><code class="language-cpp">// How many bytes is 50 ms of audio at this instance's rate and channel count?
+const auto bytes = tone.GetSampleSizeInBytes(System::TimeSpan::FromMilliseconds(50));</code></pre>
+
+      <p>Buffer size is a latency-versus-safety trade. Smaller buffers respond faster to gameplay changes; larger ones survive a frame spike. Around 20&ndash;50&nbsp;ms per buffer, with the three-buffer minimum in front of the hardware, is a reasonable starting point.</p>
+
+      <h2 id="float">Submitting float samples (CNAEXT)</h2>
+
+      <p>Real XNA has no float submission path at all. CNA adds one, marked <code>CNAEXT</code>, which spares you the int16 conversion if your synthesis already works in floats:</p>
+
+      <pre><code class="language-cpp">CNAEXT void SubmitFloatBufferEXT(const std::vector&lt;float&gt;&amp; buffer);
+CNAEXT void SubmitFloatBufferEXT(const std::vector&lt;float&gt;&amp; buffer,
+                                 SharpRuntime::intcs offset,
+                                 SharpRuntime::intcs count);</code></pre>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Pick one format per instance and stay with it.</strong> Switching between <code>SubmitBuffer</code> and <code>SubmitFloatBufferEXT</code> while the instance is playing or paused throws <code>System::InvalidOperationException</code>. The underlying stream is created for one sample format, and feeding it the other would be silently wrong &mdash; so CNA makes it loud instead. Switching is only legal from the <code>Stopped</code> state.</p>
+      </div>
+
+      <p>Because these are extensions, a build configured with <code>-DCNA_STRICT_XNA_API=ON</code> turns a call to either one into a compile error. That is the point of the mode: if you intend to stay portable to real XNA semantics, use <code>SubmitBuffer</code> only.</p>
+
+      <h2 id="differences">Where a dynamic instance differs from a normal one</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Member</th><th>Behaviour on <code>DynamicSoundEffectInstance</code></th></tr></thead>
+        <tbody>
+          <tr><td><code>getIsLoopedProperty()</code></td><td>Always returns <code>false</code>.</td></tr>
+          <tr><td><code>setIsLoopedProperty(bool)</code></td><td>Accepted and ignored &mdash; no throw, no effect. There is no authored buffer to loop over.</td></tr>
+          <tr><td><code>Stop(false)</code></td><td>Throws <code>System::InvalidOperationException</code>. A non-immediate stop releases into an authored loop, and there is not one.</td></tr>
+          <tr><td><code>Stop()</code> / <code>Stop(true)</code></td><td>Stops and clears every queued buffer.</td></tr>
+          <tr><td><code>Play()</code></td><td>Requests more buffers if it is short, then starts or continues.</td></tr>
+          <tr><td><code>Pause()</code> / <code>Resume()</code></td><td>Inherited and fully functional.</td></tr>
+          <tr><td><code>Volume</code>, <code>Pitch</code>, <code>Pan</code>, <code>Apply3D</code></td><td>Inherited from <code>SoundEffectInstance</code> and work normally &mdash; see <a href="119-3d-audio.html">Tutorial 119</a>.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>Two more CNAEXT helpers are available when you need finer control: <code>ClearBuffers()</code> drops everything queued without stopping playback &mdash; useful when the player skips and the queued audio is now stale &mdash; and <code>Update()</code> can be called directly if you are not going through <code>FrameworkDispatcher</code>.</p>
+
+      <h2 id="pitfalls">Pitfalls</h2>
+
+      <p><strong>Doing heavy work inside the handler.</strong> <code>BufferNeeded</code> is raised synchronously from your update pass, and can fire more than once in a single frame. Whatever it does happens on your frame budget. Generate into a pre-allocated buffer rather than allocating a fresh vector every call.</p>
+
+      <p><strong>Disposing from inside the handler.</strong> This is a legitimate XNA pattern &mdash; you have no more data, so you dispose the instance from the very handler that asked for some. CNA supports it: the dispatcher snapshots its stream list before calling into your code, precisely so a handler that disposes its own instance does not deadlock.</p>
+
+      <p><strong>Assuming there is an audio device.</strong> On a machine with no working audio output, playback will not start. Design so silence degrades gracefully rather than stalling a state machine that waits for a sound to finish.</p>
+
+      <p><strong>Forgetting to prime.</strong> If you call <code>Play()</code> with an empty queue, the first sound you get is whatever your handler manages to produce on the next update. Submit at least one buffer first.</p>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="119-3d-audio.html">Tutorial 119: 3D positional audio</a> &mdash; place your generated sound in the world</li>
+        <li><a href="120-xact.html">Tutorial 120: XACT cue-based audio</a></li>
+        <li><a href="122-media-library.html">Tutorial 122: MediaLibrary and audio visualization</a></li>
+        <li><a href="14-sound-effects.html">Tutorial 14: Playing Sound Effects</a></li>
+        <li><a href="../audio.html">Audio reference</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

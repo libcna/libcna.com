@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 97: Networking and Multiplayer Basics - CNA</title>
-  <meta name="description" content="CNA ships Microsoft::Xna::Framework::Net: NetworkSession, LocalNetworkGamer, PacketReader/PacketWriter over real ENet UDP. Hosting, LAN discovery, packet send/receive, and the honest limits.">
+  <meta name="description" content="CNA ships Microsoft::Xna::Framework::Net: NetworkSession, LocalNetworkGamer and PacketReader/PacketWriter over real ENet peer-to-peer UDP. Hosting, LAN discovery, working SimulatedLatency/SimulatedPacketLoss, and the honest limits.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/97-networking.html">
   <meta property="og:title"       content="Tutorial 97: Networking and Multiplayer Basics - CNA">
-  <meta property="og:description" content="CNA ships Microsoft::Xna::Framework::Net: NetworkSession, LocalNetworkGamer, PacketReader/PacketWriter over real ENet UDP. Hosting, LAN discovery, packet send/receive, and the honest limits.">
+  <meta property="og:description" content="CNA ships Microsoft::Xna::Framework::Net: NetworkSession, LocalNetworkGamer and PacketReader/PacketWriter over real ENet peer-to-peer UDP. Hosting, LAN discovery, working SimulatedLatency/SimulatedPacketLoss, and the honest limits.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/97-networking.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 97: Networking and Multiplayer Basics",
   "url": "https://libcna.com/docs/tutorials/97-networking.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-07-18",
+  "dateModified": "2026-08-11",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -60,6 +60,7 @@
       <a href="../../contact.html"       class="nav-link">Contact</a>
       <a href="../../search.html" class="nav-link">Search</a>
       <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
     </div>
   </div>
 </nav>
@@ -94,16 +95,14 @@
         <h2>CNA ships an XNA-compatible networking API</h2>
         <p>
           You do not need to bolt a third-party socket library onto your CNA game. CNA implements
-          <code>Microsoft::Xna::Framework::Net</code> &mdash; the same namespace XNA 4.0 exposed &mdash; with
-          23 public types under <code>include/Microsoft/Xna/Framework/Net/</code>, backed by roughly 1,880
-          lines of implementation (of which <code>NetworkSession.cpp</code> alone is 1,036 lines) and covered
-          by 260 unit tests, including a genuine two-process loopback test that spawns a host and a client as
-          separate OS processes and makes them exchange packets.
+          <code>Microsoft::Xna::Framework::Net</code> &mdash; the same namespace XNA 4.0 exposed &mdash; as a real
+          implementation, not a stub. It is covered by unit tests including a genuine two-process loopback test
+          that spawns a host and a client as separate OS processes and makes them exchange packets.
         </p>
         <p>
-          The transport is real. CNA vendors ENet in <code>third_party/enet</code> and wraps it behind the XNA
-          API surface, so <code>NetworkSession</code> is reliable/unreliable UDP with packet sequencing, not a
-          stub. LAN session discovery is a real broadcast protocol on UDP port <code>61190</code>, and the
+          The transport is real: <strong>peer-to-peer ENet over UDP</strong>. CNA vendors ENet and wraps it behind
+          the XNA API surface, so <code>NetworkSession</code> is reliable/unreliable UDP with packet sequencing,
+          not a stub. LAN session discovery is a real broadcast protocol on UDP port <code>61190</code>, and the
           <code>QualityOfService</code> attached to a discovered session carries a genuinely measured
           round-trip time, sampled from the wall-clock delay between the discovery query and the host's reply.
         </p>
@@ -196,6 +195,14 @@ session-&gt;Dispose();</code></pre>
           <code>AvailableNetworkSessionCollection</code>. Discovery is a UDP request/reply exchange, so a
           single call can legitimately return nothing &mdash; poll it.
         </p>
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>Discovery is gated to <code>SystemLink</code>, and does nothing on the web.</strong>
+          <code>Find()</code> returns an empty collection for every other session type &mdash; that is the gate
+          working, not a network failure &mdash; and it does nothing at all under Emscripten, where a browser page
+          cannot open a UDP socket. Do not build a session browser that treats "no results" as "still searching"
+          on those paths.</p>
+        </div>
         <div class="callout callout--note">
           <span class="callout-icon">&#9432;</span>
           <p><code>AvailableNetworkSessionCollection</code> is a read-only collection. Its
@@ -407,7 +414,7 @@ session-&gt;ResetReady();           // clears every gamer's IsReady flag</code><
             </tr>
             <tr>
               <td><code>SimulatedLatency</code>, <code>SimulatedPacketLoss</code></td>
-              <td>Stored and readable, but not wired to any delay queue or synthetic drop. Setting them changes no observable network behaviour. This matches FNA's non-functional reference stub.</td>
+              <td><strong>Genuinely implemented</strong> &mdash; and this is a place CNA goes beyond its reference. <code>SimulatedLatency</code> drives a real per-session deferred-delivery queue; <code>SimulatedPacketLoss</code> drives a real probabilistic drop with a seeded RNG (0.0 and 1.0 short-circuit deterministically). Both are <em>scoped to AppData</em>: session-management traffic and a host's relay hop for two other peers are deliberately unaffected. FNA's equivalents are inert auto-properties; CNA's are not.</td>
             </tr>
             <tr>
               <td>Leaderboards / TrueSkill</td>
@@ -418,8 +425,8 @@ session-&gt;ResetReady();           // clears every gamer's IsReady flag</code><
         </div>
         <p>
           In short: build LAN multiplayer on <code>SystemLink</code>, prototype single-process logic on
-          <code>Local</code>, and do not plan around voice, host migration, matchmaking, or simulated network
-          conditions.
+          <code>Local</code>, test your netcode against the real <code>SimulatedLatency</code>/<code>SimulatedPacketLoss</code>
+          dials, and do not plan around voice, host migration or matchmaking.
         </p>
 
         <h2>Lockstep vs client-server</h2>
@@ -501,7 +508,7 @@ Vector2 InterpolateRemote(const Vector2&amp; prev, const Vector2&amp; next,
             <tr><td><code>cna_demo_session_lifecycle_events</code></td><td>Console-only, <code>NetworkSessionType::Local</code>: <code>StartGame()</code>/<code>EndGame()</code> and the resulting state transitions and events.</td></tr>
             <tr><td><code>cna_demo_qos_probe</code></td><td>Measured <code>QualityOfService</code> round-trip times and live <code>NetworkGamer::RoundtripTime</code>.</td></tr>
             <tr><td><code>cna_demo_net_avatar_sync</code></td><td>Synchronising richer per-gamer state than a bare position.</td></tr>
-            <tr><td><code>cna_demo_simulated_network_conditions</code></td><td>The <code>SimulatedLatency</code>/<code>SimulatedPacketLoss</code> dials &mdash; and honest output showing they do not affect the measured RTT.</td></tr>
+            <tr><td><code>cna_demo_simulated_network_conditions</code></td><td>The <code>SimulatedLatency</code>/<code>SimulatedPacketLoss</code> dials, raised and lowered live. Both genuinely affect AppData delivery; the measured <code>QualityOfService</code> RTT is a separate discovery-time measurement and does not move with them.</td></tr>
           </tbody>
         </table>
         </div>
@@ -530,7 +537,7 @@ Vector2 InterpolateRemote(const Vector2&amp; prev, const Vector2&amp; next,
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -547,7 +554,7 @@ Vector2 InterpolateRemote(const Vector2&amp; prev, const Vector2&amp; next,
           <li><a href="../getting-started.html">Getting Started</a></li>
           <li><a href="../building.html">Building</a></li>
           <li><a href="../platforms.html">Platforms</a></li>
-          <li><a href="../rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
           <li><a href="../faq.html">FAQ</a></li>
         </ul>
       </div>

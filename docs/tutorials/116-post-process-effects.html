@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 116: CNAEXT Post-Process Effects: ASCII, CRT, Depth and Colour Matrix - CNA Tutorials</title>
+  <meta name="description" content="CNA's four post-process effects attach at three different layers. Covers AsciiPostProcessEffect (not an Effect subclass, and why that matters), the ShaderEffect-based CRTEffect and DepthEffect, and why ColorMatrixEffect runs only on the CPU sprite path.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/116-post-process-effects.html">
+  <meta property="og:title"       content="Tutorial 116: CNAEXT Post-Process Effects: ASCII, CRT, Depth and Colour Matrix - CNA Tutorials">
+  <meta property="og:description" content="CNA's four post-process effects attach at three different layers. Covers AsciiPostProcessEffect (not an Effect subclass, and why that matters), the ShaderEffect-based CRTEffect and DepthEffect, and why ColorMatrixEffect runs only on the CPU sprite path.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/116-post-process-effects.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 116: CNAEXT Post-Process Effects: ASCII, CRT, Depth and Colour Matrix",
+  "url": "https://libcna.com/docs/tutorials/116-post-process-effects.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Advanced"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 116</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 116: CNAEXT Post-Process Effects: ASCII, CRT, Depth and Colour Matrix</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; CNA Extensions</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>The four CNAEXT post-process effects, and why they attach to CNA at three different layers.</li>
+          <li>Why <code>AsciiPostProcessEffect</code> is <em>not</em> an <code>Effect</code> &mdash; and why that is what makes it work everywhere.</li>
+          <li>How <code>CRTEffect</code> and <code>DepthEffect</code> differ from it, and which renderers actually execute them.</li>
+          <li>Why <code>ColorMatrixEffect</code> runs on the CPU sprite path only, and why other renderers refuse to fake it.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="24-post-processing.html">Tutorial 24: Post-Processing with Render Targets</a> covers the render-to-texture-then-redraw pattern every effect on this page is built on, and <a href="115-cnaext-overview.html">Tutorial 115: CNAEXT</a> explains what &ldquo;CNAEXT&rdquo; means and why three of these four effects are missing from a stock build.</p>
+      </div>
+
+      <p>CNA ships four post-process effects that have no XNA precedent at all. It is tempting to treat them as four instances of one pattern &mdash; construct, configure, bind, done. They are not. Each one attaches to CNA at a <strong>different layer</strong>, and that single fact decides which renderers execute it, what it costs per frame, and how you have to structure your <code>Draw()</code>.</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Effect</th><th>What it is</th><th>Build flag</th><th>Executes on</th></tr></thead>
+        <tbody>
+          <tr><td><code>AsciiPostProcessEffect</code></td><td>Standalone class &mdash; <strong>not</strong> an <code>Effect</code></td><td><code>CNA_CNAEXT</code></td><td>Any renderer that can read pixels back</td></tr>
+          <tr><td><code>CRTEffect</code></td><td><code>ShaderEffect</code> subclass (GLSL)</td><td><code>CNA_CNAEXT</code></td><td>Shader-capable renderers only</td></tr>
+          <tr><td><code>DepthEffect</code></td><td><code>ShaderEffect</code> subclass (GLSL)</td><td><code>CNA_CNAEXT</code></td><td>Shader-capable renderers only</td></tr>
+          <tr><td><code>ColorMatrixEffect</code></td><td><code>Effect</code> subclass with no shader at all</td><td>none &mdash; always built</td><td>The shared CPU <code>SpriteBatch</code> path only</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2 id="build">First: three of them are not in your build</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><code>CNA_CNAEXT</code> defaults to <strong>OFF</strong>. Every header under <code>modules/graphics-ext/include/CNA/Graphics/</code> is wrapped in <code>#ifdef CNA_CNAEXT</code>, so on a stock build they expand to nothing and your <code>CNA::Graphics::CRTEffect</code> reference simply fails to resolve.</p>
+      </div>
+
+      <pre><code class="language-bash">cmake -S . -B build -DCNA_CNAEXT=ON
+cmake --build build -j3</code></pre>
+
+      <p><code>ColorMatrixEffect</code> is the exception: it lives with the XNA graphics types, not in the extension module, and is compiled into every build. It is still tagged with CNA's <code>CNAEXT</code> marker macro, so it will turn into a compile error under <code>CNA_STRICT_XNA_API</code> &mdash; see <a href="115-cnaext-overview.html">Tutorial 115</a>.</p>
+
+      <h2 id="ascii">AsciiPostProcessEffect: the one that is not an Effect</h2>
+
+      <p>This is the most interesting of the four, because of where it came from. <code>ASCII</code> used to be a <em>selectable renderer</em> &mdash; <code>CNA_GRAPHICS_RENDERER=ASCII</code>. That identity was deliberately deleted, and the same quantization code was reborn as a post-process effect.</p>
+
+      <p>The reasoning is worth understanding, because it explains the shape of the API. The old <code>ASCII</code> renderer was never a real graphics implementation: it was a thin decorator around the SDL renderer that let the game draw normally into a private offscreen target, then read that frame back at present time, quantized it into a glyph grid, and drew the grid to the window instead. It had no texture, vertex or present pipeline of its own. Keeping it as a renderer identity meant the glyph look cost you a compile-time commitment, dragged the wrapped renderer's <strong>2D-only</strong> limitation along with it (every 3D draw threw), and could never be applied to part of a frame or composed with anything else.</p>
+
+      <p>As an effect, the identical logic applies to the finished output of <strong>any</strong> renderer and <strong>any</strong> scene, 2D or 3D, because it only ever touches public API: it reads finished pixels through <code>Texture2D::GetData()</code> and redraws them through <code>SpriteBatch</code>. It never downcasts to a renderer type. That is why it is not an <code>Effect</code> subclass &mdash; an <code>Effect</code> is a GPU shader program that <code>SpriteBatch</code> and <code>GraphicsDevice</code> bind and apply, and this class performs its own multi-step CPU-plus-GPU pass instead. <strong>You cannot bind it as a shader effect.</strong> You call it.</p>
+
+      <pre><code class="language-cpp">#include "CNA/Graphics/AsciiPostProcessEffect.hpp"
+#include "Microsoft/Xna/Framework/Graphics/RenderTarget2D.hpp"
+
+using namespace Microsoft::Xna::Framework;
+using namespace Microsoft::Xna::Framework::Graphics;
+using CNA::Graphics::AsciiPostProcessEffect;
+using CNA::Graphics::AsciiQuantizeMode;
+
+// --- once, in LoadContent() ---
+sceneTarget_ = std::make_unique&lt;RenderTarget2D&gt;(device, 640, 480);
+ascii_       = std::make_unique&lt;AsciiPostProcessEffect&gt;(device);
+ascii_-&gt;setQuantizeMode(AsciiQuantizeMode::Color);   // or ::BlackWhite
+ascii_-&gt;setCellSize(8, 8);                           // source pixels per glyph cell
+
+// --- every frame, in Draw() ---
+device.SetRenderTarget(sceneTarget_.get());
+device.Clear(Color::CornflowerBlue);
+DrawMyWholeScene();                 // 2D sprites, 3D geometry, anything
+device.SetRenderTarget(nullptr);    // back to the real backbuffer
+
+ascii_-&gt;Draw(*sceneTarget_);        // stretched to fill the current viewport</code></pre>
+
+      <p>The second overload takes an explicit destination, so you can quantize one panel of the screen and leave the rest alone &mdash; something the old renderer could not express at all:</p>
+
+      <pre><code class="language-cpp">ascii_-&gt;Draw(*sceneTarget_, Rectangle(16, 16, 320, 240));</code></pre>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Member</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>setCellSize(int w, int h)</code></td><td>Source pixels averaged into one cell. Defaults to 8&times;8. Throws <code>std::invalid_argument</code> on a non-positive size.</td></tr>
+          <tr><td><code>getCellSize(int&amp; w, int&amp; h)</code></td><td>Reads it back. Independent of the atlas' own fixed 8&times;8 glyph size &mdash; each cell is stretched to its share of the destination.</td></tr>
+          <tr><td><code>setQuantizeMode(AsciiQuantizeMode)</code></td><td><code>BlackWhite</code>: glyph by luminance rank, fixed white foreground, no background fill. <code>Color</code>: same glyph choice, plus the cell's averaged colour as foreground and that colour at quarter brightness as background.</td></tr>
+          <tr><td><code>Draw(Texture2D&amp;)</code></td><td>Fills the current viewport of whatever render target is bound.</td></tr>
+          <tr><td><code>Draw(Texture2D&amp;, const Rectangle&amp;)</code></td><td>Fills an explicit destination rectangle instead.</td></tr>
+          <tr><td><code>GetLastGridDimensions(int&amp; cols, int&amp; rows)</code></td><td>Column/row count as of the last <code>Draw()</code>. Exposed for tests &mdash; it proves the cell size changed the output, not just the accessor.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h3>The cost, stated plainly</h3>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Every <code>Draw()</code> performs a real GPU-to-CPU readback.</strong> The current implementation reads the source through <code>Texture2D::GetData()</code>, quantizes on the CPU, and re-uploads the result as textured quads. Budget for it the way you would budget for any per-frame readback.</p>
+      </div>
+
+      <p>This is not an oversight and it is not temporary sloppiness. A shader-only GPU path is architecturally possible on shader-capable renderers, and it is <em>deliberately</em> deferred, because it would stop working on exactly the 2D-only and non-shader renderers this effect exists to keep supporting uniformly. The portable path is the feature.</p>
+
+      <p>Two consequences follow directly. First, an effect that never draws costs nothing &mdash; do not construct and <code>Draw()</code> it on frames where the glyph look is off. Second, on the renderers with no back buffer to read at all &mdash; <code>HEADLESS</code> and <code>STUB</code> &mdash; the readback is rejected with <code>System::NotSupportedException</code>. That is a documented capability boundary, not a defect; CNA's own test for this effect catches that exception and reports a skip. See <a href="125-pixel-testing.html">Tutorial 125</a>.</p>
+
+      <h2 id="shader-effects">CRTEffect and DepthEffect: real ShaderEffects</h2>
+
+      <p>These two are the opposite design. Both derive from <code>ShaderEffect</code> and carry a built-in GLSL program, so they bind exactly like any custom shader you write yourself &mdash; and they inherit that path's renderer restrictions wholesale.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>These run only where custom <code>ShaderEffect</code>s run.</strong> That is the five GL-profile identities, plus <code>OPENGL2</code>, <code>OPENGL4</code>, <code>VULKAN</code>, <code>SDL_GPU</code>, <code>SOKOL</code>, <code>LLGL</code>, <code>MAGNUM</code>, <code>DIRECTX9</code>, <code>DIRECTX11</code> and <code>DIRECTX12</code>. Elsewhere the outcome is one of three: <code>BGFX</code> and <code>SOFTWARE</code> accept the effect and silently ignore the source you supplied; <code>GDI</code>, <code>METAL</code>, <code>HTML_DOM</code> and <code>SVG_DOM</code> throw; <code>FNA3D</code> cannot compile custom shaders at all. <code>HEADLESS</code> records the call and renders nothing.</p>
+      </div>
+
+      <p>If your game must look the same on a 2D-only renderer, these two are not the tool &mdash; <code>AsciiPostProcessEffect</code> or <code>ColorMatrixEffect</code> is. Check <a href="../rendering-backends.html">the renderer reference</a> before you build a visual identity on either of them.</p>
+
+      <h3>DepthEffect: colour-depth reduction</h3>
+
+      <p><code>DepthEffect</code> is a pure per-pixel colour transform, so it binds like any other <code>SpriteBatch</code> effect and needs no special frame structure:</p>
+
+      <pre><code class="language-cpp">#include "CNA/Graphics/DepthEffect.hpp"
+
+using CNA::Graphics::DepthEffect;
+using CNA::Graphics::DepthEffectMode;
+using CNA::Graphics::DitherMode;
+
+depth_ = std::make_unique&lt;DepthEffect&gt;(device);
+depth_-&gt;setMode(DepthEffectMode::Palette16);      // classic 16-colour EGA/CGA
+depth_-&gt;setDitherMode(DitherMode::Bayer8x8);      // break up the banding
+
+SamplerState pointClamp = SamplerState::PointClamp;
+spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::AlphaBlend,
+                    &amp;pointClamp, nullptr, nullptr, depth_.get());
+spriteBatch_-&gt;Draw(*sceneTarget_, Rectangle(0, 0, 640, 480), Color::White);
+spriteBatch_-&gt;End();</code></pre>
+
+      <p>Seven modes are available, and they split into two genuinely different mechanisms. <code>Color16Bit</code>, <code>Color8Bit</code>, <code>Grayscale4Bit</code>, <code>Grayscale2Bit</code> and <code>Grayscale1Bit</code> round each channel independently. <code>Palette256</code> (the 216-colour web-safe palette) and <code>Palette16</code> (EGA/CGA) do a real nearest-colour search against a fixed, non-uniform colour table &mdash; which is why they look period-correct in a way per-channel rounding never does. Those two lazily build lookup textures on first use.</p>
+
+      <p>Dithering offers <code>None</code>, <code>Bayer4x4</code> and <code>Bayer8x8</code>. Error-diffusion dithering (Floyd&ndash;Steinberg, Atkinson) is deliberately absent: it is inherently sequential, so it does not fit a single-pass fragment shader. Ordered Bayer dithering is what real-time engines use instead, and it helps most on the modes that band worst &mdash; <code>Color8Bit</code>, and especially <code>Grayscale1Bit</code>, which degenerates into a hard threshold without it.</p>
+
+      <h3>CRTEffect: and the trap that comes with it</h3>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong><code>CRTEffect</code> needs a single full-screen source.</strong> Bind it to an ordinary multi-sprite batch and every sprite gets its own little curved, vignetted screen warped around its own rectangle.</p>
+      </div>
+
+      <p>The mechanism is easy to see once stated: curvature and vignette measure position from the drawn quad's own texture coordinate, which is only a meaningful proxy for &ldquo;where on screen am I&rdquo; when the entire frame <em>is</em> one quad. (Scanlines and the RGB mask index by real screen pixels and do not have this problem, but the single-pass requirement is documented for the whole effect.)</p>
+
+      <p>So: render the scene into a render target with no effect bound, then redraw that one composited texture full-screen through <code>CRTEffect</code>. Note the <code>FlipVertically</code> &mdash; render target contents are stored bottom-up, and without it the composited frame comes out upside down:</p>
+
+      <pre><code class="language-cpp">#include "CNA/Graphics/CRTEffect.hpp"
+
+using CNA::Graphics::CRTEffect;
+using CNA::Graphics::CRTMaskType;
+
+// Pass 1: the scene, into an offscreen target, no CRTEffect bound.
+device.SetRenderTarget(sceneTarget_.get());
+device.Clear(Color::Black);
+DrawMyWholeScene();
+device.SetRenderTarget(nullptr);
+
+// Pass 2: one full-screen quad through CRTEffect.
+crt_-&gt;setScanlineIntensity(0.30f);
+crt_-&gt;setCurvature(0.08f);
+crt_-&gt;setVignetteIntensity(0.25f);
+crt_-&gt;setMaskIntensity(0.35f);
+crt_-&gt;setMaskType(CRTMaskType::ApertureGrille);   // or ::ShadowMask, or ::None
+
+SamplerState pointClamp = SamplerState::PointClamp;
+spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::Opaque,
+                    &amp;pointClamp, nullptr, nullptr, crt_.get());
+spriteBatch_-&gt;Draw(*sceneTarget_, Rectangle(0, 0, 640, 480),
+                   Rectangle(0, 0, 640, 480), Color::White,
+                   0.0f, Vector2::Zero, SpriteEffects::FlipVertically, 0.0f);
+spriteBatch_-&gt;End();</code></pre>
+
+      <p>Every parameter is clamped to <code>[0,1]</code> and has a moderate default, so an unconfigured <code>CRTEffect</code> already looks reasonable. The two effects are deliberately separate classes rather than one with options, because CRT emulation and colour-depth reduction are independent concerns and plenty of retro-look games want only one. To chain them, use the same multi-pass shape with <code>DepthEffect</code> as the first pass: scene &rarr; <code>DepthEffect</code> &rarr; render target &rarr; <code>CRTEffect</code> &rarr; backbuffer.</p>
+
+      <h2 id="colormatrix">ColorMatrixEffect: honest about not running</h2>
+
+      <p><code>ColorMatrixEffect</code> is the odd one out. It <em>is</em> an <code>Effect</code> subclass, so you pass it to <code>SpriteBatch::Begin()</code> like any other &mdash; but it carries no shader source at all. It accepts only a fixed row-major RGBA matrix and an offset, transforming each sprite's sampled and tinted colour before ordinary <code>BlendState</code> processing:</p>
+
+      <p><code>out[row] = dot(matrix[row], inRGBA) + offset[row]</code>, with every output component clamped to <code>[0,1]</code>. The default is the identity transform.</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ColorMatrixEffect.hpp"
+
+ColorMatrixEffect tint(device);
+
+// The shortcut: Rec. 709 grayscale, alpha preserved.
+tint.SetGrayscale();
+
+// Or a hand-written transform. Row-major, 16 floats.
+tint.SetColorMatrix({
+    0.60f, 0.30f, 0.10f, 0.0f,
+    0.20f, 0.70f, 0.10f, 0.0f,
+    0.10f, 0.20f, 0.70f, 0.0f,
+    0.00f, 0.00f, 0.00f, 1.0f});
+tint.SetColorOffset(Vector4(0.05f, 0.02f, 0.0f, 0.0f));
+
+spriteBatch.Begin(SpriteSortMode::Deferred, BlendState::AlphaBlend,
+                  nullptr, nullptr, nullptr, &amp;tint);
+// ... draws ...
+spriteBatch.End();
+
+tint.Reset();   // back to identity and a zero offset</code></pre>
+
+      <p>Both setters reject non-finite values, so a stray <code>NaN</code> fails loudly rather than blanking the screen.</p>
+
+      <p>The design decision worth taking away is what happens on renderers that do <em>not</em> implement it. The effect's state is copied into the shared CPU <code>SpriteBatch</code> draw description behind a single flag, and the contract in CNA's own renderer interface is explicit: <strong>other renderers deliberately leave that flag false rather than pretending to execute it.</strong> The <code>PortableGL</code> renderer goes further and refuses the draw with a diagnostic naming the effect.</p>
+
+      <p>That is why <code>GDI</code> &mdash; which rejects every other custom effect for <code>SpriteBatch</code> outright &mdash; accepts this one specifically: it is small and fixed enough that a CPU rasterizer can implement it exactly, with no shader source to parse or silently ignore. If you need a colour transform that survives on a 2D CPU renderer, this is the mechanism. If you need one on a GPU renderer, write a <code>ShaderEffect</code> (<a href="52-custom-shaders.html">Tutorial 52</a>).</p>
+
+      <h2 id="choosing">Choosing between them</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>If you want&hellip;</th><th>Use</th><th>And accept</th></tr></thead>
+        <tbody>
+          <tr><td>A glyph-grid look on any renderer, including 2D-only ones</td><td><code>AsciiPostProcessEffect</code></td><td>A GPU-to-CPU readback per <code>Draw()</code>; <code>CNA_CNAEXT=ON</code></td></tr>
+          <tr><td>Scanlines, curvature, vignette, sub-pixel mask</td><td><code>CRTEffect</code></td><td>Shader-capable renderers only; one full-screen source; <code>CNA_CNAEXT=ON</code></td></tr>
+          <tr><td>Retro colour depth or a fixed historical palette</td><td><code>DepthEffect</code></td><td>Shader-capable renderers only; <code>CNA_CNAEXT=ON</code></td></tr>
+          <tr><td>A fixed colour transform on a CPU 2D renderer</td><td><code>ColorMatrixEffect</code></td><td>The CPU <code>SpriteBatch</code> path only &mdash; a no-op elsewhere, by design</td></tr>
+          <tr><td>Anything else</td><td>Your own <code>ShaderEffect</code></td><td>Hand-written GLSL &mdash; compiled <code>.fx</code> bytecode is unsupported</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="115-cnaext-overview.html">Tutorial 115: CNAEXT &mdash; extending beyond XNA</a></li>
+        <li><a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a></li>
+        <li><a href="24-post-processing.html">Tutorial 24: Post-Processing with Render Targets</a></li>
+        <li><a href="125-pixel-testing.html">Tutorial 125: Headless and pixel testing</a></li>
+        <li><a href="../effects.html">Effects System reference</a> and <a href="../shader-effects.html">ShaderEffect reference</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

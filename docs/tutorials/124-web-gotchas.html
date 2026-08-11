@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 124: WebAssembly Gotchas: Game Lifetime, Storage and Video - CNA Tutorials</title>
+  <meta name="description" content="Three things that break CNA games in the browser but not on the desktop: a stack-allocated Game is silently corrupted, StorageDevice saves never persist, and Video/VideoPlayer are excluded from web builds at link time.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/124-web-gotchas.html">
+  <meta property="og:title"       content="Tutorial 124: WebAssembly Gotchas: Game Lifetime, Storage and Video - CNA Tutorials">
+  <meta property="og:description" content="Three things that break CNA games in the browser but not on the desktop: a stack-allocated Game is silently corrupted, StorageDevice saves never persist, and Video/VideoPlayer are excluded from web builds at link time.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/124-web-gotchas.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 124: WebAssembly Gotchas: Game Lifetime, Storage and Video",
+  "url": "https://libcna.com/docs/tutorials/124-web-gotchas.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Intermediate"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 124</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 124: WebAssembly Gotchas: Game Lifetime, Storage and Video</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Platforms</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>Why a stack-allocated <code>Game</code> is silently corrupted on the web, and how to avoid it.</li>
+          <li>That saved games do not persist at all in the browser, and what to do instead.</li>
+          <li>That <code>Video</code> and <code>VideoPlayer</code> are absent from web builds &mdash; at link time, not run time.</li>
+          <li>Which renderers you can actually select under Emscripten.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="81-emscripten.html">Tutorial 81: Building for WebAssembly</a> covers the toolchain and the build itself. This tutorial is about the three things that will bite you <em>after</em> the build succeeds.</p>
+      </div>
+
+      <p>A CNA game that runs perfectly on the desktop can compile for the browser, start up, and then misbehave in ways that make no sense &mdash; a crash several frames later with no stack, saves that vanish on refresh, a link error mentioning symbols you never touched. All three have the same cause: the browser is not a small desktop, and CNA is explicit about where it stops pretending otherwise.</p>
+
+      <h2 id="game-lifetime">1. Your Game must be heap-allocated</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>On Emscripten, allocate your <code>Game</code> subclass with <code>new</code>. A stack-allocated one is silently corrupted.</strong> This is the single most important thing on this page, because it does not fail loudly.</p>
+      </div>
+
+      <p>The mechanism is worth understanding, because the symptom is so far from the cause. Emscripten's <code>emscripten_set_main_loop(..., simulateInfiniteLoop = 1)</code> is implemented as a raw JavaScript <code>throw 'unwind'</code>. Under <code>-fwasm-exceptions</code>, the cleanup landing pad that C++ generates for a local object with a non-trivial destructor <em>genuinely catches it</em>. So your <code>Game</code>'s destructor runs, for real, at the <code>Run()</code> call site &mdash; freeing the <code>GraphicsDeviceManager</code> and leaving <code>Game::graphicsDeviceManager_</code> dangling while the main loop is still scheduled to run.</p>
+
+      <p>Nothing reports an error. The game keeps going, and then some frames later the WebAssembly runtime faults with something like <code>table index is out of bounds</code> or <code>null function or function signature mismatch</code>.</p>
+
+      <pre><code class="language-cpp">// WRONG on Emscripten - compiles, starts, then corrupts itself
+int main()
+{
+    MyGame game;          // stack-allocated: destructor runs on the unwind throw
+    game.Run();
+    return 0;
+}
+
+// CORRECT - the Game outlives Run() because nothing destroys it
+int main()
+{
+    auto* game = new MyGame();   // deliberately never deleted
+    game-&gt;Run();
+    return 0;
+}</code></pre>
+
+      <p>Deliberately leaking here is the right call: on the web the page teardown reclaims everything anyway, and the alternative is a use-after-free. Native builds are unaffected, so if you share one <code>main()</code> across targets, guard it:</p>
+
+      <pre><code class="language-cpp">int main()
+{
+#ifdef __EMSCRIPTEN__
+    auto* game = new MyGame();
+    game-&gt;Run();
+#else
+    MyGame game;
+    game.Run();
+#endif
+    return 0;
+}</code></pre>
+
+      <h2 id="no-storage">2. Saved games do not persist</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Every save written through <code>StorageDevice</code>/<code>StorageContainer</code> is discarded when the page reloads.</strong> The write succeeds and reports success &mdash; the data simply is not there next time.</p>
+      </div>
+
+      <p>Under Emscripten, <code>SDL_GetPrefPath()</code> resolves into MEMFS, Emscripten's in-memory filesystem. CNA mounts no IDBFS and never calls <code>FS.syncfs</code>, so nothing is ever copied into IndexedDB. The XNA storage API works exactly as documented, against a filesystem that ceases to exist when the tab closes.</p>
+
+      <p>If your game targets the browser and needs persistence, do not route it through <code>StorageDevice</code>. Write through your own <code>localStorage</code> or IndexedDB path instead, and keep the XNA storage path for native builds:</p>
+
+      <pre><code class="language-cpp">#ifdef __EMSCRIPTEN__
+#include &lt;emscripten.h&gt;
+
+void SaveProgress(const std::string&amp; json)
+{
+    // Persist through the browser's own storage rather than the C++ filesystem
+    EM_ASM({ localStorage.setItem('save', UTF8ToString($0)); }, json.c_str());
+}
+#else
+void SaveProgress(const std::string&amp; json)
+{
+    // Real StorageContainer write - see Tutorial 19
+}
+#endif</code></pre>
+
+      <p>See <a href="19-save-load.html">Tutorial 19: Saving and Loading Data</a> for the native path, and the <a href="../storage.html">Storage reference</a>.</p>
+
+      <h2 id="no-video">3. Video is not in the build at all</h2>
+
+      <p>On Windows, Emscripten and Android, CNA's three video translation units are <strong>excluded from the build entirely</strong>. The headers still exist, so code that calls <code>Video</code> or <code>VideoPlayer</code> compiles cleanly &mdash; and then fails at <strong>link time</strong> with undefined symbols.</p>
+
+      <p>This catches people out because it is not a runtime stub you can probe for. There is no "is video supported" query to call; the symbols are missing. Guard video features with your own build-time switch:</p>
+
+      <pre><code class="language-cpp">#if !defined(__EMSCRIPTEN__) &amp;&amp; !defined(_WIN32) &amp;&amp; !defined(__ANDROID__)
+    #define GAME_HAS_VIDEO 1
+#endif
+
+#ifdef GAME_HAS_VIDEO
+    videoPlayer-&gt;Play(introVideo);
+#else
+    SkipToMainMenu();
+#endif</code></pre>
+
+      <h2 id="renderers">Which renderers you can choose</h2>
+
+      <p>Emscripten builds are restricted to five renderers, and CMake enforces it with a hard error rather than a warning:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Renderer</th><th>Scope</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>WEBGL2</code></td><td>2D + 3D</td><td><strong>The Emscripten default.</strong> GLES 3.0 through the shared EasyGL implementation.</td></tr>
+          <tr><td><code>WEBGL1</code></td><td>2D + 3D</td><td>GLES 2.0. Genuinely loses MRT, occlusion queries, <code>Texture3D</code>, instancing and multi-stream vertex input.</td></tr>
+          <tr><td><code>CANVAS</code></td><td>2D only</td><td>Browser-native 2D canvas, no GPU context.</td></tr>
+          <tr><td><code>HTML_DOM</code></td><td>2D only</td><td>Sprites as CSS-transformed DOM elements. Has real headless-Chromium CI.</td></tr>
+          <tr><td><code>SVG_DOM</code></td><td>2D only</td><td>Sprites as real SVG elements with <code>feColorMatrix</code> tinting.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>Selecting a desktop renderer for a web build is a configure-time <code>FATAL_ERROR</code>, not a silent fallback &mdash; which is the behaviour you want. Note that <code>EASYGL</code> is no longer a valid value anywhere; use <code>WEBGL2</code>.</p>
+
+      <h2 id="checklist">Pre-ship checklist</h2>
+      <ul>
+        <li>Is your <code>Game</code> heap-allocated under <code>__EMSCRIPTEN__</code>?</li>
+        <li>Does anything call <code>StorageDevice</code> expecting it to survive a reload?</li>
+        <li>Does anything reference <code>VideoPlayer</code> without a build-time guard?</li>
+        <li>Have you actually reloaded the page mid-game and checked what came back?</li>
+        <li>Have you tested in a real browser, not just Node? Only <code>HTML_DOM</code> has automatic browser CI &mdash; everything else is on you.</li>
+      </ul>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="81-emscripten.html">Tutorial 81: Building for WebAssembly</a></li>
+        <li><a href="19-save-load.html">Tutorial 19: Saving and Loading Data</a></li>
+        <li><a href="100-shipping.html">Tutorial 100: Shipping Your CNA Game</a></li>
+        <li><a href="../platforms.html">Platform support reference</a></li>
+      </ul>
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

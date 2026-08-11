@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 81: Emscripten: Building for WebAssembly - CNA</title>
-  <meta name="description" content="Build and deploy CNA games for WebAssembly using Emscripten. Covers SDL3 target, WebGL 2 via EASYGL, emscripten_set_main_loop, async file loading, and the shell HTML template.">
+  <meta name="description" content="Build and deploy CNA games for WebAssembly with Emscripten: the WEBGL2 renderer, emscripten_set_main_loop, async loading — and the three web caveats: your Game must be heap-allocated, there is no save persistence, and no video.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/81-emscripten.html">
   <meta property="og:title"       content="Tutorial 81: Emscripten: Building for WebAssembly - CNA">
-  <meta property="og:description" content="Build and deploy CNA games for WebAssembly using Emscripten. Covers SDL3 target, WebGL 2 via EASYGL, emscripten_set_main_loop, async file loading, and the shell HTML template.">
+  <meta property="og:description" content="Build and deploy CNA games for WebAssembly with Emscripten: the WEBGL2 renderer, emscripten_set_main_loop, async loading — and the three web caveats: your Game must be heap-allocated, there is no save persistence, and no video.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/81-emscripten.html">
@@ -19,9 +19,10 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "Tutorial 81: Emscripten: Building for WebAssembly",
+  "description": "Building CNA for the browser with Emscripten, plus the three web caveats: Game must be heap-allocated, there is no save persistence, and no video.",
   "url": "https://libcna.com/docs/tutorials/81-emscripten.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-07-18",
+  "dateModified": "2026-08-11",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -60,6 +61,7 @@
       <a href="../../contact.html"       class="nav-link">Contact</a>
       <a href="../../search.html" class="nav-link">Search</a>
       <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
     </div>
   </div>
 </nav>
@@ -84,15 +86,24 @@
           <p><strong>What you&rsquo;ll learn</strong></p>
           <ul>
             <li>Installing the Emscripten SDK and pointing CMake at its toolchain file.</li>
-            <li>Running the <code>EASYGL</code> backend on WebGL 2.</li>
+            <li>Running the <code>WEBGL2</code> renderer on WebGL 2, and the four other Emscripten-only renderers.</li>
+            <li><strong>The three web caveats:</strong> <code>Game</code> must be heap-allocated, saves do not persist, and video is absent.</li>
             <li>Why the browser needs <code>emscripten_set_main_loop()</code> instead of a blocking loop.</li>
             <li>Customising the shell HTML and loading files asynchronously with Asyncify.</li>
           </ul>
-          <p><strong>Before you start</strong> &mdash; <a href="80-cross-platform.html">Tutorial 80: Cross-Platform Build Guide</a> (the WebAssembly build is one branch of that matrix) and <a href="05-game-loop.html">Tutorial 05: The Game Loop</a> (the loop shape that must change). Web builds use the <code>EASYGL</code> backend on WebGL 2.</p>
+          <p><strong>Before you start</strong> &mdash; <a href="80-cross-platform.html">Tutorial 80: Cross-Platform Build Guide</a> (the WebAssembly build is one branch of that matrix) and <a href="05-game-loop.html">Tutorial 05: The Game Loop</a> (the loop shape that must change). Web builds default to the <code>WEBGL2</code> renderer on WebGL 2.</p>
+        </div>
+
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>Read this before you write a line of web-specific code.</strong> Three things about CNA on the web are not obvious, not optional, and not in the Emscripten manual.</p>
+          <p><strong>1. Your <code>Game</code> subclass must be heap-allocated.</strong> A stack-allocated <code>Game</code> is <em>silently corrupted</em> under Emscripten and then fails frames later as an indirect-call fault &mdash; a crash with no obvious connection to its cause. Allocate it with <code>new</code> or <code>std::make_unique</code> and never let the object live in <code>main</code>&rsquo;s frame. This is the single most expensive mistake to debug on this platform.</p>
+          <p><strong>2. There is no save persistence at all.</strong> Under Emscripten <code>SDL_GetPrefPath</code> resolves to volatile MEMFS. CNA mounts no IDBFS and never calls <code>FS.syncfs</code>, so every save is silently discarded on page reload. Nothing throws and nothing warns &mdash; the write appears to succeed. If your game needs persistence in the browser you must implement it yourself, for example through <code>localStorage</code> or IndexedDB via <code>EM_JS</code>.</p>
+          <p><strong>3. There is no video.</strong> CNA&rsquo;s video translation units are excluded from web builds, so <code>Video</code> and <code>VideoPlayer</code> are missing symbols. The headers still exist, which means calling code <em>compiles</em> and then <strong>fails to link</strong>. The same is true on Windows and Android.</p>
         </div>
 
         <h2>Installing Emscripten SDK</h2>
-<pre><code class="language-cpp">git clone https://github.com/emscripten-core/emsdk.git
+<pre><code class="language-bash">git clone https://github.com/emscripten-core/emsdk.git
 cd emsdk
 ./emsdk install latest
 ./emsdk activate latest
@@ -101,14 +112,18 @@ source ./emsdk_env.sh
 emcc --version</code></pre>
 
         <h2>CMake toolchain file</h2>
-<pre><code class="language-cpp"># Configure CNA for WebAssembly
+<pre><code class="language-bash"># Configure CNA for WebAssembly
 cmake -S . -B build-wasm \
   -DCMAKE_TOOLCHAIN_FILE=$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake \
-  -DCNA_GRAPHICS_BACKEND=EASYGL \
+  -DCNA_GRAPHICS_RENDERER=WEBGL2 \
   -DCMAKE_BUILD_TYPE=Release
 
-cmake --build build-wasm -j$(nproc)
-# Output: build-wasm/MyGame.html, MyGame.js, MyGame.wasm</code></pre>
+cmake --build build-wasm
+# Output: build-wasm/MyGame.html, MyGame.js, MyGame.wasm
+
+# CNA ships a "web" CMake preset that configures exactly this:
+cmake --preset web</code></pre>
+        <p>Do not pass <code>--target CNA</code>: <code>CNA</code> is an <code>INTERFACE</code> library with no sources and is not a buildable target.</p>
 
         <h2>SDL3 Emscripten target</h2>
         <p>
@@ -117,12 +132,27 @@ cmake --build build-wasm -j$(nproc)
           <code>CMAKE_TOOLCHAIN_FILE</code> is set to the Emscripten toolchain.
         </p>
 
-        <h2>EASYGL backend on WebGL 2</h2>
+        <h2>The WEBGL2 renderer on WebGL 2</h2>
         <p>
-          The EASYGL backend maps OpenGL ES 3.0 calls directly to WebGL 2, which is supported in all modern browsers
+          The <code>WEBGL2</code> renderer maps OpenGL ES 3.0 calls directly to WebGL 2, which is supported in all modern browsers
           (Chrome, Firefox, Safari, Edge). Set <code>-s FULL_ES3=1</code> to enable the full ES 3.0 feature set.
           Unsupported features in WebGL 2: compute shaders (not available in WebGL 2), and
           <code>glBlitFramebuffer</code> with multisampling.
+        </p>
+
+        <h2>The other Emscripten-only renderers</h2>
+        <p>
+          Five of CNA's 46 renderer identities are gated to Emscripten and refuse to configure for a native target.
+          <code>WEBGL2</code> is the default and <code>WEBGL1</code> its lower profile &mdash; both are the shared EasyGL
+          implementation, and <code>WEBGL1</code> genuinely loses MRT, occlusion queries, <code>Texture3D</code>,
+          instancing and multi-stream vertex input rather than merely relabelling a context.
+        </p>
+        <p>
+          The other three do not use WebGL at all and are 2D-only: <code>CANVAS</code> (HTML Canvas 2D),
+          <code>HTML_DOM</code> (CSS-composited DOM elements) and <code>SVG_DOM</code> (SVG nodes). <code>HTML_DOM</code>
+          is the one renderer in the whole project with real automated browser CI. <code>HTML_DOM</code> and
+          <code>SVG_DOM</code> throw on a custom <code>ShaderEffect</code> &mdash; the honest behaviour, since they have
+          no programmable pipeline to run it on.
         </p>
 
         <h2>emscripten_set_main_loop()</h2>
@@ -135,7 +165,7 @@ cmake --build build-wasm -j$(nproc)
 #include &lt;emscripten.h&gt;
 #include &lt;emscripten/html5.h&gt;
 
-// CNA calls this internally, but you can also use it directly:
+// The Game object must outlive main()'s frame, and must NOT live on the stack.
 static MyGame* g_game = nullptr;
 
 void EmscriptenMainLoop() {
@@ -143,27 +173,34 @@ void EmscriptenMainLoop() {
 }
 
 int main() {
-    static MyGame game;
-    g_game = &game;
-    game.Initialize();
-    game.LoadContent();
+    // HEAP, always. A stack-allocated Game is silently corrupted under
+    // Emscripten and faults frames later as an indirect-call error.
+    g_game = new MyGame();   // deliberately never deleted; see below
+    g_game->Initialize();
+    g_game->LoadContent();
     emscripten_set_main_loop(EmscriptenMainLoop, 0, 1);
     // Control never returns here in the browser
     return 0;
 }
 #else
 int main() {
+    // On native targets a stack-allocated Game is perfectly fine.
     MyGame game;
     game.Run();
     return 0;
 }
 #endif</code></pre>
+        <p>
+          Leaking the <code>Game</code> deliberately is the right call: <code>emscripten_set_main_loop</code> with a
+          <code>simulate_infinite_loop</code> argument of <code>1</code> never returns, so any destructor you were
+          counting on would not run anyway, and the browser reclaims the whole heap when the page unloads.
+        </p>
 
         <h2>Shell HTML template</h2>
         <p>
           Emscripten generates a default shell HTML page. Customize it by providing your own shell file:
         </p>
-<pre><code class="language-cpp"># Link with custom shell
+<pre><code class="language-bash"># Link with custom shell
 em++ -o MyGame.html MyGame.cpp \
   --shell-file my_shell.html \
   -s USE_SDL=3 -s FULL_ES3=1</code></pre>
@@ -178,12 +215,12 @@ em++ -o MyGame.html MyGame.cpp \
           Loading files asynchronously in the browser requires either Asyncify or preloading assets into the
           Emscripten virtual filesystem. Preloading is simpler and works well for games with a bounded asset set:
         </p>
-<pre><code class="language-cpp"># Preload assets directory into WASM virtual filesystem
+<pre><code class="language-cmake"># Preload assets directory into WASM virtual filesystem
 set_target_properties(MyGame PROPERTIES
   LINK_FLAGS "-s USE_SDL=3 -s FULL_ES3=1 --preload-file assets@/assets"
 )</code></pre>
         <p>For larger assets, use Asyncify to suspend C++ execution while the browser fetches a file:</p>
-<pre><code class="language-cpp">set_target_properties(MyGame PROPERTIES
+<pre><code class="language-cmake">set_target_properties(MyGame PROPERTIES
   LINK_FLAGS "-s ASYNCIFY=1 -s USE_SDL=3 -s FULL_ES3=1"
 )</code></pre>
 
@@ -228,7 +265,7 @@ set_target_properties(MyGame PROPERTIES
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -245,7 +282,7 @@ set_target_properties(MyGame PROPERTIES
           <li><a href="../getting-started.html">Getting Started</a></li>
           <li><a href="../building.html">Building</a></li>
           <li><a href="../platforms.html">Platforms</a></li>
-          <li><a href="../rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
           <li><a href="../faq.html">FAQ</a></li>
         </ul>
       </div>

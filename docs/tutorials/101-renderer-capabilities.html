@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 101: Querying Renderer Capabilities - CNA Tutorials</title>
+  <meta name="description" content="CNA's SupportsCapability() fails open: the shared default answers true for eleven of thirteen capabilities, and four renderers never override it. Learn what a true really means, and how to probe the feature you depend on.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/101-renderer-capabilities.html">
+  <meta property="og:title"       content="Tutorial 101: Querying Renderer Capabilities - CNA Tutorials">
+  <meta property="og:description" content="CNA's SupportsCapability() fails open: the shared default answers true for eleven of thirteen capabilities, and four renderers never override it. Learn what a true really means, and how to probe the feature you depend on.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/101-renderer-capabilities.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 101: Querying Renderer Capabilities",
+  "url": "https://libcna.com/docs/tutorials/101-renderer-capabilities.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Intermediate"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 101</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 101: Querying Renderer Capabilities</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Renderers</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>What the 13 <code>GraphicsCapability</code> members promise, and how to query one.</li>
+          <li>Why <code>SupportsCapability()</code> <strong>fails open</strong>, and why a <code>false</code> is worth far more than a <code>true</code>.</li>
+          <li>How to write a real probe for the one feature your game actually depends on.</li>
+          <li>The queries that <em>are</em> reliable, and the policy switch that decides what happens when you call anyway.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a> introduces CNA's 46 renderer identities and the fact that exactly one is compiled into any build.</p>
+      </div>
+
+      <p>CNA compiles exactly one renderer into a build, and those renderers differ enormously: some have no 3D pipeline, some have no shader stage, some never produce a pixel. <code>GraphicsDevice::SupportsCapability()</code> exists so you can branch <em>before</em> reaching for a feature instead of catching an exception afterwards.</p>
+
+      <p>It is a genuinely useful tool. It is also the single most misread API in CNA, because <strong>its default answer is yes</strong>. This tutorial is about reading it correctly.</p>
+
+      <h2 id="the-enum">The 13 capabilities</h2>
+
+      <p><code>CNA::GraphicsCapability</code> is a closed enum of 13 members. Every one of them maps to a real gap that exists somewhere in the renderer set &mdash; it is not a speculative wish list.</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Member</th><th>What a <code>true</code> is supposed to mean</th></tr></thead>
+        <tbody>
+          <tr><td><code>ThreeD</code></td><td>The 3D pipeline as a whole: vertex/index buffers, 3D draw calls, depth/stencil clears and state.</td></tr>
+          <tr><td><code>DepthStencilBuffer</code></td><td>A complete, real depth/stencil attachment on the active target.</td></tr>
+          <tr><td><code>StencilBuffer</code></td><td>A stencil plane usable independently of depth. Separate so a 2D renderer can advertise a stencil-mask extension without claiming a depth attachment.</td></tr>
+          <tr><td><code>MultiSampleAntiAliasing</code></td><td>Any sample count above 1.</td></tr>
+          <tr><td><code>MultipleRenderTargets</code></td><td>More than one simultaneous render target.</td></tr>
+          <tr><td><code>AnisotropicFiltering</code></td><td>Anisotropic texture filtering. Device- and driver-dependent on several renderers.</td></tr>
+          <tr><td><code>WireFrame</code></td><td><code>RasterizerState.FillMode = FillMode::WireFrame</code>.</td></tr>
+          <tr><td><code>OcclusionQuery</code></td><td>Real GPU occlusion queries &mdash; <code>Begin</code>/<code>End</code>/<code>PixelCount</code>.</td></tr>
+          <tr><td><code>CustomEffects</code></td><td>A non-stock <code>Effect</code> passed to <code>SpriteBatch::Begin()</code>.</td></tr>
+          <tr><td><code>Texture3D</code></td><td>Real volume-texture <em>storage</em> &mdash; <code>SetData</code>/<code>GetData</code> genuinely persist. It never promises shader sampling.</td></tr>
+          <tr><td><code>MultiStreamVertexInput</code></td><td>More than one <code>VertexBufferBinding</code> of the same input rate on one draw.</td></tr>
+          <tr><td><code>Instancing</code></td><td>Hardware instancing via <code>DrawInstancedPrimitives</code>.</td></tr>
+          <tr><td><code>AdditiveBlending</code></td><td><code>BlendState::Additive</code> uses a documented additive colour path rather than silently degrading to ordinary alpha blending.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>Note the deliberately narrow wording on two of them. <code>Texture3D</code> describes storage and readback only &mdash; Skia reports it <code>true</code> for bounded CPU transfer storage while keeping <code>ThreeD</code> and <code>CustomEffects</code> <code>false</code>. And <code>AdditiveBlending</code> is about the fidelity of <em>this renderer's implementation</em>, not about whether the underlying API could theoretically express additive blending.</p>
+
+      <h2 id="querying">Querying a capability</h2>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Game.hpp"
+#include "Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp"
+#include "CNA/GraphicsCapability.hpp"
+
+using CNA::GraphicsCapability;
+
+void MyGame::Draw(const GameTime&amp;)
+{
+    auto&amp; device = getGraphicsDeviceProperty();
+
+    if (device.SupportsCapability(GraphicsCapability::MultipleRenderTargets))
+        DrawDeferredPath();
+    else
+        DrawForwardPath();
+}</code></pre>
+
+      <p><code>SupportsCapability()</code> is a CNA extension, not part of the XNA 4.0 surface. It is tagged <code>CNAEXT</code>, so a translation unit compiled with <code>CNA_STRICT_XNA_API</code> plus <code>-Werror=deprecated-declarations</code> will refuse to build if it calls this method. If you are keeping a module XNA-pure, keep the capability checks out of it.</p>
+
+      <h2 id="fails-open">The default that fails open</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>The shared base implementation returns <code>true</code> for every capability except two.</strong> <code>MultiStreamVertexInput</code> defaults to <code>false</code>, and <code>StencilBuffer</code> is forwarded to the renderer's own <code>SupportsStencilBuffer()</code>. Everything else falls through to a flat <code>return true;</code> &mdash; whether or not the renderer implements it.</p>
+      </div>
+
+      <p>The comment on that default is explicit that every renderer with a narrower contract <em>must</em> override the applicable entries truthfully. Most do. Four do not override <code>SupportsCapability()</code> at all:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Renderer</th><th>What it reports today</th></tr></thead>
+        <tbody>
+          <tr><td><code>DIRECTX9</code></td><td rowspan="4">The shared default, unmodified: <code>true</code> for eleven members, <code>false</code> for <code>MultiStreamVertexInput</code>, and the renderer's depth/stencil answer for <code>StencilBuffer</code>.</td></tr>
+          <tr><td><code>DIRECTX11</code></td></tr>
+          <tr><td><code>DIRECTX12</code></td></tr>
+          <tr><td><code>SDL_GPU</code></td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>These are not weak renderers &mdash; <code>DIRECTX9</code> is the only one that matches all 39 scenes of CNA's XNA oracle corpus exactly. But their capability answers are inherited, not authored. Ask <code>DIRECTX9</code> whether it supports occlusion queries and it says yes; <code>CreateOcclusionQuery()</code> on that renderer falls through to the shared default that returns <code>nullptr</code>.</p>
+
+      <h2 id="asymmetry">A <code>false</code> is a promise; a <code>true</code> is only an absence of one</h2>
+
+      <p>This is the whole lesson. Because <code>true</code> is what you get for free, a renderer only ever reports <code>false</code> by making a deliberate, explicit decision to say no. That makes the two answers mean very different things:</p>
+
+      <ul>
+        <li><strong><code>false</code> is authored.</strong> Somebody looked at that capability on that renderer and wrote the negative. Trust it, and take the fallback path.</li>
+        <li><strong><code>true</code> means &ldquo;not contradicted&rdquo;.</strong> It may be an authored yes backed by a real implementation, or it may be the default nobody has revisited. The API cannot tell you which.</li>
+      </ul>
+
+      <p>Some renderers do report the whole set explicitly, and their answers carry real information:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Renderer</th><th>How it answers</th></tr></thead>
+        <tbody>
+          <tr><td><code>STUB</code></td><td><code>false</code> for <strong>every</strong> capability &mdash; the only renderer that does. It renders nothing and says so.</td></tr>
+          <tr><td><code>OPENVG</code></td><td><code>false</code> for all 13, each with its own recorded reason.</td></tr>
+          <tr><td><code>METAL</code></td><td>An explicit answer for all 13, with no permissive default. Six are <code>false</code>.</td></tr>
+          <tr><td><code>SKIA</code></td><td>An exhaustive <code>switch</code> with no <code>default</code> arm, so a capability added later is a compiler diagnostic rather than a silently wrong answer. Only <code>Texture3D</code> and <code>AdditiveBlending</code> are <code>true</code>.</td></tr>
+          <tr><td><code>FNA3D</code></td><td>Authored falses for <code>CustomEffects</code> and <code>Instancing</code>, a real device query for MSAA. See <a href="108-fna3d.html">Tutorial 108</a>.</td></tr>
+          <tr><td>The GL family</td><td>Profile-dependent, and partly a live driver query. See <a href="102-opengl-family.html">Tutorial 102</a>.</td></tr>
+          <tr><td><code>HTML_DOM</code>, <code>SVG_DOM</code></td><td><code>false</code> for everything except <code>AdditiveBlending</code>, which is answered by asking the running browser whether it supports <code>mix-blend-mode: plus-lighter</code>. See <a href="105-browser-renderers.html">Tutorial 105</a>.</td></tr>
+          <tr><td><code>HEADLESS</code></td><td>Reports <code>ThreeD</code> as <code>true</code> and renders nothing at all. A capability is not a pixel.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2 id="probing">Writing a real probe</h2>
+
+      <p>When a <code>true</code> is load-bearing &mdash; your whole lighting path depends on MRT, or your UI depends on additive blending &mdash; do not stop at the query. Perform the operation once, during startup, and record what happened.</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/RenderTarget2D.hpp"
+#include "Microsoft/Xna/Framework/Graphics/RenderTargetBinding.hpp"
+
+// Run once, after the GraphicsDevice exists. Cheap: two 4x4 targets.
+bool ProbeMultipleRenderTargets(GraphicsDevice&amp; device)
+{
+    // A false here is authored and final -- believe it and stop.
+    if (!device.SupportsCapability(GraphicsCapability::MultipleRenderTargets))
+        return false;
+
+    try
+    {
+        RenderTarget2D a(device, 4, 4);
+        RenderTarget2D b(device, 4, 4);
+
+        std::vector&lt;RenderTargetBinding&gt; set;
+        set.emplace_back(&amp;a);
+        set.emplace_back(&amp;b);
+        device.SetRenderTargets(set);
+        device.SetRenderTarget(nullptr);
+        return true;
+    }
+    catch (const std::exception&amp;)
+    {
+        return false;   // the "yes" was inherited, not implemented
+    }
+}</code></pre>
+
+      <p>Three things make this pattern work. It short-circuits on the trustworthy answer, so it costs nothing on a renderer that already said no. It exercises the real API rather than a proxy. And it runs once at startup, so the result can be cached in a struct your render code reads every frame.</p>
+
+      <p>For capabilities that produce a wrong <em>image</em> rather than an exception &mdash; additive blending degrading to alpha blending is the classic case &mdash; a probe needs pixels: draw into a small <code>RenderTarget2D</code>, read it back with <code>GetBackBufferData()</code>, and compare. <a href="107-cpu-renderers.html">Tutorial 107</a> covers that readback pattern.</p>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>One capability the shared layer enforces for you.</strong> <code>GraphicsDevice</code> checks <code>MultiStreamVertexInput</code> itself before native submission: bind a <code>VertexDeclaration</code> split across several buffers, or several per-instance streams, on a renderer that reports <code>false</code>, and you get a <code>System::NotSupportedException</code> naming the stream counts rather than a draw that silently renders from stream 0 alone. The classic shapes &mdash; one per-vertex stream, or one per-vertex plus one per-instance stream &mdash; need no capability at all and are never affected.</p>
+      </div>
+
+      <h2 id="trustworthy">Three queries you can rely on</h2>
+
+      <p>Not everything on this part of the API is soft. These three are exact:</p>
+
+      <pre><code class="language-cpp">#include "CNA/GraphicsRendererType.hpp"
+
+// 1. Which renderer is compiled in -- a compile-time constant.
+std::string_view name = device.GetGraphicsRendererName();   // e.g. "OPENGLES3"
+
+// 2. The same thing as an enum, usable in a constant expression.
+static_assert(CNA::getCurrentGraphicsRendererType() != CNA::GraphicsRendererType::Stub,
+              "This target needs a renderer that draws something.");
+
+// 3. The renderer's real maximum single-axis texture dimension.
+const int maxDim = device.GetMaxTextureDimension();</code></pre>
+
+      <p>The name matches the <code>CNA_GRAPHICS_RENDERER</code> CMake value exactly, and both it and the type are resolved from the compile definition CMake sets, so they are <code>constexpr</code> and cannot drift. <code>GetMaxTextureDimension()</code> answers from the renderer rather than from a hardcoded profile number &mdash; query it before creating or accepting a texture whose size comes from a file or a user.</p>
+
+      <h2 id="policy">Changing what happens when you call anyway</h2>
+
+      <p>Capability queries describe what a renderer can do. A separate policy decides what happens if your code calls an unsupported 3D operation regardless:</p>
+
+      <pre><code class="language-cpp">#include "CNA/Unsupported3DGraphicsCallBehavior.hpp"
+
+device.SetUnsupported3DGraphicsCallBehavior(
+    CNA::Unsupported3DGraphicsCallBehavior::WarnAndStub);</code></pre>
+
+      <p><code>Throw</code> is the default and preserves each renderer's established exceptions and null results. <code>WarnAndStub</code> logs each unsupported operation once and substitutes a safe no-op or a null-object resource, so a 3D game boots and runs on a 2D-only renderer instead of aborting on its first draw call. The policy is device-local, takes effect immediately, and clears the warn-once history so the next stubbed operation is visible in the log.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><code>WarnAndStub</code> <strong>does not change <code>SupportsCapability()</code> results</strong>, and it does not suppress argument errors, lifetime errors, driver failures, or implementation bugs on an otherwise 3D-capable renderer. It only softens the permanent 2D boundary.</p>
+      </div>
+
+      <h2 id="checklist">A short checklist</h2>
+
+      <ul>
+        <li>Treat <code>false</code> as final and <code>true</code> as unverified.</li>
+        <li>Probe once at startup for anything load-bearing, and cache the answer.</li>
+        <li>Be especially careful on <code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code> and <code>SDL_GPU</code>, which report the inherited default for every member.</li>
+        <li>Remember that a capability describes an implementation, not an image: <code>HEADLESS</code> answers <code>true</code> to <code>ThreeD</code> and draws nothing.</li>
+        <li>Keep <code>SupportsCapability()</code> out of any translation unit you compile with <code>CNA_STRICT_XNA_API</code>.</li>
+      </ul>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="102-opengl-family.html">Tutorial 102: The OpenGL family</a> &mdash; five profiles whose capability answers genuinely differ</li>
+        <li><a href="107-cpu-renderers.html">Tutorial 107: CPU-only renderers</a> &mdash; reading pixels back without a GPU</li>
+        <li><a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a></li>
+        <li><a href="../rendering-backends.html">Renderers reference</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

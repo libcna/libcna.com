@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 108: FNA3D: Running XNA's Real Compiled Stock Effects - CNA Tutorials</title>
+  <meta name="description" content="FNA3D is the only CNA renderer that executes XNA's own compiled .fxb stock effects through MojoShader. How it picks its driver at runtime, why ShaderEffect and instancing are off, and how to read its XNA oracle result.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/108-fna3d.html">
+  <meta property="og:title"       content="Tutorial 108: FNA3D: Running XNA's Real Compiled Stock Effects - CNA Tutorials">
+  <meta property="og:description" content="FNA3D is the only CNA renderer that executes XNA's own compiled .fxb stock effects through MojoShader. How it picks its driver at runtime, why ShaderEffect and instancing are off, and how to read its XNA oracle result.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/108-fna3d.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 108: FNA3D: Running XNA's Real Compiled Stock Effects",
+  "url": "https://libcna.com/docs/tutorials/108-fna3d.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Advanced"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 108</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 108: FNA3D: Running XNA's Real Compiled Stock Effects</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Renderers</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>Why <code>FNA3D</code> is the only CNA renderer that runs XNA's own compiled shader programs.</li>
+          <li>How it picks SDL_GPU, Direct3D 11 or OpenGL at <em>runtime</em>, and how to pin that choice.</li>
+          <li>The trade-off that buys it: <code>ShaderEffect</code> does not work here at all, and instancing is off on purpose.</li>
+          <li>How to read its XNA oracle corpus result without mistaking a measurement for a failure.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="32-basiceffect.html">Tutorial 32: BasicEffect and 3D Lighting</a>, because the stock effects are the whole point of this renderer and the only shaders it can run.</p>
+      </div>
+
+      <p>Every other CNA renderer reimplements XNA's stock effects. <code>FNA3D</code> does not: it loads <strong>the actual compiled shader binaries Microsoft shipped with XNA Game Studio</strong> and executes them. If you have ever wanted to know what your scene looks like under XNA's real <code>BasicEffect</code> rather than somebody's careful reconstruction of it, this is the renderer that answers.</p>
+
+      <p>It gets there by building on <a href="https://github.com/FNA-XNA/FNA3D" target="_blank" rel="noopener">FNA3D</a>, the C graphics library FNA itself renders through. FNA3D's API design <em>is</em> XNA 4.0 &mdash; <code>FNA3D_DrawIndexedPrimitives</code>, <code>FNA3D_SetBlendState</code>, <code>FNA3D_VerifySampler</code>, <code>FNA3D_SetRenderTargets</code> &mdash; so it maps onto CNA's renderer interface almost one to one. That closeness is why the renderer exists, and the one place FNA3D constrains its consumer is what the second half of this tutorial is about.</p>
+
+      <h2 id="route">The route a draw call takes</h2>
+
+      <pre><code class="language-none">CNA game code
+  -&gt; Microsoft::Xna::Framework::Graphics   (GraphicsDevice / SpriteBatch / BasicEffect / ...)
+  -&gt; Fna3dRenderer                         (CNA's IGraphicsRenderer implementation)
+  -&gt; FNA3D                                 (chooses its driver at runtime)
+  -&gt; SDL_GPU  |  Direct3D 11  |  OpenGL</code></pre>
+
+      <p>Note the last two rows. <code>FNA3D</code> belongs to CNA's portable-RHI family alongside <code>LLGL</code>, <code>DILIGENT</code>, <code>SOKOL</code> and <code>BGFX</code> &mdash; it is not one native API, and which API you end up on is decided while the program is running.</p>
+
+      <h2 id="building">Building it</h2>
+
+      <pre><code class="language-bash">cmake -S . -B build-fna3d \
+  -DCNA_GRAPHICS_RENDERER=FNA3D \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCNA_BUILD_TESTS=ON
+cmake --build build-fna3d -j3</code></pre>
+
+      <p>FNA3D is fetched at configure time at a pinned revision (release tag <strong>26.08</strong>) and built as a static archive. The fetch recurses into its MojoShader submodule, because FNA3D's own CMake compiles MojoShader's translation units directly.</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Item</th><th>Detail</th></tr></thead>
+        <tbody>
+          <tr><td>Upstream</td><td><code>FNA-XNA/FNA3D</code>, zlib licence, pinned to release tag 26.08.</td></tr>
+          <tr><td>Vendored submodule</td><td>MojoShader (<code>icculus/mojoshader</code>), built from FNA3D's own CMake.</td></tr>
+          <tr><td>Dependencies</td><td><strong>SDL 3.2.0 or newer, and nothing else</strong> &mdash; exactly the SDL3 CNA already vendors. No second SDL build, no system SDL requirement.</td></tr>
+          <tr><td>Offline builds</td><td><code>-DFETCHCONTENT_SOURCE_DIR_FNA3D=/path/to/FNA3D</code>. The checkout must already have its MojoShader submodule initialised.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>The version handshake is checked rather than assumed: <code>FNA3D_LinkedVersion()</code> is compared against the compiled-in version at device creation, so a mismatched shared FNA3D is reported instead of silently trusted.</p>
+
+      <h2 id="driver">Runtime driver selection</h2>
+
+      <p>FNA3D tries its drivers in the order <strong>SDL_GPU, Direct3D 11, OpenGL</strong> and reports the SDL window flags the chosen one needs. Selection happens <em>before the window exists</em>, because preparing the window attributes also primes the GL attributes the window's visual is chosen from &mdash; CNA therefore asks FNA3D for its flags while assembling the SDL window, the same shape <code>LLGL</code>, <code>DILIGENT</code> and <code>BGFX</code> already use.</p>
+
+      <p>You can pin the driver with an SDL hint:</p>
+
+      <pre><code class="language-bash"># Force the OpenGL driver
+FNA3D_FORCE_DRIVER=OpenGL ./my_game
+
+# Force SDL_GPU. The aliases Vulkan, D3D12 and Metal also map onto SDL_GPU backends.
+FNA3D_FORCE_DRIVER=SDL_GPU ./my_game</code></pre>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>Pin the driver in any test that asserts on pixels.</strong> CNA's own FNA3D tests set <code>FNA3D_FORCE_DRIVER=OpenGL</code> for exactly this reason: a machine with a partially functional Vulkan stack would otherwise silently change which driver the assertions were written against. Three genuinely driver-dependent behaviours have already been found here (sub-rectangle readback origin, volume readback, compressed readback), so treat a pass on one driver as evidence about that driver only.</p>
+      </div>
+
+      <h2 id="stock-effects">XNA's real compiled shaders</h2>
+
+      <p><code>FNA3D_CreateEffect()</code> is the <strong>only</strong> shader entry point in the whole library. It takes a compiled Direct3D 9 Effect Framework binary and runs it through MojoShader. Nothing anywhere in FNA3D compiles a GLSL or HLSL source string, and the drivers refuse to draw without a bound MojoShader program.</p>
+
+      <p>A renderer built on FNA3D therefore cannot author its own shaders. It must supply <code>.fxb</code> blobs &mdash; and the blobs CNA supplies are the XNA 4.0 stock effects, the same artefacts FNA itself ships, loaded through the same call. Using them is not a shortcut around writing shaders; it is how FNA3D is designed to be consumed, and it is what makes this the one CNA renderer that executes <em>XNA's own</em> shader programs rather than a reimplementation of them.</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Blob</th><th>Techniques &times; passes</th><th>Shader variants</th></tr></thead>
+        <tbody>
+          <tr><td><code>SpriteEffect.fxb</code></td><td>1 &times; 1</td><td>1</td></tr>
+          <tr><td><code>BasicEffect.fxb</code></td><td>1 &times; 1</td><td>32, selected by <code>ShaderIndex</code></td></tr>
+          <tr><td><code>AlphaTestEffect.fxb</code></td><td>1 &times; 1</td><td>8</td></tr>
+          <tr><td><code>DualTextureEffect.fxb</code></td><td>1 &times; 1</td><td>4</td></tr>
+          <tr><td><code>EnvironmentMapEffect.fxb</code></td><td>1 &times; 1</td><td>16</td></tr>
+          <tr><td><code>SkinnedEffect.fxb</code></td><td>1 &times; 1</td><td>18</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>Each blob carries exactly one technique with one pass; the variant is chosen by an integer <code>ShaderIndex</code> parameter plus the effect's own index arrays. That is XNA's own dispatch mechanism, and CNA computes the index with the same arithmetic XNA's <code>OnApply()</code> does. Which means the blobs are a behavioural contract rather than build input &mdash; the arithmetic is only correct against these exact artefacts, so they are committed into the CNA tree, pinned to a specific FNA revision, rather than fetched.</p>
+
+      <p>Provenance matters here, and it is documented rather than assumed. The blobs come from FNA's <code>StockEffects/FXB/</code> directory; the original sources are Microsoft's XNA Game Studio stock effect <code>.fx</code> files, released under the Microsoft Permissive Licence, and <code>.fxb</code> is their <code>fxc</code>-compiled form. CNA is itself Ms-PL, so they are redistributed under the licence they arrived with, with the attribution repeated in the repository's third-party notices.</p>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>They cannot be rebuilt from source in this repository.</strong> Compiling <code>.fx</code> to <code>.fxb</code> needs <code>fxc</code> from the DirectX SDK, which exists on no platform CNA builds on. The HLSL sources remain readable upstream if you want to know what the shader actually does.</p>
+      </div>
+
+      <p>This is also worth placing against CNA's wider shader story: compiled <code>.fx</code> bytecode is <a href="../shader-effects.html">unsupported across CNA generally</a> &mdash; <code>Effect(device, bytecode)</code> throws and the XNB effect reader refuses before reading a byte. <code>FNA3D</code> does not change that. It ships six specific known blobs and dispatches into them; it does not give you a general bytecode loader for your own compiled effects.</p>
+
+      <h2 id="no-custom-shaders">The trade-off: no custom shaders at all</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong><code>ShaderEffect</code> does not work on <code>FNA3D</code>.</strong> <code>GraphicsCapability::CustomEffects</code> is an authored <code>false</code>, and the renderer's effect factory returns null. There is no workaround, because there is no source-string compiler anywhere in FNA3D to route to.</p>
+      </div>
+
+      <p>This is the direct, unavoidable consequence of the previous section, and it is the deciding factor when choosing this renderer. Claiming otherwise would be a promise broken at the first custom effect, so the renderer says no up front instead.</p>
+
+      <p>Two behaviours follow, and they fail differently:</p>
+
+      <ul>
+        <li><strong>Constructing a <code>ShaderEffect</code> does not throw.</strong> The factory returns null, so the effect is built but invalid &mdash; <code>IsEffectValid()</code> answers <code>false</code>. Nothing was compiled.</li>
+        <li><strong>Handing a custom effect to <code>SpriteBatch::Begin()</code> is silently ignored.</strong> The batch draws through the stock <code>SpriteEffect</code> as if you had passed nothing.</li>
+      </ul>
+
+      <p>So query the capability rather than waiting for a symptom:</p>
+
+      <pre><code class="language-cpp">#include "CNA/GraphicsCapability.hpp"
+
+using CNA::GraphicsCapability;
+
+// A `false` here is authored, not inherited -- believe it and take the other path.
+if (device.SupportsCapability(GraphicsCapability::CustomEffects))
+{
+    ShaderEffect grade(device, kVertexSrc, kFragmentSrc);
+    if (grade.IsEffectValid())
+    {
+        spriteBatch.Begin(SpriteSortMode::Deferred, BlendState::AlphaBlend,
+                          nullptr, nullptr, nullptr, &amp;grade);
+        // ...
+        spriteBatch.End();
+        return;
+    }
+}
+
+// FNA3D lands here: stock path only.
+spriteBatch.Begin();
+// ...
+spriteBatch.End();</code></pre>
+
+      <p><a href="101-renderer-capabilities.html">Tutorial 101</a> explains why a <code>false</code> from <code>SupportsCapability()</code> is worth far more than a <code>true</code>; <code>FNA3D</code> is one of the renderers whose negatives are individually authored with a recorded reason.</p>
+
+      <h2 id="instancing">Instancing is false, and that is a shader limit too</h2>
+
+      <p>FNA3D instances natively. Its own instanced draw is real, and its per-stream bindings carry an instance frequency. Yet <code>GraphicsCapability::Instancing</code> reports <code>false</code> and <code>DrawInstancedPrimitives</code> refuses.</p>
+
+      <p>The reason is the same one as above, viewed from a different angle: <strong>none of XNA's compiled stock effects declares a per-instance vertex input</strong>. A per-instance stream could be bound perfectly and would still never reach a shader that reads it. Reporting <code>true</code> would promise instancing that renders every instance from record zero &mdash; visually, one object where you expected a thousand, with no error. The refusal spells out the same reason.</p>
+
+      <p>Multi-stream vertex input, by contrast, is a real <code>true</code>: FNA3D's vertex-binding call takes an array of per-stream declarations, each with its own stride and vertex offset, so it is the library's native shape rather than an emulation. If you came here from <a href="60-instancing.html">Tutorial 60</a>, that is the distinction to carry away &mdash; several per-vertex streams are fine, a per-instance stream is not.</p>
+
+      <h2 id="capabilities">The full capability contract</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Capability</th><th>Reported</th><th>Backed by</th></tr></thead>
+        <tbody>
+          <tr><td><code>ThreeD</code></td><td>true</td><td>The full draw routes.</td></tr>
+          <tr><td><code>DepthStencilBuffer</code> / <code>StencilBuffer</code></td><td>true</td><td>Back-buffer and per-target depth/stencil renderbuffers.</td></tr>
+          <tr><td><code>MultiSampleAntiAliasing</code></td><td>device-dependent</td><td>A live query of the driver's maximum sample count.</td></tr>
+          <tr><td><code>MultipleRenderTargets</code></td><td>true</td><td>The native call takes the whole ordered set.</td></tr>
+          <tr><td><code>AnisotropicFiltering</code></td><td>true</td><td>Native sampler state.</td></tr>
+          <tr><td><code>WireFrame</code></td><td>true</td><td>Native wireframe fill mode.</td></tr>
+          <tr><td><code>OcclusionQuery</code></td><td>true</td><td>Native queries and pixel counts.</td></tr>
+          <tr><td><code>Texture3D</code></td><td>true</td><td>Native volume textures.</td></tr>
+          <tr><td><code>AdditiveBlending</code></td><td>true</td><td>Native blend factors.</td></tr>
+          <tr><td><code>MultiStreamVertexInput</code></td><td><strong>true</strong></td><td>Native per-stream bindings with independent strides and offsets.</td></tr>
+          <tr><td><code>Instancing</code></td><td><strong>false</strong></td><td>Authored no &mdash; the stock effects declare no per-instance input.</td></tr>
+          <tr><td><code>CustomEffects</code></td><td><strong>false</strong></td><td>Authored no &mdash; FNA3D compiles no shader source.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2 id="enums">Every enum is numerically XNA's, and that is proved</h2>
+
+      <p>FNA3D's header states that its enumerations should match XNA 4.0, and CNA's enums are ports of the same specification, so every conversion between them is the numeric identity. Rather than assume that, CNA guards each converter with <code>static_assert</code>s pinning the endpoints &mdash; and, where the enum is small enough to matter, every single value.</p>
+
+      <pre><code class="language-cpp">// Illustrative shape: a future divergence on either side becomes a compile error,
+// not a silently wrong blend mode or vertex format.
+static_assert(static_cast&lt;int&gt;(Blend::One) == FNA3D_BLEND_ONE);
+static_assert(static_cast&lt;int&gt;(Blend::Zero) == FNA3D_BLEND_ZERO);</code></pre>
+
+      <p>A runtime range check sits behind the asserts and rejects an out-of-contract ordinal from the shared layer by name, instead of casting it into an undefined enumerator. Combined, that means a state ordinal either maps exactly or fails loudly &mdash; never quietly renders with the wrong state.</p>
+
+      <h2 id="oracle">The XNA oracle corpus, read correctly</h2>
+
+      <p>CNA keeps a 39-scene oracle corpus: scene descriptions plus reference PNGs captured from the <strong>real XNA 4.0 runtime</strong>. Renderers are diffed against those images at <strong>tolerance zero</strong>. <code>FNA3D</code> runs the whole corpus and matches <strong>10 of the 39 scenes exactly</strong>.</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>That number is a measurement, not a grade.</strong> The reference images were captured on a different rasteriser, so the corpus carries a host-wide divergence that is not renderer-specific. CNA's GL renderer family scores 10 of 39 on the same machine, and <code>OPENGLES1</code> scores 11. A renderer at 10 is at the established baseline &mdash; the useful signal is the per-scene comparison, not the headline count.</p>
+      </div>
+
+      <p>Three things are worth taking from the FNA3D run:</p>
+
+      <ul>
+        <li><strong>Every one of the 39 scenes rendered.</strong> None failed. This corpus is the only thing in the repository that drives <code>DualTextureEffect</code>, <code>EnvironmentMapEffect</code>, <code>SkinnedEffect</code>, the <code>BasicEffect</code> lighting variants, fog and all eight alpha-test comparison functions through this renderer at all.</li>
+        <li><strong>It is better than the GL baseline in places.</strong> The three sprite sort-mode scenes are exact under <code>FNA3D</code> and off by one sub-LSB rounding step under the GL family &mdash; which is precisely what lifts its exact count.</li>
+        <li><strong>It found a real defect that nothing else could.</strong> Two skinned scenes landed far outside the expected band. Measuring the rendered geometry rather than guessing located it: the quad was 26 pixels left of where XNA put it, and the scene's bone translation worked out to almost exactly that distance. The bone matrix packing was writing rows where the shader expected columns, dropping the translation row entirely and silently turning every translating bone into an identity bone. A wrongly transposed identity is still an identity, and a bone palette is overwhelmingly identities &mdash; so single-bone scenes and the unit tests all looked fine. Only a bone carrying a translation reveals it.</li>
+      </ul>
+
+      <p>The honest limits are recorded alongside the result: the run used a software rasteriser rather than vendor hardware, and it exercised FNA3D's OpenGL driver only. Whether SDL_GPU and Direct3D 11 &mdash; which run the same MojoShader-translated stock effects through different rasterisers &mdash; hit the same numbers is an open external question. See <a href="../verification.html">Verification</a> for how CNA frames this kind of evidence.</p>
+
+      <h2 id="boundaries">Other boundaries worth knowing</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Area</th><th>Behaviour</th></tr></thead>
+        <tbody>
+          <tr><td>Render-target array slices</td><td>Rejected: CNA exposes no texture arrays, and FNA3D's binding has no slice field.</td></tr>
+          <tr><td>An unknown vertex stride with no declaration</td><td>Throws, naming the stride. FNA3D binds real per-stream declarations, and this renderer will not guess a layout.</td></tr>
+          <tr><td>Block-compressed readback</td><td>Refused on the OpenGL and Direct3D 11 drivers &mdash; both refuse it upstream &mdash; and reported as &ldquo;read nothing&rdquo; rather than an untouched buffer passed off as a successful read. Which case applies is <em>measured</em> once per device with a small probe, not guessed from the driver name.</td></tr>
+          <tr><td>Compressed <code>Texture3D</code> / <code>TextureCube</code></td><td>Refused by name. Volume and cube transfers are RGBA8 in CNA's renderer contract.</td></tr>
+          <tr><td>Driver format limits</td><td>Queried once at device creation and enforced: a texture in a format the driver has no storage for is refused by name, and so is a bind past the driver's real sampler-slot count.</td></tr>
+          <tr><td>Sub-rectangle back-buffer readback</td><td>Handled for you. FNA3D's own sub-rectangle origin differs between drivers, so CNA reads the whole back buffer &mdash; which every driver agrees is top-row-first &mdash; and crops on the CPU.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>On the friendlier side: the presentation modes, MSAA render targets with resolve-on-unbind, mip generation, <code>PreserveContents</code>, MRT sets, both index widths, <code>SetDataOptions</code> forwarded verbatim, hardware occlusion queries and named resources in a RenderDoc capture are all real. <code>SetDataOptions::NoOverwrite</code> is gated on the driver actually having that fast path and downgraded where it does not.</p>
+
+      <h2 id="when">When to choose FNA3D</h2>
+
+      <ul>
+        <li><strong>Yes</strong> &mdash; when you want XNA's genuine stock-effect output as a reference, or when you are porting a title whose look was tuned against real XNA.</li>
+        <li><strong>Yes</strong> &mdash; when you want one build that can fall back across SDL_GPU, Direct3D 11 and OpenGL without recompiling.</li>
+        <li><strong>No</strong> &mdash; if your game has any custom shader. That is a hard stop, not a degradation.</li>
+        <li><strong>No</strong> &mdash; if you draw crowds with hardware instancing.</li>
+      </ul>
+
+      <p>If the stock effects are enough and shaders are not part of your plan, this is the closest CNA gets to running XNA's own graphics code. If they are not, <a href="72-backend-selection.html">Tutorial 72</a> covers the alternatives.</p>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="101-renderer-capabilities.html">Tutorial 101: Querying Renderer Capabilities</a></li>
+        <li><a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a></li>
+        <li><a href="84-migrate-xna.html">Tutorial 84: Migrating from XNA to CNA</a></li>
+        <li><a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders</a> &mdash; and where they run</li>
+        <li><a href="../rendering-backends.html">Renderers reference</a> and <a href="../verification.html">Verification</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

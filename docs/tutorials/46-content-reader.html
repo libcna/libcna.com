@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tutorial 46: Custom ContentTypeReader - CNA</title>
-  <meta name="description" content="Create custom ContentTypeReader implementations in CNA to load arbitrary file types like level data from JSON through the ContentManager pipeline.">
+  <title>Tutorial 46: Custom Content Readers - CNA</title>
+  <meta name="description" content="Create custom LooseFileContentTypeReader implementations in CNA to load arbitrary file types, such as level data from JSON, through ContentManager.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/46-content-reader.html">
-  <meta property="og:title"       content="Tutorial 46: Custom ContentTypeReader - CNA">
-  <meta property="og:description" content="Create custom ContentTypeReader implementations in CNA to load arbitrary file types like level data from JSON through the ContentManager pipeline.">
+  <meta property="og:title"       content="Tutorial 46: Custom Content Readers - CNA">
+  <meta property="og:description" content="Create custom LooseFileContentTypeReader implementations in CNA to load arbitrary file types, such as level data from JSON, through ContentManager.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/46-content-reader.html">
@@ -18,10 +18,10 @@
 {
   "@context": "https://schema.org",
   "@type": "TechArticle",
-  "headline": "Tutorial 46: Custom ContentTypeReader",
+  "headline": "Tutorial 46: Custom Content Readers",
   "url": "https://libcna.com/docs/tutorials/46-content-reader.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-07-18",
+  "dateModified": "2026-08-11",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -60,6 +60,7 @@
       <a href="../../contact.html"       class="nav-link">Contact</a>
       <a href="../../search.html" class="nav-link">Search</a>
       <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
     </div>
   </div>
 </nav>
@@ -76,64 +77,57 @@
         </ol>
       </nav>
 
-      <h1>Tutorial 46: Custom ContentTypeReader</h1>
+      <h1>Tutorial 46: Custom Content Readers</h1>
         <p class="doc-meta">CNA &mdash; C++ XNA 4.0 reimplementation</p>
 
         <div class="callout callout--info">
           <span class="callout-icon">&#8505;</span>
           <p><strong>What you&rsquo;ll learn</strong></p>
           <ul>
-            <li>Deriving from <code>ContentTypeReader&lt;T&gt;</code> for your own asset type.</li>
-            <li>Reading bytes through the supplied <code>ContentReader</code>.</li>
+            <li>Deriving from <code>LooseFileContentTypeReader&lt;T&gt;</code> for your own asset type.</li>
+            <li>Declaring the extensions your reader handles with <code>GetExtensions()</code>.</li>
             <li>Registering the reader so <code>Load&lt;T&gt;</code> finds it.</li>
           </ul>
-          <p><strong>Before you start</strong> &mdash; <a href="45-content-manager.html">Tutorial 45: ContentManager and Asset Pipeline</a> &mdash; a custom reader plugs into the pipeline described there.</p>
+          <p><strong>Before you start</strong> &mdash; <a href="45-content-manager.html">Tutorial 45: ContentManager and Asset Pipeline</a> &mdash; a custom reader plugs into the loader described there.</p>
         </div>
 
-        <p>The <code>ContentManager</code> can be extended to load arbitrary file types by registering a <code>ContentTypeReader&lt;T&gt;</code>. This mirrors the XNA pattern and lets you route game-specific data (levels, dialogue, item databases) through the same managed asset pipeline.</p>
+        <p>The <code>ContentManager</code> can be extended to load arbitrary file types by registering a <code>LooseFileContentTypeReader&lt;T&gt;</code>. This lets you route game-specific data (levels, dialogue, item databases) through the same managed asset loading path as textures and models.</p>
+
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>The base class is <code>LooseFileContentTypeReader&lt;T&gt;</code>, not <code>ContentTypeReader&lt;T&gt;</code>.</strong> It was renamed in July 2026 to free the <code>ContentTypeReader</code> name for the XNB-side reader, which is a different thing with a different signature. If you are following an older article, that is the change that will bite you. This tutorial covers the loose-file path &mdash; the one that reads your own JSON, CSV or binary files from disk. Custom types cannot be read from <code>.xnb</code> at all, because CNA has no <code>ReflectiveReader</code>.</p>
+        </div>
 
         <div class="callout callout--info">
           <span class="callout-icon">&#8505;</span>
           <p><strong>ServiceProvider note.</strong> <code>ContentManager::ServiceProvider</code> is partially implemented in CNA. The <code>IGraphicsDeviceService</code> service is wired and returned by <code>getServicesProperty()</code>. Third-party service injection (custom services) works at the C++ level but does not mirror the full XNA interface-based service locator.</p>
         </div>
 
-        <h2>ContentTypeReader&lt;T&gt; template base</h2>
-        <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Content/ContentTypeReader.hpp"
-#include "Microsoft/Xna/Framework/Content/ContentReader.hpp"
+        <h2>LooseFileContentTypeReader&lt;T&gt; template base</h2>
+        <p>There are only two members, and only one of them is mandatory:</p>
+        <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Content/LooseFileContentTypeReader.hpp"
 
 namespace Microsoft::Xna::Framework::Content {
 
-    // Base template you specialise for your type T
+    // Base template you derive from for your type T
     template&lt;typename T&gt;
-    class ContentTypeReader {
+    class LooseFileContentTypeReader {
     public:
-        virtual ~ContentTypeReader() = default;
+        virtual ~LooseFileContentTypeReader() = default;
 
-        // Override this to deserialise the asset from the reader stream
-        virtual T Read(ContentReader&amp; input, T existingInstance) = 0;
+        // Extensions this reader handles, e.g. {".level.json"}.
+        // When Load() is given a name with no extension, ContentManager
+        // tries each of these in turn until a file exists.
+        // Return {} if your reader is always handed a full path.
+        [[nodiscard]] virtual std::vector&lt;std::string&gt; GetExtensions() const { return {}; }
+
+        // Read the asset. `path` is the full filesystem path that
+        // ContentManager assembled; `cm` is there for sub-asset loading.
+        virtual T Read(const std::string&amp; path, ContentManager&amp; cm) = 0;
     };
 
 } // namespace</code></pre>
-
-        <h2>ContentReader provides file access</h2>
-        <pre><code class="language-cpp">// ContentReader wraps the open file stream and the ContentManager context
-class ContentReader {
-public:
-    // Primitive reads
-    int32_t     ReadInt32();
-    float       ReadSingle();
-    std::string ReadString();
-    bool        ReadBoolean();
-
-    // Read raw bytes into a buffer
-    void ReadBytes(void* buffer, size_t count);
-
-    // Access to the ContentManager for loading sub-assets
-    ContentManager&amp; getContentManagerProperty();
-
-    // The full path to the asset file being read
-    std::string getAssetNameProperty() const;
-};</code></pre>
+        <p>Note what is <em>not</em> here. There is no <code>ContentReader</code> stream object and no <code>existingInstance</code> parameter &mdash; those belong to the XNB reader contract. You are handed a path and are expected to open the file yourself, with whatever library suits the format.</p>
 
         <h2>Example: LevelData struct and reader</h2>
 
@@ -174,21 +168,28 @@ struct LevelData {
         <h3>The reader (LevelDataReader.hpp)</h3>
         <pre><code class="language-cpp">// LevelDataReader.hpp
 #pragma once
-#include "Microsoft/Xna/Framework/Content/ContentTypeReader.hpp"
+#include "Microsoft/Xna/Framework/Content/LooseFileContentTypeReader.hpp"
+#include "Microsoft/Xna/Framework/Content/ContentManager.hpp"
 #include "LevelData.hpp"
 #include &lt;nlohmann/json.hpp&gt;  // or your preferred JSON library
 #include &lt;fstream&gt;
+#include &lt;string&gt;
+#include &lt;vector&gt;
 
 class LevelDataReader
-    : public Microsoft::Xna::Framework::Content::ContentTypeReader&lt;LevelData&gt;
+    : public Microsoft::Xna::Framework::Content::LooseFileContentTypeReader&lt;LevelData&gt;
 {
 public:
-    LevelData Read(
-        Microsoft::Xna::Framework::Content::ContentReader&amp; input,
-        LevelData /*existingInstance*/) override
+    // Lets Load&lt;LevelData&gt;("levels/level01") find level01.level.json
+    [[nodiscard]] std::vector&lt;std::string&gt; GetExtensions() const override
     {
-        // Open the JSON file directly via the asset path
-        std::string path = input.getAssetNameProperty();
+        return {".level.json"};
+    }
+
+    LevelData Read(
+        const std::string&amp; path,
+        Microsoft::Xna::Framework::Content::ContentManager&amp; /*cm*/) override
+    {
         std::ifstream f(path);
         if (!f.is_open())
             throw std::runtime_error("Cannot open level: " + path);
@@ -234,10 +235,11 @@ protected:
         content.RegisterTypeReader&lt;LevelData&gt;(
             std::make_unique&lt;LevelDataReader&gt;());
 
-        // Load just like any built-in type
-        LevelData* level = content.Load&lt;LevelData&gt;("levels/level01");
+        // Load just like any built-in type. Load&lt;T&gt; returns T by value;
+        // a failure throws ContentLoadException rather than returning null.
+        LevelData level = content.Load&lt;LevelData&gt;("levels/level01");
 
-        for (const auto&amp; enemy : level-&gt;enemies) {
+        for (const auto&amp; enemy : level.enemies) {
             spawnEnemy(enemy.type, enemy.position, enemy.health);
         }
     }
@@ -250,8 +252,9 @@ protected:
 
         <h2>Tips</h2>
         <ul>
-          <li>The <code>existingInstance</code> parameter mirrors XNA's reader contract. For reference types it can be used to update an existing object; for value types (structs) just return a new one.</li>
-          <li>Custom readers can call <code>input.getContentManagerProperty().Load&lt;Texture2D&gt;(subAssetPath)</code> to load sub-assets recursively.</li>
+          <li>Override <code>GetExtensions()</code> whenever you want callers to pass an extensionless logical name. Return <code>{}</code> only if your reader will always be given a full path.</li>
+          <li>Custom readers can call <code>cm.Load&lt;Texture2D&gt;(subAssetPath)</code> on the <code>ContentManager&amp;</code> they are handed, to load sub-assets recursively.</li>
+          <li>If several <code>.cnj</code> document types should deserialise into the same C++ type, register named <code>.cnj</code> loaders with <code>RegisterCnjLoader</code> instead &mdash; <code>RegisterTypeReader&lt;T&gt;</code> allows only one reader per <code>T</code>.</li>
           <li>JSON is not mandated &mdash; a reader can parse binary, CSV, XML, or any other format.</li>
           <li>Each <code>ContentManager</code> instance maintains its own reader registry. If you use multiple managers (one per screen), register your readers on each.</li>
         </ul>
@@ -280,7 +283,7 @@ protected:
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -297,7 +300,7 @@ protected:
           <li><a href="../getting-started.html">Getting Started</a></li>
           <li><a href="../building.html">Building</a></li>
           <li><a href="../platforms.html">Platforms</a></li>
-          <li><a href="../rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
           <li><a href="../faq.html">FAQ</a></li>
         </ul>
       </div>

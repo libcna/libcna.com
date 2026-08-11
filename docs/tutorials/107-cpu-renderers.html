@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 107: CPU-Only Renderers: Software, PortableGL, Headless and Stub - CNA Tutorials</title>
+  <meta name="description" content="Verify CNA rendering in CI with no GPU and no display server. How SOFTWARE, PORTABLEGL, HEADLESS and STUB differ, why Present() is a no-op on all four, and where the pixels actually come from.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/107-cpu-renderers.html">
+  <meta property="og:title"       content="Tutorial 107: CPU-Only Renderers: Software, PortableGL, Headless and Stub - CNA Tutorials">
+  <meta property="og:description" content="Verify CNA rendering in CI with no GPU and no display server. How SOFTWARE, PORTABLEGL, HEADLESS and STUB differ, why Present() is a no-op on all four, and where the pixels actually come from.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/107-cpu-renderers.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 107: CPU-Only Renderers: Software, PortableGL, Headless and Stub",
+  "url": "https://libcna.com/docs/tutorials/107-cpu-renderers.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Advanced"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 107</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 107: CPU-Only Renderers: Software, PortableGL, Headless and Stub</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Renderers</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>How to verify rendering in CI with no GPU, no display server and no Xvfb.</li>
+          <li>Why <code>Present()</code> is a no-op on all four of these renderers, and where the pixels actually come from.</li>
+          <li>What each of <code>SOFTWARE</code>, <code>PORTABLEGL</code>, <code>HEADLESS</code> and <code>STUB</code> genuinely proves &mdash; and what none of them proves.</li>
+          <li>A render-target trap these renderers exposed, and why it argues for honest capability reporting.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="99-unit-testing.html">Tutorial 99: Unit Testing CNA Game Logic</a> covers the GoogleTest side of CNA testing. This tutorial is about the other half: getting a real frame out of a machine that has no graphics stack.</p>
+      </div>
+
+      <p>Four of CNA's renderers are built to run where there is no graphics stack at all: <code>SOFTWARE</code>, <code>PORTABLEGL</code>, <code>HEADLESS</code> and <code>STUB</code>. None of them creates an <code>SDL_Window</code>, none of them initialises SDL's video subsystem, and none of them links a GPU library. A build selecting any of them needs nothing beyond what every CNA build already needs.</p>
+
+      <p>They are not four flavours of the same thing. Two of them rasterise real pixels you can assert on; one of them records what your code did without drawing anything; one of them does nothing whatsoever, on purpose. Picking the wrong one is the main way this group disappoints people, so this tutorial spends most of its length on the differences.</p>
+
+      <h2 id="at-a-glance">The four at a glance</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Renderer</th><th>What it does</th><th>Pixels you can read back</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>SOFTWARE</code></td>
+            <td>A hand-written CPU rasteriser &mdash; edge functions, perspective-correct interpolation, a real per-pixel depth test &mdash; writing into an RGBA8 framebuffer CNA owns.</td>
+            <td><strong>Yes, real ones.</strong></td>
+          </tr>
+          <tr>
+            <td><code>PORTABLEGL</code></td>
+            <td>Real <code>gl*</code> calls into <a href="https://github.com/rswinkle/PortableGL" target="_blank" rel="noopener">PortableGL</a>, a single-header CPU implementation of an OpenGL-3.x-shaped API. Its framebuffer is ordinary RAM.</td>
+            <td><strong>Yes, real ones.</strong></td>
+          </tr>
+          <tr>
+            <td><code>HEADLESS</code></td>
+            <td>Validates arguments, counts calls, tracks resource lifetimes and (optionally) logs every call. Rasterises nothing.</td>
+            <td>No &mdash; readback throws rather than fabricating a frame.</td>
+          </tr>
+          <tr>
+            <td><code>STUB</code></td>
+            <td>Nothing. Every method is a no-op or returns a fixed value. No counters, no validation, no framebuffer.</td>
+            <td>No &mdash; readback throws.</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2 id="no-present">Nobody presents; you read the back buffer instead</h2>
+
+      <p><code>Present()</code> is a no-op on all four. There is no window to swap into, so a CNA game running on any of them draws frame after frame that nothing displays. The frame is not lost on the two rasterising renderers &mdash; it is sitting in a CPU buffer, and the way you get at it is XNA's own back-buffer readback:</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Color.hpp"
+#include "Microsoft/Xna/Framework/Rectangle.hpp"
+#include "Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp"
+
+// Read a 4x4 patch out of the finished frame and assert on it.
+auto&amp; device = getGraphicsDeviceProperty();
+device.Clear(Color(20, 40, 60, 255));
+
+const Rectangle region(0, 0, 4, 4);
+std::vector&lt;Color&gt; pixels(4 * 4, Color(0, 0, 0, 0));
+device.GetBackBufferData(&amp;region, pixels.data(), 0, static_cast&lt;int&gt;(pixels.size()));
+
+for (const Color&amp; p : pixels)
+{
+    assert(p.getRProperty() == 20 &amp;&amp; p.getGProperty() == 40
+        &amp;&amp; p.getBProperty() == 60 &amp;&amp; p.getAProperty() == 255);
+}</code></pre>
+
+      <p>Three overloads exist &mdash; whole buffer, whole buffer at an offset, and the rectangle form above. Rows come back top-first.</p>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>Readback refuses rather than lies.</strong> On <code>HEADLESS</code> and <code>STUB</code>, <code>GetBackBufferData()</code> raises instead of returning something. That is deliberate: <code>HEADLESS</code> used to fill the caller's buffer with the last <code>Clear()</code> colour, which a test could not tell apart from a genuine black frame. A test that silently passes against a fabricated frame is worse than no test.</p>
+      </div>
+
+      <h2 id="software">SOFTWARE: real pixels, deliberately narrow</h2>
+
+      <pre><code class="language-bash">cmake -S . -B build-software \
+  -DCNA_GRAPHICS_RENDERER=SOFTWARE \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCNA_BUILD_TESTS=ON
+cmake --build build-software -j3</code></pre>
+
+      <p>This is the one to reach for when you want to prove &ldquo;this triangle, with this effect state, this texture and this blend mode, produces <em>these exact pixels</em>&rdquo;. The rasteriser is independently written, so comparing its output against a GPU renderer's is a genuine cross-check rather than two views of the same code.</p>
+
+      <p>It is explicitly not a gameplay renderer: there is no SIMD, no multithreading, no tiling or binning. Correctness and determinism are the goals.</p>
+
+      <p>The v1 scope is narrow, and it fails loudly at every edge rather than misrendering:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Boundary</th><th>Behaviour</th></tr></thead>
+        <tbody>
+          <tr><td><code>PrimitiveType</code></td><td><strong><code>TriangleList</code> only.</strong> Strip, line and point topologies throw &ldquo;only TriangleList is supported in v1&rdquo;.</td></tr>
+          <tr><td>Vertex strides</td><td>Only the five stock layouts (16, 20, 24, 32 and 52 bytes). Any other stride throws, naming the stride.</td></tr>
+          <tr><td>Lighting and fog</td><td><strong>Out of scope for v1.</strong> <code>EnableDefaultLighting()</code> and the fog properties have no effect on the image. The base colour is <code>vertexColor * diffuseColor * texture0</code> &mdash; no per-light <code>N&middot;L</code> sum, no ambient, no emissive.</td></tr>
+          <tr><td>Stock effects</td><td><code>BasicEffect</code>, <code>DualTextureEffect</code>, <code>EnvironmentMapEffect</code> and <code>SkinnedEffect</code> all render, minus the lighting caveat above. <code>SkinnedEffect</code> does real per-vertex bone blending.</td></tr>
+          <tr><td>Multiple render targets</td><td>One target at a time. A second simultaneous target throws, and so does a cube-face binding.</td></tr>
+          <tr><td>MSAA</td><td>Exactly one option: 4&times;, a 2&times;2 sub-pixel coverage grid. Any other requested count applies as none &mdash; and the <em>applied</em> count is what gets reported back, not the one you asked for.</td></tr>
+          <tr><td>Cube sampling</td><td>Addressed face-locally with <code>Clamp</code> whatever mode you set, and there is no filtering across cube seams.</td></tr>
+          <tr><td>Missing resources</td><td>No <code>Texture3D</code>, no render-target cube maps, no occlusion queries &mdash; the factories create nothing. Plain <code>TextureCube</code>s are real.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>What sits <em>inside</em> that boundary is more complete than the list above might suggest. Blend state is retained in full &mdash; every <code>Blend</code> factor and <code>BlendFunction</code> ordinal, with an out-of-contract value rejected by name at state-application time rather than halfway through a draw. All nine <code>TextureFilter</code> ordinals are honoured, split correctly into their minification, magnification and mip components; <code>Wrap</code>, <code>Clamp</code> and <code>Mirror</code> are all real; and mip level selection is real, with the footprint computed once per triangle. Backface culling follows <code>RasterizerState.CullMode</code> in both directions, a triangle crossing the near plane is genuinely clipped rather than discarded, and the viewport and scissor rectangle both apply.</p>
+
+      <p>Its capability answers are authored rather than inherited, which makes them worth trusting: <code>Texture3D</code> and <code>Instancing</code> are both a deliberate <code>false</code>, and <code>MultiStreamVertexInput</code> is a real <code>true</code> &mdash; the vertex reader resolves each attribute to the stream that owns it, with that stream's own stride and binding offset. <a href="101-renderer-capabilities.html">Tutorial 101</a> explains why the negatives carry more information than the positives.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Your GLSL does not run here.</strong> <code>SOFTWARE</code>'s effect renderer accepts a shader source string and reports success <em>without compiling it</em> &mdash; the CPU rasteriser's own fixed shading path is what produces the pixels. A <code>ShaderEffect</code> written for a GPU renderer will therefore render, but not as you wrote it. Only effects whose parameter output matches the fixed <code>BasicEffect</code>-subset path give a meaningful image. See <a href="52-custom-shaders.html">Tutorial 52</a> for where custom shaders genuinely execute.</p>
+      </div>
+
+      <h3 id="software-test">A complete Software pixel test</h3>
+
+      <p>A test is an ordinary <code>Game</code> subclass. The only thing that makes it a Software test is the renderer chosen at configure time:</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Game.hpp"
+#include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
+#include "Microsoft/Xna/Framework/Graphics/BasicEffect.hpp"
+#include "Microsoft/Xna/Framework/Graphics/VertexBuffer.hpp"
+#include "Microsoft/Xna/Framework/Graphics/VertexPositionColor.hpp"
+
+class TrianglePixelTest : public Game
+{
+    std::unique_ptr&lt;GraphicsDeviceManager&gt; gdm_;
+    int result_ = 1;
+
+protected:
+    void Draw(const GameTime&amp;) override
+    {
+        auto&amp; device = getGraphicsDeviceProperty();
+        device.Clear(Color::Black);
+
+        BasicEffect fx(device);
+        fx.VertexColorEnabled = true;   // XNA's real default is false -- opt in explicitly
+        fx.Apply();
+
+        device.SetVertexBuffer(&amp;vertexBuffer_);
+        device.DrawPrimitives(PrimitiveType::TriangleList, 0, 1);
+        device.SetVertexBuffer(nullptr);
+
+        // Real, correct pixels. No GPU, no window, no display server.
+        const Rectangle centre(32, 32, 1, 1);
+        Color pixel(0, 0, 0, 0);
+        device.GetBackBufferData(&amp;centre, &amp;pixel, 0, 1);
+
+        result_ = (pixel.getRProperty() == 255) ? 0 : 1;
+        Exit();
+    }
+
+public:
+    TrianglePixelTest()
+    {
+        gdm_ = std::make_unique&lt;GraphicsDeviceManager&gt;(this);
+        gdm_-&gt;setPreferredBackBufferWidthProperty(64);
+        gdm_-&gt;setPreferredBackBufferHeightProperty(64);
+    }
+
+    int getResult() const { return result_; }
+};
+
+int main()
+{
+    TrianglePixelTest game;
+    game.Run();
+    return game.getResult();   // 0 = pass, non-zero = fail
+}</code></pre>
+
+      <p>Note the <code>VertexColorEnabled</code> line. XNA's real default is <code>false</code>, and CNA reproduces that faithfully &mdash; a plain <code>BasicEffect</code> ignores vertex colours entirely. It is the single most common reason a first Software test reads back the clear colour and looks broken.</p>
+
+      <h2 id="portablegl">PORTABLEGL: a real GL pipeline on the CPU</h2>
+
+      <pre><code class="language-bash">cmake -S . -B build-portablegl \
+  -DCNA_GRAPHICS_RENDERER=PORTABLEGL \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCNA_BUILD_TESTS=ON
+cmake --build build-portablegl -j3</code></pre>
+
+      <p>Where <code>SOFTWARE</code> is CNA's own rasteriser, <code>PORTABLEGL</code> delegates: every stage is a genuine PortableGL call. <code>glGenBuffers</code>, <code>glBufferData</code>, <code>glVertexAttribPointer</code>, <code>pglCreateProgram</code> with real C vertex and fragment shader callbacks, <code>glDrawArrays</code>/<code>glDrawElements</code>, <code>glClear</code>, <code>glViewport</code>, <code>glScissor</code>, <code>glTexImage2D</code>, <code>glBlendFuncSeparate</code>, <code>glStencilOpSeparate</code>, <code>glCullFace</code>, <code>glPolygonMode</code>. Upstream is pinned at tag 0.100.0 and fetched at configure time; it is MIT, header-only and nothing in it is patched. For an offline build, point <code>FETCHCONTENT_SOURCE_DIR_PORTABLEGL</code> at an existing checkout.</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>This renderer is a bounded CPU 3D path, not an XNA parity target.</strong> That is its own framing, and it is the right way to read the list below. Everything outside the boundary fails loudly &mdash; a <code>System::NotSupportedException</code> naming the missing capability &mdash; never a silent no-op.</p>
+      </div>
+
+      <p>Inside the boundary it is surprisingly complete: real <code>vertexStart</code>/<code>startIndex</code>/<code>baseVertex</code> offsets, the whole <code>Blend</code> enum with separate RGB and alpha equations, the full stencil half of <code>DepthStencilState</code> including two-sided stencil, <code>CullMode</code> both ways, <code>FillMode.WireFrame</code>, scissor, depth bias, viewport with <code>MinDepth</code>/<code>MaxDepth</code>, and textured <code>SpriteBatch</code> with its own resolved sampler state. It also interleaves 3D draws and sprite draws in one frame without state leaking between them.</p>
+
+      <p><code>SupportsCapability()</code> reports <code>true</code> for exactly five members &mdash; <code>ThreeD</code>, <code>DepthStencilBuffer</code>, <code>StencilBuffer</code>, <code>AdditiveBlending</code> and <code>WireFrame</code> &mdash; each backed by an implementation and a permanent test. Everything else is a deliberate no:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Not supported</th><th>Why, and how it fails</th></tr></thead>
+        <tbody>
+          <tr><td><code>RenderTarget2D</code>, <code>RenderTargetCube</code>, MRT</td><td>A PortableGL context owns exactly one framebuffer and has no off-screen attachment mechanism. Nothing is created, so binding one raises <code>System::NotSupportedException</code>.</td></tr>
+          <tr><td>Custom <code>ShaderEffect</code></td><td>PortableGL's shader stage is a pair of C function pointers; there is no compiler to target. <code>SpriteBatch</code>'s custom-effect setter throws.</td></tr>
+          <tr><td>Lit, textured, fogged or alpha-tested effects</td><td>Only the unlit <code>VertexPositionColor</code> program exists. The draw is refused before any native call.</td></tr>
+          <tr><td>Any layout other than <code>VertexPositionColor</code></td><td>Refused &mdash; including a <em>different</em> declaration that happens to share the 16-byte stride, rather than reinterpreting the bytes.</td></tr>
+          <tr><td>Instancing, multi-stream vertex input</td><td>One stream is bound. A second is rejected.</td></tr>
+          <tr><td><code>TextureCube</code>, <code>Texture3D</code>, occlusion queries</td><td>Not implemented; the factories create nothing.</td></tr>
+          <tr><td>MSAA, mip mapping, anisotropic filtering</td><td>One sample per pixel, one mip level, one filter per texture.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>One quirk worth knowing if you are diffing images: PortableGL converts float colour to bytes by <em>truncating</em>, and does so after blending. CNA quantises its fragment output onto the 8-bit grid first, so unblended writes are byte-exact &mdash; but a partial-alpha composite can still land one LSB below what a round-to-nearest GPU writes. Give the destination term a one-LSB tolerance and assert the rest exactly.</p>
+
+      <h2 id="headless">HEADLESS: what your code did, not what it looked like</h2>
+
+      <pre><code class="language-bash">cmake -S . -B build-headless \
+  -DCNA_GRAPHICS_RENDERER=HEADLESS \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DCNA_BUILD_TESTS=ON
+cmake --build build-headless -j3</code></pre>
+
+      <p><code>HEADLESS</code> implements the entire renderer interface without touching a GPU or a window, and every call does real bookkeeping instead of real drawing. What it proves is <em>&ldquo;this code path ran, with these arguments, this many times, and nothing leaked or misused an API&rdquo;</em>. What it proves about pixels is nothing at all.</p>
+
+      <p>Unlike the others it has a <strong>runtime</strong> strictness dial rather than three separate builds:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Mode</th><th>Behaviour</th></tr></thead>
+        <tbody>
+          <tr><td><code>Fast</code></td><td>Counters only. Skips all argument and bounds validation. For runs that just need the game loop to execute quickly.</td></tr>
+          <tr><td><code>Validation</code> <em>(default)</em></td><td>Full argument validation on top of the counters &mdash; throws <code>HeadlessValidationException</code> for the same misuse a real renderer would reject.</td></tr>
+          <tr><td><code>Trace</code></td><td>Everything <code>Validation</code> does, plus a structured in-memory call log with method name, argument summary and frame index.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>Select it with the <code>CNA_HEADLESS_MODE</code> environment variable (<code>Fast</code>, <code>Validation</code>, <code>Trace</code>; an unrecognised value falls back to <code>Validation</code>), or set it in code before <code>Run()</code>:</p>
+
+      <pre><code class="language-cpp">#include "CNA/Internal/Renderers/Headless/HeadlessRenderer.hpp"
+
+using namespace CNA::Internal::Renderers::Headless;
+
+void MyHeadlessTest::Draw(const GameTime&amp;)
+{
+    auto&amp; device   = getGraphicsDeviceProperty();
+    auto&amp; renderer = static_cast&lt;HeadlessRenderer&amp;&gt;(device.GetRenderer());
+
+    // ... exercise real game code: VertexBuffer, SpriteBatch, Effects, RenderTargets ...
+
+    const HeadlessStatistics&amp; stats = renderer.GetStatistics();
+    assert(stats.drawCallCount == 3);
+    assert(stats.vertexBuffersCreated == 1);
+
+    // Throws HeadlessValidationException listing anything still alive.
+    renderer.AssertNoLeaks();
+
+    Exit();
+}</code></pre>
+
+      <p>The statistics struct carries cumulative draw-call, primitive, clear, present and state-change counters plus a per-resource-type creation count; <code>GetLastFrameStatistics()</code> gives the same figures diffed across the most recent <code>Present()</code>. <code>PushDebugLabel()</code>/<code>PopDebugLabel()</code> wrap a block of resource creation so a leak report names the block that created it. All of this is <code>CNAEXT</code> &mdash; it is not part of the XNA surface, so keep it out of any translation unit you compile with <code>CNA_STRICT_XNA_API</code>.</p>
+
+      <h3 id="trace-diff">Diffing two runs instead of two images</h3>
+
+      <p>In <code>Trace</code> mode the call log becomes a regression signal that needs no pixels. Capture a log from a known-good build and one from your branch, and compare them entry by entry:</p>
+
+      <pre><code class="language-cpp">const std::vector&lt;HeadlessTraceEntry&gt;&amp; baseline = rendererA.TraceLog();
+const std::vector&lt;HeadlessTraceEntry&gt;&amp; current  = rendererB.TraceLog();
+
+const HeadlessTraceLogDiff diff = CompareTraceLogs(baseline, current);
+if (!diff.identical)
+    std::cerr &lt;&lt; FormatTraceLogDiff(baseline, current);</code></pre>
+
+      <p>Entries are compared on frame index, method name and argument summary. The output is either a one-line &ldquo;identical&rdquo; summary or the first diverging pair side by side. For a deterministic game this catches behavioural drift &mdash; a state change that stopped happening, a draw that moved between frames &mdash; that a pixel diff would either miss or drown in noise.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong><code>HEADLESS</code> reports <code>ThreeD</code> as <code>true</code> and renders nothing.</strong> That is not a bug: the 3D call paths really do run, validate and count. But a capability is not a pixel. If a test needs to know what the frame <em>looks</em> like, this is the wrong renderer &mdash; use <code>SOFTWARE</code>.</p>
+      </div>
+
+      <h2 id="stub">STUB: the deliberate nothing</h2>
+
+      <p><code>STUB</code> is the smallest complete renderer implementation in the project. Every method either does nothing or returns a fixed value, with <strong>no bookkeeping of any kind</strong> &mdash; no counters, no validation, no trace log, no resource registry. Three uses justify it:</p>
+
+      <ul>
+        <li><strong>A minimal reference implementation.</strong> Reading it end to end shows exactly which renderer members are mandatory and which already have a usable shared default, without wading through <code>HEADLESS</code>'s validation modes or <code>SOFTWARE</code>'s rasteriser maths. If you are writing a renderer, start here &mdash; see <a href="87-custom-backend.html">Tutorial 87</a>.</li>
+        <li><strong>The fastest &ldquo;does the game loop even run&rdquo; check.</strong> Nothing to maintain, nothing to get subtly wrong.</li>
+        <li><strong>A dependency-free placeholder</strong> for build configurations that need <em>some</em> renderer to link.</li>
+      </ul>
+
+      <p>It is also the only renderer that reports <code>false</code> for <strong>every</strong> capability. That makes it the honest end of the spectrum and a useful canary: code that behaves correctly under <code>STUB</code> is code whose capability checks are real rather than decorative.</p>
+
+      <p>It is named <code>Stub</code> rather than <code>Null</code> for a concrete reason &mdash; <code>NULL</code> is a macro, so a <code>CNA_GRAPHICS_RENDERER=NULL</code> value risks silent substitution in a preprocessor comparison.</p>
+
+      <h2 id="ci">Putting it in CI</h2>
+
+      <p>This is where the group earns its keep. A container with no GPU, no <code>DISPLAY</code> and no Xvfb can build and run any of these renderers directly. Remember that <strong>exactly one renderer is compiled into a build</strong>, so a matrix means separate build directories, not a runtime flag:</p>
+
+      <pre><code class="language-yaml">jobs:
+  cpu-renderers:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        renderer: [SOFTWARE, PORTABLEGL, HEADLESS, STUB]
+    steps:
+      - uses: actions/checkout@v4
+        with: { submodules: true }
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-${{ matrix.renderer }}
+          -DCNA_GRAPHICS_RENDERER=${{ matrix.renderer }}
+          -DCNA_BUILD_TESTS=ON
+          -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build-${{ matrix.renderer }} --parallel 3
+
+      - name: Test
+        # No Xvfb, no DISPLAY, no GPU driver.
+        run: ctest --test-dir build-${{ matrix.renderer }} --output-on-failure</code></pre>
+
+      <p>Each family registers its example tests under its own CTest label, so you can narrow a run: <code>-L Software</code>, <code>-L PortableGL</code>, <code>-L Headless</code>, <code>-L Stub</code>. Every one of those tests is a real <code>Game</code> that draws through the ordinary public XNA API; the two rasterising families read the back buffer back rather than merely asserting that a call returned.</p>
+
+      <p>Two practical notes. Build only what you need &mdash; these are cheap configurations, but four of them are still four compiles. And a <code>SOFTWARE</code> job is the one that gives you image-level regression protection without a GPU, so if you can only afford one, make it that one.</p>
+
+      <h3 id="cross-check">Cross-checking a GPU renderer against the CPU one</h3>
+
+      <p>Because <code>SOFTWARE</code>'s rasteriser is independently written, dumping the same scene from a GPU renderer and from <code>SOFTWARE</code> and diffing the two localises a rendering bug: agreement points at shared code or at expected-but-undocumented behaviour, disagreement points at one specific renderer. CNA ships a renderer-agnostic diagnostic scene and a standalone comparator for exactly this. It is <em>not</em> a single automated test &mdash; the renderer is a compile-time choice, so comparing two means two builds and two dumps.</p>
+
+      <h2 id="rt-trap">The render-target trap these renderers exposed</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Binding a render target on a renderer that creates none used to succeed silently, and every subsequent draw landed in the real back buffer.</strong> This has been fixed &mdash; binding one now raises <code>System::NotSupportedException</code> &mdash; but it is worth understanding, because the shape of the bug recurs.</p>
+      </div>
+
+      <p>A renderer that keeps the shared <code>nullptr</code> default for render-target creation &mdash; <code>STUB</code> and <code>PORTABLEGL</code> among them &mdash; produces a <code>RenderTarget2D</code> whose underlying resource is null. Construction is deliberately allowed to succeed, because an object that is never bound or sampled should not eagerly refuse. The single-target bind path, however, collapsed that null to <em>the same null the &ldquo;unbind&rdquo; call passes</em>. The renderer read it as an ordinary restore-the-back-buffer request, while the shared layer went on recording the target as bound and resizing the viewport to match it. Nothing threw. Your off-screen pass just quietly drew on screen.</p>
+
+      <p>The fix routes the single-target overload through the same multi-target path, which already checked for a null resource. Two lessons generalise:</p>
+
+      <ul>
+        <li><strong>Guard with the capability query, not with a try/catch you never wrote.</strong> These four renderers make it obvious how much of an API surface is optional. <a href="101-renderer-capabilities.html">Tutorial 101</a> covers the query and its failure mode.</li>
+        <li><strong>A renderer that reports its gaps honestly is what makes the shared layer able to refuse.</strong> <code>STUB</code>'s blanket <code>false</code>, <code>SOFTWARE</code>'s authored negatives for <code>Texture3D</code> and <code>Instancing</code>, and <code>PORTABLEGL</code>'s five-true list are the mechanism, not documentation about it.</li>
+      </ul>
+
+      <h2 id="choosing">Choosing between the four</h2>
+
+      <ul>
+        <li><strong>You need to assert on an image.</strong> <code>SOFTWARE</code> &mdash; as long as your scene fits its <code>TriangleList</code>, unlit, stock-effect scope.</li>
+        <li><strong>You need a real GL pipeline's semantics on the CPU</strong> &mdash; blend equations, two-sided stencil, cull and fill modes exercised through actual GL calls. <code>PORTABLEGL</code>, for unlit vertex-coloured geometry and sprites.</li>
+        <li><strong>You need to know your game logic drives the renderer correctly</strong> &mdash; call counts, no leaks, no API misuse, no drift between commits. <code>HEADLESS</code>.</li>
+        <li><strong>You need the loop to run and nothing else</strong>, or a reference to copy when writing your own renderer. <code>STUB</code>.</li>
+      </ul>
+
+      <p>And the thing none of them does: prove your game looks right on the renderer you actually ship. For that you need the real one. See <a href="../verification.html">Verification</a> for how CNA frames the difference between a test that exists and a test that gates.</p>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="101-renderer-capabilities.html">Tutorial 101: Querying Renderer Capabilities</a></li>
+        <li><a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a></li>
+        <li><a href="99-unit-testing.html">Tutorial 99: Unit Testing CNA Game Logic</a></li>
+        <li><a href="106-vector-renderers.html">Tutorial 106: 2D Vector Renderers</a></li>
+        <li><a href="../rendering-backends.html">Renderers reference</a> and <a href="../verification.html">Verification</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

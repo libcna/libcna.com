@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 112: Skeletal Animation from glTF - CNA Tutorials</title>
+  <meta name="description" content="Play imported glTF animation clips with AnimationPlayer and SkinnedEffect. Covers where SkinningData lives, how LINEAR/STEP/CUBICSPLINE are baked at import time, and the silent drop of rigid unskinned node animation.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/112-gltf-animation.html">
+  <meta property="og:title"       content="Tutorial 112: Skeletal Animation from glTF - CNA Tutorials">
+  <meta property="og:description" content="Play imported glTF animation clips with AnimationPlayer and SkinnedEffect. Covers where SkinningData lives, how LINEAR/STEP/CUBICSPLINE are baked at import time, and the silent drop of rigid unskinned node animation.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/112-gltf-animation.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 112: Skeletal Animation from glTF",
+  "url": "https://libcna.com/docs/tutorials/112-gltf-animation.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Intermediate"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 112</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 112: Skeletal Animation from glTF</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; 3D Content</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>Where an imported skeleton and its clips actually live on a loaded <code>Model</code>.</li>
+          <li>Driving <code>AnimationPlayer</code>, and feeding its output into <code>SkinnedEffect</code>.</li>
+          <li>How LINEAR, STEP and CUBICSPLINE are resolved &mdash; and why it happens at import, not at playback.</li>
+          <li>The one silent failure that eats whole animations without a word of diagnostic.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="57-skinned-effect.html">Tutorial 57: SkinnedEffect and Skeletal Animation</a> covers the effect this tutorial feeds, and <a href="110-gltf-models.html">Tutorial 110</a> covers getting the model in.</p>
+      </div>
+
+      <p>A rigged glTF file arrives in CNA with its skeleton, its bind pose and every one of its clips already unpacked. There is no separate animation import step and no separate animation asset to load &mdash; it all comes attached to the <code>Model</code>. What is left to you is three lines of setup and one line per frame.</p>
+
+      <h2 id="where">Where the data lives</h2>
+
+      <p>Real XNA&rsquo;s <code>Model</code> class has no skinning property, so CNA follows the convention Microsoft&rsquo;s own Skinned Model Sample established and stashes the data on the model&rsquo;s <code>Tag</code>:</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/AnimationPlayer.hpp"
+
+using namespace Microsoft::Xna::Framework::Graphics;
+
+Model* hero = Content-&gt;Load&lt;Model&gt;("hero");
+
+auto* skinning = static_cast&lt;SkinningData*&gt;(hero-&gt;getTagProperty());
+if (skinning == nullptr) {
+    // Not a skinned model: no skin in the source file, so no skeleton and no clips.
+    return;
+}</code></pre>
+
+      <p>Always check for null. <code>Tag</code> is left empty for a model with no skin, and that includes several cases you might not expect &mdash; see <a href="#rigid">the trap below</a>.</p>
+
+      <p><code>SkinningData</code> is a plain aggregate. Everything on it is public:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Member</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>BoneCount</code></td><td>Number of bones in the skeleton.</td></tr>
+          <tr><td><code>SkeletonHierarchy</code></td><td>Parent index per bone (<code>-1</code> for a root), in topological order.</td></tr>
+          <tr><td><code>BindPose</code></td><td>Each bone&rsquo;s local bind transform, relative to its parent.</td></tr>
+          <tr><td><code>InverseBindPose</code></td><td>Inverse of each bone&rsquo;s bind-pose <em>global</em> transform.</td></tr>
+          <tr><td><code>SkeletonRootPrefix</code></td><td>Per-root context: the scene ancestry above the joint set, and the cancellation of the skinned mesh node&rsquo;s own transform. May be empty, which reads as all-identity.</td></tr>
+          <tr><td><code>AnimationClips</code></td><td><code>std::unordered_map&lt;std::string, AnimationClip&gt;</code>, keyed by clip name.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>The clip names are the animation names from the source file. Enumerate them if you do not know them:</p>
+
+      <pre><code class="language-cpp">for (const auto&amp; [name, clip] : skinning-&gt;AnimationClips) {
+    // name is the glTF animation name; clip.Duration is a System::TimeSpan
+}</code></pre>
+
+      <p>An <code>AnimationClip</code> is a duration plus a list of per-bone tracks; each track is a bone index and a list of keyframes carrying <code>Time</code>, <code>Translation</code>, <code>Rotation</code> and <code>Scale</code>. You rarely need to touch any of that directly &mdash; that is what the player is for.</p>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#8505;</span>
+        <p><code>SkinningData</code>, <code>AnimationClip</code>, <code>Keyframe</code> and <code>AnimationPlayer</code> all carry the <code>CNAEXT</code> marker. None of them is XNA 4.0 API &mdash; they mirror the classes that almost every XNA game copy-pasted out of Microsoft&rsquo;s Skinned Model Sample, because real XNA never shipped them as framework code. See <a href="115-cnaext-overview.html">Tutorial 115</a>.</p>
+      </div>
+
+      <h2 id="player">AnimationPlayer, in four calls</h2>
+
+      <p>The player owns no data of its own. It holds a reference to your <code>SkinningData</code> &mdash; which must outlive it &mdash; and recomputes three transform arrays whenever you advance it.</p>
+
+      <pre><code class="language-cpp">// Once, after loading. skinning must stay alive for as long as player does.
+AnimationPlayer player(*skinning);
+player.StartClip(skinning-&gt;AnimationClips.at("Walk"));
+
+// Every frame.
+player.Update(gameTime.getElapsedGameTimeProperty(), /*relativeToCurrentTime*/ true, /*loop*/ true);</code></pre>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Call</th><th>Does</th></tr></thead>
+        <tbody>
+          <tr><td><code>AnimationPlayer(const SkinningData&amp;)</code></td><td>Binds to a skeleton and immediately snaps every bone to the bind pose.</td></tr>
+          <tr><td><code>StartClip(const AnimationClip&amp;)</code></td><td>Switches clip and rewinds to zero.</td></tr>
+          <tr><td><code>Update(TimeSpan, bool relativeToCurrentTime, bool loop = true)</code></td><td>Advances or seeks, then recomputes all three arrays.</td></tr>
+          <tr><td><code>GetSkinTransforms()</code></td><td>The array you hand to the effect.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>Two more getters are available when you need them. <code>GetBoneTransforms()</code> gives each bone&rsquo;s local transform relative to its parent, and <code>GetWorldTransforms()</code> gives each bone&rsquo;s model-space transform &mdash; useful for attaching a weapon to a hand bone or drawing a debug skeleton. <code>getCurrentPositionProperty()</code> and <code>getCurrentClipProperty()</code> report playback state; the latter returns <code>nullptr</code> before the first <code>StartClip()</code>.</p>
+
+      <p>If <code>StartClip()</code> was never called, <code>Update()</code> leaves every bone at its bind pose rather than misbehaving. That makes the bind pose a safe default to draw.</p>
+
+      <h2 id="loop">Looping, clamping and seeking</h2>
+
+      <p>The two <code>bool</code> parameters cover every playback mode you are likely to want:</p>
+
+      <pre><code class="language-cpp">// Loop a walk cycle forever.
+player.Update(elapsed, true, true);
+
+// Play an attack once and hold the final pose.
+player.Update(elapsed, true, false);
+
+// Scrub to an absolute position -- an editor timeline, or a cutscene sync point.
+player.Update(System::TimeSpan::FromSeconds(1.5), false, false);
+
+// Play backwards.
+player.Update(-elapsed, true, true);</code></pre>
+
+      <p>With <code>loop</code> true, the position wraps around the clip duration &mdash; and it wraps correctly for negative positions too, so reverse playback loops cleanly. With <code>loop</code> false, the position is clamped to <code>[0, Duration]</code>. The wrap is computed arithmetically rather than by repeated subtraction, so a long session with a short clip costs the same per frame as a fresh one.</p>
+
+      <h2 id="drawing">Feeding the transforms into an effect</h2>
+
+      <p><code>GetSkinTransforms()</code> returns exactly what <code>SetBoneTransforms()</code> wants &mdash; <code>InverseBindPose</code> already composed with the world transform, one matrix per bone. Hand it straight over:</p>
+
+      <pre><code class="language-cpp">for (ModelMesh* mesh : model-&gt;getMeshesProperty()) {
+    for (ModelMeshPart* part : mesh-&gt;getMeshPartsProperty()) {
+        auto* skinned = dynamic_cast&lt;SkinnedEffect*&gt;(part-&gt;getEffectProperty());
+        if (skinned == nullptr) { continue; }
+
+        skinned-&gt;SetBoneTransforms(player.GetSkinTransforms());
+        skinned-&gt;setWorldProperty(world);
+        skinned-&gt;setViewProperty(view);
+        skinned-&gt;setProjectionProperty(projection);
+    }
+    mesh-&gt;Draw();
+}</code></pre>
+
+      <p>Two limits carry over from <a href="57-skinned-effect.html">Tutorial 57</a> and apply here unchanged. <code>SkinnedEffect::MaxBones</code> is <strong>72</strong>, and passing more matrices than that is an error rather than a silent truncation. <code>WeightsPerVertex</code> must be 1, 2 or 4 &mdash; there is no 3.</p>
+
+      <p>If the importer chose <code>SkinnedPbrEffect</code> instead &mdash; which it does when the source material carries a normal or metallic-roughness map &mdash; the bone API is identical. Same <code>MaxBones = 72</code>, same <code>SetBoneTransforms()</code>, same <code>getWeightsPerVertexProperty()</code>. Cast to whichever type the part actually has, or handle both:</p>
+
+      <pre><code class="language-cpp">if (auto* pbr = dynamic_cast&lt;SkinnedPbrEffect*&gt;(part-&gt;getEffectProperty())) {
+    pbr-&gt;SetBoneTransforms(player.GetSkinTransforms());
+} else if (auto* skinned = dynamic_cast&lt;SkinnedEffect*&gt;(part-&gt;getEffectProperty())) {
+    skinned-&gt;SetBoneTransforms(player.GetSkinTransforms());
+}</code></pre>
+
+      <p>See <a href="114-pbr-materials.html">Tutorial 114</a> for what the PBR variant does with the rest of the material.</p>
+
+      <h2 id="interpolation">Interpolation is resolved at import, not at playback</h2>
+
+      <p>glTF offers three sampler interpolation modes, and CNA supports all three &mdash; but it is worth knowing exactly where each one is honoured, because it explains a behaviour that otherwise looks like a bug.</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Mode</th><th>Support</th><th>Handled by</th></tr></thead>
+        <tbody>
+          <tr><td><code>LINEAR</code></td><td><span class="status-badge status-done">Yes</span></td><td>Importer, then the player.</td></tr>
+          <tr><td><code>STEP</code></td><td><span class="status-badge status-done">Yes</span></td><td>Importer &mdash; a real hold-last-value, not an approximation.</td></tr>
+          <tr><td><code>CUBICSPLINE</code></td><td><span class="status-badge status-done">Yes</span></td><td>Importer &mdash; real Hermite evaluation using the file&rsquo;s own tangents.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>Here is what the importer actually does. For each animated bone it collects the union of every sample time across that bone&rsquo;s translation, rotation and scale channels, sorts and de-duplicates it, and then evaluates <em>all three</em> channels at each of those times using that channel&rsquo;s own declared interpolation mode. A channel that has no key at a given time contributes its evaluated value; a channel absent altogether contributes the bind pose, decomposed. The result is one flat list of fully-populated keyframes per bone.</p>
+
+      <p>At playback, <code>AnimationPlayer</code> then does the simple thing between those baked keys: <code>Lerp</code> on translation and scale, <code>Slerp</code> on rotation, clamped at both ends.</p>
+
+      <p>The consequence: a CUBICSPLINE curve is sampled onto the key times that exist in the file, and interpolated linearly between them. If your exporter wrote sparse spline keys expecting the runtime to reconstruct the curve, the imported motion is a polyline through the same points. Export denser keys if a specific curve shape matters; the cost is file size, not runtime work.</p>
+
+      <p>One channel path is not imported at all: <code>weights</code>, the morph-target channel. That is not a defect &mdash; it targets a mesh node rather than a skeleton joint, so it has no bone index to key against, and it is carried on a separate track type instead. <a href="113-morph-targets.html">Tutorial 113</a> covers it. The converter emits a warning when it sees one.</p>
+
+      <h2 id="rigid">The trap: rigid animation disappears silently</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Animation of an unskinned node is dropped, with no diagnostic and no clip.</strong> A rotating door, an orbiting moon, a spinning fan, a bobbing pickup &mdash; none of them survive import. This is tracked as a known defect, not a design decision.</p>
+      </div>
+
+      <p>There are two layers to it, and knowing both makes it easy to recognise.</p>
+
+      <p><strong>Channels are resolved against the skin&rsquo;s joint set.</strong> An animation channel names a target node. The importer looks that node up in the skeleton it built from the skin; if the node is not one of the joints, the channel is skipped. An ordinary mesh node is never a joint, so its channels never match.</p>
+
+      <p><strong>A file with no skin extracts no clips at all.</strong> Clip extraction only runs for a mesh group that has a skin. A file containing nothing but animated rigid objects therefore produces a model whose <code>Tag</code> is null and whose clip map does not exist.</p>
+
+      <p>So the symptom is one of two things: an animation you know you exported is simply not in <code>AnimationClips</code>, or <code>getTagProperty()</code> returns <code>nullptr</code> for a file you are certain contains animation. Check for this first &mdash; nothing is logged, so there is nothing to search for.</p>
+
+      <p>Two workarounds are available today:</p>
+
+      <ul>
+        <li><strong>Animate it in game code.</strong> A rigid transform is one matrix. Compose your own rotation into the <code>world</code> matrix you pass to the effect, or into the bone transform before drawing, and you have lost nothing but authoring convenience.</li>
+        <li><strong>Give the object a one-joint skin.</strong> If the motion must ship inside the asset, bind the mesh to a single joint and animate that joint. It then travels the supported path end to end &mdash; at the cost of a skinned vertex layout and a <code>SkinnedEffect</code>.</li>
+      </ul>
+
+      <h2 id="example">Putting it together</h2>
+
+      <pre><code class="language-cpp">class HeroActor
+{
+public:
+    void Load(ContentManager&amp; content)
+    {
+        model_ = content.Load&lt;Model&gt;("hero");
+        skinning_ = static_cast&lt;SkinningData*&gt;(model_-&gt;getTagProperty());
+        if (skinning_ == nullptr) {
+            throw std::runtime_error("hero has no skin -- rigid-only animation is dropped on import");
+        }
+        player_ = std::make_unique&lt;AnimationPlayer&gt;(*skinning_);
+        Play("Idle");
+    }
+
+    void Play(const std::string&amp; clipName)
+    {
+        auto it = skinning_-&gt;AnimationClips.find(clipName);
+        if (it == skinning_-&gt;AnimationClips.end()) { return; }   // clip was dropped, or misspelled
+        player_-&gt;StartClip(it-&gt;second);
+    }
+
+    void Update(const GameTime&amp; gameTime)
+    {
+        player_-&gt;Update(gameTime.getElapsedGameTimeProperty(), true, true);
+    }
+
+    void Draw(const Matrix&amp; world, const Matrix&amp; view, const Matrix&amp; projection)
+    {
+        const std::vector&lt;Matrix&gt;&amp; skin = player_-&gt;GetSkinTransforms();
+
+        for (ModelMesh* mesh : model_-&gt;getMeshesProperty()) {
+            for (ModelMeshPart* part : mesh-&gt;getMeshPartsProperty()) {
+                if (auto* e = dynamic_cast&lt;SkinnedEffect*&gt;(part-&gt;getEffectProperty())) {
+                    e-&gt;SetBoneTransforms(skin);
+                    e-&gt;setWorldProperty(world);
+                    e-&gt;setViewProperty(view);
+                    e-&gt;setProjectionProperty(projection);
+                }
+            }
+            mesh-&gt;Draw();
+        }
+    }
+
+private:
+    Model* model_ = nullptr;
+    SkinningData* skinning_ = nullptr;
+    std::unique_ptr&lt;AnimationPlayer&gt; player_;
+};</code></pre>
+
+      <p>One player per animated instance, not one per model: the player owns the playback position, so two characters sharing a loaded <code>Model</code> need two players and one <code>SkinningData</code>.</p>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="113-morph-targets.html">Tutorial 113: Morph Targets</a> &mdash; the other half of glTF animation.</li>
+        <li><a href="114-pbr-materials.html">Tutorial 114: PBR Materials</a> &mdash; <code>SkinnedPbrEffect</code> in full.</li>
+        <li><a href="111-cnj-pipeline.html">Tutorial 111: The CNJ Format</a> &mdash; where those clip files come from.</li>
+        <li><a href="57-skinned-effect.html">Tutorial 57: SkinnedEffect</a></li>
+        <li><a href="../effects.html">Effects reference</a></li>
+      </ul>
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

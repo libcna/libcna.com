@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 119: 3D Positional Audio - CNA Tutorials</title>
+  <meta name="description" content="Placing sounds in 3D space with AudioListener, AudioEmitter and Apply3D in CNA: the exact attenuation curve, real Doppler, orientation-aware panning, and the one-listener limit.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/119-3d-audio.html">
+  <meta property="og:title"       content="Tutorial 119: 3D Positional Audio - CNA Tutorials">
+  <meta property="og:description" content="Placing sounds in 3D space with AudioListener, AudioEmitter and Apply3D in CNA: the exact attenuation curve, real Doppler, orientation-aware panning, and the one-listener limit.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/119-3d-audio.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 119: 3D Positional Audio",
+  "url": "https://libcna.com/docs/tutorials/119-3d-audio.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Intermediate"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 119</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 119: 3D Positional Audio</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Audio</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>Positioning a sound in the world with <code>AudioListener</code>, <code>AudioEmitter</code> and <code>Apply3D</code>.</li>
+          <li>The four global knobs &mdash; distance scale, Doppler scale, speed of sound, master volume.</li>
+          <li>The exact attenuation curve CNA uses, and why sounds are at full volume nearby.</li>
+          <li><strong>The one-listener limit</strong>, and the two properties <code>Apply3D</code> quietly stops governing.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="14-sound-effects.html">Tutorial 14: Playing Sound Effects</a> covers <code>SoundEffectInstance</code>, and <a href="34-camera-3d.html">Tutorial 34: 3D Cameras</a> gives you the world-space position and orientation the listener needs.</p>
+      </div>
+
+      <p>3D audio in XNA is deliberately small: you describe where the ear is, you describe where the sound is, and you call one method. CNA implements the same three pieces on top of SDL3_mixer, with the Doppler mathematics carried over exactly and the spatial part &mdash; distance and stereo placement &mdash; approximated. This page covers both what works and where the approximation shows, because the difference matters when you are tuning a mix.</p>
+
+      <h2 id="listener-emitter">Listener and emitter</h2>
+
+      <p>Both classes are plain state holders with the usual <code>getXProperty()</code>/<code>setXProperty()</code> accessors. Update the listener from your camera once per frame:</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Audio/AudioListener.hpp"
+#include "Microsoft/Xna/Framework/Audio/AudioEmitter.hpp"
+
+using namespace Microsoft::Xna::Framework;
+using namespace Microsoft::Xna::Framework::Audio;
+
+AudioListener listener;   // defaults: Position Zero, Forward -Z, Up +Y, Velocity Zero
+AudioEmitter  emitter;
+
+void UpdateAudio(const Camera&amp; camera, const Entity&amp; source, float dt)
+{
+    listener.setPositionProperty(camera.Position);
+    listener.setForwardProperty(camera.Forward);
+    listener.setUpProperty(camera.Up);
+    listener.setVelocityProperty((camera.Position - previousCameraPosition_) / dt);
+
+    emitter.setPositionProperty(source.Position);
+    emitter.setVelocityProperty(source.Velocity);
+
+    engineSound_.Apply3D(listener, emitter);
+
+    previousCameraPosition_ = camera.Position;
+}</code></pre>
+
+      <p>Velocity is <em>units per second</em>, not per-frame displacement. Dividing by the frame delta, as above, is the whole difference between a Doppler shift that behaves and one that flutters with the frame rate.</p>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#10003;</span>
+        <p><code>AudioEmitter</code> also carries a per-emitter <code>getDopplerScaleProperty()</code>/<code>setDopplerScaleProperty(float)</code>, which multiplies into the global scale. It rejects negative values with <code>System::ArgumentOutOfRangeException</code>.</p>
+      </div>
+
+      <h2 id="apply3d">Apply3D</h2>
+
+      <p><code>SoundEffectInstance</code> exposes two overloads:</p>
+
+      <pre><code class="language-cpp">void Apply3D(const AudioListener&amp; listener, const AudioEmitter&amp; emitter);
+void Apply3D(const AudioListener* listeners, int listenerCount, const AudioEmitter&amp; emitter);</code></pre>
+
+      <p>Call it every frame the emitter or listener moves. It is cheap, and CNA persists the values it derives &mdash; attenuation, Doppler factor and spatial pan are stored on the instance and recomposed on every later <code>Play()</code>, volume or pitch write, so a <code>Volume</code> change no longer erases your spatial state. Calling <code>Apply3D</code> before the sound has ever played is fine too; the values are applied when it starts.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Exactly one listener is supported.</strong> The array overload calls straight through when <code>listenerCount == 1</code>; for any other count it throws <code>System::NotSupportedException("Only one listener is supported.")</code>. A null array throws <code>System::ArgumentNullException</code>. Split-screen games that want a per-viewport mix do not get one from this API &mdash; you have to pick a single notional ear (the midpoint between players is the usual choice) and drive the one listener from that.</p>
+      </div>
+
+      <p>To be precise about what the limit is not: constructing several <code>AudioListener</code> objects is perfectly legal, and cheap. The restriction bites at the moment you try to spatialise a sound against more than one of them at a time.</p>
+
+      <h2 id="attenuation">The attenuation curve</h2>
+
+      <p>Distance falloff is governed by one global on <code>SoundEffect</code>:</p>
+
+      <pre><code class="language-cpp">SoundEffect::setDistanceScaleProperty(20.0f);   // default is 1.0f</code></pre>
+
+      <p>The curve is the same one XNA and FAudio use when no custom volume curve is authored, and it surprises people the first time:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Distance from listener</th><th>Attenuation</th></tr></thead>
+        <tbody>
+          <tr><td>Anywhere within <code>DistanceScale</code></td><td><strong>None at all</strong> &mdash; full volume</td></tr>
+          <tr><td>Beyond <code>DistanceScale</code></td><td>Inverse-distance: <code>DistanceScale / distance</code>, clamped to [0, 1]</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>So <code>DistanceScale</code> is not a &ldquo;how fast does it fade&rdquo; dial &mdash; it is the radius of the zone inside which nothing fades at all, and the point where falloff begins. If everything in your game sounds equally loud, your <code>DistanceScale</code> is larger than your play space. If sounds vanish two steps away, it is smaller than your world unit.</p>
+
+      <h2 id="doppler">Doppler</h2>
+
+      <p>Doppler is computed exactly, as a closed-form pitch-shift factor from the relative velocity along the listener-to-emitter axis. It is not an approximation, and it is not an SDL3_mixer feature &mdash; CNA calculates it and applies the result to the track&rsquo;s frequency ratio.</p>
+
+      <pre><code class="language-cpp">SoundEffect::setSpeedOfSoundProperty(343.5f);  // default 343.5f, in your world units per second
+SoundEffect::setDopplerScaleProperty(1.0f);    // default 1.0f
+SoundEffect::setDopplerScaleProperty(0.0f);    // exactly zero disables Doppler entirely</code></pre>
+
+      <p>The speed of sound is expressed in <em>your</em> units. If one world unit is a metre, 343.5 is correct; if one unit is a foot, or a tile, the default will make everything sound like it is moving at a large fraction of the speed of sound and pitch-bend wildly. This is the single most common cause of &ldquo;why does my racing game warble&rdquo;.</p>
+
+      <p>Setting the global scale to exactly <code>0.0f</code> short-circuits the whole calculation to a neutral factor &mdash; the cheapest way to turn Doppler off for a scene.</p>
+
+      <h2 id="pan">Stereo placement</h2>
+
+      <p>CNA projects the emitter&rsquo;s listener-relative position onto the listener&rsquo;s own right axis &mdash; the cross product of <code>Forward</code> and <code>Up</code>, normalised &mdash; then divides by distance and clamps to [-1, 1]. Two consequences follow directly:</p>
+
+      <ul>
+        <li><strong>Listener orientation genuinely matters.</strong> Turn the camera and the mix rotates with it, because the right axis is derived from <code>Forward</code> and <code>Up</code> rather than assuming world X.</li>
+        <li><strong>Emitter orientation does not.</strong> <code>AudioEmitter</code> stores <code>Forward</code> and <code>Up</code>, and <code>Apply3D</code> never reads them. There are no sound cones: a speaker facing away from you is not quieter for it.</li>
+      </ul>
+
+      <p>An emitter at exactly the listener&rsquo;s position has no meaningful direction and is centred rather than dividing by zero.</p>
+
+      <h2 id="latch">The two properties Apply3D takes over</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>Once <code>Apply3D</code> has been called on an instance, <strong>that instance is 3D for the rest of its life</strong>. The flag is never cleared.</p>
+      </div>
+
+      <p>Concretely, and matching XNA&rsquo;s own behaviour:</p>
+
+      <ul>
+        <li><code>setPanProperty()</code> still records the value, and <code>getPanProperty()</code> still reads it back &mdash; but it stops affecting the audible output. <code>Apply3D</code>&rsquo;s own pan is what governs from then on, until the next <code>Apply3D</code>.</li>
+        <li><code>Volume</code> and <code>Pan</code> are <em>never modified</em> by <code>Apply3D</code>. They keep reporting exactly what you last set. Attenuation lives alongside <code>Volume</code> and is multiplied in, so do not try to read back the audible loudness from the property &mdash; it is not there.</li>
+      </ul>
+
+      <p>If you need a sound that is sometimes spatial and sometimes not, use two instances rather than trying to un-3D one.</p>
+
+      <h2 id="globals">The four globals, in one place</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Static on <code>SoundEffect</code></th><th>Default</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>get/setMasterVolumeProperty</code></td><td><code>1.0f</code></td><td>Global scale over all sound effects. Passed through unclamped.</td></tr>
+          <tr><td><code>get/setDistanceScaleProperty</code></td><td><code>1.0f</code></td><td>Radius of the no-attenuation zone; falloff begins here.</td></tr>
+          <tr><td><code>get/setDopplerScaleProperty</code></td><td><code>1.0f</code></td><td>Multiplies the computed Doppler factor. <code>0.0f</code> disables it.</td></tr>
+          <tr><td><code>get/setSpeedOfSoundProperty</code></td><td><code>343.5f</code></td><td>In world units per second. Match it to your unit scale.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2 id="xact">3D cues in XACT</h2>
+
+      <p>The XACT layer has the same facility. <code>Cue::Apply3D(listener, emitter)</code> works exactly like the instance version, and <code>SoundBank</code> has a one-shot overload that positions a fire-and-forget cue at the moment it starts:</p>
+
+      <pre><code class="language-cpp">soundBank-&gt;PlayCue("Explosion", listener, emitter);</code></pre>
+
+      <p>See <a href="120-xact.html">Tutorial 120</a> for the rest of the XACT surface.</p>
+
+      <h2 id="limits">Honest limits</h2>
+
+      <ul>
+        <li><strong>One listener.</strong> Covered above &mdash; this is the headline restriction.</li>
+        <li><strong>No HRTF, no binaural rendering.</strong> Placement is a stereo gain pair, not a head model. Elevation is not audible.</li>
+        <li><strong>No sound cones or directional emitters.</strong> Emitter orientation is stored and ignored.</li>
+        <li><strong>No occlusion, obstruction or reverb zones.</strong> A wall between you and the sound changes nothing. If you want that, attenuate <code>Volume</code> yourself from your own raycast.</li>
+        <li><strong>No custom volume curves.</strong> The inverse-distance law above is the only curve.</li>
+      </ul>
+
+      <p>None of these are bugs to wait on &mdash; they are the shape of the backing library. Games that need more usually implement it a layer up, in their own audio manager, using <code>Volume</code> and a low-pass filter of their own.</p>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="118-dynamic-audio.html">Tutorial 118: Procedural audio</a> &mdash; spatialise a sound you generated yourself</li>
+        <li><a href="120-xact.html">Tutorial 120: XACT cue-based audio</a></li>
+        <li><a href="34-camera-3d.html">Tutorial 34: 3D Cameras</a></li>
+        <li><a href="../audio.html">Audio reference</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 123: Achievements and Leaderboards with Local Persistence - CNA Tutorials</title>
+  <meta name="description" content="CNA has no online service, but its GamerServices achievements and leaderboards are real and genuinely persist as JSON on disk. How to award, rank and page them, and exactly which parts do nothing.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/123-achievements.html">
+  <meta property="og:title"       content="Tutorial 123: Achievements and Leaderboards with Local Persistence - CNA Tutorials">
+  <meta property="og:description" content="CNA has no online service, but its GamerServices achievements and leaderboards are real and genuinely persist as JSON on disk. How to award, rank and page them, and exactly which parts do nothing.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/123-achievements.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 123: Achievements and Leaderboards with Local Persistence",
+  "url": "https://libcna.com/docs/tutorials/123-achievements.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Intermediate"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 123</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 123: Achievements and Leaderboards with Local Persistence</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Services</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>Awarding achievements that survive a restart, with no online service involved.</li>
+          <li>Writing scores and reading ranked, paged leaderboards.</li>
+          <li>Where the data lands on disk, and how it is written safely.</li>
+          <li>Exactly which parts of <code>GamerServices</code> do nothing &mdash; stated plainly.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="19-save-load.html">Tutorial 19: Saving and Loading Data</a> covers <code>StorageDevice</code>, which decides where this data is written.</p>
+      </div>
+
+      <p>XNA&rsquo;s <code>GamerServices</code> namespace was a front end for Xbox Live. CNA has no online service and is never going to grow one, so a fair question is what is left. The answer is more than you would expect: <strong>achievements and leaderboards are backed by a real local implementation that genuinely persists</strong>, written as JSON under the platform&rsquo;s preferences directory and reloaded by the next run of your game.</p>
+
+      <p>That is a meaningful difference from the no-op shim other reimplementations ship. It is enough to build and test a real achievement system against, and enough to ship a single-player game with a working local leaderboard. The parts that are inert are inert honestly, and they are listed at the bottom of this page.</p>
+
+      <h2 id="setup">Getting a gamer</h2>
+
+      <p>GamerServices is switched on by adding a <code>GamerServicesComponent</code> to your game&rsquo;s components, exactly as XNA 4.0 required on PC:</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/GamerServices/GamerServicesComponent.hpp"
+#include "Microsoft/Xna/Framework/GamerServices/SignedInGamer.hpp"
+#include "Microsoft/Xna/Framework/Storage/StorageDevice.hpp"
+
+using namespace Microsoft::Xna::Framework::GamerServices;
+
+MyGame::MyGame()
+{
+    // Decides the on-disk directory everything below is written to. Set it once, early.
+    Storage::StorageDevice::SetAppNameEXT("MyGame");
+
+    gamerServices_ = new GamerServicesComponent(*this);
+    getComponentsProperty().Add(gamerServices_);
+}
+
+void MyGame::Initialize()
+{
+    Game::Initialize();
+    localGamer_ = (*Gamer::getSignedInGamersProperty())[0];
+}</code></pre>
+
+      <p>Note the shape: <code>Gamer::getSignedInGamersProperty()</code> returns a <em>pointer</em> to a <code>SignedInGamerCollection</code>, so you dereference it before indexing. Indexing by <code>int</code> gives you a <code>SignedInGamer*</code>; there is also an overload taking a <code>PlayerIndex</code>, which returns <code>nullptr</code> for an empty slot. Count with <code>getCountProperty()</code>, or use range-for.</p>
+
+      <p>There is no sign-in step to perform. The dispatcher creates a set of local gamers when it initialises, so index 0 is available from <code>Initialize()</code> onwards and achievements work immediately. If you want your own gamer identities &mdash; local profiles, say &mdash; publish them with <code>Gamer::setSignedInGamersProperty()</code>.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Never copy or move a constructed <code>Gamer</code> or <code>SignedInGamer</code>.</strong> Each one holds a <code>LeaderboardWriter</code> that captured <code>this</code> at construction, so a copy leaves a dangling owner pointer. Heap-allocate them and pass pointers.</p>
+      </div>
+
+      <h2 id="achievements">Achievements</h2>
+
+      <p>Awarding is one call, and it writes to disk immediately:</p>
+
+      <pre><code class="language-cpp">localGamer_-&gt;AwardAchievement("FIRST_BLOOD");</code></pre>
+
+      <p>Reading back what has been earned:</p>
+
+      <pre><code class="language-cpp">AchievementCollection earned = localGamer_-&gt;GetAchievements();
+
+std::set&lt;std::string&gt; earnedKeys;
+for (const Achievement&amp; a : earned)
+{
+    earnedKeys.insert(a.getKeyProperty());
+    System::DateTime when = a.getEarnedDateTimeProperty();
+    // ... show it in your UI ...
+}</code></pre>
+
+      <p><code>AchievementCollection</code> supports <code>getCountProperty()</code>, indexing by position and by key, <code>Contains</code>, <code>IndexOf</code> and range-for. Indexing by an unknown key throws <code>System::IndexOutOfRangeException</code>; indexing out of range throws <code>System::ArgumentOutOfRangeException</code>.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Only three fields round-trip: the key, the earned flag, and the earned timestamp.</strong> Name, description, how-to-earn, gamer score and the display-before-earned flag are <em>not</em> persisted &mdash; <code>AwardAchievement</code> only ever takes a key, exactly as in real XNA. Keep your own catalogue of achievement metadata in your game&rsquo;s content, and use <code>GetAchievements()</code> purely to find out which keys are earned.</p>
+      </div>
+
+      <p>Build that catalogue with the CNAEXT factory, then merge in the earned state:</p>
+
+      <pre><code class="language-cpp">// Your own authored catalogue - name, description, visibility.
+std::vector&lt;Achievement&gt; catalogue = {
+    Achievement::CreateInternal("FIRST_BLOOD", "First Blood",
+                                "Defeat your first enemy", true, false, System::DateTime{}),
+    Achievement::CreateInternal("SPEEDRUN", "Fleet of Foot",
+                                "Finish level 1 in under 60 seconds", true, false, System::DateTime{}),
+};
+
+// Which of them are actually earned, from disk. Match on the KEY.
+const bool firstBlood = earnedKeys.count("FIRST_BLOOD") != 0;</code></pre>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Match on the key, never with <code>Contains</code> or <code>==</code>.</strong> <code>Achievement</code>&rsquo;s equality compares every field &mdash; name, description, gamer score, earned flag and timestamp included &mdash; so an authored catalogue entry will never compare equal to the sparse record that comes back from disk. Key comparison is the only reliable join.</p>
+      </div>
+
+      <p><code>Achievement</code> is immutable once constructed, so &ldquo;marking one earned&rdquo; in your UI means constructing a new value with <code>earned = true</code> and swapping it into your own list.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><code>Achievement::GetPicture()</code> <strong>always throws <code>System::NotImplementedException</code></strong>. There is no achievement artwork store. Ship your icons as ordinary content and look them up by key.</p>
+      </div>
+
+      <h2 id="leaderboards">Leaderboards</h2>
+
+      <p>A leaderboard is identified by a <code>LeaderboardIdentity</code>, built from one of four <code>LeaderboardKey</code> values &mdash; <code>BestScoreLifeTime</code>, <code>BestScoreRecent</code>, <code>BestTimeLifeTime</code>, <code>BestTimeRecent</code> &mdash; optionally with a game-mode number so one key can serve several modes:</p>
+
+      <pre><code class="language-cpp">LeaderboardIdentity board = LeaderboardIdentity::Create(LeaderboardKey::BestScoreLifeTime);
+LeaderboardIdentity hardMode = LeaderboardIdentity::Create(LeaderboardKey::BestScoreLifeTime, 2);</code></pre>
+
+      <h3 id="writing">Writing a score</h3>
+
+      <p>There is no submit or commit call. You fetch the gamer&rsquo;s entry for that board and set its rating; the write is what persists it:</p>
+
+      <pre><code class="language-cpp">localGamer_-&gt;getLeaderboardWriterProperty()
+           .GetLeaderboard(board)
+           -&gt;setRatingProperty(finalScore);</code></pre>
+
+      <p>Ratings are <code>long long</code>. For a time-based board, store whatever ordering you want to sort descending &mdash; ranking is always highest-rating-first, so a &ldquo;fastest time&rdquo; board needs an inverted value.</p>
+
+      <p><code>LeaderboardEntry</code> also carries a <code>PropertyDictionary</code> of extra columns via <code>getColumnsProperty()</code>, which is persisted alongside the rating.</p>
+
+      <h3 id="reading">Reading a page</h3>
+
+      <p><code>LeaderboardReader</code> has three static <code>Read</code> overloads &mdash; by page offset, centred on a pivot gamer, and centred on a pivot within an explicit gamer list:</p>
+
+      <pre><code class="language-cpp">// A page of 10 starting at the top
+LeaderboardReader reader = LeaderboardReader::Read(board, 0, 10);
+
+// A page of 10 centred on this player
+LeaderboardReader around = LeaderboardReader::Read(board, localGamer_, 10);</code></pre>
+
+      <p>The pivot form is the one worth using in a results screen: it centres the page on the player&rsquo;s own position, so they see who is just above and just below them rather than a top-ten they are nowhere near.</p>
+
+      <pre><code class="language-cpp">const auto entries = reader.getEntriesProperty();
+
+for (SharpRuntime::intcs i = 0; i &lt; entries.getCountProperty(); ++i)
+{
+    const LeaderboardEntry&amp; e = entries[i];
+    std::printf("#%d  %s  %lld\n",
+                e.getRankingEXTProperty(),                    // 1-based
+                e.getGamerProperty()-&gt;getGamertagProperty().c_str(),
+                e.getRatingProperty());
+}</code></pre>
+
+      <p>Note the accessor name: rank is <code>getRankingEXTProperty()</code>, a CNA extension, not <code>getRankProperty()</code>. Ranks are 1-based and assigned after a rating-descending sort of the whole board.</p>
+
+      <p>Paging mutates the reader in place, and you must check first &mdash; paging past either end throws <code>System::InvalidOperationException</code>:</p>
+
+      <pre><code class="language-cpp">if (reader.getCanPageDownProperty())
+{
+    reader.PageDown();
+}
+if (reader.getCanPageUpProperty())
+{
+    reader.PageUp();
+}
+
+const int total = reader.getTotalLeaderboardSizeProperty();
+const int start = reader.getPageStartProperty();</code></pre>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>A persisted entry only appears if its gamertag is currently signed in.</strong> Entries are matched back to live <code>Gamer</code> objects by gamertag, and any record with no match is skipped. If you are building a local-multiplayer high-score table, publish every relevant gamer through <code>Gamer::setSignedInGamersProperty()</code> before reading.</p>
+      </div>
+
+      <h2 id="async">The Begin/End pattern is synchronous</h2>
+
+      <p>Every <code>Begin*</code>/<code>End*</code> pair in this module &mdash; <code>BeginAwardAchievement</code>, <code>BeginGetAchievements</code>, <code>LeaderboardReader::BeginRead</code>, <code>BeginPageDown</code>, <code>BeginPageUp</code> &mdash; completes <strong>inline</strong>. The work is already done and your callback has already run by the time <code>Begin*</code> returns.</p>
+
+      <pre><code class="language-cpp">System::IAsyncResult* result = localGamer_-&gt;BeginAwardAchievement(
+    "FIRST_BLOOD",
+    [](System::IAsyncResult&amp;) { /* runs BEFORE BeginAwardAchievement returns */ },
+    std::any{});
+
+localGamer_-&gt;EndAwardAchievement(result);
+delete result;   // the IAsyncResult is yours to free</code></pre>
+
+      <p>This is faithful to XNA, whose &ldquo;async&rdquo; here was always a fiction over an instant local operation &mdash; but it matters for your code. Do not write a state machine that waits for completion in a later frame; it will never be pending. And note the ownership: the returned <code>IAsyncResult*</code> is caller-owned.</p>
+
+      <p><code>BeginGetAchievements</code> additionally throws <code>System::InvalidOperationException</code> if one is already outstanding.</p>
+
+      <h2 id="storage">Where the data lives</h2>
+
+      <p>Everything is written under the platform preferences directory that <code>StorageDevice</code> resolves through <code>SDL_GetPrefPath</code>, in a <code>GamerServices</code> subdirectory:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Data</th><th>Path under the storage root</th></tr></thead>
+        <tbody>
+          <tr><td>Achievements</td><td><code>GamerServices/achievements/&lt;gamertag&gt;.json</code></td></tr>
+          <tr><td>Leaderboards</td><td><code>GamerServices/leaderboards/&lt;key&gt;_&lt;gameMode&gt;.json</code></td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>Both file-name components are sanitised &mdash; anything outside letters, digits, <code>-</code>, <code>_</code> and <code>.</code> becomes an underscore &mdash; so an exotic gamertag cannot escape the directory.</p>
+
+      <p>Writes go to a temporary file and are then renamed over the target. That matters more than it sounds: without it, a crash or power loss during a write would leave a truncated, unparseable file, and the next run would lose <em>every</em> previously earned achievement, not just the one being written. If the rename fails &mdash; a temp directory on another filesystem, for instance &mdash; there is a direct-write fallback rather than a silent loss.</p>
+
+      <p>Reading is equally defensive: a missing or corrupt file yields an empty result instead of an exception.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>None of this persists on the web.</strong> Under Emscripten <code>SDL_GetPrefPath</code> resolves into an in-memory filesystem that is discarded on page reload, and CNA mounts nothing durable behind it. Achievements will appear to work for the length of a session and then vanish. See <a href="124-web-gotchas.html">Tutorial 124</a>.</p>
+      </div>
+
+      <h2 id="inert">What does nothing</h2>
+
+      <p>Being able to trust the working parts means being precise about the rest.</p>
+
+      <h3 id="guide-noops">Fifteen documented no-op overlay entry points</h3>
+
+      <p>Fourteen <code>Guide::Show*</code> overloads plus <code>Guide::DelayNotifications</code> are documented no-ops: their bodies are empty. They compile, they return, and nothing appears.</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>No-op</th><th>No-op</th><th>No-op</th></tr></thead>
+        <tbody>
+          <tr><td><code>ShowSignIn</code></td><td><code>ShowGamerCard</code></td><td><code>ShowFriends</code></td></tr>
+          <tr><td><code>ShowFriendRequest</code></td><td><code>ShowComposeMessage</code></td><td><code>ShowMessages</code></td></tr>
+          <tr><td><code>ShowGameInvite</code> (both overloads)</td><td><code>ShowParty</code></td><td><code>ShowPartySessions</code></td></tr>
+          <tr><td><code>ShowPlayers</code></td><td><code>ShowPlayerReview</code></td><td><code>ShowMarketplace</code></td></tr>
+          <tr><td><code>ShowAchievementsEXT</code></td><td><code>DelayNotifications</code></td><td></td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>Every one of them is an Xbox Live shell surface with no local equivalent, so a no-op is the honest implementation. If you want an achievements screen, draw one yourself &mdash; you have the catalogue and the earned keys.</p>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#10003;</span>
+        <p><strong>Two <code>Guide</code> pairs are genuinely real</strong>, and unlike the achievement calls above they do <em>not</em> complete synchronously &mdash; they complete when the player responds. <code>BeginShowMessageBox</code>/<code>EndShowMessageBox</code> renders a real overlay with buttons and mouse hit-testing; <code>BeginShowKeyboardInput</code>/<code>EndShowKeyboardInput</code> renders a real text prompt, with an optional password-masking mode. <code>EndShowMessageBox</code> returns a <code>std::optional&lt;int&gt;</code> button index, and <code>EndShowKeyboardInput</code> the entered string.</p>
+      </div>
+
+      <h3 id="avatars">AvatarRenderer::Draw is inert by design</h3>
+
+      <p><code>AvatarRenderer::Draw()</code> validates its arguments &mdash; it throws if the bone array is the wrong length or the renderer is disposed &mdash; and then genuinely does nothing. That is faithful: XNA&rsquo;s avatars were an Xbox-only asset store, and CNA has no avatar data to draw.</p>
+
+      <p>The working path is the CNAEXT one. <code>EnableRealRenderingEXT()</code> binds a skinned model you supply, and <code>DrawRealEXT()</code> renders it with real GPU skinning. If you want avatars, that is the route &mdash; the XNA-spec <code>Draw()</code> will stay a no-op.</p>
+
+      <h3 id="other-inert">Other flat surfaces</h3>
+      <ul>
+        <li><code>SignedInGamer::GetFriends()</code> returns an empty collection, and <code>IsFriend()</code> is always false. There is no friends graph.</li>
+        <li><code>Achievement::GetPicture()</code> throws.</li>
+        <li><code>PropertyDictionary::CopyTo()</code> throws.</li>
+      </ul>
+
+      <h2 id="testing">Testing it</h2>
+
+      <p>Because persistence is a real filesystem write, achievement logic is straightforward to test &mdash; give the test its own app name so it writes somewhere disposable:</p>
+
+      <pre><code class="language-cpp">Storage::StorageDevice::SetAppNameEXT("MyGameTests");</code></pre>
+
+      <p>This is exactly how CNA&rsquo;s own tests isolate themselves. See <a href="99-unit-testing.html">Tutorial 99: Unit Testing</a> for the harness.</p>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="19-save-load.html">Tutorial 19: Saving and Loading Data</a></li>
+        <li><a href="124-web-gotchas.html">Tutorial 124: WebAssembly gotchas</a></li>
+        <li><a href="99-unit-testing.html">Tutorial 99: Unit Testing</a></li>
+        <li><a href="../storage.html">Storage reference</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

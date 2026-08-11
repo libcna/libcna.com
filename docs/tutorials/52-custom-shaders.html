@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 52: Writing Custom Shaders (ShaderEffect) - CNA</title>
-  <meta name="description" content="Write custom shaders in CNA with ShaderEffect: pass GLSL source text to the constructor, set uniforms with SetUniformXxx, and load source from a .cnj descriptor.">
+  <meta name="description" content="Write custom shaders in CNA with ShaderEffect: pass shader source text to the constructor, set uniforms with SetUniformXxx, and know which renderers execute it, which throw, and which silently ignore it.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/52-custom-shaders.html">
   <meta property="og:title"       content="Tutorial 52: Writing Custom Shaders (ShaderEffect) - CNA">
-  <meta property="og:description" content="Write custom shaders in CNA with ShaderEffect: pass GLSL source text to the constructor, set uniforms with SetUniformXxx, and load source from a .cnj descriptor.">
+  <meta property="og:description" content="Write custom shaders in CNA with ShaderEffect: pass shader source text to the constructor, set uniforms with SetUniformXxx, and know which renderers execute it, which throw, and which silently ignore it.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/52-custom-shaders.html">
@@ -19,9 +19,10 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "Tutorial 52: Writing Custom Shaders",
+  "description": "ShaderEffect is CNAEXT and takes shader source text, not a path. Which renderers execute it, which throw, which silently ignore it, and which shading language each expects.",
   "url": "https://libcna.com/docs/tutorials/52-custom-shaders.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-07-18",
+  "dateModified": "2026-08-11",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -60,6 +61,7 @@
       <a href="../../contact.html"       class="nav-link">Contact</a>
       <a href="../../search.html" class="nav-link">Search</a>
       <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
     </div>
   </div>
 </nav>
@@ -86,17 +88,17 @@
             <li>Why compiled <code>.fx</code> files are not supported and <code>ShaderEffect</code> takes source text instead.</li>
             <li>A minimal working vertex/fragment pair, used with <code>SpriteBatch</code> and with a real 3D draw call.</li>
             <li>Setting uniforms, and where the shader source should live in your project.</li>
-            <li>Which shading language each backend expects.</li>
+            <li>Which renderers actually execute a <code>ShaderEffect</code>, which throw, which silently ignore it &mdash; and which shading language each expects.</li>
           </ul>
-          <p><strong>Before you start</strong> &mdash; <a href="32-basiceffect.html">Tutorial 32: BasicEffect and 3D Lighting</a> (the stock effect this replaces) and <a href="38-vertex-buffers.html">Tutorial 38: Vertex Buffers and Index Buffers</a> (the buffers a custom shader consumes). Requires a 3D-capable backend such as <code>EASYGL</code> or <code>VULKAN</code>; the 2D-only backends (<code>SDL_Renderer</code>, <code>DX3</code>, <code>ASCII</code>, <code>CANVAS</code>) throw on 3D calls.</p>
+          <p><strong>Before you start</strong> &mdash; <a href="32-basiceffect.html">Tutorial 32: BasicEffect and 3D Lighting</a> (the stock effect this replaces) and <a href="38-vertex-buffers.html">Tutorial 38: Vertex Buffers and Index Buffers</a> (the buffers a custom shader consumes). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the eleven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>) throw on 3D calls.</p>
         </div>
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
-          <p><strong><code>ShaderEffect</code> is NOXNA.</strong> It is a CNA extension, not part of the XNA 4.0 API &mdash; its header carries the <code>NOXNA</code> marker on the class and on nearly every one of its methods. Real XNA had no such type; you shipped compiled <code>.fx</code> bytecode instead. Code written against <code>ShaderEffect</code> will not port back to XNA or MonoGame unchanged.</p>
+          <p><strong><code>ShaderEffect</code> is CNAEXT.</strong> It is a CNA extension, not part of the XNA 4.0 API &mdash; its header carries the <code>CNAEXT</code> marker on the class and on nearly every one of its methods. Real XNA had no such type; you shipped compiled <code>.fx</code> bytecode instead. Code written against <code>ShaderEffect</code> will not port back to XNA or MonoGame unchanged.</p>
         </div>
 
         <h2>Why this exists: compiled .fx is not supported</h2>
-        <p>XNA's custom-shader story was HLSL compiled to bytecode by the Content Pipeline's <code>EffectProcessor</code>, then handed to <code>new Effect(device, effectCode)</code>. CNA has that constructor, and it throws:</p>
+        <p>XNA's custom-shader story was HLSL compiled to bytecode by the XNA content pipeline's <code>EffectProcessor</code>, then handed to <code>new Effect(device, effectCode)</code>. CNA has that constructor, and it throws:</p>
         <pre><code class="language-cpp">// Microsoft/Xna/Framework/Graphics/Effect.hpp
 Effect(GraphicsDevice&amp; device, const std::vector&lt;SharpRuntime::bytecs&gt;&amp; effectCode);
 // throws System::NotImplementedException -- always.</code></pre>
@@ -105,12 +107,12 @@ Effect(GraphicsDevice&amp; device, const std::vector&lt;SharpRuntime::bytecs&gt;
         <h2>The constructor takes source text, not a path</h2>
         <p>This is the single most important fact on this page. <code>ShaderEffect</code> takes <strong>three</strong> arguments, and the two strings are the shader source code itself:</p>
         <pre><code class="language-cpp">// Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp
-NOXNA ShaderEffect(GraphicsDevice&amp; device,
+CNAEXT ShaderEffect(GraphicsDevice&amp; device,
                    const std::string&amp; vertSrc,   // contents of the vertex shader (not a file path)
                    const std::string&amp; fragSrc);  // contents of the fragment shader (not a file path)</code></pre>
-        <p>The header comment spells out "not a file path" for both parameters. Passing <code>"Content/shaders/tinted"</code> will not load anything &mdash; that string is handed to the backend as shader source, fails to compile, and leaves you with an invalid effect.</p>
+        <p>The header comment spells out "not a file path" for both parameters. Passing <code>"Content/shaders/tinted"</code> will not load anything &mdash; that string is handed to the renderer as shader source, fails to compile, and leaves you with an invalid effect.</p>
         <p>The constructor does <strong>not</strong> throw on a compile failure. This is how you find out:</p>
-        <pre><code class="language-cpp">NOXNA [[nodiscard]] bool IsEffectValid() const;</code></pre>
+        <pre><code class="language-cpp">CNAEXT [[nodiscard]] bool IsEffectValid() const;</code></pre>
         <p>Treat a <code>false</code> here as a hard error during development. There is nothing else that will tell you.</p>
 
         <h2>A minimal working shader pair</h2>
@@ -211,8 +213,8 @@ void Draw(const GameTime&amp;) override
         </div>
         <p>Note the difference between the last two rows: <code>SetUniformFloatArray</code> counts scalars, <code>SetUniformVec2Array</code> counts elements. Both are documented that way in the header, and it is easy to get wrong.</p>
         <p>Textures beyond unit 0 are bound with <code>SetTexture</code>, which has a <code>Texture2D</code> overload and a <code>TextureCube</code> overload for shaders declaring a <code>samplerCube</code>:</p>
-        <pre><code class="language-cpp">NOXNA void SetTexture(int unit, Texture2D&amp; texture);
-NOXNA void SetTexture(int unit, TextureCube&amp; texture);</code></pre>
+        <pre><code class="language-cpp">CNAEXT void SetTexture(int unit, Texture2D&amp; texture);
+CNAEXT void SetTexture(int unit, TextureCube&amp; texture);</code></pre>
         <p>Unit 0 is normally driven by the caller &mdash; SpriteBatch's own texture parameter, for instance &mdash; so these are for the extra units a custom shader samples directly, the equivalent of XNA's <code>GraphicsDevice.Textures[unit] = tex</code>.</p>
 
         <div class="callout callout--warn">
@@ -221,7 +223,7 @@ NOXNA void SetTexture(int unit, TextureCube&amp; texture);</code></pre>
         </div>
 
         <h2>Driving a real 3D draw call</h2>
-        <p><code>ShaderEffect</code> implements <code>IEffectMatrices</code>, the same interface every stock effect implements. <code>World</code>, <code>View</code>, and <code>Projection</code> are therefore set as properties, and CNA forwards them to the backend, which binds them as uniforms of exactly those names on your compiled program &mdash; matching the naming convention the original XNA samples' own <code>.fx</code> sources already used.</p>
+        <p><code>ShaderEffect</code> implements <code>IEffectMatrices</code>, the same interface every stock effect implements. <code>World</code>, <code>View</code>, and <code>Projection</code> are therefore set as properties, and CNA forwards them to the renderer, which binds them as uniforms of exactly those names on your compiled program &mdash; matching the naming convention the original XNA samples' own <code>.fx</code> sources already used.</p>
         <pre><code class="language-cpp">auto* fx = dynamic_cast&lt;ShaderEffect*&gt;(fxBase_.get());
 
 fx-&gt;setWorldProperty(world);
@@ -272,7 +274,7 @@ const std::string vert = System::IO::File::ReadAllText("Content/shaders/lit3d.ve
 const std::string frag = System::IO::File::ReadAllText("Content/shaders/lit3d.frag.glsl");
 
 ShaderEffect fx(device, vert, frag);</code></pre>
-        <p><strong>A <code>.cnj</code> descriptor</strong> lets <code>ContentManager</code> do the reading. CNA's content pipeline has a real <code>Effect</code> reader for this. The descriptor has exactly two shader fields, <code>vertex</code> and <code>fragment</code>, each naming a file relative to the descriptor:</p>
+        <p><strong>A <code>.cnj</code> descriptor</strong> lets <code>ContentManager</code> do the reading. CNA's content loader has a real <code>Effect</code> reader for this. The descriptor has exactly two shader fields, <code>vertex</code> and <code>fragment</code>, each naming a file relative to the descriptor:</p>
         <pre><code class="language-json">{
   "cnjVersion": 1,
   "type": "Effect",
@@ -290,40 +292,57 @@ if (fx == nullptr || !fx-&gt;IsEffectValid()) {
     // Descriptor loaded, but the shader did not compile.
 }</code></pre>
 
-        <h2>Backends and the shading language</h2>
-        <p>The header documents these strings as GLSL, and GLSL is what the reference backend expects &mdash; but the constructor does not parse them. It forwards them to whichever graphics backend is compiled in, and different backends want different things:</p>
+        <h2 id="renderers-and-languages">Renderers and the shading language</h2>
+        <p>The header documents these strings as GLSL, and GLSL is what the GL family expects &mdash; but the constructor does not parse them. It forwards them to whichever renderer is compiled in, and renderers disagree in three quite different ways: some execute your shader, some refuse it loudly, and one accepts it and quietly draws without it.</p>
+
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong><code>BGFX</code> and <code>SOFTWARE</code> accept a <code>ShaderEffect</code> and silently ignore the source you supplied.</strong> No exception, no warning, no shader &mdash; the draw proceeds with your effect dropped. It is the one renderer where a custom shader fails without telling you, so if you develop on the GL family and later switch to bgfx, this is what you will hit.</p>
+        </div>
+
+        <h3>Renderers that execute a ShaderEffect</h3>
+        <p>Your shader genuinely runs on: the five GL profile identities (<code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL1</code>, <code>WEBGL2</code>), <code>OPENGL2</code>, <code>OPENGL4</code>, <code>VULKAN</code>, <code>SDL_GPU</code>, <code>SOKOL</code>, <code>LLGL</code>, <code>MAGNUM</code>, <code>DIRECTX9</code>, <code>DIRECTX11</code> and <code>DIRECTX12</code>. <code>HEADLESS</code> records the submission without executing it, which is exactly what you want from a logic-only CI renderer.</p>
+
+        <h3>The shading language differs</h3>
         <div class="table-wrap">
         <table>
-          <thead><tr><th>Backend</th><th>What the source strings must contain</th></tr></thead>
+          <thead><tr><th>Renderer</th><th>What the source strings must contain</th></tr></thead>
           <tbody>
-            <tr><td>EasyGL</td><td>GLSL, compiled by the GL driver. The reference path &mdash; CNA's shader examples target it.</td></tr>
-            <tr><td>SDL_GPU</td><td>GLSL, compiled to SPIR-V in-process via shaderc.</td></tr>
-            <tr><td>Software, Headless</td><td>GLSL, handled by their own effect backends.</td></tr>
-            <tr><td>Vulkan</td><td>SPIR-V <em>bytes</em>, not GLSL text. The string goes straight to <code>vkCreateShaderModule</code> and its length must be a multiple of 4. Pre-compile with <code>glslc</code> or <code>glslangValidator</code>.</td></tr>
-            <tr><td>D3D9 / D3D11 / D3D12</td><td>HLSL, compiled with <code>D3DCompile</code>. The entry point must be named <code>main</code>. D3D9 targets <code>vs_2_0</code>/<code>ps_2_0</code> on Reach and <code>vs_3_0</code>/<code>ps_3_0</code> on HiDef.</td></tr>
-            <tr><td>bgfx</td><td>Not supported. Its effect backend's <code>CompileProgram</code> returns <code>false</code> unconditionally, so <code>IsEffectValid()</code> is always <code>false</code>.</td></tr>
+            <tr><td>The GL family (<code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL1</code>, <code>WEBGL2</code>) &mdash; internally EasyGL &mdash; plus <code>OPENGL2</code> and <code>OPENGL4</code></td><td><strong>GLSL</strong>, compiled by the GL driver. The reference path; CNA's shader examples target it.</td></tr>
+            <tr><td><code>VULKAN</code>, <code>SDL_GPU</code></td><td><strong>SPIR-V</strong> bytes, not GLSL text. Pre-compile with <code>glslc</code> or <code>glslangValidator</code>.</td></tr>
+            <tr><td><code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code></td><td><strong>HLSL</strong>, compiled at runtime.</td></tr>
+            <tr><td><code>SOFTWARE</code>, <code>HEADLESS</code>, <code>SOKOL</code>, <code>LLGL</code>, <code>MAGNUM</code></td><td>Handled by their own effect layers &mdash; check the renderer before authoring against it.</td></tr>
           </tbody>
         </table>
         </div>
-        <p>The practical consequence, stated plainly: a single shader source string is <strong>not</strong> portable across all of CNA's backends. Shipping on more than one shading language means authoring one source variant per language and selecting it at build or run time. <code>IsEffectValid()</code> is what tells you whether the one you picked worked.</p>
-        <p>Pre-compiling GLSL to SPIR-V for the Vulkan backend is an ordinary offline step:</p>
+
+        <h3>Renderers that refuse</h3>
+        <ul>
+          <li><strong><code>GDI</code>, <code>METAL</code>, <code>HTML_DOM</code>, <code>SVG_DOM</code> throw.</strong> You find out at the call site, which is the behaviour you want.</li>
+          <li><strong><code>FNA3D</code> cannot compile custom shaders at all.</strong></li>
+          <li><strong><code>BGFX</code> accepts and ignores</strong>, as above.</li>
+          <li>The eleven 2D-only renderers have no programmable pipeline to speak of; 3D calls throw there regardless.</li>
+        </ul>
+
+        <p>The practical consequence, stated plainly: a single shader source string is <strong>not</strong> portable across CNA's renderers. Shipping on more than one shading language means authoring one source variant per language and selecting it at build time with the <code>CNA_RENDERER_&lt;NAME&gt;</code> define CNA's configure emits (the five GL profiles share <code>CNA_RENDERER_EASYGL</code>). <code>IsEffectValid()</code> tells you whether the variant you picked compiled &mdash; but note it cannot help you on bgfx, where nothing was attempted.</p>
+        <p>Pre-compiling GLSL to SPIR-V for <code>VULKAN</code> or <code>SDL_GPU</code> is an ordinary offline step:</p>
         <pre><code class="language-bash">glslc -fshader-stage=vert lit3d.vert.glsl -o lit3d.vert.spv
 glslc -fshader-stage=frag lit3d.frag.glsl -o lit3d.frag.spv</code></pre>
         <p>Read those <code>.spv</code> files as bytes and pass their contents as the two strings.</p>
 
         <h2>Cloning</h2>
-        <p><code>Clone()</code> on a <code>ShaderEffect</code> recompiles a new backend program from the same source strings rather than sharing the original's compiled program. This is a deliberate deviation from the stock effects, which share GPU state implicitly because CNA caches their pipelines globally by state rather than per instance. A <code>ShaderEffect</code> uniquely owns its compiled program, so cloning costs a real recompile &mdash; do not do it per frame.</p>
+        <p><code>Clone()</code> on a <code>ShaderEffect</code> recompiles a new renderer-side program from the same source strings rather than sharing the original's compiled program. This is a deliberate deviation from the stock effects, which share GPU state implicitly because CNA caches their pipelines globally by state rather than per instance. A <code>ShaderEffect</code> uniquely owns its compiled program, so cloning costs a real recompile &mdash; do not do it per frame.</p>
 
         <h2>Summary</h2>
         <ul>
-          <li><code>ShaderEffect</code> is a NOXNA CNA extension, and it is the only working custom-shader path: <code>Effect(device, effectCode)</code> throws <code>NotImplementedException</code> for compiled <code>.fx</code> bytecode.</li>
+          <li><code>ShaderEffect</code> is a CNAEXT CNA extension, and it is the only working custom-shader path: <code>Effect(device, effectCode)</code> throws <code>NotImplementedException</code> for compiled <code>.fx</code> bytecode.</li>
           <li>The constructor takes <strong>three</strong> arguments &mdash; the device, and the vertex and fragment shader <strong>source text</strong>. Not a file path.</li>
           <li>It does not throw on a compile failure. Check <code>IsEffectValid()</code>.</li>
           <li>Uniforms are set with <code>SetUniformMat4</code>/<code>Vec4</code>/<code>Vec3</code>/<code>Vec2</code>/<code>Float</code>/<code>Int</code>/<code>FloatArray</code>/<code>Vec2Array</code> by name, and textures with <code>SetTexture(unit, tex)</code>. There is no <code>Parameters</code> collection.</li>
           <li>Call <code>Apply()</code> before setting uniforms &mdash; they write to the currently bound program.</li>
           <li><code>World</code>/<code>View</code>/<code>Projection</code> come from <code>IEffectMatrices</code> and are bound as uniforms of those names automatically.</li>
           <li>Keep source in a raw string literal, read it yourself, or reference it from a <code>.cnj</code> <code>Effect</code> descriptor with <code>"vertex"</code> and <code>"fragment"</code> fields.</li>
-          <li>The expected shading language is backend-dependent: GLSL on EasyGL/SDL_GPU, SPIR-V bytes on Vulkan, HLSL on the D3D backends, and nothing at all on bgfx.</li>
+          <li>The expected shading language is renderer-dependent: GLSL on the GL family, SPIR-V on <code>VULKAN</code> and <code>SDL_GPU</code>, HLSL compiled at runtime on the Direct3D renderers. <code>GDI</code>, <code>METAL</code>, <code>HTML_DOM</code> and <code>SVG_DOM</code> throw, <code>FNA3D</code> cannot compile one at all, and <code>BGFX</code> accepts it and silently ignores it.</li>
         </ul>
 
         <nav class="docs-pagination" aria-label="Page navigation">
@@ -350,7 +369,7 @@ glslc -fshader-stage=frag lit3d.frag.glsl -o lit3d.frag.spv</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -367,7 +386,7 @@ glslc -fshader-stage=frag lit3d.frag.glsl -o lit3d.frag.spv</code></pre>
           <li><a href="../getting-started.html">Getting Started</a></li>
           <li><a href="../building.html">Building</a></li>
           <li><a href="../platforms.html">Platforms</a></li>
-          <li><a href="../rendering-backends.html">Rendering Backends</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
           <li><a href="../faq.html">FAQ</a></li>
         </ul>
       </div>

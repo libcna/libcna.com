@@ -21,7 +21,7 @@
   "headline": "Tutorial 20: Building and Running Your Game",
   "url": "https://libcna.com/docs/tutorials/20-build-run.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-07-18",
+  "dateModified": "2026-08-11",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -60,6 +60,7 @@
       <a href="../../contact.html"       class="nav-link">Contact</a>
       <a href="../../search.html" class="nav-link">Search</a>
       <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
     </div>
   </div>
 </nav>
@@ -93,10 +94,10 @@
       <p>CNA uses CMake as its build system. This tutorial covers release builds for Linux and Windows, the ctest sanity check, WebAssembly via Emscripten, Android APK packaging, and a CMakeLists.txt install target that bundles your game with its assets.</p>
 
       <h2>CMake release build (Linux)</h2>
-      <pre><code class="language-cpp">## Configure a release build with the EasyGL backend
+      <pre><code class="language-cpp">## Configure a release build with the OPENGLES3 renderer
 cmake -S . -B build-release \
       -DCMAKE_BUILD_TYPE=Release \
-      -DCNA_GRAPHICS_BACKEND=EASYGL
+      -DCNA_GRAPHICS_RENDERER=OPENGLES3
 
 ## Build only your game target (faster than building everything)
 cmake --build build-release --target MyGame --parallel
@@ -114,13 +115,17 @@ cmake --build build-release --target MyGame --parallel
 ctest --test-dir build-release --output-on-failure --parallel 4
 </code></pre>
 
-      <p>All 4,845 unit tests should pass. If any fail, your compiler or CNA version may be incompatible.</p>
+      <p>The suite should come back clean. How many tests run depends on the renderer you configured &mdash; the general GoogleTest cases are always there, but renderer pixel and smoke tests are registered only for the one renderer family compiled into this build. If something fails, your compiler or CNA version may be incompatible.</p>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>Do not try <code>cmake --build build-release --target CNA</code>. <code>CNA</code> is an <code>INTERFACE</code> library with no sources, so there is nothing to build under that name and CMake will refuse. Build your own game target, build <code>CnaTests</code>, or omit <code>--target</code> entirely.</p>
+      </div>
 
       <h2>Windows executable</h2>
       <pre><code class="language-cpp">:: Configure (PowerShell or cmd.exe)
 cmake -S . -B build-win-release ^
       -DCMAKE_BUILD_TYPE=Release ^
-      -DCNA_GRAPHICS_BACKEND=EASYGL
+      -DCNA_GRAPHICS_RENDERER=OPENGLES3
 
 :: Build
 cmake --build build-win-release --target MyGame --config Release
@@ -130,6 +135,8 @@ build-win-release\Release\MyGame.exe
 </code></pre>
 
       <p>On Windows with MSVC, <code>SDL3.dll</code> is placed alongside the executable automatically by the build system. No additional DLL redistribution steps are required for self-contained distribution.</p>
+
+      <p>The command above keeps <code>OPENGLES3</code> so that the same renderer runs on Linux and Windows. If you want a native Direct3D path instead, fourteen renderers are gated to a Windows configure &mdash; among them <code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>DIRECT2D</code> and <code>GDI</code>. Swap the flag, for example <code>-DCNA_GRAPHICS_RENDERER=DIRECTX11</code>; naming one of them on a non-Windows configure is a hard <code>FATAL_ERROR</code>. Note also that these renderers are routinely verified on Linux through Wine with DXVK and vkd3d-proton rather than on real Windows hardware, and that the Windows CI workflows are manual-dispatch only &mdash; test on the machines you intend to ship to.</p>
 
       <h2>Linux executable packaging</h2>
       <p>For distributing to end users on Linux, bundle your executable with its assets:</p>
@@ -153,11 +160,15 @@ cmake --install build-release --prefix dist/linux-x64
       <h2>Emscripten WebAssembly build</h2>
       <p>CNA supports Emscripten 3.1+ for web deployment. You need the Emscripten SDK installed and activated (<code>source emsdk_env.sh</code>).</p>
 
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Web builds need a web renderer.</strong> <code>OPENGLES3</code>, <code>OPENGLES2</code> and <code>OPENGL33</code> are hard-gated <em>off</em> under Emscripten and will stop the configure with a <code>FATAL_ERROR</code>. The browser renderers are <code>WEBGL2</code> (the Emscripten default), <code>WEBGL1</code>, <code>CANVAS</code>, <code>HTML_DOM</code> and <code>SVG_DOM</code>.</p>
+      </div>
+
       <pre><code class="language-cpp">## Configure with the Emscripten toolchain
 emcmake cmake -S . -B build-web \
       -DCMAKE_BUILD_TYPE=Release \
-      -DCNA_GRAPHICS_BACKEND=EASYGL \
-      -DCNA_PLATFORM=WEB
+      -DCNA_GRAPHICS_RENDERER=WEBGL2
 
 ## Build
 cmake --build build-web --target MyGame
@@ -192,6 +203,15 @@ python3 -m http.server 8080
 # Open http://localhost:8080/MyGame.html
 </code></pre>
 
+      <p>CNA also ships a <code>web</code> CMake preset that configures a WEBGL2 release build for you: <code>emcmake cmake --preset web</code>.</p>
+
+      <h3>Three things the web build does differently</h3>
+      <ul>
+        <li><strong><code>Game</code> must be heap-allocated.</strong> A stack-allocated <code>Game</code> is silently corrupted under Emscripten's main-loop model &mdash; you get no diagnostic, just wrong behaviour. Write <code>auto* game = new MyGame(); game-&gt;Run();</code> rather than <code>MyGame game; game.Run();</code> in your web entry point.</li>
+        <li><strong>No save persistence.</strong> Anything written through <code>StorageDevice</code> lives in volatile MEMFS and is gone on reload. See <a href="19-save-load.html">Tutorial 19</a>.</li>
+        <li><strong>No video playback.</strong> The video translation units are excluded from Emscripten builds, so <code>Video</code> and <code>VideoPlayer</code> are missing symbols. The headers still exist, which means calling code compiles happily and then fails at link time. The same is true on Windows and Android.</li>
+      </ul>
+
       <h2>Android APK overview</h2>
       <p>Android support in CNA uses SDL3's Android build infrastructure. The high-level steps are:</p>
 
@@ -208,14 +228,13 @@ cmake -S . -B build-android \
       -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
       -DANDROID_ABI=arm64-v8a \
       -DANDROID_PLATFORM=android-24 \
-      -DCNA_GRAPHICS_BACKEND=EASYGL \
-      -DCNA_PLATFORM=ANDROID \
+      -DCNA_GRAPHICS_RENDERER=OPENGLES3 \
       -DCMAKE_BUILD_TYPE=Release
 
 cmake --build build-android --target MyGame
 </code></pre>
 
-      <p>See the <a href="../platforms.html">Platforms documentation</a> for a full step-by-step Android setup guide.</p>
+      <p>See the <a href="../platforms.html">Platforms documentation</a> for a full step-by-step Android setup guide. Be aware that Android code paths exist and are maintained, but no CI job builds or runs them, so treat an Android build as something you verify yourself. Video playback is unavailable there for the same reason as on the web.</p>
 
       <h2>Packaging assets with CPack</h2>
       <p>CPack can produce a ZIP, DEB, or NSIS installer automatically:</p>
@@ -299,7 +318,7 @@ include(CPack)
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. Near-complete XNA 4.0 type coverage, verified by 4,845 unit tests and 648 backend pixel/integration tests across 14 selectable rendering backends. Works on Linux, Windows, Web, and Android.</p>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly. Works on Linux, Windows, Web, and Android.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

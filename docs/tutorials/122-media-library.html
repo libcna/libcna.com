@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 122: MediaLibrary and Audio Visualization - CNA Tutorials</title>
+  <meta name="description" content="CNA's MediaLibrary really reads the user's music and pictures: recursive scans, ID3v2 and Vorbis tags, album art and playlists. Plus MediaPlayer's real FFT spectrum, and how to build a visualizer on it.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/122-media-library.html">
+  <meta property="og:title"       content="Tutorial 122: MediaLibrary and Audio Visualization - CNA Tutorials">
+  <meta property="og:description" content="CNA's MediaLibrary really reads the user's music and pictures: recursive scans, ID3v2 and Vorbis tags, album art and playlists. Plus MediaPlayer's real FFT spectrum, and how to build a visualizer on it.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/122-media-library.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 122: MediaLibrary and Audio Visualization",
+  "url": "https://libcna.com/docs/tutorials/122-media-library.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Intermediate"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 122</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 122: MediaLibrary and Audio Visualization</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; Media</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>That <code>MediaLibrary</code> really reads the user&rsquo;s music and pictures &mdash; and what it does with what it finds.</li>
+          <li>Playing a user&rsquo;s own songs through <code>MediaPlayer</code>.</li>
+          <li>Building a real spectrum analyser from <code>GetVisualizationData</code>.</li>
+          <li>Which audio formats actually decode, and which quietly do not.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="15-background-music.html">Tutorial 15: Background Music</a> covers <code>Song</code> and the basics of <code>MediaPlayer</code>.</p>
+      </div>
+
+      <div class="callout callout--note">
+        <span class="callout-icon">&#10003;</span>
+        <p><strong>A correction to earlier documentation.</strong> CNA&rsquo;s <code>Media</code> catalogue types were once described as no-ops. They are not. <code>MediaLibrary</code> resolves the operating system&rsquo;s real Music and Pictures folders, scans them recursively, parses tags, probes durations, discovers album art, reads playlists and saves pictures.</p>
+      </div>
+
+      <h2 id="opening">Opening the library</h2>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Media/MediaLibrary.hpp"
+
+using namespace Microsoft::Xna::Framework::Media;
+
+MediaLibrary library;   // scans on construction</code></pre>
+
+      <p>Construction resolves the user&rsquo;s Music and Pictures folders through SDL&rsquo;s own user-folder API and walks them. The scan is one-shot: the library is a snapshot, not a live view, so recreate it if you expect the folders to have changed.</p>
+
+      <p>A second constructor takes a <code>MediaSource*</code>. Sources come only from <code>MediaSource::GetAvailableMediaSources()</code> &mdash; the constructor is private &mdash; and <code>MediaSourceType</code> has two values, <code>LocalDevice</code> and <code>WindowsMediaConnect</code>.</p>
+
+      <h2 id="browsing">Browsing what it found</h2>
+
+      <p>Every catalogue is a collection pointer owned by the library:</p>
+
+      <pre><code class="language-cpp">SongCollection*     songs     = library.getSongsProperty();
+AlbumCollection*    albums    = library.getAlbumsProperty();
+ArtistCollection*   artists   = library.getArtistsProperty();
+GenreCollection*    genres    = library.getGenresProperty();
+PlaylistCollection* playlists = library.getPlaylistsProperty();
+PictureCollection*  pictures  = library.getPicturesProperty();
+PictureAlbum*       root      = library.getRootPictureAlbumProperty();
+PictureCollection*  saved     = library.getSavedPicturesProperty();</code></pre>
+
+      <p>Songs carry real metadata, not filename guesses &mdash; when the file has tags:</p>
+
+      <pre><code class="language-cpp">const std::string&amp;  title  = song-&gt;getNameProperty();
+System::TimeSpan    length = song-&gt;getDurationProperty();
+SharpRuntime::intcs track  = song-&gt;getTrackNumberProperty();
+SharpRuntime::intcs rating = song-&gt;getRatingProperty();   // XNA's 0-10 scale
+
+// Artist, Album and Genre are objects, not strings - each may be null.
+Artist* artist = song-&gt;getArtistProperty();
+Album*  album  = song-&gt;getAlbumProperty();
+Genre*  genre  = song-&gt;getGenreProperty();
+
+const std::string artistName = artist ? artist-&gt;getNameProperty() : std::string{};</code></pre>
+
+      <p>That last detail catches people migrating from XNA reflexively: <code>Artist</code>, <code>Album</code> and <code>Genre</code> are real objects with their own song lists, not plain strings, and each one may be absent.</p>
+
+      <h3 id="tags">What is parsed</h3>
+
+      <p>CNA implements the tag readers itself rather than pulling in a tagging library. Four formats are handled:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Format</th><th>Where it appears</th></tr></thead>
+        <tbody>
+          <tr><td>ID3v2 (2.3 and 2.4, all four text encodings)</td><td>MP3</td></tr>
+          <tr><td>Ogg Vorbis comments</td><td>Ogg Vorbis</td></tr>
+          <tr><td>Ogg Opus <code>OpusTags</code></td><td>Ogg Opus</td></tr>
+          <tr><td>Native FLAC <code>VORBIS_COMMENT</code> blocks</td><td>FLAC</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>When a file has no usable tags at all, there is a filename heuristic: title from the file name, album from the parent directory, artist from the one above that. It is a fallback, and it is exactly as reliable as the user&rsquo;s folder naming.</p>
+
+      <p>Durations are probed through FFmpeg&rsquo;s container and stream metadata &mdash; no full decode, so the scan stays fast. On a build without FFmpeg (Windows, Android, Emscripten) the probe returns zero rather than failing, so expect songs with a zero duration there.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>The music scan indexes <code>.ogg</code>, <code>.oga</code>, <code>.mp3</code> and <code>.wav</code>.</strong> A library full of FLAC will come back looking empty even though CNA can decode FLAC perfectly well through the <code>Song</code> path. Do not read an empty <code>SongCollection</code> as &ldquo;the user has no music&rdquo;.</p>
+      </div>
+
+      <h3 id="art">Album art</h3>
+
+      <pre><code class="language-cpp">if (album-&gt;getHasArtProperty())
+{
+    System::IO::Stream* art = album-&gt;GetAlbumArt();   // caller owns the stream
+    // ... decode into a Texture2D ...
+}</code></pre>
+
+      <p>Art is found in two passes. First, a sidecar image beside the songs &mdash; <code>cover</code>, <code>folder</code>, <code>front</code>, <code>album</code> or <code>albumart</code>, in <code>.jpg</code>, <code>.jpeg</code> or <code>.png</code>, matched case-insensitively and in that order of preference. Failing that, embedded art from the first member song that has any: ID3v2 <code>APIC</code> frames in MP3, and FLAC picture blocks, preferring the front-cover type.</p>
+
+      <p><code>GetAlbumArt()</code> and <code>GetThumbnail()</code> both throw <code>System::InvalidOperationException</code> when <code>HasArt</code> is false, so check first. You own the returned stream.</p>
+
+      <h3 id="playlists">Playlists</h3>
+
+      <p>Playlists are read from <code>.m3u</code> and <code>.m3u8</code> files in the top level of the music root &mdash; that scan is <em>not</em> recursive, unlike the song and picture scans. <code>.pls</code> is not supported.</p>
+
+      <p>One deliberate divergence from the M3U convention is worth knowing: entries with absolute paths, and relative entries that escape the playlist&rsquo;s own directory via <code>..</code> or a symlink, are <strong>skipped</strong>. A playlist is user-supplied data, and CNA will not let it point your game at arbitrary files.</p>
+
+      <h3 id="pictures">Pictures</h3>
+
+      <p>Pictures form a real tree: <code>getRootPictureAlbumProperty()</code> gives you the root <code>PictureAlbum</code>, whose <code>getAlbumsProperty()</code> and <code>getPicturesProperty()</code> let you walk down. Each <code>Picture</code> has a name, dimensions, a date, <code>GetImage()</code> and <code>GetThumbnail()</code>.</p>
+
+      <p>Saving works too &mdash; useful for an in-game screenshot or photo mode:</p>
+
+      <pre><code class="language-cpp">Picture* SavePicture(std::string name, const std::vector&lt;uint8_t&gt;&amp; imageBuffer);
+Picture* SavePicture(std::string name, System::IO::Stream* source);</code></pre>
+
+      <p>Saved pictures come back through <code>getSavedPicturesProperty()</code>, and a picture&rsquo;s CNAEXT <code>getTokenEXT()</code> gives you a stable handle you can pass to <code>GetPictureFromToken()</code> later.</p>
+
+      <h2 id="playing">Playing a user&rsquo;s music</h2>
+
+      <p><code>MediaPlayer</code> is entirely static &mdash; one song at a time, globally:</p>
+
+      <pre><code class="language-cpp">MediaPlayer::Play((*songs)[0]);            // one song (operator[] yields a Song*)
+MediaPlayer::Play(*songs);                 // the whole collection as a queue
+MediaPlayer::Play(*songs, 4);              // the queue, starting at index 4
+
+MediaPlayer::setIsShuffledProperty(true);
+MediaPlayer::setIsRepeatingProperty(true);
+MediaPlayer::setVolumeProperty(0.6f);      // clamped to [0, 1]
+
+MediaPlayer::MoveNext();
+MediaPlayer::MovePrevious();
+MediaPlayer::Pause();
+MediaPlayer::Resume();
+MediaPlayer::Stop();</code></pre>
+
+      <p>The current queue is available as <code>MediaPlayer::getQueueProperty()</code>, which returns a <code>MediaQueue&amp;</code> with <code>getActiveSongProperty()</code>, <code>getActiveSongIndexProperty()</code>, <code>getCountProperty()</code> and <code>operator[]</code>. Two events, <code>ActiveSongChanged</code> and <code>MediaStateChanged</code>, fire as playback moves along.</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><code>MediaPlayer::getGameHasControlProperty()</code> exists so a well-behaved game can check whether it is allowed to take over the music. On a console this reflected whether the user had their own playlist running; respect it if you are porting a title that already checks it.</p>
+      </div>
+
+      <h2 id="formats">Which formats actually play</h2>
+
+      <p>CNA plays audio through a vendored SDL3_mixer, built with a specific set of decoders. This is what that means in practice:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Format</th><th>Status</th><th>Decoder</th></tr></thead>
+        <tbody>
+          <tr><td>WAV</td><td><span class="status-badge status-done">Plays</span></td><td>SDL3&rsquo;s own loader</td></tr>
+          <tr><td>MP3</td><td><span class="status-badge status-done">Plays</span></td><td>dr_mp3</td></tr>
+          <tr><td>Ogg Vorbis</td><td><span class="status-badge status-done">Plays</span></td><td>stb_vorbis</td></tr>
+          <tr><td>FLAC</td><td><span class="status-badge status-done">Plays</span></td><td>drflac</td></tr>
+          <tr><td>Opus</td><td><span class="status-badge status-partial">Disabled in this build</span></td><td>&mdash;</td></tr>
+          <tr><td>WavPack, tracker modules, MIDI via FluidSynth, GME formats</td><td><span class="status-badge status-partial">Disabled in this build</span></td><td>&mdash;</td></tr>
+          <tr><td><code>.m4a</code> / <code>.aac</code></td><td><span class="status-badge status-partial">Unplayable</span></td><td>No AAC decoder ships with SDL3_mixer</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>The AAC gap matters for music libraries specifically, because <code>.m4a</code> is what an iTunes-shaped collection is full of. Offer the user a graceful failure rather than assuming everything in their Music folder will play.</p>
+
+      <h2 id="visualization">Visualization: a real FFT</h2>
+
+      <p>This is the genuinely fun part. <code>MediaPlayer</code> can tap the live mixed output and hand you both a waveform and a frequency spectrum &mdash; not a decorative approximation, but a real radix-2 FFT over audio captured from the post-mix callback.</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Media/VisualizationData.hpp"
+
+MediaPlayer::setIsVisualizationEnabledProperty(true);
+
+// Verify it actually took effect - see the warning below.
+if (!MediaPlayer::getIsVisualizationEnabledProperty())
+{
+    // No mixer or no audio device: draw something static instead.
+}</code></pre>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Enabling can silently fail.</strong> The flag is only set once the post-mix callback has genuinely been installed on the mixer. With no audio device, the setter succeeds and the property stays <code>false</code>. Always read it back.</p>
+      </div>
+
+      <p>Then sample it once per frame:</p>
+
+      <pre><code class="language-cpp">VisualizationData vis;                    // 256 floats each, zero-initialised
+MediaPlayer::GetVisualizationData(vis);
+
+const std::array&lt;float, VisualizationData::Size&gt;&amp; spectrum = vis.getFrequenciesProperty();
+const std::array&lt;float, VisualizationData::Size&gt;&amp; waveform = vis.getSamplesProperty();</code></pre>
+
+      <p>A minimal bar-graph visualiser, drawn with a one-pixel white texture:</p>
+
+      <pre><code class="language-cpp">void DrawSpectrum(Graphics::SpriteBatch&amp; spriteBatch,
+                  const Graphics::Texture2D&amp; whitePixel,
+                  int screenWidth, int screenHeight)
+{
+    VisualizationData vis;
+    MediaPlayer::GetVisualizationData(vis);
+    const auto&amp; bins = vis.getFrequenciesProperty();
+
+    const int barWidth = std::max(1, screenWidth / VisualizationData::Size);
+
+    spriteBatch.Begin();
+    for (int i = 0; i &lt; VisualizationData::Size; ++i)
+    {
+        const int height = static_cast&lt;int&gt;(bins[i] * screenHeight * 4.0f);
+        spriteBatch.Draw(whitePixel,
+                         Rectangle(i * barWidth, screenHeight - height, barWidth - 1, height),
+                         Color::White);
+    }
+    spriteBatch.End();
+}</code></pre>
+
+      <p>Two details make the difference between a plot and something that looks alive:</p>
+
+      <ul>
+        <li><strong>Bins are linear in frequency, and music is not.</strong> The FFT runs over a 512-sample Hann-windowed window and yields 256 bins, so bin <em>i</em> is centred on <code>i &times; sampleRate / 512</code>. Nearly all the visible energy lands in the first few dozen bins. Map bins to bars logarithmically, or plot only the lower part of the range.</li>
+        <li><strong>Smooth over time.</strong> Raw magnitudes flicker. Keep your own array and ease each bar toward the new value &mdash; a simple <code>bar = bar * 0.7f + value * 0.3f</code> is usually enough. A slower fall than rise reads especially well.</li>
+      </ul>
+
+      <p>With visualization disabled, or before any audio has been captured, both arrays come back zeroed rather than throwing &mdash; so a visualiser degrades to a flat line rather than a crash.</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p>The capture point is the mixer&rsquo;s post-mix callback, so the spectrum reflects <em>everything</em> audible &mdash; sound effects included, not just the current song.</p>
+      </div>
+
+      <h2 id="pitfalls">Pitfalls</h2>
+
+      <p><strong>The user&rsquo;s folders may not exist.</strong> On a headless machine, a fresh container, or a locked-down account, the folder lookup can come back with nothing. Every collection will simply be empty. Handle it as a normal case.</p>
+
+      <p><strong>You are reading someone&rsquo;s personal files.</strong> Scanning a real Music folder is a privacy-relevant act. Ask before you do it, and do not send what you find anywhere.</p>
+
+      <p><strong>Scanning costs real time.</strong> A large music folder means a lot of file opens and tag parses. Do it off the critical path, not in the middle of a level load.</p>
+
+      <p><strong>Streams are yours to free.</strong> <code>GetAlbumArt()</code>, <code>GetThumbnail()</code> and <code>GetImage()</code> hand you ownership.</p>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="15-background-music.html">Tutorial 15: Background Music</a></li>
+        <li><a href="118-dynamic-audio.html">Tutorial 118: Procedural audio</a></li>
+        <li><a href="121-video-playback.html">Tutorial 121: Video playback</a></li>
+        <li><a href="../audio.html">Audio reference</a></li>
+      </ul>
+
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>

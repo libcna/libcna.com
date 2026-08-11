@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial 113: Morph Targets - CNA Tutorials</title>
+  <meta name="description" content="Blend shapes in CNA: where MorphTargetDataEXT lives on a ModelMeshPart, how SetMorphWeightsEXT works, and the CPU blend plus full vertex-buffer re-upload cost model that decides how you should budget them.">
+  <meta property="og:type"        content="website">
+  <meta property="og:site_name"   content="CNA">
+  <meta property="og:url"         content="https://libcna.com/docs/tutorials/113-morph-targets.html">
+  <meta property="og:title"       content="Tutorial 113: Morph Targets - CNA Tutorials">
+  <meta property="og:description" content="Blend shapes in CNA: where MorphTargetDataEXT lives on a ModelMeshPart, how SetMorphWeightsEXT works, and the CPU blend plus full vertex-buffer re-upload cost model that decides how you should budget them.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/docs/tutorials/113-morph-targets.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "TechArticle",
+  "headline": "Tutorial 113: Morph Targets",
+  "url": "https://libcna.com/docs/tutorials/113-morph-targets.html",
+  "datePublished": "2026-08-11",
+  "dateModified": "2026-08-11",
+  "isPartOf": {
+    "@type": "CreativeWorkSeries",
+    "name": "CNA Tutorial Series",
+    "url": "https://libcna.com/tutorials.html"
+  },
+  "author": {
+    "@type": "Organization",
+    "name": "OpenEggbert",
+    "url": "https://github.com/openeggbert"
+  },
+  "technicalAudience": "Software Developer",
+  "proficiencyLevel": "Advanced"
+}
+</script>
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav">
+  <div class="nav-container">
+    <a href="../../index.html" class="nav-brand">CNA</a>
+    <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-menu">
+      <a href="../../index.html"         class="nav-link">Home</a>
+      <a href="../../about.html"         class="nav-link">About</a>
+      <a href="../../features.html"      class="nav-link">Features</a>
+      <a href="../../architecture.html"  class="nav-link">Architecture</a>
+      <a href="../../documentation.html" class="nav-link">Documentation</a>
+      <a href="../../tutorials.html"     class="nav-link">Tutorials</a>
+      <a href="../../demos.html"         class="nav-link">Demos</a>
+      <a href="../../showcase.html"      class="nav-link">Showcase</a>
+      <a href="../../videos.html"        class="nav-link">Videos</a>
+      <a href="../../roadmap.html"       class="nav-link">Roadmap</a>
+      <a href="../../contact.html"       class="nav-link">Contact</a>
+      <a href="../../search.html" class="nav-link">Search</a>
+      <a href="https://github.com/openeggbert/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+      <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+    </div>
+  </div>
+</nav>
+
+<main id="main-content">
+  <div class="tutorial-layout">
+<div class="docs-main">
+<article class="docs-content">
+      <nav class="breadcrumb" aria-label="Breadcrumb">
+        <ol>
+          <li><a href="../../index.html">Home</a></li>
+          <li><a href="../../tutorials.html">Tutorials</a></li>
+          <li aria-current="page">Tutorial 113</li>
+        </ol>
+      </nav>
+
+      <h1>Tutorial 113: Morph Targets</h1>
+      <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; 3D Content</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>What you&rsquo;ll learn</strong></p>
+        <ul>
+          <li>Finding the morph data an imported model brings with it, and setting blend weights.</li>
+          <li>Why CNA blends morph targets on the CPU, and exactly what that costs you per change.</li>
+          <li>Driving weights from an imported animation track.</li>
+          <li>How to budget morph targets so the cost model works in your favour rather than against it.</li>
+        </ul>
+        <p><strong>Before you start</strong> &mdash; <a href="110-gltf-models.html">Tutorial 110: Loading glTF 2.0 Models at Runtime</a>. Morph targets arrive attached to a loaded <code>Model</code>, so you need that path working first.</p>
+      </div>
+
+      <p>A morph target &mdash; a blend shape, a shape key, whichever name your DCC tool uses &mdash; is a stored set of per-vertex offsets from a base pose. Blend several of them at once with independent weights and you get facial expressions, muscle bulges, damage states and vehicle deformation without adding a single bone.</p>
+
+      <p>CNA imports them from glTF and blends them for you. The blending happens on the CPU, and that single fact determines everything about how you should use the feature.</p>
+
+      <h2 id="where">Where the data lives</h2>
+
+      <p>Morph data is per <em>mesh part</em>, not per model, and it rides on the part&rsquo;s <code>Tag</code> &mdash; the same convention <a href="112-gltf-animation.html">Tutorial 112</a>&rsquo;s <code>SkinningData</code> uses on <code>Model::Tag</code>, for the same reason: real XNA&rsquo;s <code>ModelMeshPart</code> has no morph property to reuse.</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/MorphTargetEXT.hpp"
+
+using namespace Microsoft::Xna::Framework::Graphics;
+
+Model* head = Content-&gt;Load&lt;Model&gt;("head");
+
+for (ModelMesh* mesh : head-&gt;getMeshesProperty()) {
+    for (ModelMeshPart* part : mesh-&gt;getMeshPartsProperty()) {
+        auto* morph = dynamic_cast&lt;MorphTargetDataEXT*&gt;(part-&gt;getTagProperty());
+        if (morph == nullptr) { continue; }   // this part has no morph targets
+
+        const std::size_t targetCount = morph-&gt;PositionDeltas.size();
+        // morph-&gt;Weights holds the current weights, one per target
+    }
+}</code></pre>
+
+      <p>Use <code>dynamic_cast</code> rather than <code>static_cast</code> here. <code>Tag</code> is a general-purpose <code>System::Object*</code>, so a null result is the honest answer for "this part has no morph targets", and a <code>dynamic_cast</code> gives you that answer safely.</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Member of <code>MorphTargetDataEXT</code></th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>BaseVertexBytes</code></td><td>The part&rsquo;s all-weights-zero vertex bytes, exactly as first uploaded.</td></tr>
+          <tr><td><code>Stride</code></td><td>Byte stride of one vertex &mdash; 32, 52 or 56.</td></tr>
+          <tr><td><code>PositionDeltas</code></td><td><code>PositionDeltas[target][vertex]</code>. Its outer size <em>is</em> the target count.</td></tr>
+          <tr><td><code>NormalDeltas</code></td><td>Same shape; a target with no normal deltas has an empty inner vector.</td></tr>
+          <tr><td><code>Weights</code></td><td>Current blend weights, one per target.</td></tr>
+          <tr><td><code>WeightTrack</code></td><td>Optional imported weight animation, or empty.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>The initial <code>Weights</code> are the default weights from the source mesh, so a model loads showing whatever neutral shape the artist authored.</p>
+
+      <h2 id="applying">Setting weights</h2>
+
+      <p>One call does the whole job &mdash; blend, then re-upload:</p>
+
+      <pre><code class="language-cpp">// Two targets: [smile, blink]. Weights are usually 0..1, one per target.
+SetMorphWeightsEXT(*part, { 0.7f, 0.0f });</code></pre>
+
+      <p>Two things will throw, and both are worth knowing before you meet them at runtime:</p>
+
+      <ul>
+        <li>Calling it on a part with no <code>MorphTargetDataEXT</code> attached.</li>
+        <li>Passing a weight vector whose length does not exactly match the target count. There is no padding and no truncation &mdash; the message names both the expected and the received count.</li>
+      </ul>
+
+      <p>The blend itself is the obvious formula, applied per vertex:</p>
+
+      <pre><code class="language-cpp">finalPosition = basePosition + sum(weights[t] * PositionDeltas[t][v]);
+finalNormal   = normalize(baseNormal + sum(weights[t] * NormalDeltas[t][v]));</code></pre>
+
+      <p>Normals are renormalised afterwards, because a weighted sum of unit vectors is not itself unit length. Every other attribute &mdash; texture coordinates, blend weights, blend indices, colour &mdash; is copied from the base pose untouched. Normal deltas are only applied for the strides that actually have a normal slot, which is all three of 32, 52 and 56.</p>
+
+      <p>Weights are not clamped to <code>[0, 1]</code>. Nothing stops you passing <code>1.4</code> to overshoot a shape, or a negative weight to push it the other way &mdash; a legitimate technique, and entirely your responsibility.</p>
+
+      <p>If you want the blended bytes without touching the GPU &mdash; for a collision proxy, a bounds recomputation, a unit test &mdash; the pure function is public:</p>
+
+      <pre><code class="language-cpp">std::vector&lt;std::uint8_t&gt; bytes = BlendMorphTargetsEXT(*morph, { 0.7f, 0.0f });
+// Same size and stride as morph-&gt;BaseVertexBytes. Nothing was uploaded.</code></pre>
+
+      <h2 id="cost">The cost model</h2>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>Morph blending is a <strong>CPU</strong> operation. Every <code>SetMorphWeightsEXT()</code> call walks every vertex of that mesh part, sums every target&rsquo;s contribution, and then re-uploads <strong>the entire vertex buffer</strong>. It is not a vertex-shader technique.</p>
+      </div>
+
+      <p>This is a deliberate simplicity-over-throughput trade, and it buys something real: morph targets work unchanged with every effect and every shader on <em>every</em> renderer, including the 2D-only and non-shader ones. There is no per-renderer morph shader to be missing, so there is no renderer on which the feature quietly does nothing.</p>
+
+      <p>What it costs is that the work scales with the product of three things:</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Factor</th><th>Effect on cost</th></tr></thead>
+        <tbody>
+          <tr><td>Vertices in the mesh part</td><td>Linear. The whole buffer is rebuilt and re-uploaded.</td></tr>
+          <tr><td>Number of morph targets</td><td>Linear. Every target is summed for every vertex.</td></tr>
+          <tr><td>Weight changes per second</td><td>Linear. Cost is paid per <em>change</em>, not per frame.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>That third row is the lever, and it is the one most under your control. Four rules follow from it directly:</p>
+
+      <ul>
+        <li><strong>Do not call it every frame unconditionally.</strong> Compare against the previous weights and skip the call when nothing moved. A face holding an expression should cost nothing.</li>
+        <li><strong>Keep morphed parts small.</strong> Split a character so the face is its own mesh part. Morphing a 2,000-vertex head is a fundamentally different proposition from morphing a 60,000-vertex whole body, and the split is free.</li>
+        <li><strong>Batch a whole expression into one call.</strong> The weight vector covers every target at once, so setting eight blend shapes costs one traversal &mdash; not eight.</li>
+        <li><strong>Prefer bones for large-amplitude motion.</strong> Skinning runs on the GPU. Reserve morph targets for what bones cannot express: the surface detail.</li>
+      </ul>
+
+      <p>Used that way &mdash; a handful of low-poly morphed parts, updated only when a weight genuinely changes &mdash; the cost is negligible. Used the other way &mdash; every character&rsquo;s full body mesh re-uploaded every frame &mdash; it will dominate your frame time, and it will do so quietly, because nothing errors.</p>
+
+      <h2 id="tracks">Animated weights</h2>
+
+      <p>glTF can animate morph weights over time through a <code>weights</code> channel. That channel targets a mesh node rather than a skeleton joint, so it has no bone index and cannot live on <a href="112-gltf-animation.html">Tutorial 112</a>&rsquo;s bone timeline. CNA gives it its own track type, imported onto <code>MorphTargetDataEXT::WeightTrack</code>.</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Member of <code>MorphWeightTrackEXT</code></th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>Keys</code></td><td>Keyframes in ascending <code>Time</code> order; each holds a full weight vector.</td></tr>
+          <tr><td><code>StepInterpolation</code></td><td>True if the source channel was <code>STEP</code> &mdash; a real hold-last-value.</td></tr>
+          <tr><td><code>CubicSpline</code></td><td>True if the source channel was <code>CUBICSPLINE</code>. Each key then also carries <code>InTangent</code> and <code>OutTangent</code>.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>Unlike the bone tracks, this one is <em>evaluated at playback</em>, so a CUBICSPLINE weight curve keeps its real Hermite shape between keys rather than being baked down to a polyline:</p>
+
+      <pre><code class="language-cpp">// Advance your own clock however you like; the track is independent of AnimationPlayer.
+elapsedSeconds_ += gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty();
+
+std::vector&lt;float&gt; w = EvaluateMorphWeightsEXT(morph-&gt;WeightTrack, elapsedSeconds_);
+if (!w.empty() &amp;&amp; w != morph-&gt;Weights) {
+    SetMorphWeightsEXT(*part, w);      // only re-upload when the weights actually changed
+}</code></pre>
+
+      <p>Evaluation is clamped at both ends and returns an empty vector for a track with no keys, so an unanimated part costs one comparison. Note the guard on the last line &mdash; that is the "pay per change" rule from above, in code.</p>
+
+      <p>Because the track is a plain data member and evaluation is a free function, nothing forces you to use the imported timeline at all. Drive the weights from gameplay instead &mdash; damage level, speech volume, a UI slider &mdash; and the same <code>SetMorphWeightsEXT()</code> call applies.</p>
+
+      <h2 id="offline">Morph targets through the offline converter</h2>
+
+      <p>Both import paths carry morph data. The runtime <code>.gltf</code>/<code>.glb</code> path builds <code>MorphTargetDataEXT</code> in memory; <a href="111-cnj-pipeline.html">the offline converter</a> writes the same information out as a <code>_morph.bin</code> sidecar plus three JSON fields on the mesh entry:</p>
+
+      <pre><code class="language-json">{
+  "vertices": "head_mesh0_verts.bin",
+  "indices": "head_mesh0_idx.bin",
+  "vertexStride": 32,
+  "effect": "BasicEffect",
+  "parentBone": 0,
+  "morphTargets": "head_mesh0_morph.bin",
+  "morphWeights": [0, 0],
+  "morphWeightTrack": {
+    "stepInterpolation": false,
+    "cubicSpline": false,
+    "keys": [
+      { "time": 0,   "weights": [0, 0] },
+      { "time": 0.5, "weights": [1, 0] }
+    ]
+  }
+}</code></pre>
+
+      <p>The loaded result is identical either way, so you can switch an asset between the two paths without touching a line of game code.</p>
+
+      <h2 id="next">Where to go next</h2>
+      <ul>
+        <li><a href="112-gltf-animation.html">Tutorial 112: Skeletal Animation from glTF</a> &mdash; the GPU-side half of character animation.</li>
+        <li><a href="111-cnj-pipeline.html">Tutorial 111: The CNJ Format</a> &mdash; the morph sidecar and its fields.</li>
+        <li><a href="115-cnaext-overview.html">Tutorial 115: CNAEXT</a> &mdash; why every name here ends in <code>EXT</code>.</li>
+        <li><a href="../model-loading.html">Model Loading reference</a></li>
+      </ul>
+</article>
+    </div>
+  </div>
+</main>
+
+<footer>
+  <div class="footer-inner">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <div class="footer-brand-name">CNA</div>
+        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+      </div>
+      <div class="footer-col">
+        <h4>Project</h4>
+        <ul>
+          <li><a href="../../about.html">About</a></li>
+          <li><a href="../../features.html">Features</a></li>
+          <li><a href="../../architecture.html">Architecture</a></li>
+          <li><a href="../../roadmap.html">Roadmap</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Docs</h4>
+        <ul>
+          <li><a href="../getting-started.html">Getting Started</a></li>
+          <li><a href="../building.html">Building</a></li>
+          <li><a href="../platforms.html">Platforms</a></li>
+          <li><a href="../rendering-backends.html">Renderers</a></li>
+          <li><a href="../faq.html">FAQ</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/openeggbert/cna" target="_blank" rel="noopener">GitHub</a></li>
+          <li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li>
+          <li><a href="../../demos.html">Demos</a></li>
+          <li><a href="../../videos.html">Videos</a></li>
+          <li><a href="../../contact.html">Contact</a></li>
+        </ul>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
+      <div class="footer-links">
+        <a href="https://github.com/openeggbert/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="../../contact.html">Contact</a>
+      </div>
+    </div>
+  </div>
+</footer>
+
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+<script src="../../js/tutorial-progress.js"></script>
+</body>
+</html>
