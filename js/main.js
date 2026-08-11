@@ -2,6 +2,75 @@
 (function () {
   'use strict';
 
+  /* Theme switch -------------------------------------------------------
+     Three states, deliberately:
+       no stored value -> follow the OS via prefers-color-scheme (the default)
+       'light'/'dark'  -> an explicit choice, stored and honoured everywhere
+
+     A tiny inline script in each page's <head> applies the stored value
+     before first paint; this block only wires up the button. Keep the two
+     in sync: both read the same localStorage key. */
+  const THEME_KEY = 'cna-theme';
+
+  function storedTheme() {
+    try { return localStorage.getItem(THEME_KEY); } catch (e) { return null; }
+  }
+
+  function systemPrefersLight() {
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches;
+  }
+
+  /* What the reader is actually looking at right now. */
+  function effectiveTheme() {
+    return storedTheme() || (systemPrefersLight() ? 'light' : 'dark');
+  }
+
+  function applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    try { localStorage.setItem(THEME_KEY, theme); } catch (e) { /* private mode */ }
+    document.querySelectorAll('.theme-toggle').forEach(function (btn) {
+      btn.setAttribute('aria-label',
+        theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme');
+      btn.setAttribute('title',
+        theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme');
+    });
+  }
+
+  document.querySelectorAll('.theme-toggle').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      applyTheme(effectiveTheme() === 'light' ? 'dark' : 'light');
+    });
+  });
+
+  /* Label the button correctly on load without forcing a stored choice --
+     a reader who has never clicked it keeps following the OS. */
+  (function labelOnly() {
+    const theme = effectiveTheme();
+    document.querySelectorAll('.theme-toggle').forEach(function (btn) {
+      btn.setAttribute('aria-label',
+        theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme');
+      btn.setAttribute('title',
+        theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme');
+    });
+  })();
+
+  /* Follow the OS live, but only while the reader has made no explicit choice. */
+  if (window.matchMedia) {
+    const mq = window.matchMedia('(prefers-color-scheme: light)');
+    const onChange = function () { if (!storedTheme()) labelOnlyRefresh(); };
+    function labelOnlyRefresh() {
+      const theme = systemPrefersLight() ? 'light' : 'dark';
+      document.querySelectorAll('.theme-toggle').forEach(function (btn) {
+        btn.setAttribute('aria-label',
+          theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme');
+        btn.setAttribute('title',
+          theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme');
+      });
+    }
+    if (mq.addEventListener) { mq.addEventListener('change', onChange); }
+    else if (mq.addListener) { mq.addListener(onChange); }
+  }
+
   /* Mobile nav toggle */
   const toggle = document.querySelector('.nav-toggle');
   const menu   = document.querySelector('.nav-menu');
