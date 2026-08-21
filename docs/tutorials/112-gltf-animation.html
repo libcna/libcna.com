@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 112: Skeletal Animation from glTF - CNA Tutorials</title>
-  <meta name="description" content="Play imported glTF animation clips with AnimationPlayer and SkinnedEffect. Covers where SkinningData lives, how LINEAR/STEP/CUBICSPLINE are baked at import time, and the silent drop of rigid unskinned node animation.">
+  <meta name="description" content="Play skinned and rigid glTF animation in CNA with AnimationPlayer, ModelAnimationsEXT and ApplyClipToBonesEXT; includes the mixed-animation alpha boundary.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/112-gltf-animation.html">
   <meta property="og:title"       content="Tutorial 112: Skeletal Animation from glTF - CNA Tutorials">
-  <meta property="og:description" content="Play imported glTF animation clips with AnimationPlayer and SkinnedEffect. Covers where SkinningData lives, how LINEAR/STEP/CUBICSPLINE are baked at import time, and the silent drop of rigid unskinned node animation.">
+  <meta property="og:description" content="Play skinned and rigid glTF animation in CNA with AnimationPlayer, ModelAnimationsEXT and ApplyClipToBonesEXT; includes the mixed-animation alpha boundary.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/112-gltf-animation.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 112: Skeletal Animation from glTF",
   "url": "https://libcna.com/docs/tutorials/112-gltf-animation.html",
   "datePublished": "2026-08-11",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-08-20",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -92,7 +92,7 @@
           <li>Where an imported skeleton and its clips actually live on a loaded <code>Model</code>.</li>
           <li>Driving <code>AnimationPlayer</code>, and feeding its output into <code>SkinnedEffect</code>.</li>
           <li>How LINEAR, STEP and CUBICSPLINE are resolved &mdash; and why it happens at import, not at playback.</li>
-          <li>The one silent failure that eats whole animations without a word of diagnostic.</li>
+          <li>Playing unskinned scene-node clips, plus the reported boundary for mixed skin and rigid animation.</li>
         </ul>
         <p><strong>Before you start</strong> &mdash; <a href="57-skinned-effect.html">Tutorial 57: SkinnedEffect and Skeletal Animation</a> covers the effect this tutorial feeds, and <a href="110-gltf-models.html">Tutorial 110</a> covers getting the model in.</p>
       </div>
@@ -115,7 +115,7 @@ if (skinning == nullptr) {
     return;
 }</code></pre>
 
-      <p>Always check for null. <code>Tag</code> is left empty for a model with no skin, and that includes several cases you might not expect &mdash; see <a href="#rigid">the trap below</a>.</p>
+      <p>Always check for null before using the skinned path. An unskinned animated model uses the same <code>Tag</code> slot for <code>ModelAnimationsEXT</code> instead; see <a href="#rigid">rigid animation below</a>.</p>
 
       <p><code>SkinningData</code> is a plain aggregate. Everything on it is public:</p>
 
@@ -210,7 +210,7 @@ player.Update(-elapsed, true, true);</code></pre>
 
       <p>Two limits carry over from <a href="57-skinned-effect.html">Tutorial 57</a> and apply here unchanged. <code>SkinnedEffect::MaxBones</code> is <strong>72</strong>, and passing more matrices than that is an error rather than a silent truncation. <code>WeightsPerVertex</code> must be 1, 2 or 4 &mdash; there is no 3.</p>
 
-      <p>If the importer chose <code>SkinnedPbrEffect</code> instead &mdash; which it does when the source material carries a normal or metallic-roughness map &mdash; the bone API is identical. Same <code>MaxBones = 72</code>, same <code>SetBoneTransforms()</code>, same <code>getWeightsPerVertexProperty()</code>. Cast to whichever type the part actually has, or handle both:</p>
+      <p>If the importer chose <code>SkinnedPbrEffect</code> instead &mdash; which it does for glTF&rsquo;s metallic-roughness material model even when it is factor-only &mdash; the bone API is identical. Same <code>MaxBones = 72</code>, same <code>SetBoneTransforms()</code>, same <code>getWeightsPerVertexProperty()</code>. Cast to whichever type the part actually has, or handle both:</p>
 
       <pre><code class="language-cpp">if (auto* pbr = dynamic_cast&lt;SkinnedPbrEffect*&gt;(part-&gt;getEffectProperty())) {
     pbr-&gt;SetBoneTransforms(player.GetSkinTransforms());
@@ -243,27 +243,22 @@ player.Update(-elapsed, true, true);</code></pre>
 
       <p>One channel path is not imported at all: <code>weights</code>, the morph-target channel. That is not a defect &mdash; it targets a mesh node rather than a skeleton joint, so it has no bone index to key against, and it is carried on a separate track type instead. <a href="113-morph-targets.html">Tutorial 113</a> covers it. The converter emits a warning when it sees one.</p>
 
-      <h2 id="rigid">The trap: rigid animation disappears silently</h2>
+      <h2 id="rigid">Rigid scene-node animation</h2>
+
+      <p>An unskinned door, fan or orbiting moon now arrives with a real scene-node clip. Because no <code>SkinningData</code> needs the compatibility <code>Tag</code> slot, the loader places a <code>ModelAnimationsEXT</code> there. Its clips address the imported <code>ModelBone</code> hierarchy directly:</p>
+
+      <pre><code class="language-cpp">auto* animations = static_cast&lt;ModelAnimationsEXT*&gt;(model-&gt;getTagProperty());
+if (animations != nullptr) {
+    const AnimationClip&amp; spin = animations-&gt;Clips.at("Spin");
+    ApplyClipToBonesEXT(*model, spin, gameTime.getTotalGameTimeProperty());
+}</code></pre>
+
+      <p><code>ApplyClipToBonesEXT()</code> interpolates translation and scale linearly and rotation spherically, then writes the local transforms onto the bones targeted by the clip. Ordinary <code>Model::Draw()</code> and <code>CopyAbsoluteBoneTransformsTo()</code> immediately see the new pose.</p>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Animation of an unskinned node is dropped, with no diagnostic and no clip.</strong> A rotating door, an orbiting moon, a spinning fan, a bobbing pickup &mdash; none of them survive import. This is tracked as a known defect, not a design decision.</p>
+        <p><strong>Mixed skin and extra rigid tracks remain an alpha boundary.</strong> A skinned model&rsquo;s <code>Tag</code> is already occupied by its first <code>SkinningData</code>. If the same file also contains additional scene-node animation, those rigid tracks cannot be exposed there and are omitted with a named entry in <code>getGltfImportReportEXTProperty()</code>. The loss is reported rather than silent.</p>
       </div>
-
-      <p>There are two layers to it, and knowing both makes it easy to recognise.</p>
-
-      <p><strong>Channels are resolved against the skin&rsquo;s joint set.</strong> An animation channel names a target node. The importer looks that node up in the skeleton it built from the skin; if the node is not one of the joints, the channel is skipped. An ordinary mesh node is never a joint, so its channels never match.</p>
-
-      <p><strong>A file with no skin extracts no clips at all.</strong> Clip extraction only runs for a mesh group that has a skin. A file containing nothing but animated rigid objects therefore produces a model whose <code>Tag</code> is null and whose clip map does not exist.</p>
-
-      <p>So the symptom is one of two things: an animation you know you exported is simply not in <code>AnimationClips</code>, or <code>getTagProperty()</code> returns <code>nullptr</code> for a file you are certain contains animation. Check for this first &mdash; nothing is logged, so there is nothing to search for.</p>
-
-      <p>Two workarounds are available today:</p>
-
-      <ul>
-        <li><strong>Animate it in game code.</strong> A rigid transform is one matrix. Compose your own rotation into the <code>world</code> matrix you pass to the effect, or into the bone transform before drawing, and you have lost nothing but authoring convenience.</li>
-        <li><strong>Give the object a one-joint skin.</strong> If the motion must ship inside the asset, bind the mesh to a single joint and animate that joint. It then travels the supported path end to end &mdash; at the cost of a skinned vertex layout and a <code>SkinnedEffect</code>.</li>
-      </ul>
 
       <h2 id="example">Putting it together</h2>
 
@@ -275,7 +270,7 @@ public:
         model_ = content.Load&lt;Model&gt;("hero");
         skinning_ = static_cast&lt;SkinningData*&gt;(model_-&gt;getTagProperty());
         if (skinning_ == nullptr) {
-            throw std::runtime_error("hero has no skin -- rigid-only animation is dropped on import");
+            throw std::runtime_error("hero has no SkinningData; use ModelAnimationsEXT for a rigid model");
         }
         player_ = std::make_unique&lt;AnimationPlayer&gt;(*skinning_);
         Play("Idle");
@@ -284,7 +279,7 @@ public:
     void Play(const std::string&amp; clipName)
     {
         auto it = skinning_-&gt;AnimationClips.find(clipName);
-        if (it == skinning_-&gt;AnimationClips.end()) { return; }   // clip was dropped, or misspelled
+        if (it == skinning_-&gt;AnimationClips.end()) { return; }   // clip name is absent or misspelled
         player_-&gt;StartClip(it-&gt;second);
     }
 
@@ -336,7 +331,7 @@ private:
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

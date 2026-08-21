@@ -22,7 +22,7 @@
   "description": "Extend CNA with a custom renderer: the IGraphicsRenderer interface, the compile-time selection contract, and how to report capabilities so unsupported work refuses deterministically.",
   "url": "https://libcna.com/docs/tutorials/87-custom-backend.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-08-20",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -92,16 +92,16 @@
           <ul>
             <li>How CNA splits the XNA-compatible frontend from the <code>IGraphicsRenderer</code> implementation.</li>
             <li>What a renderer must implement, and what it may inherit.</li>
-            <li>The compile-time selection contract &mdash; there is no runtime registry.</li>
+            <li>The generated registry contract used by both single- and multi-renderer builds.</li>
             <li>The texture upload and shader compilation paths, and how to test a new renderer.</li>
             <li>How to report capabilities so unsupported work <em>refuses</em> instead of silently doing nothing.</li>
           </ul>
-          <p><strong>Before you start</strong> &mdash; <a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a> (what the existing 46 renderers do) and <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (renderers receive shader source, so know what that source is). Reading the real renderers under <code>modules/renderers/</code> alongside this page is strongly recommended.</p>
+          <p><strong>Before you start</strong> &mdash; <a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a> (what the existing 50 renderers do) and <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (renderers receive shader source, so know what that source is). Reading the real renderers under <code>modules/renderers/</code> alongside this page is strongly recommended.</p>
         </div>
 
         <h2>CNA renderer architecture</h2>
         <p>CNA's rendering pipeline is split into a frontend (the XNA-compatible API in <code>Microsoft::Xna::Framework::Graphics</code>) and a renderer (the actual GPU calls). The renderer interface is <code>IGraphicsRenderer</code>. The frontend delegates all draw work to the active renderer through this interface, so you can add a new renderer without modifying any frontend code.</p>
-        <p>CNA ships 42 renderer families implementing this one interface today, exposed as 46 selectable identities. Yours would be the 43rd family.</p>
+        <p>CNA ships 46 renderer implementation families behind 50 public identities. A new independent implementation would become the 47th family; a new profile over an existing family may instead add only a public identity.</p>
 
         <h2>The IGraphicsRenderer interface</h2>
         <p>The interface lives in <code>modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp</code>, in namespace <code>CNA::Internal::Renderers</code>. That one header declares the whole contract: <code>IGraphicsRenderer</code> itself plus the resource interfaces it hands back.</p>
@@ -114,7 +114,7 @@
         </ul>
         <div class="callout callout--info">
           <span class="callout-icon">&#8505;</span>
-          <p><code>IGraphicsRenderer</code> declares a few dozen methods, of which only a minority are pure virtual and must be implemented. The rest are virtual-with-a-default, deliberately: <code>ReadBackbuffer</code> throws unless overridden, <code>SetSwapInterval</code> is a no-op, <code>CreateOcclusionQuery</code> and <code>CreateTexture3D</code> return <code>nullptr</code>, and the coordinate-transform pair reports that window space equals logical space. <strong>A partial renderer is a supported thing to build</strong> &mdash; you override what your API can genuinely do and inherit a documented fallback for the rest. Eleven shipped renderers are 2D-only, and two produce no pixels at all.</p>
+          <p><code>IGraphicsRenderer</code> declares a few dozen methods, of which only a minority are pure virtual and must be implemented. The rest are virtual-with-a-default, deliberately: <code>ReadBackbuffer</code> throws unless overridden, <code>SetSwapInterval</code> is a no-op, <code>CreateOcclusionQuery</code> and <code>CreateTexture3D</code> return <code>nullptr</code>, and the coordinate-transform pair reports that window space equals logical space. <strong>A partial renderer is a supported thing to build</strong> &mdash; you override what your API can genuinely do and inherit a documented fallback for the rest. Thirteen shipped renderers are 2D-only, and two produce no pixels at all.</p>
         </div>
 
         <h2>Skeleton renderer class</h2>
@@ -160,7 +160,7 @@ namespace CNA::Internal::Renderers::MyCustom
         <h2>Report capabilities honestly &mdash; refuse, do not no-op</h2>
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
-          <p><strong>The base <code>SupportsCapability()</code> fails open.</strong> It returns <code>true</code> for every one of the 13 <code>GraphicsCapability</code> members except <code>MultiStreamVertexInput</code>. If you inherit it and your renderer has no occlusion queries, no MRT and no <code>Texture3D</code>, CNA will confidently tell every caller that you do. Overriding this truthfully is not optional polish &mdash; it is the single most important thing a new renderer does after drawing a triangle.</p>
+          <p><strong>The base <code>SupportsCapability()</code> fails open for most entries.</strong> It opts out of <code>MultiStreamVertexInput</code> and <code>CompiledEffects</code>, delegates <code>StencilBuffer</code>, and returns <code>true</code> for the rest. If you inherit it and your renderer has no occlusion queries, no MRT and no <code>Texture3D</code>, CNA will confidently tell every caller that you do. Overriding this truthfully is not optional polish.</p>
         </div>
         <p>This matters because CNA has learned the lesson the expensive way. Four of its own shipped renderers &mdash; <code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code> and <code>SDL_GPU</code> &mdash; still have no override at all, so a capability query against them answers "yes" to questions nobody verified. Do not add a fifth.</p>
         <p>The design principle running through the whole interface is <strong>deterministic refusal over silent success</strong>. A renderer that cannot do something should make that visible at the call site &mdash; through a truthful capability answer, or through the exception the shared layer raises on your behalf. The alternative, quietly returning as though the work happened, produces bugs that surface frames or screens later with nothing to trace them to. <code>ITextureRenderer::GetData</code> is the canonical example: its default returns <code>false</code> rather than leaving the destination untouched, precisely because a silent no-op used to hand callers a complete, uniformly transparent-black frame that passed every check. The shared layer now converts only on <code>true</code> and raises <code>System::NotSupportedException</code> on <code>false</code>, so an unimplemented renderer can never answer with content it never read.</p>
@@ -185,11 +185,11 @@ namespace CNA::Internal::Renderers::MyCustom
         <h2>Selecting a renderer</h2>
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
-          <p>There is <strong>no runtime renderer registry</strong> in CNA &mdash; no <code>Register(&quot;NAME&quot;, factory)</code> call, and nothing to do inside <code>main()</code>. The renderer is a <em>compile-time</em> choice: exactly one renderer tree is compiled into the library, chosen by the <code>CNA_GRAPHICS_RENDERER</code> CMake option (or the equivalent single <code>CNA_RENDERER_&lt;NAME&gt;=ON</code>).</p>
+          <p>CNA has a <strong>generated, fixed-at-link-time renderer registry</strong>, not a plugin registration call in <code>main()</code>. A default build contains the one identity named by <code>CNA_GRAPHICS_RENDERER</code>; <code>CNA_GRAPHICS_RENDERERS</code> can compile several compatible families into one binary. CMake generates the descriptor table explicitly so static-library linkers cannot discard self-registering renderer objects.</p>
         </div>
-        <p>The whole contract between CNA and a renderer implementation is one free function, in namespace <code>CNA::Internal::Renderers</code>, defined by whichever renderer <code>.cpp</code> got compiled. <code>GraphicsDevice</code> calls it &mdash; unqualified, resolved at link time &mdash; and never knows which renderer it got:</p>
+        <p>Each implementation exposes a namespaced factory that a generated <code>GraphicsRendererDescriptor</code> points to. <code>GraphicsDevice</code> resolves the selected descriptor, then calls its factory:</p>
         <pre><code class="language-cpp">// MyCustomRenderer.cpp
-namespace CNA::Internal::Renderers
+namespace CNA::Internal::Renderers::MyCustom
 {
     std::unique_ptr&lt;IGraphicsRenderer&gt; CreateGraphicsRenderer(
         const GraphicsRendererCreateArgs&amp; args)
@@ -198,7 +198,7 @@ namespace CNA::Internal::Renderers
     }
 }</code></pre>
         <p><code>GraphicsRendererCreateArgs</code> is what the frontend hands you at construction: the <code>SDL_Window*</code>, the requested <code>virtualWidth</code>/<code>virtualHeight</code>, a <code>CnaPresentationMode</code>, the <code>contextRecoveryEnabled</code> flag, <code>multiSampleCount</code>, the swap interval, requested back-buffer and depth/stencil formats, an <code>isFullScreen</code> flag, the requested <code>GraphicsProfile</code>, and an optional device-event callback. Every field is documented as ignorable by renderers that cannot honour it &mdash; another instance of the same honesty rule: ignore it openly, do not pretend.</p>
-        <p>Add your source directory to <code>cmake/RendererSelection.cmake</code> alongside the existing branches. Each branch sets the renderer directory and target and emits a <code>CNA_RENDERER_&lt;NAME&gt;</code> compile definition for the whole build; the five GL profile identities are the one exception, sharing <code>CNA_RENDERER_EASYGL</code> plus a <code>CNA_GL_PROFILE_&lt;NAME&gt;</code> define. Then configure with <code>-DCNA_GRAPHICS_RENDERER=MYCUSTOM</code>.</p>
+        <p>Add the identity, directory, target, defines and descriptor metadata through <code>cmake/RendererSelection.cmake</code> and the registry-generation inputs in <code>cmake/RendererRegistry.cmake</code>. Identity macros apply to that renderer target; only the default identity's macros remain project-wide in a multi-renderer build. Then configure alone with <code>-DCNA_GRAPHICS_RENDERER=MYCUSTOM</code>, and also test it as a member of a valid <code>CNA_GRAPHICS_RENDERERS</code> list.</p>
 
         <h2>Texture upload path</h2>
         <p><code>Texture2D</code> asks the renderer for one object per texture rather than juggling handles: it calls <code>CreateTexture(imageData)</code> and keeps the returned <code>std::unique_ptr&lt;ITextureRenderer&gt;</code> for the texture's lifetime. Later writes go through that object &mdash; <code>UpdatePixels(rgba, stride)</code> for a full level-0 replacement, <code>UpdatePixelsLevel(level, rgba, w, h)</code> for an individual mip. Readback runs the other way through <code>GetData(&hellip;)</code>, and <code>Texture2D</code> only reaches for it when it has no CPU-side shadow copy of its own &mdash; in practice, for render targets.</p>
@@ -209,11 +209,11 @@ namespace CNA::Internal::Renderers
         <p>If your renderer cannot execute a custom <code>ShaderEffect</code>, <strong>throw</strong>, as <code>GDI</code>, <code>METAL</code>, <code>HTML_DOM</code> and <code>SVG_DOM</code> do. Accepting the effect and drawing without it &mdash; what <code>BGFX</code> does today &mdash; is the behaviour users find hardest to diagnose, and is not a pattern to copy.</p>
 
         <h2>Real reference implementations</h2>
-        <p>This tutorial teaches the interface shape using a hypothetical <code>MYCUSTOM</code> renderer, but CNA ships 42 real families implementing the same contract, and the useful ones to read depend on what you are building. For a GPU renderer with a modern API, read <code>modules/renderers/vulkan/</code> or <code>modules/renderers/sdl-gpu/</code>. For a runtime-compiled-HLSL path, read <code>modules/renderers/directx11/</code>. For a 2D-only renderer that refuses 3D deterministically, read <code>modules/renderers/sdl-renderer/</code> or <code>modules/renderers/gdi/</code>. For bring-up without a GPU at all, read <code>modules/renderers/headless/</code>; for real pixels without a GPU, <code>modules/renderers/software/</code>.</p>
+        <p>This tutorial teaches the interface shape using a hypothetical <code>MYCUSTOM</code> renderer, but CNA ships 46 real implementation families. For a GPU renderer with a modern API, read <code>modules/renderers/vulkan/</code> or <code>modules/renderers/sdl-gpu/</code>. For a runtime-compiled-HLSL path, read <code>modules/renderers/directx11/</code>. For a 2D-only renderer that refuses 3D deterministically, read <code>modules/renderers/sdl-renderer/</code> or <code>modules/renderers/gdi/</code>. For bring-up without a GPU, read <code>modules/renderers/headless/</code>; for real CPU pixels, <code>modules/renderers/software/</code>.</p>
 
         <h2>Testing strategy</h2>
-        <p>Configure with <code>-DCNA_GRAPHICS_RENDERER=MYCUSTOM</code> and run CNA's test suite &mdash; 433 test source files containing 6,818 GoogleTest case definitions. The math tests never touch the GPU, so they compile and run the moment your renderer constructs without crashing, which alone exercises the frontend against your build.</p>
-        <p>The renderer pixel, smoke and integration tests are the real exercise: 1,621 are registered with CMake tree-wide across the 42 families, but only one family's worth is registered in any given build &mdash; at most 293 &mdash; because only one renderer is compiled. Those tests open a window, render, and compare output.</p>
+        <p>Configure with <code>-DCNA_GRAPHICS_RENDERER=MYCUSTOM</code> and run CNA's test suite. Alpha.1 contains 568 C++ test sources and 8,263 statically discoverable GoogleTest-family definitions, but the executable and CTest totals depend on the full configuration. The math tests never touch the GPU, so they exercise the frontend as soon as your renderer constructs.</p>
+        <p>Renderer pixel, smoke and integration tests are the real exercise. Register your cases under a renderer-specific label, inspect the actual configuration with <code>ctest -N</code>, and test both a minimal single-renderer build and at least one valid multi-renderer build containing your implementation.</p>
         <p>The <code>HEADLESS</code> renderer is the model to copy for bring-up. It implements the full interface with no GPU and no window, but it still validates its arguments and tracks resource lifetimes rather than stubbing everything out &mdash; which means it catches frontend misuse instead of silently swallowing it. That is the same principle as truthful capability reporting, applied to a renderer that draws nothing at all.</p>
 
         <nav class="docs-pagination" aria-label="Page navigation">
@@ -240,7 +240,7 @@ namespace CNA::Internal::Renderers
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

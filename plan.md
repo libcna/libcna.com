@@ -1,5 +1,116 @@
 # libcna.com — CNA accuracy audit and website refresh
 
+## Current authoritative audit: CNA v0.1.0-alpha.1
+
+**Audit date:** 2026-08-20 (Europe/Prague)
+**Detailed delta ledger:** `audit/alpha1-delta.md`
+
+The 2026-08-11 audit below is retained as historical context only. Its renderer, test,
+CI, effects, build and limitation claims are superseded by this section and the delta
+ledger.
+
+### Immutable source boundary
+
+| Ref | Resolved commit | Result |
+|---|---|---|
+| BASE | `ae0be4b5211957efaef60f2f23627ae5a9ddda23` | Confirmed commit and ancestor of target |
+| Tag | `v0.1.0-alpha.1` | `1bb2145d99ed572dd4eb15009c34e2e5f410fcf0` |
+| Exact range | `ae0be4b5211957efaef60f2f23627ae5a9ddda23..1bb2145d99ed572dd4eb15009c34e2e5f410fcf0` | 1,445 commits; 6,803 changed paths |
+| Tag date | 2026-08-20 19:06:23 +0200 | Annotated tag metadata |
+| CNA HEAD at audit start | `1bb2145d99ed572dd4eb15009c34e2e5f410fcf0` | Equal to tag; zero post-tag commits |
+
+Both revisions were inspected through temporary detached worktrees. The user's CNA
+checkout was not switched, edited, reset or cleaned. Because its HEAD was exactly the
+tag, it was also used read-only as the source for an out-of-source C API build whose
+entire build tree lived under `/tmp`.
+
+### Canonical alpha.1 facts
+
+- Product version: `0.1.0-alpha.1`; Git tag: `v0.1.0-alpha.1`. The first tagged CNA
+  release is an alpha prerelease, and pre-1.0 C++ APIs may change.
+- Generated `CNA/Version.hpp` exposes `CNA_VERSION_*`, `CNA::getVersionMajor()`,
+  `getVersionMinor()`, `getVersionPatch()`, `getVersionPreRelease()`,
+  `getVersionString()` and `isPreReleaseVersion()`.
+- Graphics: 50 public renderer identities, 46 implementation families, no aliases.
+  EasyGL owns five identities. Thirteen identities are deliberately 2D-only; NanoVG
+  and PixiJS are part of that final set. `GraphicsCapability` has 14 members, but its
+  inherited defaults remain permissive enough that a positive answer is only a hint.
+- The default remains a single renderer. `CNA_GRAPHICS_RENDERERS` opts into compatible
+  multi-renderer builds; API choice beats `CNA_GRAPHICS_RENDERER` environment choice,
+  which beats the compiled default. Selection latches on first device creation and
+  fallback is opt-in.
+- Host platform, audio-device selection, graphics renderer and target OS are separate axes.
+  `CNA_PLATFORM` implements SDL3, SDL2, Headless and POSIX Terminal;
+  `CNA_AUDIO_PLATFORM` selects SDL3, SDL2 or Null low-level device code. Only SDL3 defines
+  `SOUND_ENABLED` and links the SDL3_mixer-backed XNA playback/decoding engine; SDL2 and
+  Null are not high-level feature-equivalent. Reserved identifiers fail rather than falling back.
+- Compiled XNA/FNA D3D9 Effect Framework bytecode (`.fxb`, XNA wrapper, XNB Effect)
+  works on FNA3D by default and on explicitly enabled EasyGL, SDL_GPU and Vulkan builds.
+  HLSL `.fx` source, DXBC and MGFX are different unsupported formats.
+- The experimental C layer is opt-in with `CNA_BUILD_C_API=ON`; its intended targets use
+  C17 while public headers are checked for C99 consumers, and it declares independent ABI
+  0.7.0. The tag has 59 public C headers, 2,861 declared routes and a checked-in 6,712-row
+  semantic inventory. However, its final implementation cannot compile: a 49-entry C
+  renderer map is asserted against CNA's 50 canonical identities, with NanoVG missing.
+  A Headless/Null-audio GCC 14.2 build with networking enabled reproduced `(49 == 50)`;
+  disabling networking instead fails earlier on an unconditional GamerServices include.
+  Alpha.1 therefore has a broad C source contract but no consumable native C library.
+- Source inventory: 568 C++ test files and 8,263 statically discoverable
+  GoogleTest-family definitions. Executed/CTest totals are configuration-specific.
+- CI: 21 workflow files. Linux, Apple, Emscripten, multi-renderer, platform and declared
+  C API gates have distinct scopes; native Windows D3D/GDI and Wine paths are manual. The
+  intended unfiltered job and two Input rows use the invalid `EASYGL` identity and fail
+  configuration at the tag; the C API final target separately fails its renderer-count
+  assertion.
+- XNB: 50 built-in readers with FFmpeg, 49 without it. `EffectReader` is real. CNA loads
+  but does not author XNB. Runtime glTF and Media catalogue behavior remain real.
+- Apple floors are macOS 13.3 and iOS 16.3. iOS is experimental and only
+  `SDL_RENDERER` is allow-listed; CI final-links a device app and launches a simulator
+  frame, with no physical-device or pixel claim.
+
+### Website work
+
+- 166 existing HTML pages changed; 102 received substantive alpha.1 content updates and
+  the remainder received the release-aware global footer and/or metadata/HTML cleanup.
+  The two checked-in Emscripten-generated demo shells were preserved.
+- Seven public pages were added: Releases & Versioning, Runtime Renderer Selection,
+  Experimental Native C API, and tutorials 126–129.
+- Tutorial count grew from 125 to 129. All 125 existing tutorial pages were searched;
+  72 received substantive release corrections, while every tutorial now carries the
+  release snapshot footer.
+- The homepage exposes the release, 50/46 renderer inventory, 568-source/8,263-definition
+  test scope, 63/86 ported XNA samples and 21 workflows. The user confirmed the
+  `cna-samples` repository had not changed since the prior audit.
+- “Related projects & references” was expanded with public OpenEggbert ecosystem
+  projects including sharp-runtime, easy-gl/meta-gl, free-direct/free-api, Easy3D,
+  CNA glTF Viewer, CNA.NET, Galaxy Eggbert, Mobile Eggbert, MeshCraft, archived CNA
+  Editor, FreeDirect game consumers and the public ecosystem map. Private repositories
+  were not exposed, and a release-boundary warning explains independent repository cadence.
+- Search and sitemap are generated from canonical HTML metadata by
+  `scripts/build_site_indexes.py`. A reusable structural/link/index validator lives at
+  `scripts/validate_site.py`.
+
+### Validation record
+
+- 175 HTML files parsed; 173 authored pages pass the HTML5 parser with zero errors. The
+  two preserved Emscripten-generated shells are parsed by the tolerant pass and are an
+  explicit strict-parser exemption.
+- 10,083 link/resource references and 486 local fragments inspected; zero missing local
+  targets or fragments.
+- Zero duplicate IDs; 140 JSON-LD blocks parse structurally.
+- `search-index.json`: 171 unique public pages, exactly one entry per intended page.
+- `sitemap.xml`: 171 unique canonical URLs, exactly one entry per intended page.
+- Metadata and canonical coverage is complete for authored site pages.
+
+Final stale-fact and post-tag sweeps found no unintended public claim. Firefox visual QA
+covered the homepage in both themes, the open mobile navigation, the expanded Related
+projects section, the main renderer/platform/effects/build pages, both new reference pages,
+the tutorial index, a new tutorial and the long verification page. `git diff --check` passes,
+the complete 169-file tracked diff plus 10 new files was reviewed, and both temporary CNA
+worktrees and the out-of-source C API build were removed. Nothing was pushed.
+
+---
+
 **Audit date:** 2026-08-11
 **Previous audit record:** 2026-07-09 (superseded — that document's counts, feature
 statuses, bugs, platform statuses, test counts, coverage estimates, sample counts and

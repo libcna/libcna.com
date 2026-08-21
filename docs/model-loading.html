@@ -56,10 +56,13 @@
             <ul class="docs-nav-list">
         <li><a href="getting-started.html" class="docs-nav-link">Getting Started</a></li>
         <li><a href="building.html" class="docs-nav-link">Building</a></li>
+        <li><a href="releases.html" class="docs-nav-link">Releases &amp; Versioning</a></li>
         <li><a href="platforms.html" class="docs-nav-link">Platforms</a></li>
         <li><a href="rendering-backends.html" class="docs-nav-link">Renderers</a></li>
+        <li><a href="runtime-renderer-selection.html" class="docs-nav-link">Runtime Renderer Selection</a></li>
         <li><a href="xna-compatibility.html" class="docs-nav-link">XNA Compatibility</a></li>
         <li><a href="verification.html" class="docs-nav-link">Verification &amp; Known Issues</a></li>
+        <li><a href="c-api.html" class="docs-nav-link">Experimental C API</a></li>
         <li><a href="effects.html" class="docs-nav-link">Effects System</a></li>
         <li><a href="shader-effects.html" class="docs-nav-link">Shader Effects</a></li>
         <li><a href="render-targets.html" class="docs-nav-link">Render Targets</a></li>
@@ -97,7 +100,7 @@
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Implementation status:</strong> Model loading and <code>Draw</code> are implemented. There are two ways to get a model into CNA: the offline <strong><code>gltf_to_cnj</code></strong> converter (glTF 2.0 → <code>.cnj</code>), which is CNA's actual content path for models, and the <strong>XNB model reader family</strong>, for content already built by the XNA Content Pipeline. Skeletal animation is <em>not</em> left to game code &mdash; CNA ships a full CNAEXT animation layer (<code>SkinnedModelEXT</code>, <code>AnimationPlayer</code>, <code>AnimationClipEXT</code>, <code>MorphTargetEXT</code>). <span class="status-badge status-done">Implemented</span></p>
+        <p><strong>Implementation status:</strong> Model loading and <code>Draw</code> are implemented. CNA accepts direct glTF 2.0, converter-generated <code>.cnj</code>, older loose model descriptors and XNB models built by an XNA-compatible content pipeline. Skeletal and rigid animation, multiple skins, morph targets, material variants, cameras and import reports have CNAEXT carriers. <span class="status-badge status-done">Implemented</span></p>
       </div>
 
       <h2>Overview</h2>
@@ -107,19 +110,25 @@
       <p>The simplest path needs no tooling step at all: <strong>drop a <code>.gltf</code> or <code>.glb</code> into your content root and load it like any other asset.</strong> glTF support is compiled into every build &mdash; there is no CMake option to enable, and the loader (a vendored copy of <a href="https://github.com/jkuhlmann/cgltf" target="_blank" rel="noopener">cgltf</a>) is always present.</p>
 
       <pre><code>// No conversion step. Content/models/house.glb on disk:
-Model* house = Content-&gt;Load&lt;Model&gt;("models/house");</code></pre>
+Model house = getContentProperty().Load&lt;Model&gt;("models/house");</code></pre>
 
       <p><code>Load&lt;Model&gt;</code> resolves candidates in a fixed order: <code>name.xnb</code> always wins first, then a literal <code>name</code> on disk, then <code>name.cnj</code>, then the reader extensions <code>.cnj</code>, <code>.gltf</code> and <code>.glb</code>. Both JSON <code>.gltf</code> and binary <code>.glb</code> are handled, including external <code>.bin</code> buffers, base64-embedded buffers and images, and PNG/JPEG textures embedded in a buffer view. Only glTF version <code>2.0</code> is accepted.</p>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Two deliberate limits on the runtime path.</strong> It imports only the
-        <strong>first mesh group</strong> of the file, and it hardcodes a unit scale of
-        <code>1.0</code>. A file containing several independent characters, or one authored in
-        centimetres, needs the offline tool below. Note also that CNA does <strong>not</strong>
-        check <code>extensionsRequired</code>: a file that depends on an unsupported extension will
-        load and render incorrectly rather than refuse.</p>
+        <p><strong>The runtime path always uses a unit scale of <code>1.0</code>.</strong> It now
+        imports every mesh group into one <code>Model</code>; every independent skin is exposed by
+        <code>Model::getSkinsEXTProperty()</code>, while the first skin also remains in
+        <code>Tag</code> for compatibility. Use the offline tool when an asset needs unit conversion
+        or when separate per-group files are more convenient. The alpha.1 importer validates
+        <code>extensionsRequired</code> against its source-owned extension registry and refuses a
+        file whose required semantics cannot be honoured.</p>
       </div>
+
+      <p>Both this direct path and the converter-backed <code>.cnj</code> path attach structured
+      diagnostics to <code>Model::getGltfImportReportEXTProperty()</code>. Inspect its stable codes
+      when an optional extension, a third distinct UV set, or another deliberately reduced feature
+      needs your attention; do not rely on parsing warning text.</p>
 
       <h2 id="gltf-to-cnj">The gltf_to_cnj tool</h2>
       <p>For the cases the runtime path deliberately does not cover, the <code>gltf_to_cnj</code> tool (target <code>cna_tool_gltf_to_cnj</code>, under <code>tools/gltf_to_cnj/</code>, built unconditionally with the project) converts <strong>glTF 2.0</strong> into CNA's own <code>.cnj</code> JSON asset format. It emits one <code>Model</code> <code>.cnj</code> <em>per mesh group</em>, plus <code>.vb.bin</code>/<code>.ib.bin</code>/<code>.skeleton.bin</code> sidecars, one <code>.cnj</code> per animation clip, morph sidecars, and extracted PNG/JPEG textures.</p>
@@ -127,7 +136,7 @@ Model* house = Content-&gt;Load&lt;Model&gt;("models/house");</code></pre>
       <pre><code># cna_tool_gltf_to_cnj &lt;input.gltf|.glb&gt; &lt;outDir&gt; &lt;baseName&gt; [unitScale]
 cna_tool_gltf_to_cnj input/house.glb Content/models house 0.01</code></pre>
 
-      <p>Use it when you need multiple mesh groups from one file, or a unit scale other than 1.0. Otherwise the runtime path is simpler and costs you nothing at build time.</p>
+      <p>Use it when you want one output asset per mesh group or a unit scale other than 1.0. Otherwise the runtime path is simpler and costs you nothing at build time.</p>
 
       <h2>Loading pipeline-built models from .xnb</h2>
       <p>If you are porting an existing XNA title, its models are already compiled into <code>.xnb</code>. CNA's XNB reader registers the full model reader family, so those assets load without conversion &mdash; <code>ContentManager</code> prefers an <code>.xnb</code> over a loose file when both are present. Remember that the XNB reader registry is empty until you call <code>CNA::Internal::Xnb::RegisterAllBuiltInXnbReaders()</code> at startup. See <a href="content-pipeline-xnb.html">XNB Content Pipeline</a> for the full picture, including what will <em>not</em> load.</p>
@@ -170,9 +179,9 @@ cna_tool_gltf_to_cnj input/house.glb Content/models house 0.01</code></pre>
               <td>Walks the bone hierarchy and fills the caller-supplied array with world-space (absolute) bone matrices. The array must have at least <code>Bones.size()</code> entries.</td>
             </tr>
             <tr>
-              <td><code>Tag</code></td>
-              <td><code>std::any</code></td>
-              <td>Arbitrary user data attached to the model. Mirrors the XNA 4.0 <code>Tag</code> property.</td>
+              <td><code>getTagProperty()</code></td>
+              <td><code>System::Object*</code></td>
+              <td>Compatibility carrier used, for example, by the first imported <code>SkinningData</code> or by <code>ModelAnimationsEXT</code> on an unskinned animated model.</td>
             </tr>
           </tbody>
         </table>
@@ -221,9 +230,9 @@ cna_tool_gltf_to_cnj input/house.glb Content/models house 0.01</code></pre>
               <td>Bounding sphere in local mesh space. Used for frustum culling.</td>
             </tr>
             <tr>
-              <td><code>Tag</code></td>
-              <td><code>std::any</code></td>
-              <td>Arbitrary user data attached to this mesh.</td>
+              <td><code>getTagProperty()</code></td>
+              <td><code>System::Object*</code></td>
+              <td>Optional caller/content object attached to this mesh.</td>
             </tr>
           </tbody>
         </table>
@@ -242,24 +251,24 @@ cna_tool_gltf_to_cnj input/house.glb Content/models house 0.01</code></pre>
           </thead>
           <tbody>
             <tr>
-              <td><code>Effect</code></td>
-              <td><code>std::shared_ptr&lt;Effect&gt;</code></td>
+              <td><code>getEffectProperty()</code></td>
+              <td><code>Effect*</code></td>
               <td>The effect used to render this part. Assign a different effect here to override the default material.</td>
             </tr>
             <tr>
-              <td><code>VertexBuffer</code></td>
-              <td><code>std::shared_ptr&lt;VertexBuffer&gt;</code></td>
+              <td><code>getVertexBufferProperty()</code></td>
+              <td><code>VertexBuffer*</code></td>
               <td>GPU buffer holding the vertex data for this part.</td>
             </tr>
             <tr>
-              <td><code>IndexBuffer</code></td>
-              <td><code>std::shared_ptr&lt;IndexBuffer&gt;</code></td>
+              <td><code>getIndexBufferProperty()</code></td>
+              <td><code>IndexBuffer*</code></td>
               <td>GPU buffer holding the index data for this part.</td>
             </tr>
             <tr>
               <td><code>PrimitiveCount</code></td>
               <td><code>int</code></td>
-              <td>Number of primitives (triangles) to draw.</td>
+              <td>Number of primitives in this part&rsquo;s own topology; not necessarily triangles.</td>
             </tr>
             <tr>
               <td><code>StartIndex</code></td>
@@ -277,9 +286,9 @@ cna_tool_gltf_to_cnj input/house.glb Content/models house 0.01</code></pre>
               <td>Number of vertices referenced by this part.</td>
             </tr>
             <tr>
-              <td><code>Tag</code></td>
-              <td><code>std::any</code></td>
-              <td>Arbitrary user data attached to this part.</td>
+              <td><code>getTagProperty()</code></td>
+              <td><code>System::Object*</code></td>
+              <td>Optional content object, including imported <code>MorphTargetDataEXT</code>.</td>
             </tr>
           </tbody>
         </table>
@@ -289,43 +298,41 @@ cna_tool_gltf_to_cnj input/house.glb Content/models house 0.01</code></pre>
 
       <h3>1. Simple one-call draw</h3>
       <p>The simplest way to render a model. <code>Model::Draw</code> iterates every part, sets the world/view/projection matrices on each effect via <code>IEffectMatrices</code>, and issues the draw calls automatically.</p>
-      <pre><code>model-&gt;Draw(world, view, projection);</code></pre>
+      <pre><code>model.Draw(world, view, projection);</code></pre>
 
       <h3>2. Loading via ContentManager</h3>
       <p>Pass the asset name without extension. <code>ContentManager</code> resolves it against the content root, preferring an <code>.xnb</code> if one exists and otherwise reading the <code>.cnj</code>, and returns a fully initialised <code>Model</code>.</p>
-      <pre><code>auto model = Content.Load&lt;Model&gt;("models/house");</code></pre>
+      <pre><code>Model model = getContentProperty().Load&lt;Model&gt;("models/house");</code></pre>
 
       <h3>3. Per-mesh effect override</h3>
       <p>Override the default effect on each part to apply custom lighting or material properties per mesh.</p>
-      <pre><code>for (auto&amp; mesh : model-&gt;Meshes) {
-    for (auto&amp; part : mesh.MeshParts) {
-        auto effect = std::dynamic_pointer_cast&lt;BasicEffect&gt;(part.Effect);
-        if (effect) {
+      <pre><code>for (ModelMesh* mesh : model.getMeshesProperty()) {
+    for (ModelMeshPart* part : mesh-&gt;getMeshPartsProperty()) {
+        if (auto* effect = dynamic_cast&lt;BasicEffect*&gt;(part-&gt;getEffectProperty())) {
             effect-&gt;setWorldProperty(world);
             effect-&gt;setViewProperty(view);
             effect-&gt;setProjectionProperty(projection);
             effect-&gt;setLightingEnabledProperty(true);
         }
     }
-    mesh.Draw();
+    mesh-&gt;Draw();
 }</code></pre>
 
       <h3>4. Skeletal animation with bone transforms</h3>
       <p>Call <code>CopyAbsoluteBoneTransformsTo</code> to obtain world-space matrices for every bone. Multiply each mesh's parent-bone transform by the scene world matrix before setting it on the effect. This is the standard pattern for rendering skinned models exported with a bone hierarchy.</p>
-      <pre><code>std::vector&lt;Matrix&gt; transforms(model-&gt;Bones.size());
-model-&gt;CopyAbsoluteBoneTransformsTo(transforms.data());
+      <pre><code>std::vector&lt;Matrix&gt; transforms(model.getBonesProperty().getCountProperty());
+model.CopyAbsoluteBoneTransformsTo(transforms);
 
-for (auto&amp; mesh : model-&gt;Meshes) {
-    Matrix meshWorld = transforms[mesh.ParentBone-&gt;Index] * world;
-    for (auto&amp; part : mesh.MeshParts) {
-        auto effect = std::dynamic_pointer_cast&lt;BasicEffect&gt;(part.Effect);
-        if (effect) {
+for (ModelMesh* mesh : model.getMeshesProperty()) {
+    Matrix meshWorld = transforms[mesh-&gt;getParentBoneProperty()-&gt;getIndexProperty()] * world;
+    for (ModelMeshPart* part : mesh-&gt;getMeshPartsProperty()) {
+        if (auto* effect = dynamic_cast&lt;BasicEffect*&gt;(part-&gt;getEffectProperty())) {
             effect-&gt;setWorldProperty(meshWorld);
             effect-&gt;setViewProperty(view);
             effect-&gt;setProjectionProperty(projection);
         }
     }
-    mesh.Draw();
+    mesh-&gt;Draw();
 }</code></pre>
 
       <h2>Skeletal animation (CNAEXT)</h2>
@@ -374,15 +381,15 @@ for (auto&amp; mesh : model-&gt;Meshes) {
       </div>
 
       <h3>Driving SkinnedEffect directly</h3>
-      <p>The lower-level path remains available and is what the animation layer ultimately feeds. Set the bone palette with <code>effect-&gt;SetBoneTransforms(span)</code> and configure the number of skinning influences per vertex via <code>effect-&gt;SetWeightsPerVertex(n)</code>, where <code>n</code> is 1, 2, or 4.</p>
-      <pre><code>auto skinned = std::dynamic_pointer_cast&lt;SkinnedEffect&gt;(part.Effect);
-if (skinned) {
-    skinned-&gt;SetWorld(meshWorld);
-    skinned-&gt;SetView(view);
-    skinned-&gt;SetProjection(projection);
+      <p>The lower-level path remains available and is what the animation layer ultimately feeds. Set the bone palette with <code>SetBoneTransforms(vector)</code> and configure the number of skinning influences per vertex with <code>setWeightsPerVertexProperty(n)</code>, where <code>n</code> is 1, 2 or 4.</p>
+      <pre><code>auto* skinned = dynamic_cast&lt;SkinnedEffect*&gt;(part-&gt;getEffectProperty());
+if (skinned != nullptr) {
+    skinned-&gt;setWorldProperty(meshWorld);
+    skinned-&gt;setViewProperty(view);
+    skinned-&gt;setProjectionProperty(projection);
     skinned-&gt;EnableDefaultLighting();
-    skinned-&gt;SetWeightsPerVertex(4);
-    skinned-&gt;SetBoneTransforms(boneMatrices);  // std::span&lt;Matrix&gt;
+    skinned-&gt;setWeightsPerVertexProperty(4);
+    skinned-&gt;SetBoneTransforms(boneMatrices);  // std::vector&lt;Matrix&gt;
 }</code></pre>
 
 
@@ -409,7 +416,7 @@ if (skinned) {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

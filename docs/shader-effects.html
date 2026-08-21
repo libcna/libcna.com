@@ -56,10 +56,13 @@
             <ul class="docs-nav-list">
         <li><a href="getting-started.html" class="docs-nav-link">Getting Started</a></li>
         <li><a href="building.html" class="docs-nav-link">Building</a></li>
+        <li><a href="releases.html" class="docs-nav-link">Releases &amp; Versioning</a></li>
         <li><a href="platforms.html" class="docs-nav-link">Platforms</a></li>
         <li><a href="rendering-backends.html" class="docs-nav-link">Renderers</a></li>
+        <li><a href="runtime-renderer-selection.html" class="docs-nav-link">Runtime Renderer Selection</a></li>
         <li><a href="xna-compatibility.html" class="docs-nav-link">XNA Compatibility</a></li>
         <li><a href="verification.html" class="docs-nav-link">Verification &amp; Known Issues</a></li>
+        <li><a href="c-api.html" class="docs-nav-link">Experimental C API</a></li>
         <li><a href="effects.html" class="docs-nav-link">Effects System</a></li>
         <li><a href="shader-effects.html" class="docs-nav-link active">Shader Effects</a></li>
         <li><a href="render-targets.html" class="docs-nav-link">Render Targets</a></li>
@@ -113,12 +116,12 @@
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Implementation status:</strong> <code>ShaderEffect</code> is a <strong>CNAEXT extension</strong> &mdash; it is not part of the XNA 4.0 API &mdash; and it is the <em>only</em> custom-shader path in CNA. XNA's compiled <code>.fx</code> bytecode is not supported at all: <code>Effect(GraphicsDevice&amp;, byte[])</code> throws <code>NotImplementedException</code> unconditionally, and there is no MojoShader equivalent. This is the single biggest real porting gap in CNA. GLSL source shaders are pixel-tested on EasyGL; SPIR-V bytecode shaders are pixel-tested on Vulkan.</p>
+        <p><strong>Implementation status:</strong> <code>ShaderEffect</code> is a <strong>CNAEXT extension</strong> for renderer-native custom shader source or binary. It is separate from alpha.1's XNA-compatible <code>Effect(GraphicsDevice&amp;, bytecode)</code> path, which accepts D3D9 Effect Framework binaries on FNA3D and opt-in EasyGL, SDL_GPU and Vulkan builds. <code>ShaderEffect</code> remains the appropriate path for the GLSL/SPIR-V examples on this page.</p>
       </div>
 
       <div class="callout callout--note">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Build flag:</strong> the CNAEXT extension layer is controlled by the <code>CNA_CNAEXT</code> CMake option, which defaults to <strong>OFF</strong>. No current build or CI job exercises the CNAEXT layer, so treat everything on this page as less travelled than the stock-effect paths.</p>
+        <p><strong>Build flag:</strong> the CNAEXT extension layer is controlled by the <code>CNA_CNAEXT</code> CMake option, which defaults to <strong>OFF</strong>. Its compiled and registered tests depend on that configuration; inspect <code>ctest -N</code> for the actual build rather than assuming the default suite exercises it.</p>
       </div>
 
       <h2 id="overview">Overview</h2>
@@ -155,7 +158,7 @@ CNAEXT ShaderEffect(GraphicsDevice&amp; device,
       <h2 id="loading-a-custom-shader">Loading a custom shader</h2>
       <p>Load the descriptor as <code>Effect</code> &mdash; that, not <code>ShaderEffect</code>, is the type the reader is registered for &mdash; then downcast.</p>
       <pre><code class="language-cpp">// In your Game::LoadContent():
-auto fxBase = Content.Load&lt;Effect&gt;("shaders/custom");
+auto fxBase = getContentProperty().Load&lt;std::shared_ptr&lt;Effect&gt;&gt;("shaders/custom");
 auto* effect = dynamic_cast&lt;ShaderEffect*&gt;(fxBase.get());
 </code></pre>
       <p>The content manager resolves <code>"shaders/custom"</code> to <code>Content/shaders/custom.cnj</code>, reads the descriptor, reads the two named source files, compiles the shader program, and returns it as an <code>Effect</code>.</p>
@@ -259,9 +262,9 @@ void main()
 
       <h3>C++ usage</h3>
       <pre><code class="language-cpp">// LoadContent
-auto fxBase       = Content.Load&lt;Effect&gt;("shaders/tinted");
+auto fxBase       = getContentProperty().Load&lt;std::shared_ptr&lt;Effect&gt;&gt;("shaders/tinted");
 auto* tintedEffect = dynamic_cast&lt;ShaderEffect*&gt;(fxBase.get());
-auto wallTexture  = Content.Load&lt;Texture2D&gt;("textures/wall");
+auto wallTexture  = getContentProperty().Load&lt;Texture2D&gt;("textures/wall");
 
 // Draw (called each frame) — Apply() first, then the uniforms.
 tintedEffect-&gt;CurrentTechnique-&gt;Passes[0]-&gt;Apply();
@@ -341,7 +344,7 @@ graphicsDevice-&gt;DrawIndexedPrimitives(
       <p>Note the difference between <code>SetUniformFloatArray</code> and <code>SetUniformVec2Array</code>: the first counts scalars, the second counts elements. There is no <code>SetUniformMat3</code>. See <a href="tutorials/52-custom-shaders.html">Tutorial 52: Writing Custom Shaders</a> for worked examples.</p>
 
       <h2 id="renderer-availability">Renderer availability</h2>
-      <p>CNA selects its renderer at <strong>build time</strong> (<code>-DCNA_GRAPHICS_RENDERER=&lt;NAME&gt;</code>), so the shader source format you must supply is fixed by the build, not chosen at runtime. Two renderers are verified paths for user-supplied shaders:</p>
+      <p>A single-renderer build fixes the shader source format with <code>-DCNA_GRAPHICS_RENDERER=&lt;NAME&gt;</code>. An opt-in multi-renderer build compiles several families and selects one before the graphics device is created, so an application that permits several runtime choices must package a compatible shader form for every active path. Two renderer families are verified paths for user-supplied shaders:</p>
 
       <div class="table-wrap">
         <table>
@@ -367,7 +370,7 @@ graphicsDevice-&gt;DrawIndexedPrimitives(
         </table>
       </div>
 
-      <p>The other twelve renderers are not characterised for user-supplied <code>ShaderEffect</code> by the current audit, and several have structural reasons to expect trouble: the 2D-only renderers (SDL_Renderer, Direct2D, Canvas, HTML_DOM, Skia, Blend2D, FreeDirect, GDI, SVG_DOM and OpenVG) have no programmable 3D pipeline; bgfx ships only GL/GLES/Vulkan/WebGPU shader blobs, with no D3D or Metal variants, so 3D silently draws nothing on bgfx's default Windows and macOS renderers; WebGPU is an early backbuffer-only forward renderer; and Headless deliberately renders nothing. If you need custom shaders, build against EasyGL or Vulkan. See <a href="rendering-backends.html">Renderers</a> for the full comparison across all 46 renderers.</p>
+      <p>The remaining renderer families are not uniformly characterised for user-supplied <code>ShaderEffect</code>, and several have structural reasons to expect trouble: the 13 2D-only identities (SDL_Renderer, Direct2D, Canvas, HTML_DOM, Skia, Blend2D, FreeDirect, DirectX1, GDI, SVG_DOM, OpenVG, NanoVG and PixiJS) have no programmable 3D pipeline; bgfx ships only GL/GLES/Vulkan/WebGPU shader blobs, with no D3D or Metal variants, so 3D silently draws nothing on bgfx's default Windows and macOS renderers; WebGPU is an early backbuffer-only forward renderer; and Headless deliberately renders nothing. If you need custom shaders, build against EasyGL or Vulkan. See <a href="rendering-backends.html">Renderers</a> for the full comparison across all 50 renderers.</p>
 
 
     <nav class="docs-pagination" aria-label="Page navigation">
@@ -393,7 +396,7 @@ graphicsDevice-&gt;DrawIndexedPrimitives(
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 101: Querying Renderer Capabilities - CNA Tutorials</title>
-  <meta name="description" content="CNA's SupportsCapability() fails open: the shared default answers true for eleven of thirteen capabilities, and four renderers never override it. Learn what a true really means, and how to probe the feature you depend on.">
+  <meta name="description" content="CNA's SupportsCapability() is permissive for most entries and four renderers never override it. Learn the explicit false/delegated cases and how to verify the feature you depend on.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/101-renderer-capabilities.html">
   <meta property="og:title"       content="Tutorial 101: Querying Renderer Capabilities - CNA Tutorials">
-  <meta property="og:description" content="CNA's SupportsCapability() fails open: the shared default answers true for eleven of thirteen capabilities, and four renderers never override it. Learn what a true really means, and how to probe the feature you depend on.">
+  <meta property="og:description" content="CNA's SupportsCapability() is permissive for most entries and four renderers never override it. Learn the explicit false/delegated cases and how to verify the feature you depend on.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/101-renderer-capabilities.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 101: Querying Renderer Capabilities",
   "url": "https://libcna.com/docs/tutorials/101-renderer-capabilities.html",
   "datePublished": "2026-08-11",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-08-20",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -89,21 +89,21 @@
         <span class="callout-icon">&#8505;</span>
         <p><strong>What you&rsquo;ll learn</strong></p>
         <ul>
-          <li>What the 13 <code>GraphicsCapability</code> members promise, and how to query one.</li>
+          <li>What the 14 <code>GraphicsCapability</code> members promise, and how to query one.</li>
           <li>Why <code>SupportsCapability()</code> <strong>fails open</strong>, and why a <code>false</code> is worth far more than a <code>true</code>.</li>
           <li>How to write a real probe for the one feature your game actually depends on.</li>
           <li>The queries that <em>are</em> reliable, and the policy switch that decides what happens when you call anyway.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a> introduces CNA's 46 renderer identities and the fact that exactly one is compiled into any build.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a> introduces CNA's 50 identities, the compact single-renderer default and alpha.1's opt-in multi-renderer build.</p>
       </div>
 
-      <p>CNA compiles exactly one renderer into a build, and those renderers differ enormously: some have no 3D pipeline, some have no shader stage, some never produce a pixel. <code>GraphicsDevice::SupportsCapability()</code> exists so you can branch <em>before</em> reaching for a feature instead of catching an exception afterwards.</p>
+      <p>CNA's default build compiles one renderer, while an opt-in multi-renderer build can contain several and select one before device creation. The active renderers differ enormously: some have no 3D pipeline, some have no shader stage, some never produce a pixel. <code>GraphicsDevice::SupportsCapability()</code> exists so you can branch <em>before</em> reaching for a feature instead of catching an exception afterwards.</p>
 
       <p>It is a genuinely useful tool. It is also the single most misread API in CNA, because <strong>its default answer is yes</strong>. This tutorial is about reading it correctly.</p>
 
-      <h2 id="the-enum">The 13 capabilities</h2>
+      <h2 id="the-enum">The 14 capabilities</h2>
 
-      <p><code>CNA::GraphicsCapability</code> is a closed enum of 13 members. Every one of them maps to a real gap that exists somewhere in the renderer set &mdash; it is not a speculative wish list.</p>
+      <p><code>CNA::GraphicsCapability</code> is a closed enum of 14 members. Every one of them maps to a real gap that exists somewhere in the renderer set &mdash; it is not a speculative wish list.</p>
 
       <div class="table-wrap">
       <table>
@@ -118,6 +118,7 @@
           <tr><td><code>WireFrame</code></td><td><code>RasterizerState.FillMode = FillMode::WireFrame</code>.</td></tr>
           <tr><td><code>OcclusionQuery</code></td><td>Real GPU occlusion queries &mdash; <code>Begin</code>/<code>End</code>/<code>PixelCount</code>.</td></tr>
           <tr><td><code>CustomEffects</code></td><td>A non-stock <code>Effect</code> passed to <code>SpriteBatch::Begin()</code>.</td></tr>
+          <tr><td><code>CompiledEffects</code></td><td>XNA/FNA Direct3D 9 Effect Framework binaries can be reflected and executed, including their passes and state.</td></tr>
           <tr><td><code>Texture3D</code></td><td>Real volume-texture <em>storage</em> &mdash; <code>SetData</code>/<code>GetData</code> genuinely persist. It never promises shader sampling.</td></tr>
           <tr><td><code>MultiStreamVertexInput</code></td><td>More than one <code>VertexBufferBinding</code> of the same input rate on one draw.</td></tr>
           <tr><td><code>Instancing</code></td><td>Hardware instancing via <code>DrawInstancedPrimitives</code>.</td></tr>
@@ -152,7 +153,7 @@ void MyGame::Draw(const GameTime&amp;)
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>The shared base implementation returns <code>true</code> for every capability except two.</strong> <code>MultiStreamVertexInput</code> defaults to <code>false</code>, and <code>StencilBuffer</code> is forwarded to the renderer's own <code>SupportsStencilBuffer()</code>. Everything else falls through to a flat <code>return true;</code> &mdash; whether or not the renderer implements it.</p>
+        <p><strong>The shared base implementation is explicit for three entries and permissive for the rest.</strong> <code>MultiStreamVertexInput</code> returns <code>false</code>, <code>CompiledEffects</code> calls the false-by-default <code>SupportsCompiledEffects()</code> opt-in, and <code>StencilBuffer</code> forwards to <code>SupportsStencilBuffer()</code>. Everything else falls through to <code>true</code> &mdash; whether or not the renderer implements it.</p>
       </div>
 
       <p>The comment on that default is explicit that every renderer with a narrower contract <em>must</em> override the applicable entries truthfully. Most do. Four do not override <code>SupportsCapability()</code> at all:</p>
@@ -161,7 +162,7 @@ void MyGame::Draw(const GameTime&amp;)
       <table>
         <thead><tr><th>Renderer</th><th>What it reports today</th></tr></thead>
         <tbody>
-          <tr><td><code>DIRECTX9</code></td><td rowspan="4">The shared default, unmodified: <code>true</code> for eleven members, <code>false</code> for <code>MultiStreamVertexInput</code>, and the renderer's depth/stencil answer for <code>StencilBuffer</code>.</td></tr>
+          <tr><td><code>DIRECTX9</code></td><td rowspan="4">The shared default, unmodified: false-by-default for multi-stream input and compiled effects, the renderer's depth/stencil answer for stencil, and permissive <code>true</code> answers for the remaining entries.</td></tr>
           <tr><td><code>DIRECTX11</code></td></tr>
           <tr><td><code>DIRECTX12</code></td></tr>
           <tr><td><code>SDL_GPU</code></td></tr>
@@ -187,8 +188,8 @@ void MyGame::Draw(const GameTime&amp;)
         <thead><tr><th>Renderer</th><th>How it answers</th></tr></thead>
         <tbody>
           <tr><td><code>STUB</code></td><td><code>false</code> for <strong>every</strong> capability &mdash; the only renderer that does. It renders nothing and says so.</td></tr>
-          <tr><td><code>OPENVG</code></td><td><code>false</code> for all 13, each with its own recorded reason.</td></tr>
-          <tr><td><code>METAL</code></td><td>An explicit answer for all 13, with no permissive default. Six are <code>false</code>.</td></tr>
+          <tr><td><code>OPENVG</code></td><td><code>false</code> for all 14, each with its own recorded reason.</td></tr>
+          <tr><td><code>METAL</code></td><td>Thirteen named switch arms; the appended <code>CompiledEffects</code> member reaches the final <code>false</code>. Seven answers are false in total, with no permissive true fallback.</td></tr>
           <tr><td><code>SKIA</code></td><td>An exhaustive <code>switch</code> with no <code>default</code> arm, so a capability added later is a compiler diagnostic rather than a silently wrong answer. Only <code>Texture3D</code> and <code>AdditiveBlending</code> are <code>true</code>.</td></tr>
           <tr><td><code>FNA3D</code></td><td>Authored falses for <code>CustomEffects</code> and <code>Instancing</code>, a real device query for MSAA. See <a href="108-fna3d.html">Tutorial 108</a>.</td></tr>
           <tr><td>The GL family</td><td>Profile-dependent, and partly a live driver query. See <a href="102-opengl-family.html">Tutorial 102</a>.</td></tr>
@@ -301,7 +302,7 @@ device.SetUnsupported3DGraphicsCallBehavior(
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

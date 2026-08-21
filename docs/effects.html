@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Effects System - CNA Documentation</title>
-  <meta name="description" content="CNA effects system documentation - the six XNA stock effects implemented natively in C++, the CNAEXT PbrEffect/SkinnedPbrEffect/ShaderEffect additions, and why compiled .fx bytecode is unsupported.">
+  <meta name="description" content="CNA 0.1.0-alpha.1 effects: native stock effects, compiled XNA/FNA Effect Framework bytecode and XNB EffectReader support on qualified renderers, reflection, passes, parameters, cloning and ShaderEffect.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/effects.html">
   <meta property="og:title"       content="Effects System - CNA Documentation">
-  <meta property="og:description" content="CNA effects system documentation - the six XNA stock effects implemented natively in C++, the CNAEXT PbrEffect/SkinnedPbrEffect/ShaderEffect additions, and why compiled .fx bytecode is unsupported.">
+  <meta property="og:description" content="CNA 0.1.0-alpha.1 effects: native stock effects, compiled XNA/FNA Effect Framework bytecode and XNB EffectReader support on qualified renderers, reflection, passes, parameters, cloning and ShaderEffect.">
   <link rel="stylesheet" href="../css/style.css">
   <link rel="icon" href="../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/effects.html">
@@ -56,10 +56,13 @@
             <ul class="docs-nav-list">
         <li><a href="getting-started.html" class="docs-nav-link">Getting Started</a></li>
         <li><a href="building.html" class="docs-nav-link">Building</a></li>
+        <li><a href="releases.html" class="docs-nav-link">Releases &amp; Versioning</a></li>
         <li><a href="platforms.html" class="docs-nav-link">Platforms</a></li>
         <li><a href="rendering-backends.html" class="docs-nav-link">Renderers</a></li>
+        <li><a href="runtime-renderer-selection.html" class="docs-nav-link">Runtime Renderer Selection</a></li>
         <li><a href="xna-compatibility.html" class="docs-nav-link">XNA Compatibility</a></li>
         <li><a href="verification.html" class="docs-nav-link">Verification &amp; Known Issues</a></li>
+        <li><a href="c-api.html" class="docs-nav-link">Experimental C API</a></li>
         <li><a href="effects.html" class="docs-nav-link active">Effects System</a></li>
         <li><a href="shader-effects.html" class="docs-nav-link">Shader Effects</a></li>
         <li><a href="render-targets.html" class="docs-nav-link">Render Targets</a></li>
@@ -105,7 +108,7 @@
           <li><a href="#skinnedeffect">SkinnedEffect</a></li>
           <li><a href="#spriteeffect">SpriteEffect</a></li>
           <li><a href="#noxna-effects">Beyond XNA: PbrEffect, SkinnedPbrEffect, ShaderEffect</a></li>
-          <li><a href="#no-fx-bytecode">No .fx bytecode &mdash; the biggest porting gap</a></li>
+          <li><a href="#compiled-effects">Compiled XNA effects</a></li>
           <li><a href="#renderer-parity">Renderer coverage</a></li>
           <li><a href="#effect-interfaces">Effect interfaces</a></li>
           <li><a href="#effectparameter">EffectParameter</a></li>
@@ -117,13 +120,13 @@
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
         <p><strong>Implementation status:</strong> All six XNA 4.0 stock effects &mdash; <code>BasicEffect</code>, <code>AlphaTestEffect</code>, <code>DualTextureEffect</code>, <code>EnvironmentMapEffect</code>, <code>SkinnedEffect</code> and <code>SpriteEffect</code> &mdash; are <strong>implemented natively in C++</strong>. They are not translated from XNA's shipped shader bytecode; each is a real reimplementation, with per-renderer shader programs behind it. CNA additionally ships three non-XNA effects: <code>PbrEffect</code>, <code>SkinnedPbrEffect</code> and <code>ShaderEffect</code>.</p>
-        <p><strong>Compiled <code>.fx</code> bytecode is not supported at all</strong> &mdash; <code>Effect(GraphicsDevice&amp;, byte[])</code> throws <code>NotImplementedException</code> unconditionally. This is the single biggest real porting gap in CNA. See <a href="#no-fx-bytecode">below</a>.</p>
+        <p><strong>Compiled XNA effects are implemented with a renderer boundary.</strong> FNA3D supports them by default; EasyGL, SDL_GPU and Vulkan support them only with explicit build options. Other renderers report <code>GraphicsCapability::CompiledEffects</code> unavailable. See <a href="#compiled-effects">Compiled XNA effects</a>.</p>
       </div>
 
       <h2 id="overview">Overview</h2>
       <p>CNA implements the full XNA 4.0 effects pipeline inside the <code>Microsoft::Xna::Framework::Graphics</code> namespace. An <em>effect</em> is a shader program combined with its parameter set and render state. You apply an effect by setting its parameters, then calling <code>effect.CurrentTechnique.Passes[0].Apply()</code> before drawing primitives.</p>
       <p>All stock effects implement one or more <em>effect interfaces</em> (<code>IEffectMatrices</code>, <code>IEffectFog</code>, <code>IEffectLights</code>) so that higher-level drawing code can treat effects polymorphically. Parameters can also be accessed directly through <code>EffectParameter</code> objects exposed on the effect.</p>
-      <p>Custom shaders are reachable through exactly one path: the non-XNA <code>ShaderEffect</code> class, whose constructor takes the GLSL <em>source text</em> directly. You can hand it a string literal, read the file yourself, or let <code>ContentManager</code> do the reading through a <code>.cnj</code> <code>Effect</code> descriptor. There is no second route &mdash; compiled <code>.fx</code> files cannot be loaded.</p>
+      <p>CNA has two distinct custom-effect paths. XNA/FNA Direct3D 9 Effect Framework <em>binaries</em> load through the XNA <code>Effect</code> bytecode constructor or XNB <code>EffectReader</code> on qualified renderers. CNAEXT <code>ShaderEffect</code> accepts renderer-oriented source/binaries such as GLSL or SPIR-V. Support for one never implies support for the other.</p>
 
       <h2 id="stock-effects-at-a-glance">Stock effects at a glance</h2>
       <p>Six XNA 4.0 stock effects, each implemented natively in C++ rather than translated from XNA's shipped shader bytecode.</p>
@@ -265,25 +268,55 @@ effect-&gt;CurrentTechnique-&gt;Passes[0]-&gt;Apply();</code></pre>
             </tr>
             <tr>
               <td><code>ShaderEffect</code></td>
-              <td>Hand-written GLSL/SPIR-V shaders. <strong>The only custom-shader path in CNA.</strong></td>
+              <td>Renderer-native shader source or binary through CNAEXT; separate from XNA compiled Effect compatibility.</td>
             </tr>
           </tbody>
         </table>
       </div>
 
-      <h2 id="no-fx-bytecode">No .fx bytecode &mdash; the biggest porting gap</h2>
+      <h2 id="compiled-effects">Compiled XNA effects</h2>
 
+      <p><code>Effect(GraphicsDevice&amp;, bytecode)</code> accepts the XNA/FNA <strong>Direct3D 9 Effect Framework binary</strong> format (commonly stored as <code>.fxb</code>), including the wrapper emitted by the XNA 4 compiler. The real XNB <code>EffectReader</code> reads the same payload through <code>ContentManager</code>, preserves the asset name and wraps malformed/truncated input in <code>ContentLoadException</code>. The direct and XNB routes produce the same reflected effect graph.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Input</th><th>Alpha.1 status</th></tr></thead>
+          <tbody>
+            <tr><td>XNA/FNA D3D9 Effect Framework binary (<code>.fxb</code>)</td><td><span class="status-badge status-done">Accepted on capable builds</span></td></tr>
+            <tr><td>Compiled Effect payload inside an XNB</td><td><span class="status-badge status-done">Accepted through EffectReader</span></td></tr>
+            <tr><td>HLSL <code>.fx</code> source text</td><td><span class="status-badge status-wip">Not accepted; CNA embeds no HLSL compiler</span></td></tr>
+            <tr><td>MonoGame MGFX / <code>.mgfxo</code></td><td><span class="status-badge status-wip">Different container; rejected explicitly</span></td></tr>
+            <tr><td>DXBC or arbitrary GLSL/SPIR-V/Metal source</td><td>Not guessed as Effect Framework bytecode; use the toolchain/API that owns that format</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The loader enforces a 64 MiB payload limit and validates structure before constructing renderer resources. It reflects techniques, passes, parameters, annotations, arrays and structures; parameter values and textures can be set, pass render/sampler state is applied, cloning preserves runtime state, and compiled effects can participate in SpriteBatch and 3D draws.</p>
+
+      <h3>Renderer support is opt-in and queryable</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Renderer family</th><th>Build requirement</th></tr></thead>
+          <tbody>
+            <tr><td><code>FNA3D</code></td><td>Supported in the normal FNA3D build through FNA3D/MojoShader.</td></tr>
+            <tr><td>EasyGL identities</td><td><code>-DCNA_EASYGL_COMPILED_EFFECTS=ON</code> (default <code>OFF</code>).</td></tr>
+            <tr><td><code>SDL_GPU</code></td><td><code>-DCNA_SDL_GPU_COMPILED_EFFECTS=ON</code> (default <code>OFF</code>).</td></tr>
+            <tr><td><code>VULKAN</code></td><td><code>-DCNA_VULKAN_COMPILED_EFFECTS=ON</code> (default <code>OFF</code>).</td></tr>
+            <tr><td>All other renderer families</td><td>Unsupported; capability reports false and construction throws <code>NotSupportedException</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <pre><code>if (!device.SupportsCapability(CNA::GraphicsCapability::CompiledEffects)) {
+    // Choose a stock effect or another renderer/build configuration.
+}
+
+auto effect = content.Load&lt;std::shared_ptr&lt;Effect&gt;&gt;("Effects/Bloom");
+effect-&gt;getCurrentTechniqueProperty().getPassesProperty()[0].Apply();</code></pre>
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>CNA cannot load compiled <code>.fx</code> effect bytecode.</strong> The <code>Effect(GraphicsDevice&amp;, byte[])</code> constructor throws <code>NotImplementedException</code> unconditionally &mdash; there is no MojoShader equivalent and no HLSL bytecode translator. <strong>Games that ship custom HLSL effects cannot run on CNA.</strong> Of everything documented on this site, this is the single largest obstacle to porting an existing XNA title.</p>
+        <p><strong>Do not call this universal <code>.fx</code> support.</strong> CNA loads already-compiled Effect Framework bytecode on four renderer configurations. It still does not compile <code>.fx</code> source, parse MGFX, or promise the capability on every renderer.</p>
       </div>
 
-      <p>The consequence follows through the whole content path. The XNB reader registers an <code>EffectReader</code>, but it is an always-throwing placeholder, so a compiled effect will not load from <code>.xnb</code> either &mdash; see <a href="content-pipeline-xnb.html#known-gaps">XNB Content Pipeline &rarr; Known gaps</a>.</p>
-
-      <p>If your game uses custom shaders, the only route forward is to rewrite each one as GLSL or SPIR-V and load it through <code>ShaderEffect</code>. The stock effects are unaffected: they are native C++ reimplementations and need no bytecode at all.</p>
-
       <h2 id="renderer-parity">Renderer coverage</h2>
-      <p>Effect support is a property of the selected renderer, chosen at build time via <code>-DCNA_GRAPHICS_RENDERER</code>. Coverage differs sharply across the 46 renderers; the summary below reflects what has actually been audited. See <a href="rendering-backends.html">Renderers</a> for the full table.</p>
+      <p>Effect support is a property of the active renderer and its build options. Coverage differs sharply across the 50 identities; in a multi-renderer build query the actual device rather than the compile-time default. See <a href="rendering-backends.html">Renderers</a> for the full inventory.</p>
 
       <div class="table-wrap">
         <table>
@@ -439,7 +472,7 @@ Matrix world = effect-&gt;Parameters["World"]-&gt;GetValue&lt;Matrix&gt;();</cod
 }</code></pre>
 
       <p>Load it as <code>Effect</code> &mdash; that, not <code>ShaderEffect</code>, is the type the reader is registered for &mdash; then downcast. Uniforms are set by name through the <code>SetUniformXxx</code> family; there is no <code>Parameters</code> collection on <code>ShaderEffect</code>.</p>
-      <pre><code class="language-cpp">auto fxBase = content.Load&lt;Effect&gt;("effects/my_effect");
+      <pre><code class="language-cpp">auto fxBase = content.Load&lt;std::shared_ptr&lt;Effect&gt;&gt;("effects/my_effect");
 auto* myEffect = dynamic_cast&lt;ShaderEffect*&gt;(fxBase.get());
 
 // Apply first — SetUniformXxx writes to the currently bound program.
@@ -477,7 +510,7 @@ graphicsDevice-&gt;DrawPrimitives(PrimitiveType::TriangleList, 0, triangleCount)
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

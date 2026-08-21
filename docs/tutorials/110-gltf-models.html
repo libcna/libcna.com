@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 110: Loading glTF 2.0 Models at Runtime - CNA Tutorials</title>
-  <meta name="description" content="Load .gltf and .glb models in CNA with a single Content.Load&lt;Model&gt;() call - no conversion step. Covers the asset resolution order, the first-mesh-group and unit-scale limits, and the glTF features that are silently dropped.">
+  <meta name="description" content="Load .gltf and .glb models in CNA 0.1.0-alpha.1 with one Content.Load&lt;Model&gt;() call. Covers all mesh groups, multiple skins, rigid animation, extension validation, import reports and the remaining unit-scale boundary.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/110-gltf-models.html">
   <meta property="og:title"       content="Tutorial 110: Loading glTF 2.0 Models at Runtime - CNA Tutorials">
-  <meta property="og:description" content="Load .gltf and .glb models in CNA with a single Content.Load&lt;Model&gt;() call - no conversion step. Covers the asset resolution order, the first-mesh-group and unit-scale limits, and the glTF features that are silently dropped.">
+  <meta property="og:description" content="Load .gltf and .glb models in CNA 0.1.0-alpha.1 with one Content.Load&lt;Model&gt;() call. Covers all mesh groups, multiple skins, rigid animation, extension validation, import reports and the remaining unit-scale boundary.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/110-gltf-models.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 110: Loading glTF 2.0 Models at Runtime",
   "url": "https://libcna.com/docs/tutorials/110-gltf-models.html",
   "datePublished": "2026-08-11",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-08-20",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -91,8 +91,8 @@
         <ul>
           <li>Loading a <code>.gltf</code> or <code>.glb</code> file with one <code>Content.Load&lt;Model&gt;()</code> call &mdash; no tooling step.</li>
           <li>The order <code>ContentManager</code> searches, and why <code>.xnb</code> always wins.</li>
-          <li>What the runtime importer supports, and the two limits it deliberately keeps.</li>
-          <li>Which glTF features are silently dropped, so you can spot them before shipping.</li>
+          <li>How one runtime model retains every mesh group and exposes multiple skins.</li>
+          <li>How unsupported extensions, approximations and unrepresentable data are refused or reported.</li>
         </ul>
         <p><strong>Before you start</strong> &mdash; <a href="35-model-loading.html">Tutorial 35: Loading 3D Models</a> covers the <code>Model</code>/<code>ModelMesh</code>/<code>ModelMeshPart</code> hierarchy this tutorial produces.</p>
       </div>
@@ -129,21 +129,21 @@ house-&gt;Draw(world, view, projection);</code></pre>
 
       <p>The first row is the one that surprises people. If you are porting an XNA title and its old <code>.xnb</code> models are still in the content tree, dropping a <code>.glb</code> beside them changes nothing &mdash; the <code>.xnb</code> keeps winning. Delete it, or load under a different asset name.</p>
 
-      <h2 id="limits">Two deliberate limits on the runtime path</h2>
+      <h2 id="limits">Runtime shape and the remaining scale limit</h2>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p>The runtime importer <strong>reads only the first mesh group</strong> in the file, and <strong>hardcodes a unit scale of 1.0</strong>.</p>
+        <p>Alpha.1 imports <strong>every mesh group</strong> into one <code>Model</code>, but runtime loading still <strong>hardcodes a unit scale of 1.0</strong>.</p>
       </div>
 
-      <p>Neither is a bug; they are the price of a zero-configuration path. They matter in two common cases:</p>
+      <p>The direct path keeps skinned and unskinned groups together. <code>Model::getSkinsEXTProperty()</code> maps every independent skin to its exact mesh set and palette; the first skin also remains in <code>Model::Tag</code> for compatibility. The scale boundary matters when a file was not authored in glTF's metre units.</p>
 
       <ul>
-        <li><strong>A file containing several independent objects</strong> &mdash; three characters exported into one <code>.glb</code> will yield only the first.</li>
-        <li><strong>A file authored in centimetres</strong> &mdash; Blender and Maya scenes frequently are. At scale 1.0 your model arrives a hundred times too large.</li>
+        <li><strong>Several independent objects or skins</strong> &mdash; all arrive in one runtime <code>Model</code>; use <code>SkinsEXT</code> instead of assuming <code>Tag</code> describes every skin.</li>
+        <li><strong>A file authored in centimetres</strong> &mdash; at scale 1.0 the model arrives a hundred times too large.</li>
       </ul>
 
-      <p>For either case, use the offline converter, which takes an explicit unit scale and emits one asset per mesh group:</p>
+      <p>Use the offline converter when you need a scale multiplier or separately packaged assets per mesh group:</p>
 
       <pre><code class="language-bash"># cna_tool_gltf_to_cnj &lt;input.gltf|.glb&gt; &lt;outDir&gt; &lt;baseName&gt; [unitScale]
 cna_tool_gltf_to_cnj assets/city.glb Content/models city 0.01</code></pre>
@@ -162,24 +162,25 @@ cna_tool_gltf_to_cnj assets/city.glb Content/models city 0.01</code></pre>
           <tr><td>LINEAR, STEP and CUBICSPLINE interpolation</td><td><span class="status-badge status-done">Yes</span></td></tr>
           <tr><td>PBR metallic-roughness materials</td><td><span class="status-badge status-done">Yes</span></td></tr>
           <tr><td>Draco mesh compression</td><td><span class="status-badge status-partial">Optional &mdash; needs libdraco at build time</span></td></tr>
-          <tr><td>Rigid (unskinned) node animation</td><td><span class="status-badge status-partial">Silently dropped</span></td></tr>
-          <tr><td>Factor-only PBR materials (no texture maps)</td><td><span class="status-badge status-partial">Material properties lost</span></td></tr>
-          <tr><td><code>TRIANGLE_STRIP</code>, <code>TRIANGLE_FAN</code>, <code>LINES</code>, <code>POINTS</code></td><td><span class="status-badge status-partial">Refused with a diagnostic</span></td></tr>
+          <tr><td>Rigid (unskinned) node animation</td><td><span class="status-badge status-done">Yes &mdash; <code>ModelAnimationsEXT</code></span></td></tr>
+          <tr><td>Factor-only and vertex-coloured PBR materials</td><td><span class="status-badge status-done">Yes &mdash; keep PBR factors and material state</span></td></tr>
+          <tr><td><code>TRIANGLE_STRIP</code>, <code>TRIANGLE_FAN</code>, <code>LINE_LOOP</code></td><td><span class="status-badge status-done">Converted to equivalent list topology</span></td></tr>
+          <tr><td><code>LINES</code>, <code>LINE_STRIP</code>, <code>POINTS</code></td><td><span class="status-badge status-done">Imported with matching CNA primitive types</span></td></tr>
         </tbody>
       </table>
       </div>
 
-      <h2 id="pitfalls">Three pitfalls worth knowing</h2>
+      <h2 id="pitfalls">Three boundaries worth knowing</h2>
 
-      <p><strong>Rigid animation disappears without warning.</strong> Animation channels are resolved against the skin's joint set, so a channel that targets an ordinary mesh node &mdash; a rotating door, an orbiting moon, a spinning fan &mdash; is discarded and no clip is emitted. There is no diagnostic. If an animation you exported simply is not there, this is the first thing to check.</p>
+      <p><strong>Rigid animation is retained only when <code>Model::Tag</code> is available for it.</strong> An unskinned model exposes scene-node clips as <code>ModelAnimationsEXT</code>, and <code>ApplyClipToBonesEXT()</code> poses the corresponding <code>ModelBone</code> hierarchy. In a file that mixes skins with additional rigid tracks, <code>Tag</code> is already occupied by the compatibility <code>SkinningData</code> pointer; those extra rigid tracks are dropped <em>with a named import diagnostic</em> rather than silently.</p>
 
-      <p><strong>Factor-only materials lose everything.</strong> A material that sets base colour, metallic and roughness as plain numbers, with no texture maps, is downgraded to a <code>BasicEffect</code>, and its base colour factor, alpha mode, alpha cutoff and double-sidedness do not survive. Assign even a small texture and the PBR path is taken instead. See <a href="114-pbr-materials.html">Tutorial 114</a>.</p>
+      <p><strong>Two authored UV sets are the representable maximum.</strong> Each PBR map selects independently between the first two distinct sampled <code>TEXCOORD</code> sets and keeps its own <code>KHR_texture_transform</code>. A map asking for a third distinct set falls back to packed channel 0 and is named in the import report. See <a href="114-pbr-materials.html">Tutorial 114</a>.</p>
 
-      <p><strong>Required extensions are not checked.</strong> CNA does not inspect <code>extensionsRequired</code>. A file that depends on an extension CNA does not implement will load and render <em>incorrectly</em> rather than refuse. Four <code>KHR_</code> extensions are recognised; treat anything beyond them as unverified, and eyeball the result.</p>
+      <p><strong><code>extensionsRequired</code> is enforced.</strong> CNA uses one source-owned extension registry for validation and diagnostics. A required extension it does not claim is refused by name; an unknown optional <code>extensionsUsed</code> entry becomes a warning. Some known extensions are deliberately approximated or only partly implemented, and their exact loss is recorded.</p>
 
       <div class="callout callout--info">
         <span class="callout-icon">&#8505;</span>
-        <p><strong>glTF correctness is an active campaign, not a finished feature.</strong> The CNA project is explicit that its own glTF viewer still displays some assets incorrectly. Runtime loading is genuinely useful today &mdash; but check each asset visually rather than assuming fidelity.</p>
+        <p><strong>Read the public report.</strong> <code>Model::getGltfImportReportEXTProperty()</code> is populated by both direct glTF loading and converter-produced Model <code>.cnj</code>. Its stable diagnostic codes distinguish exact information, generated data, approximations, dropped data and unsupported optional features. This makes alpha.1 substantially more robust, but not universally lossless; inspect the report and verify important assets on the renderer you ship.</p>
       </div>
 
       <h2 id="next">Where to go next</h2>
@@ -199,7 +200,7 @@ cna_tool_gltf_to_cnj assets/city.glb Content/models city 0.01</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>A modern C++ reimplementation of the XNA 4.0 API. 357 public XNA 4.0 types across 46 build-time selectable renderers, with 6,818 GoogleTest case definitions and a 39-scene XNA oracle corpus that the DIRECTX9 renderer matches exactly.</p>
+        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
