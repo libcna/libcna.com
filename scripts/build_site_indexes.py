@@ -17,8 +17,6 @@ UPDATED = "2026-08-20"
 EXCLUDED = {
     "404.html",
     "search.html",
-    "demos/cnademo/CNADEMO.html",
-    "demos/house3ddemo/cna_house3d_demo.html",
 }
 
 # A global release footer changed every page. Only pages whose substantive content was

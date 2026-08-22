@@ -15,16 +15,7 @@ from urllib.parse import unquote, urlparse
 ROOT = Path(__file__).resolve().parent.parent
 SITE = "https://libcna.com"
 INDEX_EXCLUDED = {
-    "404.html", "search.html", "demos/cnademo/CNADEMO.html",
-    "demos/house3ddemo/cna_house3d_demo.html",
-}
-METADATA_EXCLUDED = {
-    "demos/cnademo/CNADEMO.html", "demos/house3ddemo/cna_house3d_demo.html",
-}
-STRICT_HTML_EXCLUDED = {
-    # Checked-in output from Emscripten's shell generator, not hand-authored site HTML.
-    "demos/cnademo/CNADEMO.html",
-    "demos/house3ddemo/cna_house3d_demo.html",
+    "404.html", "search.html",
 }
 
 
@@ -129,26 +120,22 @@ def main() -> int:
             except Exception as exc:
                 errors.append(f"JSON-LD {rel} block {number}: {exc}")
 
-        if rel not in METADATA_EXCLUDED:
-            if not "".join(parser.title_text).strip():
-                errors.append(f"Missing title: {rel}")
-            if not parser.description:
-                errors.append(f"Missing meta description: {rel}")
-            if not parser.canonical:
-                errors.append(f"Missing canonical: {rel}")
-            elif parser.canonical != expected_canonical(rel):
-                errors.append(f"Wrong canonical {rel}: {parser.canonical}")
-            for prop in ("og:title", "og:description"):
-                if not parser.og.get(prop):
-                    errors.append(f"Missing {prop}: {rel}")
+        if not "".join(parser.title_text).strip():
+            errors.append(f"Missing title: {rel}")
+        if not parser.description:
+            errors.append(f"Missing meta description: {rel}")
+        if not parser.canonical:
+            errors.append(f"Missing canonical: {rel}")
+        elif parser.canonical != expected_canonical(rel):
+            errors.append(f"Wrong canonical {rel}: {parser.canonical}")
+        for prop in ("og:title", "og:description"):
+            if not parser.og.get(prop):
+                errors.append(f"Missing {prop}: {rel}")
 
     try:
         import html5lib
         strict_count = 0
         for path in html_files:
-            rel = path.relative_to(ROOT).as_posix()
-            if rel in STRICT_HTML_EXCLUDED:
-                continue
             html5_parser = html5lib.HTMLParser(strict=False, namespaceHTMLElements=False)
             html5_parser.parse(path.read_text(encoding="utf-8"))
             strict_count += 1
@@ -227,7 +214,7 @@ def main() -> int:
     )
     print(f"HTML parsed: {len(html_files)}")
     if strict_count:
-        print(f"Strict HTML5 parse: {strict_count} authored pages; 2 generated Emscripten shells exempt")
+        print(f"Strict HTML5 parse: {strict_count} authored pages")
     print(f"Local/external references inspected: {link_count}")
     print(f"Local fragments inspected: {fragment_count}")
     print("Duplicate IDs: 0")
