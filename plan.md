@@ -131,7 +131,7 @@ Commit: `integration: reconcile parallel feature lanes`, 2026-08-11 18:33:25 +02
 
 Local and origin `develop` were identical, so no choice between them was required.
 Analysis was performed **read-only, in place** in the existing clean checkout at
-`/rv/data/development/github.com/openeggbert/cna`. No worktree was created, nothing was
+`/rv/data/development/github.com/libcna/cna`. No worktree was created, nothing was
 written to CNA, no CNA branch was merged, reset or cleaned, and **no build was run**
 (the environment has strict SSD-wear and RAM limits).
 
