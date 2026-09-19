@@ -77,6 +77,7 @@ MATERIALLY_UPDATED = {
 }
 
 NEW_TAGS = {
+    "/network.html": ["network", "sites", "links", "bible", "demos", "metagl", "meshcraft", "easygl"],
     "/docs/releases.html": ["release", "version", "semver", "alpha", "prerelease", "abi"],
     "/docs/runtime-renderer-selection.html": ["renderer", "runtime", "selection", "fallback", "multi-renderer"],
     "/docs/c-api.html": ["c", "api", "abi", "native", "experimental", "c17"],
