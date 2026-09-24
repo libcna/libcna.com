@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 70: Procedural Geometry - CNA Tutorials</title>
-  <meta name="description" content="Build meshes at runtime in CNA: procedural spheres, cylinders, noise terrain, dynamic VertexBuffer updates, and a marching cubes overview.">
+  <meta name="description" content="Build meshes at runtime in CNA within the graphics profile limits: procedural spheres, cylinders, noise terrain, DynamicVertexBuffer updates, and a marching cubes overview.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/70-procedural-geometry.html">
   <meta property="og:title"       content="Tutorial 70: Procedural Geometry - CNA Tutorials">
-  <meta property="og:description" content="Build meshes at runtime in CNA: procedural spheres, cylinders, noise terrain, dynamic VertexBuffer updates, and a marching cubes overview.">
+  <meta property="og:description" content="Build meshes at runtime in CNA within the graphics profile limits: procedural spheres, cylinders, noise terrain, DynamicVertexBuffer updates, and a marching cubes overview.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/70-procedural-geometry.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 70: Procedural Geometry",
   "url": "https://libcna.com/docs/tutorials/70-procedural-geometry.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -91,37 +91,54 @@
         <ul>
           <li>Generating sphere and cylinder meshes at runtime.</li>
           <li>Driving terrain geometry from a noise function.</li>
-          <li>Updating a dynamic <code>VertexBuffer</code> without reallocating it each frame.</li>
+          <li>Updating a <code>DynamicVertexBuffer</code> without reallocating it each frame.</li>
+          <li>The profile limits (index width, buffer size, primitives per draw) that decide how much you can build in one mesh.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="38-vertex-buffers.html">Tutorial 38: Vertex Buffers and Index Buffers</a> (buffer creation and dynamic updates) and <a href="40-primitive-types.html">Tutorial 40: Primitive Types</a> (which topology to emit). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the thirteen 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="38-vertex-buffers.html">Tutorial 38: Vertex Buffers and Index Buffers</a> (buffer creation and dynamic updates) and <a href="40-primitive-types.html">Tutorial 40: Primitive Types</a> (which topology to emit). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code> (every 3D renderer draws indexed triangle meshes; only <code>HEADLESS</code> and <code>STUB</code> produce no pixels); the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls by default.</p>
       </div>
+
+      <div class="callout callout--warn" id="requirements">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Requirements: graphics-profile limits.</strong> CNA&rsquo;s default <code>GraphicsProfile</code> is <code>Reach</code>, and this snapshot enforces its ceilings on every renderer. For procedural meshes that means: <strong>16-bit indices only</strong> (<code>IndexElementSize::ThirtyTwoBits</code> throws <code>NotSupportedException</code> on Reach, so a mesh is limited to 65,536 vertices), at most <strong>65,535 primitives per draw</strong> (1,048,575 on HiDef), and, on every profile, at most 67,108,863 bytes in one vertex or index buffer. The sphere below has 33 &times; 33 = 1,089 vertices, so it uses 16-bit indices and runs on the default profile. A mesh with more than 65,536 vertices (a dense noise terrain, a marching-cubes chunk) either needs HiDef, requested in the <code>Game</code> constructor before the device exists, or should be split into several meshes as <a href="68-terrain.html">Tutorial 68</a> does:</p>
+      </div>
+      <pre><code class="language-cpp">ProceduralGame() : graphics_(this) {
+    graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef);
+    // Or for the whole project, before the Game is constructed:
+    //   CNA::SetProjectGraphicsProfileEXT(GraphicsProfile::HiDef);   // "CNA/ProjectGraphicsProfile.hpp"
+}</code></pre>
+      <p>The full list of profile ceilings, and the errors you will see when one is exceeded, is in <a href="152-graphics-profiles.html#gates">Tutorial 152: Reach vs HiDef</a>.</p>
+      <p>On HiDef, 32-bit index buffers are implemented by every 3D renderer that draws (<code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL1</code>, <code>WEBGL2</code>, <code>OPENGL4</code>, <code>VULKAN</code>, <code>WEBGPU</code>, <code>SDL_GPU</code>, <code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>METAL</code>, <code>FNA3D</code>, <code>SOFTWARE</code>, <code>PORTABLEGL</code>), and by <code>HEADLESS</code> and <code>STUB</code> for validation; <code>GDI</code> throws.</p>
 
       <h2>Building meshes at runtime</h2>
       <p>CNA's <code>VertexBuffer</code> and <code>IndexBuffer</code> accept raw C++ arrays, so you can generate geometry in CPU code and upload it to the GPU in <code>LoadContent</code> (for static meshes) or during <code>Update</code> (for dynamic meshes). The workflow is:</p>
       <ol>
         <li>Fill a <code>std::vector&lt;VertexPositionNormalTexture&gt;</code> with computed positions, normals, and UVs.</li>
-        <li>Fill a <code>std::vector&lt;uint32_t&gt;</code> with triangle indices.</li>
+        <li>Fill a <code>std::vector&lt;uint16_t&gt;</code> with triangle indices (or <code>uint32_t</code> on HiDef, see Requirements).</li>
         <li>Create a <code>VertexBuffer</code> and <code>IndexBuffer</code> with the appropriate <code>BufferUsage</code>:
           <ul>
-            <li><code>BufferUsage::None</code> — static data, optimised for GPU reads.</li>
-            <li><code>BufferUsage::WriteOnly</code> — hint that data will be uploaded repeatedly (dynamic meshes).</li>
+            <li><code>BufferUsage::WriteOnly</code> — the CPU will only write the buffer, never read it back; <code>GetData</code> on it throws. Use it for meshes you build once and draw many times.</li>
+            <li><code>BufferUsage::None</code> — the buffer may also be read back with <code>GetData</code>.</li>
           </ul>
+          Neither value means &ldquo;static&rdquo; or &ldquo;dynamic&rdquo;; that distinction is made by the buffer class, below.
         </li>
-        <li>Call <code>SetData</code> to upload. For dynamic meshes call <code>SetData</code> every frame (or use buffer orphaning).</li>
+        <li>Call <code>SetData</code> to upload. For meshes you rewrite every frame use a <code>DynamicVertexBuffer</code> and <code>SetDataOptions::Discard</code>: a plain buffer that is currently bound cannot be rewritten (<code>SetData</code> throws <code>InvalidOperationException</code> because the resource is in use).</li>
       </ol>
 
       <h2>Procedural sphere</h2>
-      <p>A UV sphere is parameterised by longitude (phi, 0..2π) and latitude (theta, 0..π). Each ring of vertices steps through theta; each column steps through phi. The normal at any point on the unit sphere is identical to the position vector:</p>
-      <pre><code class="language-cpp">// Returns a pair of {vertices, indices} for a UV sphere
+      <p>A UV sphere is parameterised by longitude (phi, 0..2π) and latitude (theta, 0..π). Each ring of vertices steps through theta; each column steps through phi. The normal at any point on the unit sphere is identical to the position vector. The indices are 16-bit, so the function refuses a sphere with more than 65,536 vertices rather than silently wrapping:</p>
+      <pre><code class="language-cpp">// Returns a pair of {vertices, indices} for a UV sphere (16-bit indices: Reach-safe)
 std::pair&lt;std::vector&lt;VertexPositionNormalTexture&gt;,
-          std::vector&lt;uint32_t&gt;&gt;
+          std::vector&lt;uint16_t&gt;&gt;
 ProceduralSphere(float radius, int rings, int sectors) {
     using namespace Microsoft::Xna::Framework;
     using namespace Microsoft::Xna::Framework::Graphics;
     using V = VertexPositionNormalTexture;
 
+    if ((rings + 1) * (sectors + 1) &gt; 65536)
+        throw std::invalid_argument("sphere needs 32-bit indices (HiDef) or fewer vertices");
+
     std::vector&lt;V&gt;        verts;
-    std::vector&lt;uint32_t&gt; indices;
+    std::vector&lt;uint16_t&gt; indices;
     verts.reserve(static_cast&lt;size_t&gt;((rings + 1) * (sectors + 1)));
 
     const float R    = 1.0f / static_cast&lt;float&gt;(rings);
@@ -143,18 +160,20 @@ ProceduralSphere(float radius, int rings, int sectors) {
         }
     }
 
-    // Build index buffer
+    // Build index buffer. XNA treats clockwise triangles as front faces and the
+    // default state culls counter-clockwise ones, so each triangle is wound
+    // clockwise as seen from outside the sphere (worked out by hand for XNA's rule).
     indices.reserve(static_cast&lt;size_t&gt;(rings * sectors * 6));
     for (int r = 0; r &lt; rings; ++r) {
         for (int s = 0; s &lt; sectors; ++s) {
-            uint32_t cur  = r * (sectors + 1) + s;
-            uint32_t next = cur + sectors + 1;
+            uint16_t cur  = static_cast&lt;uint16_t&gt;(r * (sectors + 1) + s);
+            uint16_t next = static_cast&lt;uint16_t&gt;(cur + sectors + 1);
             indices.push_back(cur);
-            indices.push_back(next);
-            indices.push_back(cur + 1);
             indices.push_back(cur + 1);
             indices.push_back(next);
+            indices.push_back(cur + 1);
             indices.push_back(next + 1);
+            indices.push_back(next);
         }
     }
 
@@ -163,17 +182,17 @@ ProceduralSphere(float radius, int rings, int sectors) {
 
       <p>Upload to the GPU in <code>LoadContent</code>:</p>
       <pre><code class="language-cpp">void LoadContent() override {
-    auto& gd = getGraphicsDeviceProperty();
+    auto&amp; gd = getGraphicsDeviceProperty();
     auto [verts, indices] = ProceduralSphere(1.0f, 32, 32);
 
     sphereVB_ = std::make_unique&lt;VertexBuffer&gt;(
         gd, VertexPositionNormalTexture::getVertexDeclarationStatic(),
-        static_cast&lt;int&gt;(verts.size()), BufferUsage::None);
+        static_cast&lt;int&gt;(verts.size()), BufferUsage::WriteOnly);
     sphereVB_-&gt;SetData(verts.data(), static_cast&lt;int&gt;(verts.size()));
 
     sphereIB_ = std::make_unique&lt;IndexBuffer&gt;(
-        gd, IndexElementSize::ThirtyTwoBits,
-        static_cast&lt;int&gt;(indices.size()), BufferUsage::None);
+        gd, IndexElementSize::SixteenBits,      // ThirtyTwoBits throws on Reach
+        static_cast&lt;int&gt;(indices.size()), BufferUsage::WriteOnly);
     sphereIB_-&gt;SetData(indices.data(), static_cast&lt;int&gt;(indices.size()));
     spherePrimCount_ = static_cast&lt;int&gt;(indices.size()) / 3;
 }</code></pre>
@@ -192,20 +211,21 @@ ProceduralCylinderSide(float radius, float height, int segments) {
         float cz = std::sin(angle);
         float u  = static_cast&lt;float&gt;(i) / segments;
 
-        // Bottom vertex
-        verts.push_back({
-            Vector3(cx * radius, -height * 0.5f, cz * radius),
-            Vector3(cx, 0.0f, cz),   // outward normal
-            Vector2(u, 1.0f)
-        });
-        // Top vertex
+        // Top vertex first, then bottom: with this order the strip's triangles are
+        // clockwise as seen from outside, the front-face winding of XNA's default
+        // (CullCounterClockwise) state.
         verts.push_back({
             Vector3(cx * radius,  height * 0.5f, cz * radius),
-            Vector3(cx, 0.0f, cz),
+            Vector3(cx, 0.0f, cz),   // outward normal
             Vector2(u, 0.0f)
         });
+        verts.push_back({
+            Vector3(cx * radius, -height * 0.5f, cz * radius),
+            Vector3(cx, 0.0f, cz),
+            Vector2(u, 1.0f)
+        });
     }
-    return verts;  // render as TriangleStrip
+    return verts;  // render as TriangleStrip: DrawPrimitives(TriangleStrip, 0, 2 * segments)
 }</code></pre>
 
       <h2>Procedural terrain from noise</h2>
@@ -243,22 +263,21 @@ float FractalNoise(float x, float z, int octaves = 6) {
 }</code></pre>
 
       <h2>Dynamic VertexBuffer update</h2>
-      <p>For geometry that changes every frame (cloth, water mesh, particle ribbons), create the VertexBuffer with <code>BufferUsage::WriteOnly</code> and call <code>SetData</code> with a discard hint each frame. This tells the driver to orphan the old buffer and allocate a fresh one, avoiding a GPU pipeline stall:</p>
-      <pre><code class="language-cpp">// LoadContent — create a dynamic buffer
-dynamicVB_ = std::make_unique&lt;VertexBuffer&gt;(
+      <p>For geometry that changes every frame (cloth, water mesh, particle ribbons), use a <code>DynamicVertexBuffer</code>, the one buffer class that takes a <code>SetDataOptions</code> argument. A plain <code>VertexBuffer</code> has no such overloads, and rewriting one that a previous draw still has bound throws. Passing <code>SetDataOptions::Discard</code> tells the driver to orphan the old contents and allocate fresh storage, avoiding a GPU pipeline stall; <code>NoOverwrite</code> promises not to touch data that is still in flight, for appending. Most CNA renderers honour the hint as a real GPU mapping hint; a few ignore it and always behave like <code>Discard</code>. The typed overload is <code>SetData(const T* data, int startIndex, int elementCount, SetDataOptions)</code>, and the write always lands at the start of the buffer (<code>startIndex</code> only selects where reading from your array begins):</p>
+      <pre><code class="language-cpp">// LoadContent — create a dynamic buffer (capacity MAX_VERTS vertices)
+dynamicVB_ = std::make_unique&lt;DynamicVertexBuffer&gt;(
     gd, VertexPositionNormalTexture::getVertexDeclarationStatic(),
     MAX_VERTS, BufferUsage::WriteOnly);
 
 // Update — called every frame
-void UpdateDynamicMesh(GraphicsDevice& gd,
-                       std::span&lt;const VertexPositionNormalTexture&gt; verts) {
-    // SetData with SetDataOptions::Discard for dynamic updates
+void UpdateDynamicMesh(std::span&lt;const VertexPositionNormalTexture&gt; verts) {
     dynamicVB_-&gt;SetData(
-        0,                     // byte offset
         verts.data(),
+        0,                                   // first element to read from verts
         static_cast&lt;int&gt;(verts.size()),
         SetDataOptions::Discard);
 }</code></pre>
+      <p>A <code>DynamicVertexBuffer</code> can also lose its contents when the device is reset (<code>getIsContentLostProperty()</code> and the <code>ContentLost</code> event, raised on the renderers whose API can lose a device); if it does, upload the mesh again. The member is declared <code>std::unique_ptr&lt;DynamicVertexBuffer&gt; dynamicVB_;</code>.</p>
 
       <h2>Marching cubes overview</h2>
       <p>Marching cubes is a classic algorithm for extracting a triangle mesh from a scalar field (e.g. a 3D density or signed distance function). It processes each cell of a 3D grid, classifies the 8 corners as inside or outside the isosurface (256 possible configurations), and emits zero to five triangles per cell using a pre-computed lookup table. Applications include:</p>
@@ -267,7 +286,7 @@ void UpdateDynamicMesh(GraphicsDevice& gd,
         <li>Metaballs / implicit surfaces</li>
         <li>Medical imaging volume rendering</li>
       </ul>
-      <p>In CNA you would run marching cubes on the CPU each frame (or in a background thread — see <a href="78-multithreading.html">Tutorial 78</a>) and upload the resulting <code>std::vector&lt;VertexPositionNormalTexture&gt;</code> to a dynamic VertexBuffer using the <code>SetDataOptions::Discard</code> pattern above. For volumes larger than about 64³ cells, partial rebuild (only dirty chunks) is essential for real-time performance.</p>
+      <p>In CNA you would run marching cubes on the CPU each frame (or in a background thread — see <a href="78-multithreading.html">Tutorial 78</a>) and upload the resulting <code>std::vector&lt;VertexPositionNormalTexture&gt;</code> to a <code>DynamicVertexBuffer</code> using the <code>SetDataOptions::Discard</code> pattern above (a non-indexed draw needs no index buffer, but each draw is still limited to 65,535 primitives on Reach, 1,048,575 on HiDef). For volumes larger than about 64³ cells, partial rebuild (only dirty chunks) is essential for real-time performance.</p>
 
       <nav class="docs-pagination" aria-label="Page navigation">
         <div class="docs-pagination-prev">
@@ -292,7 +311,7 @@ void UpdateDynamicMesh(GraphicsDevice& gd,
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

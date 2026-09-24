@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 67: Deferred Rendering - CNA Tutorials</title>
-  <meta name="description" content="Implement deferred rendering in CNA with a G-Buffer geometry pass and a full-screen lighting pass supporting many dynamic lights.">
+  <meta name="description" content="Implement deferred rendering in CNA with a HiDef multi-target G-Buffer geometry pass and a full-screen lighting pass supporting many dynamic lights.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/67-deferred-rendering.html">
   <meta property="og:title"       content="Tutorial 67: Deferred Rendering - CNA Tutorials">
-  <meta property="og:description" content="Implement deferred rendering in CNA with a G-Buffer geometry pass and a full-screen lighting pass supporting many dynamic lights.">
+  <meta property="og:description" content="Implement deferred rendering in CNA with a HiDef multi-target G-Buffer geometry pass and a full-screen lighting pass supporting many dynamic lights.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/67-deferred-rendering.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 67: Deferred Rendering",
   "url": "https://libcna.com/docs/tutorials/67-deferred-rendering.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -93,13 +93,49 @@
           <li>The geometry pass and the lighting pass as separate shaders.</li>
           <li>Screen-space light volumes, and why deferred scales to many lights.</li>
           <li>The costs: bandwidth, transparency, and MSAA.</li>
+          <li>The HiDef profile a multi-target G-buffer requires, and which renderers can run it.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="62-mrt.html">Tutorial 62: Multiple Render Targets (MRT)</a> &mdash; the G-buffer is an MRT setup. Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the thirteen 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls. Requires a renderer with render-target support.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="62-mrt.html">Tutorial 62: Multiple Render Targets (MRT)</a> &mdash; the G-buffer is an MRT setup. Requires a 3D-capable renderer with multiple render targets that executes a custom <code>ShaderEffect</code>, such as <code>OPENGLES3</code> or <code>VULKAN</code> (see the table below for all 25 identities); the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls by default, and <code>STUB</code> draws nothing.</p>
       </div>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p>Deferred rendering requires Multiple Render Targets (MRT) and custom Effect shaders. This needs a renderer with multiple render targets and a working custom <code>ShaderEffect</code> &mdash; <code>OPENGLES3</code> and <code>VULKAN</code> both qualify. <code>OPENGLES2</code> and <code>WEBGL1</code> lose MRT entirely, and the thirteen 2D-only renderers have no 3D pipeline at all.</p>
+        <p>Deferred rendering requires Multiple Render Targets (MRT) and custom Effect shaders. This needs a renderer with multiple render targets <em>and</em> a custom <code>ShaderEffect</code> that actually executes, in that renderer&rsquo;s own shader language. <code>OPENGLES2</code> and <code>WEBGL1</code> lose MRT entirely, so do <code>METAL</code>, <code>PORTABLEGL</code> and <code>STUB</code>, and the seven 2D-only renderers have no 3D pipeline at all. Both halves are queryable: <code>gd.SupportsCapability(CNA::GraphicsCapability::MultipleRenderTargets)</code> (the renderer&rsquo;s answer <em>and</em> the profile ceiling) and <code>CustomEffects</code> plus <code>gd.ExecutesShaderEffectSourceEXT()</code>.</p>
+      </div>
+
+      <div class="callout callout--warn" id="requirements">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Requirements: HiDef profile.</strong> CNA&rsquo;s default <code>GraphicsProfile</code> is <code>Reach</code>, which allows one simultaneous render target, and this snapshot enforces it on every renderer. <code>SetRenderTargets</code> with the three G-buffer bindings below throws <code>NotSupportedException</code> until you request HiDef (maximum four targets) in the <code>Game</code> constructor, before the device exists. (A full-resolution G-buffer also has to fit the profile&rsquo;s render-target edge limit: 2048 on Reach, 4096 on HiDef.) The full list of profile ceilings, and the errors you will see when one is exceeded, is in <a href="152-graphics-profiles.html#gates">Tutorial 152: Reach vs HiDef</a>.</p>
+      </div>
+      <pre><code class="language-cpp">DeferredGame() : graphics_(this) {
+    graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef);
+    // Or for the whole project, before the Game is constructed:
+    //   CNA::SetProjectGraphicsProfileEXT(GraphicsProfile::HiDef);   // "CNA/ProjectGraphicsProfile.hpp"
+}</code></pre>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Renderer identities</th>
+              <th scope="col">MRT (HiDef)</th>
+              <th scope="col">Custom shader language</th>
+              <th scope="col">This tutorial&rsquo;s GLSL</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row"><code>OPENGLES3</code>, <code>WEBGL2</code></th><td>Yes, up to 4</td><td>GLSL ES 3.00</td><td>Runs with a <code>#version 300 es</code> / <code>precision highp float;</code> header</td></tr>
+            <tr><th scope="row"><code>OPENGL33</code>, <code>OPENGL4</code></th><td>Yes, up to 4</td><td>Desktop GLSL</td><td>Runs with a <code>#version 330 core</code> header</td></tr>
+            <tr><th scope="row"><code>VULKAN</code></th><td>Yes (device attachment limit)</td><td>SPIR-V only</td><td>Port to SPIR-V</td></tr>
+            <tr><th scope="row"><code>WEBGPU</code></th><td>Yes, 2 to 4</td><td>WGSL</td><td>Port to WGSL</td></tr>
+            <tr><th scope="row"><code>SDL_GPU</code></th><td>Yes, 4 mixed-format targets</td><td>SPIR-V; GLSL text only in a libshaderc build</td><td>Port, or a libshaderc build</td></tr>
+            <tr><th scope="row"><code>DIRECTX11</code>, <code>DIRECTX12</code></th><td>Yes</td><td>HLSL</td><td>Port to HLSL</td></tr>
+            <tr><th scope="row"><code>DIRECTX9</code></th><td>Yes (inherited default plus the profile limit)</td><td>HLSL for SpriteBatch effects; a custom 3D shader is not verified</td><td>Not verified</td></tr>
+            <tr><th scope="row"><code>FNA3D</code>, <code>SOFTWARE</code></th><td>Yes</td><td>None: <code>CustomEffects</code> is false</td><td>Not available</td></tr>
+            <tr><th scope="row"><code>HEADLESS</code></th><td>Accepted (traced)</td><td>Accepted, never executed</td><td>Renders nothing</td></tr>
+            <tr><th scope="row"><code>OPENGLES2</code>, <code>WEBGL1</code>, <code>METAL</code>, <code>PORTABLEGL</code>, <code>STUB</code></th><td>No</td><td>&mdash;</td><td>Not available</td></tr>
+            <tr><th scope="row"><code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code></th><td>No (2D only)</td><td>&mdash;</td><td>Not available</td></tr>
+          </tbody>
+        </table>
       </div>
 
       <h2>Forward vs deferred rendering</h2>
@@ -110,7 +146,7 @@
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>This portable G-buffer uses <code>SurfaceFormat::Color</code>.</strong> The OPENGLES3/Vulkan configurations in this tutorial defer to the framework's Color-only public gate. Skia and IGL have renderer-qualified format promotions, but not a common portable MRT contract for this shader path. Reconstruct position from packed depth rather than depending on a wider target.</p>
+        <p><strong>This portable G-buffer uses <code>SurfaceFormat::Color</code>.</strong> Non-Color render-target formats are HiDef-only and classified per renderer (probed on the GL family, <code>VULKAN</code>, <code>DIRECTX11/12</code>, <code>OPENGL4</code>, <code>SDL_GPU</code>, <code>WEBGPU</code> and <code>SOFTWARE</code>; <code>Color</code> only on <code>FNA3D</code>, <code>DIRECTX9</code>, <code>METAL</code> and <code>HEADLESS</code>), and a request the profile or renderer refuses silently becomes <code>Color</code>. For one implementation that works everywhere, reconstruct position from packed depth rather than depending on a wider target; where you can ask (<code>gd.SupportsSurfaceFormatAsRenderTargetEXT(...)</code>), higher-precision normals and depth are an upgrade, not a requirement.</p>
       </div>
 
       <p>A minimal G-buffer for Blinn-Phong lighting needs three colour targets plus a hardware depth buffer:</p>
@@ -157,7 +193,7 @@ void main() {
 }</code></pre>
 
       <h2>CNA MRT support</h2>
-      <p>CNA exposes Multiple Render Targets through <code>GraphicsDevice::SetRenderTargets</code>, which takes a <code>const std::vector&lt;RenderTargetBinding&gt;&amp;</code>. <code>RenderTargetBinding</code>'s constructor is <strong>explicit</strong> and takes a <code>Texture*</code>, so pass <code>.get()</code> and name the type at each element:</p>
+      <p>CNA exposes Multiple Render Targets through <code>GraphicsDevice::SetRenderTargets</code>, which takes a <code>const std::vector&lt;RenderTargetBinding&gt;&amp;</code>. <code>RenderTargetBinding(RenderTarget2D*)</code> is the XNA-shaped, <em>implicit</em> constructor, so pass <code>.get()</code>; the code below names the type at each element for readability:</p>
       <pre><code class="language-cpp">// LoadContent — create the G-buffer targets
 auto&amp; gd = getGraphicsDeviceProperty();
 int w = gd.getPresentationParametersProperty().getBackBufferWidthProperty();
@@ -179,13 +215,13 @@ gBufferBindings_ = std::vector&lt;RenderTargetBinding&gt;{
 };</code></pre>
       <div class="callout callout--note">
         <span class="callout-icon">&#9432;</span>
-        <p>There is no <code>GraphicsCapabilities</code> type in CNA, so the maximum number of simultaneous attachments cannot be queried at runtime. Three or four targets is the safe ceiling to design against.</p>
+        <p>The number of simultaneous attachments can be queried: <code>gd.GetRendererLimitEXT(CNA::RendererLimit::MaxColorAttachments)</code> returns a value with a <code>known</code> flag (known on <code>VULKAN</code>, <code>SDL_GPU</code>, <code>WEBGPU</code> and <code>OPENGL4</code>; unknown elsewhere), and <code>gd.GetRendererCapabilityProfileEXT()</code> carries the whole picture. XNA&rsquo;s ceiling is four (the profile allows one on Reach), so three or four targets is the safe number to design against.</p>
       </div>
 
       <h2>Building the two shaders</h2>
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Both passes in this example are <code>ShaderEffect</code>s.</strong> Alpha.1's XNA/FNA Effect Framework bytecode loader is a separate renderer-qualified path. Here <code>ShaderEffect</code> takes renderer-native source and has no <code>Parameters</code> collection or techniques; uniforms go through <code>SetUniformXxx()</code> and textures through <code>SetTexture(unit, tex)</code>, after <code>Apply()</code>. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+        <p><strong>Both passes in this example are <code>ShaderEffect</code>s.</strong> This snapshot&rsquo;s XNA/FNA Effect Framework bytecode loader is a separate renderer-qualified path (<code>FNA3D</code> always, thirteen more identities behind default-OFF <code>CNA_*_COMPILED_EFFECTS</code> options). Here <code>ShaderEffect</code> takes renderer-native source and has no <code>Parameters</code> collection or techniques; uniforms go through <code>SetUniformXxx()</code> and textures through <code>SetTexture(unit, tex)</code>, with <code>Apply()</code> called first. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
       </div>
       <p>The constructor takes <strong>three</strong> arguments &mdash; the device and the two shader sources. The strings are the GLSL text itself, never a file path, so read the files yourself:</p>
       <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
@@ -200,13 +236,13 @@ lightEffect_ = std::make_unique&lt;ShaderEffect&gt;(
     System::IO::File::ReadAllText("Content/effects/lighting.vert.glsl"),
     System::IO::File::ReadAllText("Content/effects/lighting.frag.glsl"));
 
-// Neither constructor throws on a compile failure -- this is the only signal.
+// Neither constructor throws on a compile failure. IsEffectValid() is the quick
+// check; GetCompileErrorEXT() returns the compiler log (also written to stderr).
 if (!gBufferEffect_-&gt;IsEffectValid() || !lightEffect_-&gt;IsEffectValid()) {
-    // The GLSL did not compile. Do not draw with it.
+    // The shader did not compile. Do not draw with it.
 }
 
-// Sampler unit assignments, set once. Apply() binds the program first;
-// SetUniformXxx() writes into whatever program is currently bound.
+// Sampler unit assignments, set once. Apply() first is the portable order.
 gBufferEffect_-&gt;Apply();
 gBufferEffect_-&gt;SetUniformInt("DiffuseTexture", 0);
 
@@ -289,8 +325,7 @@ void main() {
     gd.Clear(ClearOptions::Target | ClearOptions::DepthBuffer,
              Color::Black, 1.0f, 0);
 
-    // Apply() binds the program; SetUniformXxx() and SetTexture() write into
-    // whatever program is currently bound, so this order is mandatory.
+    // Apply() first is the portable order for a ShaderEffect.
     gBufferEffect_-&gt;Apply();
     SetMat4(*gBufferEffect_, "View",       view_);
     SetMat4(*gBufferEffect_, "Projection", proj_);
@@ -341,8 +376,8 @@ void main() {
         DrawFullscreenQuad(gd);
     }
     gd.setBlendStateProperty(BlendState::Opaque);
-
-    gd.Present();
+    // No gd.Present(): Game presents after Draw() returns, so a manual call
+    // would present the frame twice.
 }</code></pre>
       <p>Note what is <em>not</em> in that loop: there is no per-light <code>Apply()</code>. <code>Apply()</code> binds the compiled program, and the program stays bound across the whole light loop, so calling it again per light would only rebind what is already there. The uniforms change per iteration; the program does not.</p>
 
@@ -356,10 +391,14 @@ void main() {
       <h2>Disadvantages</h2>
       <ul>
         <li><strong>Transparency</strong> — transparent objects cannot be stored in the G-buffer correctly because their fragments must blend with what is behind them. The standard workaround is to render all opaque geometry through the deferred pipeline, then render transparent objects in a separate forward pass on top.</li>
-        <li><strong>MSAA</strong> — hardware MSAA does not work with MRT without extensions (requires per-sample evaluation). Use FXAA or TAA as a post-process antialiasing alternative.</li>
+        <li><strong>MSAA</strong> — hardware MSAA combined with MRT is supported where every target in the set has the same applied sample count: on the GL family (<code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL2</code>, true MRT MSAA with a resolve) and on <code>VULKAN</code>; mismatched counts throw. The resolved multisampled G-buffer is more memory-hungry and shading it per sample is a further cost, so many deferred renderers use FXAA or TAA as a post-process antialiasing alternative instead (see <a href="65-msaa.html">Tutorial 65</a>).</li>
         <li><strong>Memory bandwidth</strong> — reading and writing several G-buffer textures per pixel has a significant bandwidth cost. On mobile GPUs with tile-based architectures this can be mitigated using render pass subpasses (Vulkan) or framebuffer fetch extensions (OpenGL ES).</li>
         <li><strong>Single material model</strong> — the G-buffer layout bakes in the shading model. Mixed material types (PBR + toon) require storing a material ID and branching in the lighting shader.</li>
+        <li><strong>Stock effects write one target</strong> — <code>BasicEffect</code> and the other stock effects write attachment 0 only, so a G-buffer fill needs your own <code>ShaderEffect</code> (as above) or a compiled effect.</li>
       </ul>
+
+      <h2>Alternatives that ship in this snapshot</h2>
+      <p>If the goal is &ldquo;many lights&rdquo; rather than deferred shading itself, the CNAEXT engine layer (build with <code>-DCNA_CNAEXT=ON</code>, off by default; see <a href="115-cnaext-overview.html#engine">Tutorial 115</a>) offers <code>CNA::Graphics::ClusteredForwardEffect</code>, a forward effect that accepts up to 128 lights per fragment (<code>kMaxLightsPerFragment</code>) with CPU or compute light assignment, and reports <code>isSupported()</code> at run time. It keeps forward rendering&rsquo;s advantages &mdash; transparency, MSAA and a single material model &mdash; and needs no MRT; its own renderer and profile requirements are the engine layer&rsquo;s, so check <code>isSupported()</code> on the renderer you ship. For screen-space effects that want depth and normals, <code>DepthNormalPrepass</code> renders them for you, and <code>RenderPipeline</code> can consume them (<a href="66-bloom.html#engine-layer">Tutorial 66</a> shows the pipeline). The engine layer is documented by CNA as still moving, so pin the CNA revision you build against.</p>
 
       <nav class="docs-pagination" aria-label="Page navigation">
         <div class="docs-pagination-prev">
@@ -384,7 +423,7 @@ void main() {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

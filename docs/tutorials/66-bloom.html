@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 66: Post-Processing: Blur and Bloom - CNA Tutorials</title>
-  <meta name="description" content="Implement Gaussian blur and bloom post-processing in CNA using RenderTarget chains, bright-pass thresholding, and additive composite blending.">
+  <meta name="description" content="Implement Gaussian blur and bloom post-processing in CNA using RenderTarget chains, bright-pass thresholding, and additive composite blending, plus the engine-layer BloomPass.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/66-bloom.html">
   <meta property="og:title"       content="Tutorial 66: Post-Processing: Blur and Bloom - CNA Tutorials">
-  <meta property="og:description" content="Implement Gaussian blur and bloom post-processing in CNA using RenderTarget chains, bright-pass thresholding, and additive composite blending.">
+  <meta property="og:description" content="Implement Gaussian blur and bloom post-processing in CNA using RenderTarget chains, bright-pass thresholding, and additive composite blending, plus the engine-layer BloomPass.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/66-bloom.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 66: Post-Processing: Blur and Bloom",
   "url": "https://libcna.com/docs/tutorials/66-bloom.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -92,14 +92,51 @@
           <li>The bright-pass, blur, composite pipeline end to end.</li>
           <li>Separating a Gaussian blur into horizontal and vertical passes.</li>
           <li>Chaining render targets between passes and compositing additively.</li>
+          <li>Which renderers can run the chain, what the HiDef profile changes, and the ready-made engine-layer <code>BloomPass</code>.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="24-post-processing.html">Tutorial 24: Post-Processing with Render Targets</a> (the post-process pass structure), <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (each pass is a shader) and <a href="22-blend-modes.html">Tutorial 22: Blend Modes and Alpha Compositing</a> (the additive composite). Requires a renderer with render-target support and a working custom <code>ShaderEffect</code>.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="24-post-processing.html">Tutorial 24: Post-Processing with Render Targets</a> (the post-process pass structure), <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (each pass is a shader) and <a href="22-blend-modes.html">Tutorial 22: Blend Modes and Alpha Compositing</a> (the additive composite). Requires a 3D-capable renderer with render targets that <em>executes</em> a custom <code>ShaderEffect</code> (the table below lists all 25 identities).</p>
       </div>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p>This tutorial needs a renderer that supports several <code>RenderTarget2D</code> objects <em>and</em> executes a custom <code>ShaderEffect</code> &mdash; <code>OPENGLES3</code> and <code>VULKAN</code> both do. The thirteen 2D-only renderers do not. Watch out for <code>BGFX</code>, which accepts a <code>ShaderEffect</code> and silently ignores it, so a bloom pass there composites nothing and reports no error.</p>
+        <p>This tutorial needs a renderer that supports several <code>RenderTarget2D</code> objects <em>and</em> executes a custom <code>ShaderEffect</code>, and the shader text has to be in that renderer&rsquo;s own language. The seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) do not, and <code>STUB</code> draws nothing. Watch out for <code>HEADLESS</code>, which accepts a <code>ShaderEffect</code>, records it and never executes it, so a bloom pass there composites nothing and reports no error. <code>FNA3D</code>, <code>SOFTWARE</code>, <code>METAL</code> and <code>PORTABLEGL</code> report <code>CustomEffects</code> false, so the hand-written route is unavailable on them.</p>
       </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Renderer identities</th>
+              <th scope="col">This tutorial&rsquo;s custom-shader chain</th>
+              <th scope="col">HDR (float) chain, HiDef</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row"><code>OPENGLES3</code>, <code>WEBGL2</code></th><td>Runs; GLSL ES 3.00 (prepend <code>#version 300 es</code> and <code>precision highp float;</code>)</td><td>If the float-target probe passes</td></tr>
+            <tr><th scope="row"><code>OPENGL33</code>, <code>OPENGL4</code></th><td>Runs after switching to <code>#version 330 core</code></td><td>If the float-target probe passes</td></tr>
+            <tr><th scope="row"><code>OPENGLES2</code>, <code>WEBGL1</code></th><td>Needs a GLSL ES 1.00 port (no <code>in</code>/<code>out</code>, no <code>float[]</code> constants)</td><td>No: float targets are refused on the ES 2 generation</td></tr>
+            <tr><th scope="row"><code>VULKAN</code></th><td>Needs SPIR-V (GLSL text is refused)</td><td>Per-format device properties decide</td></tr>
+            <tr><th scope="row"><code>SDL_GPU</code></th><td>SPIR-V, or GLSL only in a libshaderc build (Linux, Android)</td><td>If the device supports the format</td></tr>
+            <tr><th scope="row"><code>WEBGPU</code></th><td>Needs WGSL</td><td>If the device supports the format</td></tr>
+            <tr><th scope="row"><code>DIRECTX11</code>, <code>DIRECTX12</code></th><td>Needs HLSL (<code>ps_5_0</code>)</td><td>If the device supports the format</td></tr>
+            <tr><th scope="row"><code>DIRECTX9</code></th><td>HLSL is compiled for SpriteBatch effects; not verified for this chain</td><td>No</td></tr>
+            <tr><th scope="row"><code>FNA3D</code>, <code>SOFTWARE</code>, <code>METAL</code>, <code>PORTABLEGL</code></th><td>Not available: <code>CustomEffects</code> is false</td><td><code>SOFTWARE</code> has float targets but cannot run the shaders; the others have none</td></tr>
+            <tr><th scope="row"><code>HEADLESS</code></th><td>Accepted, never executed (composites nothing)</td><td>No</td></tr>
+            <tr><th scope="row"><code>STUB</code>, <code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code></th><td>Not available (no 3D; the 2D-only renderers throw on 3D calls)</td><td>No</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout callout--warn" id="requirements">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Requirements: graphics profile.</strong> CNA&rsquo;s default <code>GraphicsProfile</code> is <code>Reach</code>, enforced on every renderer. The LDR chain below (RGBA8 <code>SurfaceFormat::Color</code>, one target bound at a time) runs on Reach, with one limit: a render target&rsquo;s edge may be at most <strong>2048</strong> pixels, so a full-resolution scene target on a display wider or taller than that (a 4K back buffer, say) needs HiDef (4096). The HDR variant needs HiDef in any case: on Reach a request for <code>SurfaceFormat::HdrBlendable</code> or another float format silently becomes <code>Color</code> and your bloom clips. Request it in the <code>Game</code> constructor, before the device exists:</p>
+      </div>
+      <pre><code class="language-cpp">BloomGame() : graphics_(this) {
+    graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef);
+    // Or for the whole project, before the Game is constructed:
+    //   CNA::SetProjectGraphicsProfileEXT(GraphicsProfile::HiDef);   // "CNA/ProjectGraphicsProfile.hpp"
+}</code></pre>
+      <p>The full list of profile ceilings, and the errors you will see when one is exceeded, is in <a href="152-graphics-profiles.html#gates">Tutorial 152: Reach vs HiDef</a>.</p>
 
       <h2>Bloom pipeline overview</h2>
       <p>Bloom is a post-processing effect that makes bright areas of the scene appear to glow and bleed into surrounding pixels, simulating the way camera lenses handle very bright light sources. The standard real-time bloom pipeline has three stages:</p>
@@ -117,7 +154,7 @@
       <h2>RenderTarget chain</h2>
       <p>Bloom requires a chain of off-screen surfaces:</p>
       <ul>
-        <li><code>sceneRT</code> — full-resolution scene colour (SurfaceFormat::Color).</li>
+        <li><code>sceneRT</code> — full-resolution scene colour (SurfaceFormat::Color; see the HDR variant below).</li>
         <li><code>brightRT</code> — same resolution, holds only the bright-pass output.</li>
         <li><code>blurHRT</code> — half-resolution (or same), holds the horizontally blurred bright pixels.</li>
         <li><code>blurVRT</code> — half-resolution, holds the final blurred bloom texture.</li>
@@ -141,7 +178,7 @@ blurVRT_   = std::make_unique&lt;RenderTarget2D&gt;(gd, w/2, h/2,
       <h2>Building the two post-process shaders</h2>
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Both bloom shaders in this example are <code>ShaderEffect</code>s.</strong> Alpha.1's separate XNA/FNA Effect Framework bytecode path is available only on capable renderer builds. Here <code>ShaderEffect</code> takes renderer-native source and has no <code>Parameters</code> collection; uniforms go through <code>SetUniformXxx()</code> and textures through <code>SetTexture(unit, tex)</code>, after <code>Apply()</code>. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+        <p><strong>Both bloom shaders in this example are <code>ShaderEffect</code>s.</strong> This snapshot&rsquo;s separate compiled XNA/FNA Effect Framework bytecode path is available on <code>FNA3D</code> always and on thirteen more identities only behind default-OFF <code>CNA_*_COMPILED_EFFECTS</code> build options. Here <code>ShaderEffect</code> takes renderer-native source and has no <code>Parameters</code> collection; uniforms go through <code>SetUniformXxx()</code> and textures through <code>SetTexture(unit, tex)</code>, with <code>Apply()</code> called first. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
       </div>
       <p>Both passes share one fullscreen vertex shader and differ only in the fragment stage. The constructor takes <strong>three</strong> arguments &mdash; the device and the two shader sources &mdash; and the strings are the source text itself, never a file path, so read the files yourself:</p>
       <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
@@ -157,19 +194,20 @@ blurEffect_ = std::make_unique&lt;ShaderEffect&gt;(
     gd, fullscreenVert,
     System::IO::File::ReadAllText("Content/Shaders/gaussblur.frag.glsl"));
 
-// Neither constructor throws on a compile failure -- this is the only signal.
+// Neither constructor throws on a compile failure. IsEffectValid() is the quick
+// check; GetCompileErrorEXT() returns the compiler log (also written to stderr).
 if (!brightEffect_-&gt;IsEffectValid() || !blurEffect_-&gt;IsEffectValid()) {
-    // The GLSL did not compile. Do not draw with it.
+    // The shader did not compile. Do not draw with it.
 }
 
-// Sampler unit assignments, set once. Apply() binds the program first;
-// SetUniformXxx() writes into whatever program is currently bound.
+// Sampler unit assignments, set once. Apply() first is the portable order.
 brightEffect_-&gt;Apply();
 brightEffect_-&gt;SetUniformInt("Texture", 0);
 blurEffect_-&gt;Apply();
 blurEffect_-&gt;SetUniformInt("Texture", 0);</code></pre>
 
       <h2>Bright-pass threshold shader</h2>
+      <p>The two fragment shaders below are shown without their version header. On <code>OPENGLES3</code> and <code>WEBGL2</code> prepend <code>#version 300 es</code> and <code>precision highp float;</code>; on <code>OPENGL33</code> and <code>OPENGL4</code> prepend <code>#version 330 core</code>. Other renderers need the same maths in their own language (see the table above).</p>
       <p>The bright-pass fragment shader computes the luminance of each pixel and discards those below a threshold. A smooth knee function (instead of a hard cut) avoids aliasing at the boundary:</p>
       <pre><code class="language-glsl">// brightpass.frag
 uniform sampler2D Texture;
@@ -217,8 +255,8 @@ void main() {
 
       <p>In the C++ Draw loop, apply the blur in two passes. Both write into whichever render target is currently bound, so wrap one pass in a helper and call it twice:</p>
       <pre><code class="language-cpp">// Run one separable blur pass into the currently bound render target.
-// Apply() binds this effect's compiled program; SetUniformXxx() and
-// SetTexture() write into whatever program is bound, so the order is mandatory.
+// Apply() first is the portable order: it binds this effect's program before
+// the SetUniformXxx() and SetTexture() calls below.
 void ApplyBlur(GraphicsDevice&amp; gd, Texture2D&amp; src, Vector2 direction) {
     blurEffect_-&gt;Apply();
 
@@ -247,8 +285,14 @@ gd.Clear(Color::Black);
 ApplyBlur(gd, *blurHRT_, Vector2(0.0f, 1.0f));</code></pre>
 
       <h2>Additive blending composite</h2>
-      <p>The final composite step draws the blurred bloom texture over the original scene using additive blending. CNA's <code>BlendState::Additive</code> sets <code>SourceBlend = One</code> and <code>DestinationBlend = One</code>, which simply adds the RGB values:</p>
-      <pre><code class="language-cpp">// Composite: draw scene, then add bloom on top
+      <p>The final composite step draws the blurred bloom texture over the original scene using additive blending. Be careful which additive state you mean: CNA&rsquo;s <code>BlendState::Additive</code> preset is XNA&rsquo;s, with source blend <code>SourceAlpha</code> and destination blend <code>One</code>, so it adds the RGB values <em>scaled by the source alpha</em>. That is wrong here, because the bright-pass output carries a fading alpha and <code>Color::White * intensity</code> scales alpha too. For a plain &ldquo;destination plus source&rdquo; composite, build a state with <code>Blend::One</code> on both sides. The presets are pre-bound and immutable, so construct a fresh <code>BlendState</code> (once, in <code>LoadContent</code>) and never change it after it has been used:</p>
+      <pre><code class="language-cpp">// LoadContent: a pure additive state, result = destination + source
+addOnly_.setColorSourceBlendProperty(Blend::One);
+addOnly_.setAlphaSourceBlendProperty(Blend::One);
+addOnly_.setColorDestinationBlendProperty(Blend::One);
+addOnly_.setAlphaDestinationBlendProperty(Blend::One);   // BlendState addOnly_; is a member
+
+// Composite: draw scene, then add bloom on top
 gd.SetRenderTarget(nullptr);  // back buffer
 gd.Clear(Color::Black);
 
@@ -258,7 +302,7 @@ spriteBatch_-&gt;Draw(*sceneRT_, Vector2::Zero, Color::White);
 spriteBatch_-&gt;End();
 
 // Add bloom additively
-spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, BlendState::Additive);
+spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, addOnly_);
 spriteBatch_-&gt;Draw(*blurVRT_,
     Rectangle(0, 0,
               gd.getPresentationParametersProperty().getBackBufferWidthProperty(),
@@ -277,8 +321,16 @@ fragColor = vec4(pow(ldr, vec3(1.0 / 2.2)), 1.0);</code></pre>
       <p>Without tone mapping, additively blended bloom will clip to white in LDR targets. Keep the bloom intensity low (multiply the bloom texture by a factor of 0.3–0.8) to avoid over-brightening.</p>
       <div class="callout callout--note">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>This portable bloom chain is LDR.</strong> The EasyGL/Vulkan tutorial configurations defer to the framework's <code>SurfaceFormat::Color</code>-only gate, so every stage is RGBA8. Skia promotes <code>HdrBlendable</code>/<code>Rgba64</code> and IGL promotes <code>Single</code>, but neither makes an HDR chain portable across the shader-capable renderers used here. Encode headroom explicitly if you need one cross-renderer implementation.</p>
+        <p><strong>This portable bloom chain is LDR.</strong> Every stage is RGBA8 <code>SurfaceFormat::Color</code>, which every render-target renderer accepts. An HDR chain is possible on HiDef with the renderers that probe float targets (see the table above): ask <code>gd.SupportsCapability(CNA::GraphicsCapability::HalfFloatRenderTargets)</code> (or <code>FloatRenderTargets</code>) first, request <code>SurfaceFormat::HdrBlendable</code>, and read <code>getFormatProperty()</code> on the target you got, because a request the profile or renderer refuses silently becomes <code>Color</code>. Where you need one cross-renderer implementation, encode headroom explicitly in RGBA8.</p>
       </div>
+      <pre><code class="language-cpp">// LoadContent (HiDef): an HDR scene target where the renderer can render to it
+const SurfaceFormat sceneFormat =
+    gd.SupportsCapability(CNA::GraphicsCapability::HalfFloatRenderTargets)
+        ? SurfaceFormat::HdrBlendable
+        : SurfaceFormat::Color;
+sceneRT_ = std::make_unique&lt;RenderTarget2D&gt;(gd, w, h, false,
+               sceneFormat, DepthFormat::Depth24Stencil8);
+// sceneRT_-&gt;getFormatProperty() tells you what you actually got.</code></pre>
 
       <h2>Putting it all together</h2>
       <p>A complete per-frame bloom Draw sequence looks like this:</p>
@@ -315,14 +367,36 @@ fragColor = vec4(pow(ldr, vec3(1.0 / 2.2)), 1.0);</code></pre>
     spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, BlendState::Opaque);
     spriteBatch_-&gt;Draw(*sceneRT_, Vector2::Zero, Color::White);
     spriteBatch_-&gt;End();
-    spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, BlendState::Additive);
+    spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, addOnly_);
     spriteBatch_-&gt;Draw(*blurVRT_,
         Rectangle(0, 0, gd.getPresentationParametersProperty().getBackBufferWidthProperty(), gd.getPresentationParametersProperty().getBackBufferHeightProperty()),
         Color::White * bloomIntensity_);
     spriteBatch_-&gt;End();
-
-    gd.Present();
+    // No gd.Present(): Game presents after Draw() returns, so a manual call
+    // would present the frame twice.
 }</code></pre>
+
+      <h2 id="engine-layer">The engine-layer route: RenderPipeline and BloomPass</h2>
+      <p>Everything above is the portable, hand-written chain, and it is the right way to learn what bloom does. If you build with <code>-DCNA_CNAEXT=ON</code> (off by default, see <a href="115-cnaext-overview.html#engine">Tutorial 115</a>), this snapshot also ships the engine layer&rsquo;s version: <code>CNA::Graphics::BloomPass</code> (a soft-knee bright-pass, a half-resolution blur pyramid of up to eight levels and an additive composite) driven by <code>RenderPipeline</code>, together with <code>TonemapPass</code>, <code>FxaaPass</code> and <code>PostProcessChain</code>. The pipeline owns the scene target (choosing <code>HdrBlendable</code>, then <code>Vector4</code>, then <code>Color</code>), and it degrades to plain direct rendering, or a copy-through for a single pass, where the renderer has no float targets or cannot run custom effects. HDR needs HiDef and a float-target capability; the shader passes need <code>CustomEffects</code> and a packaged shader variant the renderer accepts, which today means <code>OPENGLES2/3</code>, <code>OPENGL33</code>, <code>WEBGL1/2</code> (EasyGL; the ES 3.00 sources are not expected to compile on the ES 2 profiles), <code>OPENGL4</code>, <code>VULKAN</code>, <code>WEBGPU</code> and <code>SDL_GPU</code> (only in a libshaderc build). <code>DIRECTX9/11/12</code>, <code>METAL</code>, <code>FNA3D</code>, <code>SOFTWARE</code>, <code>HEADLESS</code> and <code>PORTABLEGL</code> get the copy-through.</p>
+      <pre><code class="language-cpp">#include "CNA/Graphics/RenderPipeline.hpp"   // -DCNA_CNAEXT=ON
+
+using namespace CNA::Graphics;
+
+// LoadContent (HiDef for the HDR scene target)
+pipeline_ = std::make_unique&lt;RenderPipeline&gt;(gd);
+pipeline_-&gt;resize(1280, 720);
+auto&amp; settings = pipeline_-&gt;getSettings();
+settings.setHDREnabled(true);
+settings.setBloomEnabled(true);
+settings.setBloomThreshold(0.5f);
+settings.setBloomIntensity(1.5f);
+settings.setTonemappingMode(TonemappingMode::Aces);
+
+// Draw
+pipeline_-&gt;begin(Color::CornflowerBlue);   // binds the scene target
+drawScene(gd);
+pipeline_-&gt;end();                         // extract, blur, composite, tone-map into the back buffer</code></pre>
+      <p>The engine layer is documented by CNA as still moving, so pin the CNA revision you build against.</p>
 
       <nav class="docs-pagination" aria-label="Page navigation">
         <div class="docs-pagination-prev">
@@ -347,7 +421,7 @@ fragColor = vec4(pow(ldr, vec3(1.0 / 2.2)), 1.0);</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 61: Occlusion Queries - CNA Tutorials</title>
-  <meta name="description" content="Use OcclusionQuery in CNA to count GPU-visible fragments and gate expensive effects like lens flare, light shafts, and hardware LOD selection without CPU stalls.">
+  <meta name="description" content="Use OcclusionQuery in CNA (HiDef profile required) to count GPU-visible fragments and gate expensive effects like lens flare, light shafts, and hardware LOD selection without CPU stalls.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/61-occlusion-query.html">
   <meta property="og:title"       content="Tutorial 61: Occlusion Queries - CNA Tutorials">
-  <meta property="og:description" content="Use OcclusionQuery in CNA to count GPU-visible fragments and gate expensive effects like lens flare, light shafts, and hardware LOD selection without CPU stalls.">
+  <meta property="og:description" content="Use OcclusionQuery in CNA (HiDef profile required) to count GPU-visible fragments and gate expensive effects like lens flare, light shafts, and hardware LOD selection without CPU stalls.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/61-occlusion-query.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 61: Occlusion Queries",
   "url": "https://libcna.com/docs/tutorials/61-occlusion-query.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -92,14 +92,51 @@
           <li>Wrapping a draw call in <code>OcclusionQuery::Begin()</code> / <code>End()</code> and reading <code>PixelCount</code>.</li>
           <li>Why <code>IsComplete</code> matters, and the ring-buffer pattern that hides query latency.</li>
           <li>Using visibility results without stalling the CPU on the GPU.</li>
+          <li>Which renderers support queries at all, and the HiDef profile they require.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> (drawing the geometry you are querying) and <a href="44-bounding-volumes.html">Tutorial 44: Bounding Volumes and Spatial Queries</a> (visibility tests generally). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the thirteen 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls. The implementation notes here are written for the <code>OPENGLES3</code> and <code>VULKAN</code> renderers.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> (drawing the geometry you are querying) and <a href="44-bounding-volumes.html">Tutorial 44: Bounding Volumes and Spatial Queries</a> (visibility tests generally). Requires a 3D-capable renderer that implements occlusion queries, such as <code>OPENGLES3</code>, <code>OPENGL33</code> or <code>VULKAN</code> (the table below lists all 25 identities); the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls by default, and <code>STUB</code> draws nothing. The implementation notes at the end cover the GL family and <code>VULKAN</code>.</p>
       </div>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Occlusion queries are a per-renderer capability.</strong> <code>OcclusionQuery</code> relies on real GPU query objects &mdash; <code>GL_ARB_occlusion_query</code> on the GL family, a query pool on Vulkan. A renderer that has none inherits <code>CreateOcclusionQuery()</code>&rsquo;s default, which returns <code>nullptr</code>. Two concrete negatives: <code>OPENGLES2</code> and <code>WEBGL1</code> <strong>lose occlusion queries entirely</strong>, and the thirteen 2D-only renderers throw on 3D calls.</p>
-      <p><strong>Query the capability, and know its limits.</strong> The base is explicit only for multi-stream input, compiled effects and stencil; most other entries default to <code>true</code>. <code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code> and <code>SDL_GPU</code> supply no override, so a positive occlusion-query answer from them means only &ldquo;not known to be unsupported&rdquo;. Test on the renderer you ship.</p>
+        <p><strong>Occlusion queries are a per-renderer capability.</strong> <code>OcclusionQuery</code> relies on real GPU query objects &mdash; core GL query objects on the GL family, a query pool on Vulkan, the native query of Direct3D and WebGPU, an exact CPU count on <code>SOFTWARE</code>. The public <code>OcclusionQuery</code> constructor never hands you an unusable object: it throws <code>NotSupportedException</code> when the profile is Reach, when <code>SupportsCapability(GraphicsCapability::OcclusionQuery)</code> is false, or when the renderer&rsquo;s factory returns nothing (<code>SDL_GPU</code> and <code>METAL</code> throw from the factory itself). <code>OPENGLES2</code> and <code>WEBGL1</code> <strong>lose occlusion queries entirely</strong>; so do <code>SDL_GPU</code> (its vendored SDL_gpu has no query API), <code>METAL</code>, <code>PORTABLEGL</code> and <code>STUB</code>, and the seven 2D-only renderers throw on 3D calls.</p>
+        <p><strong>Query the capability, and know its limits.</strong> Ask <code>gd.SupportsCapability(GraphicsCapability::OcclusionQuery)</code> before you build a technique around queries. Note that the answer does <em>not</em> include the profile: a <code>true</code> still throws under Reach. Only <code>DIRECTX9</code> inherits the shared default without an override (its factory returns nothing, and the constructor then throws, if the device lacks queries); <code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>SDL_GPU</code>, <code>VULKAN</code> and the others answer explicitly.</p>
+      </div>
+
+      <div class="callout callout--warn" id="requirements">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Requirements: HiDef profile.</strong> CNA&rsquo;s default <code>GraphicsProfile</code> is <code>Reach</code>, and this snapshot enforces it on every renderer. Constructing an <code>OcclusionQuery</code> under Reach throws <code>NotSupportedException</code>, so every example on this page throws on default settings until you request HiDef in the <code>Game</code> constructor, before the device exists:</p>
+      </div>
+      <pre><code class="language-cpp">LensFlareGame() : graphics_(this) {
+    graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef);
+    // Or for the whole project, before the Game is constructed:
+    //   CNA::SetProjectGraphicsProfileEXT(GraphicsProfile::HiDef);   // "CNA/ProjectGraphicsProfile.hpp"
+}</code></pre>
+      <p>The full list of profile ceilings, and the errors you will see when one is exceeded, is in <a href="152-graphics-profiles.html#gates">Tutorial 152: Reach vs HiDef</a>.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Renderer identities</th>
+              <th scope="col">Occlusion queries (HiDef)</th>
+              <th scope="col">What <code>PixelCount</code> means</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row"><code>OPENGL33</code></th><td>Yes</td><td>A real sample tally where the driver accepts <code>GL_SAMPLES_PASSED</code> (desktop drivers do)</td></tr>
+            <tr><th scope="row"><code>OPENGLES3</code>, <code>WEBGL2</code></th><td>Yes</td><td>A flag: 0 or 1, from <code>GL_ANY_SAMPLES_PASSED</code>, unless the driver accepts the exact query</td></tr>
+            <tr><th scope="row"><code>OPENGL4</code></th><td>Yes</td><td>Always a real tally</td></tr>
+            <tr><th scope="row"><code>VULKAN</code></th><td>Yes</td><td>A real tally only when the device has the precise-occlusion feature</td></tr>
+            <tr><th scope="row"><code>WEBGPU</code></th><td>Yes</td><td>Exact</td></tr>
+            <tr><th scope="row"><code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>FNA3D</code></th><td>Yes</td><td>A real tally</td></tr>
+            <tr><th scope="row"><code>SOFTWARE</code></th><td>Yes</td><td>Exact CPU count</td></tr>
+            <tr><th scope="row"><code>HEADLESS</code></th><td>Accepted (validated and traced)</td><td>Nothing is rasterised, so there is no meaningful count</td></tr>
+            <tr><th scope="row"><code>OPENGLES2</code>, <code>WEBGL1</code></th><td>No</td><td>&mdash;</td></tr>
+            <tr><th scope="row"><code>SDL_GPU</code>, <code>METAL</code>, <code>PORTABLEGL</code>, <code>STUB</code></th><td>No (the constructor throws)</td><td>&mdash;</td></tr>
+            <tr><th scope="row"><code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code></th><td>No (2D only, 3D calls throw)</td><td>&mdash;</td></tr>
+          </tbody>
+        </table>
       </div>
 
       <h2>The OcclusionQuery Class</h2>
@@ -112,8 +149,12 @@
         <li><strong>Portal occlusion</strong> — draw a portal quad and skip rendering the rooms it connects to if the portal itself is hidden.</li>
         <li><strong>Impostor switching</strong> — switch from a 3D mesh to a 2D billboard impostor when the object is too small on screen (combining occlusion with screen-space size estimation).</li>
       </ul>
-      <p>Construction simply takes a reference to the <code>GraphicsDevice</code>:</p>
-      <pre><code class="language-cpp">auto query = std::make_unique&lt;OcclusionQuery&gt;(getGraphicsDeviceProperty());</code></pre>
+      <p>Construction simply takes a reference to the <code>GraphicsDevice</code>. It throws <code>NotSupportedException</code> when the profile or the renderer cannot do queries (see Requirements above), so guard it with the capability check when you must run on renderers that lack them:</p>
+      <pre><code class="language-cpp">auto&amp; gd = getGraphicsDeviceProperty();
+std::unique_ptr&lt;OcclusionQuery&gt; query;
+if (gd.SupportsCapability(CNA::GraphicsCapability::OcclusionQuery)) {
+    query = std::make_unique&lt;OcclusionQuery&gt;(gd);   // still throws on Reach
+}</code></pre>
 
       <h2>Begin() and End()</h2>
       <p>Surround the proxy geometry draw calls with <code>query.Begin()</code> and <code>query.End()</code>:</p>
@@ -126,16 +167,17 @@ drawSunProxy(gd);
 query_-&gt;End();</code></pre>
       <p>Important rules for the Begin/End block:</p>
       <ul>
-        <li>You <em>must not</em> nest queries — only one query may be active (between Begin and End) at a time per <code>GraphicsDevice</code>.</li>
+        <li>You <em>must not</em> nest or repeat a query. <code>Begin()</code> throws <code>InvalidOperationException</code> if that same query object is already between <code>Begin</code> and <code>End</code>, and also if its previous result was never observed through <code>IsComplete</code> (&ldquo;IsComplete must be queried before beginning this occlusion query again&rdquo;). <code>End()</code> without a <code>Begin()</code> throws as well. Whether several <em>different</em> query objects may be active at once on one device is up to the renderer, so keep to one at a time unless you have tested the renderer you ship.</li>
         <li>Do not change the render target, blend state, or depth-stencil state inside the query block in unexpected ways. The depth test must be enabled (and configured correctly for your scene) for the fragment count to be meaningful.</li>
         <li>The proxy geometry should be <strong>cheap to render</strong> — the point is to get a visibility answer, not to draw something beautiful. Disable colour writes during the proxy draw (set <code>ColorWriteChannels::None</code>) so the query does not contribute any visible pixels to the frame.</li>
       </ul>
       <pre><code class="language-cpp">// Best practice: disable colour writes during the proxy draw
 // so the query result does not affect the visible image.
-ColorWriteChannels saved = gd.BlendState.ColorWriteChannels;
+// BlendState::Opaque is a pre-bound preset, so copy it before changing it;
+// once a state object is bound to the device it can no longer be modified.
 BlendState noColor = BlendState::Opaque;
 noColor.setColorWriteChannelsProperty(ColorWriteChannels::None);
-gd.setBlendStateProperty(noColor);
+gd.setBlendStateProperty(noColor);   // do not mutate noColor after this line
 
 query_-&gt;Begin();
 drawSunProxy(gd);
@@ -151,19 +193,20 @@ if (queryPending_ &amp;&amp; query_-&gt;getIsCompleteProperty()) {
     lastPixelCount_ = query_-&gt;getPixelCountProperty();
     queryPending_   = false;
 }</code></pre>
-      <p>If <code>IsComplete</code> returns <code>false</code>, simply keep using the result from the previous frame. For effects like lens flare, a one- or two-frame lag is completely imperceptible to the player.</p>
+      <p>The rule is enforced: asking for <code>PixelCount</code> before the query is complete throws <code>InvalidOperationException</code> (&ldquo;The occlusion query has not completed; query IsComplete before reading PixelCount.&rdquo;), and a <code>Begin()</code> on a query whose previous result was never observed through <code>IsComplete</code> throws too. If <code>IsComplete</code> returns <code>false</code>, simply keep using the result from the previous frame. For effects like lens flare, a one- or two-frame lag is completely imperceptible to the player.</p>
 
       <h2>PixelCount</h2>
       <p><code>OcclusionQuery::PixelCount</code> returns the number of fragment samples that passed the depth test during the query. The exact interpretation depends on what proxy geometry you drew:</p>
       <ul>
         <li><strong>0</strong> — the proxy was fully occluded. The light source or effect is completely hidden behind other geometry.</li>
         <li><strong>Non-zero</strong> — at least some of the proxy was visible. The value can be used to scale the flare intensity proportionally: <code>float visibility = clamp(pixelCount / float(maxProxyPixels), 0.0f, 1.0f);</code></li>
-        <li>On MSAA framebuffers the count may reflect <em>sample</em> coverage, not pixel coverage, and may be larger than you expect. Normalise by <code>MultiSampleCount</code> if needed.</li>
+        <li>On <code>OPENGLES3</code> and <code>WEBGL2</code> the count is only a flag: <strong>0 or 1</strong>, because their only core occlusion target is the boolean <code>GL_ANY_SAMPLES_PASSED</code>. A coverage ratio computed from it would be 1/area, not a fraction. Ask <code>query.isPixelCountPreciseEXT()</code> (a CNA extension) whether you are holding a real tally before dividing by an area; the lens-flare example below only needs &ldquo;zero or not&rdquo;, so it works either way.</li>
+        <li>Where the count is precise, on MSAA framebuffers it may reflect <em>sample</em> coverage, not pixel coverage, and be larger than you expect. Normalise by the applied sample count if you divide by an area.</li>
       </ul>
 
       <h2>The Latency Problem and the Ring-Buffer Pattern</h2>
-      <p>The most critical pitfall with occlusion queries is GPU-CPU synchronisation. If you call <code>PixelCount</code> before the result is ready, the driver must <strong>stall the CPU</strong> until the GPU has finished — this is a pipeline bubble that can cost several milliseconds per frame and destroy performance.</p>
-      <p>The safe solution is to decouple the query submission from the result read by one or more frames. A simple boolean flag achieves this for a single query. For multiple simultaneous queries (e.g., one per light source), use a ring buffer of query objects:</p>
+      <p>The most critical pitfall with occlusion queries is GPU-CPU synchronisation. Reading a result in the same frame you issued the query would force the CPU to wait for the GPU &mdash; a pipeline bubble that can cost several milliseconds per frame and destroy performance. CNA does not let you fall into it silently: <code>PixelCount</code> throws until <code>IsComplete</code> has said the result is ready, so the safe pattern is also the only working one.</p>
+      <p>The safe solution is to decouple the query submission from the result read by one or more frames. A simple boolean flag achieves this for a single query. For multiple simultaneous queries (e.g., one per light source), use a ring buffer of query objects (each one is observed through <code>IsComplete</code> before it is begun again, so the ring below never trips the &ldquo;previous result was not observed&rdquo; check):</p>
       <pre><code class="language-cpp">// Ring buffer of N queries (N = max pipeline depth, typically 2-3)
 static constexpr int QUERY_LAG = 2;
 std::unique_ptr&lt;OcclusionQuery&gt; queries_[QUERY_LAG];
@@ -193,10 +236,22 @@ writeIdx_ = (writeIdx_ + 1) % QUERY_LAG;</code></pre>
       <h2>Complete Example: Lens Flare Visibility</h2>
       <p>The following example renders a lens flare sprite that fades in and out smoothly based on the GPU occlusion result for a small sun proxy sphere. The flare alpha is smoothed over time to avoid jarring one-frame pop-ins caused by the query latency.</p>
 
-      <pre><code class="language-cpp">class LensFlareGame final : public Game {
-    std::unique_ptr&lt;OcclusionQuery&gt; query_;
+      <pre><code class="language-cpp">// A minimal camera helper used by the examples in this series. It is application
+// code, not a CNA type; Tutorial 34 builds a fuller FpsCamera.
+struct Camera {
+    Matrix view = Matrix::CreateLookAt(Vector3::Zero, Vector3(0.2f, 0.3f, -1.0f), Vector3::Up);
+    Matrix projection = Matrix::CreatePerspectiveFieldOfView(
+        MathHelper::ToRadians(60.0f), 16.0f / 9.0f, 0.1f, 5000.0f);
+    const Matrix&amp; View() const       { return view; }
+    const Matrix&amp; Projection() const { return projection; }
+};
+
+class LensFlareGame final : public Game {
+    GraphicsDeviceManager          graphics_;
+    std::unique_ptr&lt;OcclusionQuery&gt; query_;       // null where queries are unavailable
     Texture2D       flareTex_;
     std::unique_ptr&lt;SpriteBatch&gt;   spriteBatch_;
+    Camera          camera_;
 
     bool   queryPending_   = false;
     int    lastPixelCount_ = 0;
@@ -205,9 +260,22 @@ writeIdx_ = (writeIdx_ + 1) % QUERY_LAG;</code></pre>
     // World-space position of the sun
     Vector3 sunWorldPos_ = Vector3(500.0f, 800.0f, -2000.0f);
 
+public:
+    LensFlareGame() : graphics_(this) {
+        // OcclusionQuery construction throws on the default Reach profile.
+        graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef);
+    }
+
+protected:
     void LoadContent() override {
-        auto& gd = getGraphicsDeviceProperty();
-        query_       = std::make_unique&lt;OcclusionQuery&gt;(gd);
+        auto&amp; gd = getGraphicsDeviceProperty();
+        // HiDef is not enough on its own: OPENGLES2, WEBGL1, SDL_GPU, METAL,
+        // PORTABLEGL and STUB have no queries. Fall back to "always visible".
+        if (gd.SupportsCapability(CNA::GraphicsCapability::OcclusionQuery)) {
+            query_ = std::make_unique&lt;OcclusionQuery&gt;(gd);
+        } else {
+            lastPixelCount_ = 1;
+        }
         flareTex_    = getContentProperty().Load&lt;Texture2D&gt;("textures/lens_flare");
         spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(gd);
     }
@@ -217,7 +285,7 @@ writeIdx_ = (writeIdx_ + 1) % QUERY_LAG;</code></pre>
         gd.Clear(Color::Black);
 
         // --- 1. Consume last frame's query result (non-blocking) ---
-        if (queryPending_ &amp;&amp; query_-&gt;getIsCompleteProperty()) {
+        if (query_ &amp;&amp; queryPending_ &amp;&amp; query_-&gt;getIsCompleteProperty()) {
             lastPixelCount_ = query_-&gt;getPixelCountProperty();
             queryPending_   = false;
         }
@@ -231,7 +299,7 @@ writeIdx_ = (writeIdx_ + 1) % QUERY_LAG;</code></pre>
         drawScene(gd);
 
         // --- 3. Issue occlusion query for sun proxy (no colour output) ---
-        if (!queryPending_) {
+        if (query_ &amp;&amp; !queryPending_) {
             // Disable colour writes so the proxy dot does not affect the image
             BlendState noWrite = BlendState::Opaque;
             noWrite.setColorWriteChannelsProperty(ColorWriteChannels::None);
@@ -261,14 +329,14 @@ writeIdx_ = (writeIdx_ + 1) % QUERY_LAG;</code></pre>
                 spriteBatch_-&gt;End();
             }
         }
-
-        gd.Present();
+        // No gd.Present(): Game presents after Draw() returns.
     }
 };</code></pre>
+      <p>Two details of the example matter. The flare only needs to know &ldquo;was any of the proxy visible&rdquo;, so <code>lastPixelCount_ &gt; 0</code> is correct even on <code>OPENGLES3</code> and <code>WEBGL2</code>, where the count is just 0 or 1. And <code>Draw</code> does not call <code>Present()</code>: the <code>Game</code> presents in its own end-of-frame step, so a manual call would present twice. For a partial-visibility fade on renderers with a real tally, gate on <code>query_-&gt;isPixelCountPreciseEXT()</code> and divide by the pixel count you expect the proxy to cover.</p>
 
       <h2>Implementation Notes: the GL family and Vulkan</h2>
-      <p>On the GL family (internally EasyGL), <code>OcclusionQuery</code> uses <code>glGenQueries</code> / <code>glBeginQuery(GL_SAMPLES_PASSED, id)</code> / <code>glEndQuery</code> / <code>glGetQueryObjectiv(id, GL_QUERY_RESULT_AVAILABLE, &amp;ready)</code>. The <code>GL_SAMPLES_PASSED</code> query counts individual MSAA samples; divide by <code>GraphicsDevice.PresentationParameters.MultiSampleCount</code> to get pixel-level counts on MSAA framebuffers.</p>
-      <p>On the <code>VULKAN</code> renderer, CNA allocates a <code>VkQueryPool</code> with <code>VK_QUERY_TYPE_OCCLUSION</code> and submits <code>vkCmdBeginQuery</code> / <code>vkCmdEndQuery</code> into the command buffer. Results are retrieved with <code>vkGetQueryPoolResults</code> using <code>VK_QUERY_RESULT_WITH_AVAILABILITY_BIT</code> to avoid blocking the CPU.</p>
+      <p>On the GL family (internally EasyGL), <code>OcclusionQuery</code> uses core query objects &mdash; <code>glGenQueries</code> / <code>glBeginQuery</code> / <code>glEndQuery</code> / <code>glGetQueryObjectiv(id, GL_QUERY_RESULT_AVAILABLE, &amp;ready)</code> &mdash; and no <code>ARB</code> extension. It probes <code>GL_SAMPLES_PASSED</code> once per process and keeps it if the driver accepts it (desktop GL, <code>OPENGL33</code>); otherwise it falls back to the boolean <code>GL_ANY_SAMPLES_PASSED</code> (<code>OPENGLES3</code>, <code>WEBGL2</code>), and <code>isPixelCountPreciseEXT()</code> reports which one you got. <code>OPENGL4</code> always uses the exact <code>GL_SAMPLES_PASSED</code>. The exact query counts individual MSAA samples, so on an MSAA framebuffer normalise by the applied sample count when you need pixel-level counts.</p>
+      <p>On the <code>VULKAN</code> renderer, CNA allocates a <code>VkQueryPool</code> with <code>VK_QUERY_TYPE_OCCLUSION</code> and submits <code>vkCmdBeginQuery</code> / <code>vkCmdEndQuery</code> into the command buffer. Results are retrieved with <code>vkGetQueryPoolResults</code> using <code>VK_QUERY_RESULT_WITH_AVAILABILITY_BIT</code> to avoid blocking the CPU. The count is exact only when the device offers the <code>occlusionQueryPrecise</code> feature; <code>isPixelCountPreciseEXT()</code> tells you. The Direct3D, WebGPU, FNA3D and <code>SOFTWARE</code> renderers use their own real queries (the CPU rasteriser counts exactly).</p>
 
       <nav class="docs-pagination" aria-label="Page navigation">
         <div class="docs-pagination-prev">
@@ -293,7 +361,7 @@ writeIdx_ = (writeIdx_ + 1) % QUERY_LAG;</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

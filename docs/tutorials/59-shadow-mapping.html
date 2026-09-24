@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 59: Shadow Mapping - CNA Tutorials</title>
-  <meta name="description" content="Implement real-time shadow mapping in CNA with a two-pass depth render, light-space matrix, PCF soft shadows, and shadow acne bias. Full GLSL and C++ draw loop included.">
+  <meta name="description" content="Implement real-time shadow mapping in CNA: a two-pass depth render with hand-written shaders, light-space matrix, PCF soft shadows and acne bias, plus the CNAEXT ShadowMap engine layer and shadow-receiving stock effects.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/59-shadow-mapping.html">
   <meta property="og:title"       content="Tutorial 59: Shadow Mapping - CNA Tutorials">
-  <meta property="og:description" content="Implement real-time shadow mapping in CNA with a two-pass depth render, light-space matrix, PCF soft shadows, and shadow acne bias. Full GLSL and C++ draw loop included.">
+  <meta property="og:description" content="Implement real-time shadow mapping in CNA: a two-pass depth render with hand-written shaders, light-space matrix, PCF soft shadows and acne bias, plus the CNAEXT ShadowMap engine layer and shadow-receiving stock effects.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/59-shadow-mapping.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 59: Shadow Mapping",
   "url": "https://libcna.com/docs/tutorials/59-shadow-mapping.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -92,14 +92,28 @@
           <li>The two-pass shadow-map algorithm end to end.</li>
           <li>Rendering depth from the light into a <code>RenderTarget2D</code> and building the light-space matrix.</li>
           <li>Sampling the shadow map, softening it with PCF, and tuning bias to kill shadow acne.</li>
+          <li>Which renderers can run a hand-written shadow pass, and the ready-made <code>ShadowMap</code> engine-layer route that ships in this snapshot.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="23-render-targets.html">Tutorial 23: Render Targets for Off-Screen Rendering</a> (the depth pass renders to a target), <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (the comparison happens in your own shader) and <a href="33-matrices.html">Tutorial 33: Matrices and Transformations</a> (light-space transforms). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the thirteen 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls. Requires a renderer with render-target support.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="23-render-targets.html">Tutorial 23: Render Targets for Off-Screen Rendering</a> (the depth pass renders to a target), <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (the comparison happens in your own shader) and <a href="33-matrices.html">Tutorial 33: Matrices and Transformations</a> (light-space transforms). Requires a 3D-capable renderer with off-screen render targets, such as <code>OPENGLES3</code> or <code>OPENGL33</code>; the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls by default, and <code>STUB</code> draws nothing. The table under <a href="#platform-limitations">Platform Limitations</a> names all 25 renderer identities.</p>
       </div>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p>Shadow mapping requires an off-screen <code>RenderTarget2D</code> and custom GLSL shaders. It needs a renderer with off-screen render targets and a custom <code>ShaderEffect</code> that actually executes &mdash; <code>OPENGLES3</code> and <code>VULKAN</code> both qualify. The thirteen 2D-only renderers do not. Those two tutorial configurations use the framework's <code>SurfaceFormat::Color</code> path, so this example stores depth packed into RGBA8; Skia and IGL's promoted format exceptions do not make float targets portable.</p>
+        <p><strong>Two routes to shadows.</strong> This tutorial first teaches the technique by hand &mdash; an off-screen <code>RenderTarget2D</code> and your own <code>ShaderEffect</code> source &mdash; because that is how you learn what every shadow system does. That route needs a renderer that has render targets, <em>executes</em> a custom <code>ShaderEffect</code>, and takes shader text in its own language: the GLSL ES 3.00 shown here runs as written on <code>OPENGLES3</code> and <code>WEBGL2</code> only, and the other 3D renderers need a port (see the table under <a href="#platform-limitations">Platform Limitations</a>). This snapshot also ships a ready-made route &mdash; the CNAEXT <code>ShadowMap</code> engine layer plus shadow-receiving stock effects &mdash; described in <a href="#engine-layer">The engine-layer route</a>; it needs <code>-DCNA_CNAEXT=ON</code>.</p>
+        <p>The hand-written example stores depth packed into RGBA8 (<code>SurfaceFormat::Color</code>), which works on every renderer that can render to a texture. Float shadow maps are a HiDef capability you query, not a portable assumption; CNA&rsquo;s own <code>ShadowMap</code> uses <code>SurfaceFormat::Single</code> where the renderer can render to it and packs into <code>Color</code> otherwise.</p>
       </div>
+
+      <div class="callout callout--warn" id="requirements">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Requirements: graphics profile.</strong> CNA&rsquo;s default <code>GraphicsProfile</code> is <code>Reach</code>, and this snapshot enforces the Reach ceilings on every renderer. The hand-written route below runs on the default profile as long as the shadow map is an RGBA8 target of at most 2048 &times; 2048: Reach caps render-target edges at 2048, and a larger request throws <code>NotSupportedException</code>. The 4096 &times; 4096 map suggested below for large outdoor scenes, a <code>SurfaceFormat::Single</code> map, and the engine layer&rsquo;s <code>ShadowQuality::Ultra</code> (4096) all need <code>HiDef</code>. Request it in the constructor, before the device exists:</p>
+      </div>
+      <pre><code class="language-cpp">MyGame::MyGame() : graphics_(this) {
+    graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef);
+    // Or, for the whole project, before the Game is constructed:
+    //   CNA::SetProjectGraphicsProfileEXT(GraphicsProfile::HiDef);   // "CNA/ProjectGraphicsProfile.hpp"
+}</code></pre>
+      <p>The full list of profile ceilings, and the errors you will see when one is exceeded, is in <a href="152-graphics-profiles.html#gates">Tutorial 152: Reach vs HiDef</a>.</p>
+      <p>Without HiDef a request for a float render-target format does not throw: it silently becomes <code>Color</code>, so read <code>getFormatProperty()</code> on the target you actually got.</p>
 
       <p>Shadow mapping is the dominant real-time shadow technique used in 3D games. The algorithm is conceptually elegant: before rendering the visible scene, render it from the light's point of view, recording only depth. This "shadow map" records how far the light can see in each direction. During the main render pass, for each fragment you compute where it would land in the light's view and compare its depth against the stored shadow map depth. If the fragment is farther from the light than what the map recorded, something else was in between — the fragment is in shadow.</p>
 
@@ -109,22 +123,22 @@
         <li><strong>Depth pass (light's POV):</strong> Set the render target to a depth-format texture (the shadow map). Render the entire scene using a minimal vertex shader that transforms positions into light space. The fragment shader is empty or writes only the depth. The hardware depth buffer is written automatically at the shadow map resolution.</li>
         <li><strong>Lighting pass (camera's POV):</strong> Restore the normal render target (the back buffer). For each vertex, additionally compute its position in light space and pass it to the fragment shader as a varying. In the fragment shader, project that light-space position into shadow map texture coordinates and sample the shadow map. Compare the sampled depth against the current fragment's light-space depth. If the fragment is deeper (farther from the light), it is shadowed.</li>
       </ol>
-      <p>The shadow map is a <code>Texture2D</code> (not a cubemap) for directional and spot lights. Point lights require six shadow maps (one per cubemap face) or a special dual-paraboloid encoding, but that is beyond the scope of this tutorial.</p>
+      <p>The shadow map is a <code>Texture2D</code> (not a cubemap) for directional and spot lights. Point lights require six shadow maps (one per cubemap face) or a special dual-paraboloid encoding; that is beyond the scope of the hand-written route here, but the engine layer&rsquo;s <code>CubeShadowMap</code> implements the six-face version (see <a href="#engine-layer">The engine-layer route</a>).</p>
 
       <h2>Depth Render Pass to RenderTarget2D</h2>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>The tutorial's portable target is <code>SurfaceFormat::Color</code>.</strong> OPENGLES3 and Vulkan defer to the framework's Color-only gate, so this cross-renderer example packs depth into RGBA8. Skia and IGL's promoted exceptions do not supply the same custom-shader/MRT portability contract.</p>
+        <p><strong>The tutorial's portable target is <code>SurfaceFormat::Color</code>.</strong> Every renderer that can render to a texture can render to Color, so packing depth into RGBA8 works everywhere this technique does. Float targets are worth using when you can ask for them: on a HiDef device, test <code>gd.SupportsCapability(GraphicsCapability::FloatRenderTargets)</code> (or <code>gd.SupportsSurfaceFormatAsRenderTargetEXT(SurfaceFormat::Single)</code>), and fall back to the packed layout when it answers false. The capability is probed per device on <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL2</code>, <code>OPENGL4</code>, <code>VULKAN</code>, <code>SDL_GPU</code>, <code>WEBGPU</code>, <code>DIRECTX11</code> and <code>DIRECTX12</code>, always true on <code>SOFTWARE</code>, and false elsewhere.</p>
       </div>
 
-      <p>Create the shadow map as a <code>RenderTarget2D</code> in <code>SurfaceFormat::Color</code>, with a real hardware depth buffer for the depth pass itself. A 1024×1024 shadow map is standard for local shadows; 2048×2048 or 4096×4096 for large outdoor scenes with sun shadows. Using a power-of-two size ensures hardware mip generation works correctly if needed.</p>
+      <p>Create the shadow map as a <code>RenderTarget2D</code> in <code>SurfaceFormat::Color</code>, with a real hardware depth buffer for the depth pass itself. A 1024×1024 shadow map is standard for local shadows; 2048×2048 or 4096×4096 for large outdoor scenes with sun shadows (4096 needs HiDef, see <a href="#requirements">Requirements</a>). Using a power-of-two size ensures hardware mip generation works correctly if needed.</p>
       <pre><code class="language-cpp">// Create shadow map render target
 shadowMap_ = std::make_unique&lt;RenderTarget2D&gt;(
     gd,
     1024, 1024,
     false,                            // no mipmaps
-    SurfaceFormat::Color,             // RGBA8 - portable for this renderer pair
+    SurfaceFormat::Color,             // RGBA8 - works on every renderer with render targets
     DepthFormat::Depth24              // hardware depth buffer for the depth pass
 );</code></pre>
       <p>The colour target stores depth as a packed RGBA8 value written by the fragment shader; <code>DepthFormat::Depth24</code> is the hardware depth buffer that performs the actual depth test during the pass. They serve different purposes and both are needed.</p>
@@ -169,7 +183,7 @@ Matrix lightProj = Matrix::CreateOrthographic(40.0f, 40.0f, 1.0f, 60.0f);
 
 // Combine: this is what gets uploaded to the depth-pass vertex shader
 Matrix lightSpaceMatrix_ = lightView * lightProj;</code></pre>
-      <p>The orthographic extents (40×40 in the example) should tightly wrap the visible scene. An overly large frustum wastes shadow map resolution — each shadow map texel covers a larger world-space area, making shadows appear blockier. For best quality, compute tight bounds around the current camera frustum (a technique called "cascaded shadow maps" or "fitted shadow maps").</p>
+      <p>The orthographic extents (40×40 in the example) should tightly wrap the visible scene. An overly large frustum wastes shadow map resolution — each shadow map texel covers a larger world-space area, making shadows appear blockier. For best quality, fit the volume tightly around what the camera can see (a "fitted shadow map"), or split the view frustum into several depth ranges with one map each ("cascaded shadow maps"). The engine layer implements both: <code>ShadowMap</code> fits an orthographic volume to the scene bounds you give it, and <code>CascadedShadowMap</code> uses two to four sphere-fitted cascades packed into one atlas.</p>
 
       <h2>Shadow Map Sampling in the Lighting Shader</h2>
       <p>In the lighting pass vertex shader, compute the fragment's position in light space and pass it to the fragment shader as a varying:</p>
@@ -230,17 +244,99 @@ float inShadow = (proj.z - bias &gt; shadowMapDepth) ? 0.0 : 1.0;</code></pre>
 float cosTheta = clamp(dot(N, L), 0.0, 1.0);
 float bias     = max(0.01 * (1.0 - cosTheta), 0.001);</code></pre>
 
-      <h2>Platform Limitations</h2>
-      <p>Shadow mapping has the following platform and renderer constraints in CNA:</p>
+      <h2 id="platform-limitations">Platform Limitations</h2>
+      <p>Shadow mapping has the following platform and renderer constraints in CNA. Three separate questions decide whether it works on a given renderer: does it render 3D into an off-screen target, does it <em>execute</em> a custom <code>ShaderEffect</code> in a language you can supply, and (for the ready-made route) do its stock lit effects sample a shadow map. All 25 renderer identities are accounted for below.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Renderer identities</th>
+              <th scope="col">Custom <code>ShaderEffect</code> source</th>
+              <th scope="col">This tutorial&rsquo;s hand-written route</th>
+              <th scope="col">Engine-layer <code>ShadowMap</code> can generate</th>
+              <th scope="col">Stock lit effects sample the map</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row"><code>OPENGLES3</code>, <code>WEBGL2</code></th><td>GLSL ES 3.00</td><td>Runs as written</td><td>Yes</td><td>Yes</td></tr>
+            <tr><th scope="row"><code>OPENGL33</code>, <code>OPENGL4</code></th><td>Desktop GLSL</td><td>Runs after replacing the <code>#version 300 es</code> and <code>precision</code> lines with <code>#version 330 core</code></td><td>Yes</td><td>Yes</td></tr>
+            <tr><th scope="row"><code>OPENGLES2</code>, <code>WEBGL1</code></th><td>GLSL ES 1.00</td><td>Needs an ES 1.00 port (<code>attribute</code>/<code>varying</code>, <code>gl_FragColor</code>, <code>texture2D</code>, a texel-size uniform instead of <code>textureSize</code>); none is provided here</td><td>Not expected: the engine&rsquo;s GLSL ES sources are 3.00 (not verified)</td><td>Yes (declared)</td></tr>
+            <tr><th scope="row"><code>VULKAN</code></th><td>SPIR-V only; GLSL text is refused</td><td>Compile the GLSL to SPIR-V offline (or use a shader package); text as written cannot be passed</td><td>Yes (SPIR-V variant)</td><td>Yes</td></tr>
+            <tr><th scope="row"><code>SDL_GPU</code></th><td>SPIR-V; GLSL text only in builds where libshaderc was found (Linux, Android)</td><td>Needs a libshaderc build (<code>CustomEffects</code> is false otherwise), or a port to SPIR-V; GLSL dialect details are in <a href="52-custom-shaders.html">Tutorial 52</a></td><td>Only when <code>CustomEffects</code> is true</td><td>Yes</td></tr>
+            <tr><th scope="row"><code>WEBGPU</code></th><td>WGSL</td><td>Needs a WGSL port</td><td>Yes (WGSL variant)</td><td>Yes</td></tr>
+            <tr><th scope="row"><code>DIRECTX11</code>, <code>DIRECTX12</code></th><td>HLSL (<code>vs_5_0</code>/<code>ps_5_0</code>, entry point <code>main</code>)</td><td>Needs an HLSL port</td><td>No</td><td>No (state accepted and ignored)</td></tr>
+            <tr><th scope="row"><code>DIRECTX9</code></th><td>HLSL, compiled for SpriteBatch effects; no 3D draw path was found that consumes a custom effect</td><td>Not verified; treat as unavailable</td><td>No</td><td>No</td></tr>
+            <tr><th scope="row"><code>FNA3D</code>, <code>SOFTWARE</code>, <code>METAL</code>, <code>PORTABLEGL</code></th><td>None: <code>CustomEffects</code> is false</td><td>Not available</td><td>No</td><td>No</td></tr>
+            <tr><th scope="row"><code>HEADLESS</code></th><td>Accepted, recorded, never executed</td><td>Renders nothing</td><td>No</td><td>No</td></tr>
+            <tr><th scope="row"><code>STUB</code> and the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>)</th><td>None (no 3D pipeline)</td><td>Not supported: no off-screen depth render targets and no programmable 3D pipeline</td><td>No</td><td>No</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>A renderer without a shadow-sampling shader accepts the shadow state and ignores it: you get an unshadowed image, not an error. <code>gd.SupportsShadowSamplingEXT()</code> tells you which case you are in.</p>
       <ul>
-        <li><strong>Portable surface format limit:</strong> the OPENGLES3/Vulkan configurations above defer to <code>Texture::ValidateFormat</code>, which accepts only <code>SurfaceFormat::Color</code>. Skia has a broad promoted set and IGL promotes <code>Rg32</code>/<code>Single</code>, but those renderer-qualified exceptions do not change this portable example.</li>
-        <li><strong><code>OPENGLES3</code>:</strong> Supported. The shadow map is a <code>SurfaceFormat::Color</code> render target sampled as an ordinary <code>sampler2D</code>, with <code>unpackDepth()</code> reconstructing the stored value.</li>
-        <li><strong><code>VULKAN</code>:</strong> Render targets are real here, with a real stencil PSO, MSAA resolve and device-queried depth formats. The same <code>SurfaceFormat::Color</code> restriction applies.</li>
-        <li><strong>The thirteen 2D-only renderers:</strong> Shadow mapping is not supported. They have no off-screen depth render targets and no programmable pipeline, and 3D calls throw deterministically rather than drawing nothing.</li>
-        <li><strong>Android / WebGL:</strong> <code>OPENGLES3</code> on Android and <code>WEBGL2</code> in the browser share one internal implementation (EasyGL) over OpenGL ES 3.0. The lower profiles <code>OPENGLES2</code> and <code>WEBGL1</code> are a different matter &mdash; they lose MRT, occlusion queries, <code>Texture3D</code> and instancing outright. Because the technique above needs nothing beyond an RGBA8 render target and standard GLSL ES 3.00, it carries across without extension checks.</li>
+        <li><strong>Surface format:</strong> the packed-RGBA8 example uses <code>SurfaceFormat::Color</code>, which every render-target-capable renderer accepts. Float formats are checked twice &mdash; the profile must be HiDef and the renderer must classify the format as renderable &mdash; and a target that fails either check silently becomes <code>Color</code>.</li>
+        <li><strong>Custom shader languages:</strong> the ShaderEffect string constructor passes your text to the renderer verbatim, so the dialect is the renderer&rsquo;s (table above). <code>gd.GetShaderDialectEXT()</code> reports it at run time, and <code>gd.ExecutesShaderEffectSourceEXT()</code> says whether the source will actually run.</li>
+        <li><strong>Android / WebGL:</strong> <code>OPENGLES3</code> on Android and <code>WEBGL2</code> in the browser share one internal implementation (EasyGL) over OpenGL ES 3.0. The lower profiles <code>OPENGLES2</code> and <code>WEBGL1</code> are a different matter &mdash; they lose MRT, occlusion queries, <code>Texture3D</code>, instancing, multisampling and multi-stream vertex input outright, and their shaders are GLSL ES 1.00, so the <code>#version 300 es</code> sources on this page do not compile there without the port described in the table.</li>
       </ul>
 
+      <h2 id="engine-layer">The engine-layer route: ShadowMap and shadow receivers</h2>
+      <p>Everything above is what a shadow system does internally, and writing it once is worth the effort. In this snapshot you do not have to write it for every project: CNA ships shadow <em>generation</em> in the CNAEXT engine layer (<code>CNA::Graphics</code>, built with <code>-DCNA_CNAEXT=ON</code>, off by default; see <a href="115-cnaext-overview.html#engine">Tutorial 115</a>) and shadow <em>receiving</em> as an always-compiled interface, <code>IShadowReceiverEXT</code>, implemented by <code>BasicEffect</code>, <code>SkinnedEffect</code>, <code>PbrEffect</code> and <code>SkinnedPbrEffect</code>. <code>AlphaTestEffect</code>, <code>DualTextureEffect</code> and <code>EnvironmentMapEffect</code> are not receivers.</p>
+      <p>The engine layer&rsquo;s design matches this tutorial&rsquo;s choices: the map stores normalised light-space <em>distance</em> in a colour target (float where the renderer can render to <code>SurfaceFormat::Single</code>, packed into 8-bit RGB otherwise), because CNA has no API for sampling a depth attachment as a texture. The caster shader is CNA&rsquo;s own; you only draw geometry.</p>
+      <pre><code class="language-cpp">#include "CNA/Graphics/ShadowMap.hpp"            // CNAEXT engine layer: -DCNA_CNAEXT=ON
+#include "Microsoft/Xna/Framework/BoundingBox.hpp"
+#include "Microsoft/Xna/Framework/Graphics/BasicEffect.hpp"
+#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+
+using namespace CNA::Graphics;
+
+// LoadContent
+shadowMap_ = std::make_unique&lt;ShadowMap&gt;(gd, ShadowQuality::High);   // 2048 x 2048, 5x5 PCF
+if (!shadowMap_-&gt;isSupported()) {
+    // This renderer cannot run the caster (see the table above). The object still
+    // works: begin()/end() are harmless and the frame simply renders unshadowed.
+}
+
+receiver_ = std::make_unique&lt;BasicEffect&gt;(gd);        // BasicEffect implements IShadowReceiverEXT
+receiver_-&gt;setShadowMapEXT(shadowMap_-&gt;getShadowTexture());
+receiver_-&gt;setShadowFilterRadiusEXT(shadowMap_-&gt;getFilterRadius());
+receiver_-&gt;setShadowDepthBiasEXT(shadowMap_-&gt;getDepthBias());
+receiver_-&gt;setShadowsEnabledEXT(true);
+
+// Draw
+DirectionalLightEXT sun;
+sun.Direction    = Vector3(-1.0f, -2.0f, -1.0f);            // the direction the light travels
+sun.CastsShadows = true;
+
+shadowMap_-&gt;begin(sun, sceneBounds_);          // binds the shadow target, fits the light to the bounds
+if (ShaderEffect* caster = shadowMap_-&gt;getCasterEffect()) {
+    for (auto&amp; obj : scene_) {
+        float world[16];
+        obj.World.ToColumnMajor(world);
+        caster-&gt;SetUniformMat4("uWorld", world);   // the caster's public world hook
+        gd.SetVertexBuffer(obj.VB);
+        gd.DrawPrimitives(PrimitiveType::TriangleList, 0, obj.TriCount);
+    }
+}
+shadowMap_-&gt;end();                             // restores the back buffer
+
+// Shade the scene with any effect that receives shadows.
+receiver_-&gt;setLightViewProjectionEXT(shadowMap_-&gt;getLightViewProjection());
+// ... set world/view/projection and draw the receivers with receiver_ ...</code></pre>
+      <p>For a large outdoor view, <code>CascadedShadowMap</code> (up to <code>kMaxCascades = 4</code>) replaces the single map (<a href="154-cascaded-shadows.html">Tutorial 154</a> is a full walkthrough); the loop renders each cascade and then hands the whole set to the receiver:</p>
+      <pre><code class="language-cpp">CascadedShadowMap cascades(gd, ShadowQuality::Medium, 3);   // three cascades
+
+cascades.update(sun, camera_.View(), camera_.Projection());
+for (int i = 0; i &lt; cascades.getCascadeCount(); ++i) {
+    cascades.begin(i);
+    // ... draw the casters with cascades.getCasterEffect() ...
+    cascades.end();
+}
+cascades.applyToReceiver(*receiver_);        // sets the atlas, the per-cascade matrices and the split depths
+receiver_-&gt;setShadowsEnabledEXT(true);</code></pre>
+      <p>Point and spot lights use <code>CubeShadowMap</code> (six faces) and <code>SpotShadowMap</code> (one perspective map); a receiver takes one such light per draw through <code>setPunctualLightEXT(PunctualLightEXT)</code>. The quality presets are <code>Low</code> (512), <code>Medium</code> (1024), <code>High</code> (2048) and <code>Ultra</code> (4096, needs HiDef). The engine layer is documented by CNA as still moving, so pin the CNA revision you build against.</p>
+
       <h2>Complete GLSL Shaders</h2>
+      <p>These sources are GLSL ES 3.00, the dialect of <code>OPENGLES3</code> and <code>WEBGL2</code>. For <code>OPENGL33</code> and <code>OPENGL4</code> replace the first two lines of each file with <code>#version 330 core</code>. <code>VULKAN</code> needs the same programs compiled to SPIR-V, <code>WEBGPU</code> needs WGSL, and the Direct3D renderers need HLSL; the algorithm is identical, only the syntax changes.</p>
 
       <h3>Depth Pass — Vertex Shader (shadow_depth.vert)</h3>
       <pre><code class="language-glsl">#version 300 es
@@ -336,12 +432,24 @@ void main() {
       <h2>Complete C++ Two-Pass Draw Loop</h2>
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Both passes in this tutorial use <code>ShaderEffect</code>, not the XNB compiled-effect path.</strong> Alpha.1 can load XNA/FNA D3D9 Effect Framework bytecode on FNA3D and explicitly enabled SDL_GPU, EasyGL-family or Vulkan builds, but that format is renderer-qualified and is not HLSL <code>.fx</code> source. This portable example keeps its renderer-native shader text explicit. <code>ShaderEffect</code> exposes no <code>Parameters</code> collection; uniforms go through <code>SetUniformXxx()</code> after <code>Apply()</code>.</p>
+        <p><strong>Both passes in this tutorial use <code>ShaderEffect</code>, not the XNB compiled-effect path.</strong> This snapshot can also run compiled XNA/FNA Effect Framework bytecode &mdash; on <code>FNA3D</code> always, and on thirteen more identities in nine further families only when the matching default-OFF <code>CNA_*_COMPILED_EFFECTS</code> option was enabled at configure time &mdash; but that bytecode is not HLSL <code>.fx</code> source, and CNA does not compile <code>.fx</code> at run time. This example keeps its renderer-native shader text explicit. <code>ShaderEffect</code> exposes no <code>Parameters</code> collection; uniforms go through <code>SetUniformXxx()</code>, and <code>Apply()</code> first is the portable order (on <code>OPENGLES2/3</code>, <code>OPENGL33</code>, <code>WEBGL1/2</code> and <code>OPENGL4</code> each setter also makes its own program current). See <a href="128-compiled-xna-effects.html">Tutorial 128</a>.</p>
       </div>
       <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
 #include "System/IO/File.hpp"
 
+// A minimal camera helper used by the examples in this series. It is application
+// code, not a CNA type; Tutorial 34 builds a fuller FpsCamera.
+struct Camera {
+    Matrix view = Matrix::CreateLookAt(Vector3(0.0f, 8.0f, 16.0f), Vector3::Zero, Vector3::Up);
+    Matrix projection = Matrix::CreatePerspectiveFieldOfView(
+        MathHelper::ToRadians(60.0f), 16.0f / 9.0f, 0.1f, 200.0f);
+    const Matrix&amp; View() const       { return view; }
+    const Matrix&amp; Projection() const { return projection; }
+    void Update(const GameTime&amp;) {}
+};
+
 class ShadowGame final : public Game {
+    GraphicsDeviceManager               graphics_;
     std::unique_ptr&lt;RenderTarget2D&gt; shadowMap_;
     std::unique_ptr&lt;ShaderEffect&gt;   depthEffect_;
     std::unique_ptr&lt;ShaderEffect&gt;   lightEffect_;
@@ -359,6 +467,14 @@ class ShadowGame final : public Game {
         fx.SetUniformMat4(name, cm);
     }
 
+public:
+    ShadowGame() : graphics_(this) {
+        // A 1024 x 1024 RGBA8 map is inside Reach's limits, so no HiDef request is
+        // needed here. Ask for HiDef only for 4096 maps or float targets:
+        // graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef);
+    }
+
+protected:
     void LoadContent() override {
         auto&amp; gd = getGraphicsDeviceProperty();
         shadowMap_ = std::make_unique&lt;RenderTarget2D&gt;(
@@ -376,11 +492,12 @@ class ShadowGame final : public Game {
             System::IO::File::ReadAllText("Content/shaders/shadow_lighting.frag.glsl"));
 
         // Neither constructor throws on a compile failure -- check both.
+        // GetCompileErrorEXT() returns the compiler log (it is also written to stderr).
         if (!depthEffect_-&gt;IsEffectValid() || !lightEffect_-&gt;IsEffectValid()) {
-            // The GLSL did not compile. Do not draw with it.
+            // The shader did not compile. Do not draw with it.
         }
 
-        // Static lighting uniforms. Apply() binds the program these writes target.
+        // Static lighting uniforms. Apply() first is the portable order.
         lightEffect_-&gt;Apply();
         lightEffect_-&gt;SetUniformVec3("u_lightColor",   1.0f,  0.95f, 0.85f);
         lightEffect_-&gt;SetUniformVec3("u_ambientColor", 0.15f, 0.15f, 0.2f);
@@ -411,7 +528,7 @@ class ShadowGame final : public Game {
         gd.setRasterizerStateProperty(RasterizerState::CullCounterClockwise);
 
         for (auto&amp; obj : scene_) {
-            // Apply() first: the uniform setters write to the bound program.
+            // Apply() first: the portable order for setting uniforms.
             depthEffect_-&gt;Apply();
             SetMat4(*depthEffect_, "u_lightSpace", lightSpaceMatrix_);
             SetMat4(*depthEffect_, "u_world",      obj.World);
@@ -439,8 +556,8 @@ class ShadowGame final : public Game {
             gd.SetVertexBuffer(obj.VB);
             gd.DrawPrimitives(PrimitiveType::TriangleList, 0, obj.TriCount);
         }
-
-        gd.Present();
+        // No gd.Present() here: Game presents after Draw() returns (in EndDraw),
+        // so a manual Present() would present the frame twice.
     }
 };</code></pre>
       <p><code>SetTexture</code> takes a reference, so the shadow map is passed as <code>*shadowMap_</code>. <code>RenderTarget2D</code> derives from <code>Texture2D</code>, so it binds like any other texture &mdash; just make sure it is no longer the active render target when you sample it.</p>
@@ -473,7 +590,7 @@ class ShadowGame final : public Game {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

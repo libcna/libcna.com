@@ -21,7 +21,7 @@
   "headline": "Tutorial 69: Water and Reflections",
   "url": "https://libcna.com/docs/tutorials/69-water.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -93,27 +93,50 @@
           <li>Displacing the water surface in the vertex shader.</li>
           <li>Animating a normal map and applying a Fresnel term.</li>
           <li>The full per-frame pass ordering.</li>
+          <li>Which renderers can run a custom-shader water pass, and why the reflection pass needs the opposite cull mode.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="23-render-targets.html">Tutorial 23: Render Targets for Off-Screen Rendering</a> (the reflection pass renders off-screen) and <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (both water shaders are custom). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the thirteen 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls. Requires a renderer with render-target support.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="23-render-targets.html">Tutorial 23: Render Targets for Off-Screen Rendering</a> (the reflection pass renders off-screen) and <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (both water shaders are custom). Requires a 3D-capable renderer with render targets that executes a custom <code>ShaderEffect</code>, such as <code>OPENGLES3</code> or <code>VULKAN</code>; the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls by default, and <code>STUB</code> draws nothing.</p>
+      </div>
+
+      <div class="callout callout--warn" id="requirements">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Requirements: renderer and profile.</strong> Both water shaders are custom <code>ShaderEffect</code>s, so this tutorial runs only where the renderer executes custom shader source, in that renderer&rsquo;s own language. It needs no HiDef request: the reflection target is an RGBA8 <code>SurfaceFormat::Color</code> target at half resolution, which the default Reach profile allows as long as its edges stay at or below 2048 pixels. (An HDR reflection, or a reflection target larger than 2048, needs HiDef; see <a href="66-bloom.html#requirements">Tutorial 66</a> for the request and the float-target query.)</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Renderer identities</th>
+              <th scope="col">Custom-shader water pass</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row"><code>OPENGLES3</code>, <code>WEBGL2</code></th><td>Runs; GLSL ES 3.00 (add <code>#version 300 es</code> and <code>precision highp float;</code> to the shader files)</td></tr>
+            <tr><th scope="row"><code>OPENGL33</code>, <code>OPENGL4</code></th><td>Runs after switching to <code>#version 330 core</code></td></tr>
+            <tr><th scope="row"><code>OPENGLES2</code>, <code>WEBGL1</code></th><td>Needs a GLSL ES 1.00 port</td></tr>
+            <tr><th scope="row"><code>VULKAN</code>, <code>SDL_GPU</code></th><td>Needs SPIR-V (<code>SDL_GPU</code> also takes GLSL text in a libshaderc build, Linux and Android)</td></tr>
+            <tr><th scope="row"><code>WEBGPU</code></th><td>Needs WGSL</td></tr>
+            <tr><th scope="row"><code>DIRECTX11</code>, <code>DIRECTX12</code></th><td>Needs HLSL</td></tr>
+            <tr><th scope="row"><code>DIRECTX9</code></th><td>HLSL is compiled for SpriteBatch effects; a custom 3D shader is not verified</td></tr>
+            <tr><th scope="row"><code>FNA3D</code>, <code>SOFTWARE</code>, <code>METAL</code>, <code>PORTABLEGL</code></th><td>Not available: <code>CustomEffects</code> is false</td></tr>
+            <tr><th scope="row"><code>HEADLESS</code></th><td>Accepts the effects, never executes them: renders nothing</td></tr>
+            <tr><th scope="row"><code>STUB</code>, <code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code></th><td>Not available (no 3D)</td></tr>
+          </tbody>
+        </table>
       </div>
 
       <h2>Planar reflections overview</h2>
-      <p>The most common real-time water reflection technique is <em>planar reflection</em>: render the scene a second time from a camera that is mirrored across the water plane, store the result in a RenderTarget, and then sample it from the water surface shader. The effect is physically correct for flat water and costs exactly one extra scene render per water plane.</p>
-      <p>The reflection camera is constructed by reflecting the main camera's position and orientation across the plane y = waterLevel:</p>
+      <p>The most common real-time water reflection technique is <em>planar reflection</em>: render the scene a second time as seen in a mirror lying on the water plane, store the result in a RenderTarget, and then sample it from the water surface shader. The effect is physically correct for flat water and costs exactly one extra scene render per water plane.</p>
+      <p>The cleanest way to draw the mirrored scene is to put a reflection matrix in front of the ordinary view matrix, so every world position is mirrored across the plane y = waterLevel before the camera sees it. The result lines up with the main camera&rsquo;s own screen, which is what lets the water shader sample it with the fragment&rsquo;s screen coordinates:</p>
       <pre><code class="language-cpp">// Build the reflection view matrix
 float waterY = 0.0f;  // world-space water level
 
-// Flip the camera position across y = waterY
-Vector3 reflPos = cameraPos_;
-reflPos.Y = 2.0f * waterY - reflPos.Y;
+// The water plane: dot(normal, p) + d = 0 with normal (0,1,0) and d = -waterY
+Plane waterPlane(Vector3::Up, -waterY);
 
-// Flip the look-at target as well
-Vector3 reflTarget = cameraTarget_;
-reflTarget.Y = 2.0f * waterY - reflTarget.Y;
-
-// Invert Up to maintain winding order (negate Y)
-Matrix reflView = Matrix::CreateLookAt(reflPos, reflTarget,
-                                       Vector3(0.0f, -1.0f, 0.0f));</code></pre>
+// Row-vector convention: mirror the world position first, then apply the camera.
+Matrix reflView = Matrix::CreateReflection(waterPlane) * view_;</code></pre>
+      <p>Two consequences follow. First, a reflection matrix has a negative determinant, so it <strong>flips the winding of every triangle</strong>: the reflection pass has to draw with the opposite cull mode, <code>RasterizerState::CullClockwise</code>, or the visible faces are culled (the default <code>CullCounterClockwise</code> is right again for the main pass). Second, mirroring the <em>camera</em> instead (reflected position and target in <code>CreateLookAt</code>) does not flip winding and does not need this, but it produces an image that needs a vertical flip to line up with the main view; negating the camera&rsquo;s Up vector to compensate rotates the image by 180 degrees, which also mirrors it left to right, so it is not a fix. The mirrored-scene form above avoids both problems.</p>
 
       <h2>RenderTarget for reflection</h2>
       <p>Allocate a RenderTarget at half resolution to save bandwidth; the distortion from the normal map will hide the reduction in sharpness:</p>
@@ -128,13 +151,13 @@ reflectionRT_ = std::make_unique&lt;RenderTarget2D&gt;(
     DepthFormat::Depth24);</code></pre>
       <div class="callout callout--note">
         <span class="callout-icon">&#9432;</span>
-        <p><code>SurfaceFormat::Color</code> is the portable reflection format for the shader-capable configurations in this tutorial. Skia and IGL have renderer-qualified promoted formats, but they do not change the common EasyGL/Vulkan path; an LDR RGBA8 reflection is also sufficient for this distortion pass.</p>
+        <p><code>SurfaceFormat::Color</code> is the portable reflection format: every renderer with render targets accepts it, and an LDR RGBA8 reflection is sufficient for this distortion pass. Float and HDR formats are HiDef-only and probed per renderer (a request the profile or renderer refuses silently becomes <code>Color</code>); see <a href="66-bloom.html">Tutorial 66</a>.</p>
       </div>
 
       <h2>Building the scene and water shaders</h2>
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Both shaders in this example are <code>ShaderEffect</code>s.</strong> Alpha.1's XNA/FNA Effect Framework bytecode loader is a separate renderer-qualified path. Here <code>ShaderEffect</code> takes renderer-native source and has no <code>Parameters</code> collection, techniques or passes; uniforms go through <code>SetUniformXxx()</code> and textures through <code>SetTexture(unit, tex)</code>, after <code>Apply()</code>. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+        <p><strong>Both shaders in this example are <code>ShaderEffect</code>s.</strong> This snapshot&rsquo;s XNA/FNA Effect Framework bytecode loader is a separate renderer-qualified path (<code>FNA3D</code> always, thirteen more identities behind default-OFF <code>CNA_*_COMPILED_EFFECTS</code> options). Here <code>ShaderEffect</code> takes renderer-native source and has no <code>Parameters</code> collection, techniques or passes; uniforms go through <code>SetUniformXxx()</code> and textures through <code>SetTexture(unit, tex)</code>, with <code>Apply()</code> called first. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
       </div>
       <p>The constructor takes <strong>three</strong> arguments &mdash; the device and the two shader sources. The strings are the GLSL text itself, never a file path:</p>
       <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
@@ -149,16 +172,17 @@ waterEffect_ = std::make_unique&lt;ShaderEffect&gt;(
     System::IO::File::ReadAllText("Content/effects/water.vert.glsl"),
     System::IO::File::ReadAllText("Content/effects/water.frag.glsl"));
 
-// Neither constructor throws on a compile failure -- this is the only signal.
+// Neither constructor throws on a compile failure. IsEffectValid() is the quick
+// check; GetCompileErrorEXT() returns the compiler log (also written to stderr).
 if (!sceneEffect_-&gt;IsEffectValid() || !waterEffect_-&gt;IsEffectValid()) {
-    // The GLSL did not compile. Do not draw with it.
+    // The shader did not compile. Do not draw with it.
 }
 
 // The scrolling wave normal map is an ordinary texture asset.
 normalMap_ = getContentProperty().Load&lt;Texture2D&gt;("textures/water_normal");
 
-// Sampler unit assignments for the water shader, set once. Apply() binds the
-// program first; SetUniformXxx() writes into whatever program is bound.
+// Sampler unit assignments for the water shader, set once. Apply() first is the
+// portable order for a ShaderEffect.
 waterEffect_-&gt;Apply();
 waterEffect_-&gt;SetUniformInt("ReflectionTexture", 0);
 waterEffect_-&gt;SetUniformInt("NormalMap",         1);</code></pre>
@@ -171,19 +195,26 @@ static void SetMat4(ShaderEffect&amp; fx, const char* name, const Matrix&amp; m)
 }</code></pre>
 
       <h2>Clip plane in the reflection pass</h2>
-      <p>When rendering the reflection, geometry <em>below</em> the water plane must be clipped away or it will appear in the reflection texture incorrectly. Pass a clip plane as a shader uniform and use <code>gl_ClipDistance[0]</code> in the vertex shader:</p>
-      <pre><code class="language-glsl">// reflect_scene.vert — add clip plane support
-uniform vec4 ClipPlane;  // (0, 1, 0, -waterY) for above-water clip
-
-out float gl_ClipDistance[1];
+      <p>When rendering the reflection, geometry <em>below</em> the water plane must be clipped away or it will appear in the reflection texture incorrectly. The classic tool, <code>gl_ClipDistance</code>, is not available here: CNA does not enable <code>GL_CLIP_DISTANCE0</code> for you and gives callers no raw-GL access to do it themselves, and <code>gl_ClipDistance</code> does not exist in the <code>#version 300 es</code> profile this tutorial uses. Do the clip in the fragment shader with <code>discard</code> instead (an oblique-frustum projection is the other portable option). Pass the plane as a uniform and test the <em>un-mirrored</em> world position, so the vertex shader has to hand that position on:</p>
+      <pre><code class="language-glsl">// reflect_scene.vert — pass the un-mirrored world position to the fragment stage
+out vec3 vWorldPos;
 
 void main() {
     vec4 worldPos = World * vec4(aPosition, 1.0);
-    gl_Position   = Projection * View * worldPos;
-    gl_ClipDistance[0] = dot(worldPos, ClipPlane);
+    vWorldPos     = worldPos.xyz;
+    gl_Position   = Projection * View * worldPos;   // View includes the mirror in the reflection pass
     // ... pass normals, texcoords
+}
+
+// reflect_scene.frag — clip everything below the water plane
+uniform vec4 ClipPlane;  // (0, 1, 0, -waterY): keep what is above the water
+in vec3 vWorldPos;
+
+void main() {
+    if (dot(vec4(vWorldPos, 1.0), ClipPlane) &lt; 0.0) discard;
+    // ... normal shading
 }</code></pre>
-      <p>Set the plane with <code>SetUniformVec4("ClipPlane", 0.0f, 1.0f, 0.0f, -waterY)</code> for the reflection pass (keep only above-plane geometry). OpenGL must have <code>GL_CLIP_DISTANCE0</code> enabled; on the GL family of renderers, call the underlying GL function once at startup. For the main scene pass set <code>ClipPlane = Vector4(0, 0, 0, 0)</code> to effectively disable clipping.</p>
+      <p>Set the plane with <code>SetUniformVec4("ClipPlane", 0.0f, 1.0f, 0.0f, -waterY)</code> for the reflection pass (keep only above-plane geometry). For the main scene pass set <code>ClipPlane</code> to <code>(0, 0, 0, 0)</code>, which discards nothing.</p>
 
       <h2>Reflection render pass</h2>
       <pre><code class="language-cpp">void DrawReflectionPass() {
@@ -191,8 +222,10 @@ void main() {
     gd.SetRenderTarget(reflectionRT_.get());
     gd.Clear(Color::CornflowerBlue);
 
-    // Apply() binds the program; SetUniformXxx() writes into whatever program
-    // is currently bound, so this order is mandatory.
+    // The mirror flips triangle winding, so cull the other side for this pass.
+    gd.setRasterizerStateProperty(RasterizerState::CullClockwise);
+
+    // Apply() first is the portable order for a ShaderEffect.
     sceneEffect_-&gt;Apply();
 
     // Set clip plane: keep pixels above water
@@ -204,6 +237,7 @@ void main() {
 
     // Disable clip plane for the main pass
     sceneEffect_-&gt;SetUniformVec4("ClipPlane", 0.0f, 0.0f, 0.0f, 0.0f);
+    gd.setRasterizerStateProperty(RasterizerState::CullCounterClockwise);   // back to the default
     gd.SetRenderTarget(nullptr);
 }</code></pre>
 
@@ -237,6 +271,7 @@ uniform sampler2D ReflectionTexture;
 uniform sampler2D NormalMap;
 uniform float     Time;
 uniform vec3      CameraPos;
+uniform vec2      ScreenSize;   // back-buffer size in pixels
 
 in vec3 vWorldPos;
 in vec2 vTexCoord;
@@ -254,10 +289,12 @@ void main() {
     // Perturb reflection UV using normal XZ for distortion
     vec2 distort = normal.xz * 0.04;
 
-    // Project world position to clip space for reflection UV
-    // (simplified — use gl_FragCoord in screenspace for accuracy)
-    vec2 screenUV = gl_FragCoord.xy /
-                    vec2(textureSize(ReflectionTexture, 0));
+    // The reflection was rendered from the main camera's own viewpoint (mirrored
+    // scene), so the fragment's screen position is the right lookup. Divide by the
+    // BACK BUFFER size, not the reflection target's: that target is half resolution.
+    // If the reflection appears upside down on your renderer, flip reflUV.y (render-
+    // target texture orientation differs between graphics APIs).
+    vec2 screenUV = gl_FragCoord.xy / ScreenSize;
     vec2 reflUV   = screenUV + distort;
 
     vec4 reflColor = texture(ReflectionTexture, reflUV);
@@ -289,7 +326,7 @@ float fresnel  = R0 + (1.0 - R0) * pow(1.0 - cosTheta, 5.0);</code></pre>
     float t = static_cast&lt;float&gt;(
         gt.getTotalGameTimeProperty().getTotalSecondsProperty());
 
-    // 1. Build reflection camera
+    // 1. Build the reflection view: Matrix::CreateReflection(waterPlane) * view_
     BuildReflectionView();
 
     // 2. Render scene from reflection camera (with clip plane)
@@ -311,6 +348,9 @@ float fresnel  = R0 + (1.0 - R0) * pow(1.0 - cosTheta, 5.0);</code></pre>
     waterEffect_-&gt;SetTexture(1, *normalMap_);
 
     waterEffect_-&gt;SetUniformFloat("Time", t);
+    waterEffect_-&gt;SetUniformVec2("ScreenSize",
+        static_cast&lt;float&gt;(gd.getPresentationParametersProperty().getBackBufferWidthProperty()),
+        static_cast&lt;float&gt;(gd.getPresentationParametersProperty().getBackBufferHeightProperty()));
     SetMat4(*waterEffect_, "View",       view_);
     SetMat4(*waterEffect_, "Projection", proj_);
     SetMat4(*waterEffect_, "World",
@@ -326,8 +366,8 @@ float fresnel  = R0 + (1.0 - R0) * pow(1.0 - cosTheta, 5.0);</code></pre>
     gd.DrawIndexedPrimitives(PrimitiveType::TriangleList,
                              0, 0, waterVerts_, 0, waterPrims_);
     gd.setBlendStateProperty(BlendState::Opaque);
-
-    gd.Present();
+    // No gd.Present(): Game presents after Draw() returns, so a manual call
+    // would present the frame twice.
 }</code></pre>
 
       <nav class="docs-pagination" aria-label="Page navigation">
@@ -353,7 +393,7 @@ float fresnel  = R0 + (1.0 - R0) * pow(1.0 - cosTheta, 5.0);</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

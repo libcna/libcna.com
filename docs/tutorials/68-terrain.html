@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 68: Terrain Rendering - CNA Tutorials</title>
-  <meta name="description" content="Load a heightmap, build a vertex/index buffer, calculate normals, and render textured terrain with BasicEffect in CNA.">
+  <meta name="description" content="Load a heightmap, build chunked 16-bit vertex and index buffers that fit the graphics profile limits, calculate normals, and render textured terrain with BasicEffect in CNA.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/68-terrain.html">
   <meta property="og:title"       content="Tutorial 68: Terrain Rendering - CNA Tutorials">
-  <meta property="og:description" content="Load a heightmap, build a vertex/index buffer, calculate normals, and render textured terrain with BasicEffect in CNA.">
+  <meta property="og:description" content="Load a heightmap, build chunked 16-bit vertex and index buffers that fit the graphics profile limits, calculate normals, and render textured terrain with BasicEffect in CNA.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/68-terrain.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 68: Terrain Rendering",
   "url": "https://libcna.com/docs/tutorials/68-terrain.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -93,9 +93,28 @@
           <li>Computing per-vertex normals so lighting works.</li>
           <li>Blending grass, rock and snow textures by height and slope.</li>
           <li>Querying terrain height for collision.</li>
+          <li>Staying inside the graphics profile&rsquo;s buffer, index and texture limits by chunking the mesh.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="38-vertex-buffers.html">Tutorial 38: Vertex Buffers and Index Buffers</a> (the mesh buffers), <a href="08-textures.html">Tutorial 08: Loading and Drawing Textures</a> (reading heightmap pixels) and <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (the blend shader). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the thirteen 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="38-vertex-buffers.html">Tutorial 38: Vertex Buffers and Index Buffers</a> (the mesh buffers), <a href="08-textures.html">Tutorial 08: Loading and Drawing Textures</a> (reading heightmap pixels) and <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (the blend shader). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls by default, and <code>STUB</code> draws nothing. The <code>BasicEffect</code> path below runs on every 3D renderer that can draw lit, textured <code>VertexPositionNormalTexture</code> geometry; the optional blend shader additionally needs a renderer that executes a custom <code>ShaderEffect</code> (see the note before the blend shader).</p>
       </div>
+
+      <div class="callout callout--warn" id="requirements">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Requirements: graphics-profile limits.</strong> CNA&rsquo;s default <code>GraphicsProfile</code> is <code>Reach</code>, and this snapshot enforces its ceilings on every renderer. Terrain is where you hit them: a single mesh for a whole heightmap breaks three of them at once.</p>
+        <ul>
+          <li><strong>32-bit indices are HiDef-only.</strong> <code>IndexElementSize::ThirtyTwoBits</code> throws <code>NotSupportedException</code> under Reach, and 16-bit indices address at most 65,536 vertices.</li>
+          <li><strong>Primitives per draw:</strong> 65,535 on Reach, 1,048,575 on HiDef. A 1,025 &times; 1,025 grid already has about 2.1 million triangles, more than one HiDef draw can take.</li>
+          <li><strong>Buffer size:</strong> a single vertex or index buffer is capped at 67,108,863 bytes on every profile (about 2.09 million 32-byte vertices).</li>
+          <li><strong>Texture size:</strong> a <code>Texture2D</code> edge is at most 2048 on Reach and 4096 on HiDef, so a 4097 &times; 4097 heightmap cannot even be loaded as a texture.</li>
+        </ul>
+        <p>The code below therefore builds the terrain as a grid of <strong>chunks</strong>, each with its own vertex buffer and 16-bit index buffer. That fits every limit above, runs on the default Reach profile, and gives you a natural unit for frustum culling and LOD. Only a heightmap larger than 2048 &times; 2048 needs HiDef, requested in the <code>Game</code> constructor before the device exists (or tile several smaller heightmaps and stay on Reach):</p>
+      </div>
+      <pre><code class="language-cpp">TerrainGame() : graphics_(this) {
+    graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef);
+    // Or for the whole project, before the Game is constructed:
+    //   CNA::SetProjectGraphicsProfileEXT(GraphicsProfile::HiDef);   // "CNA/ProjectGraphicsProfile.hpp"
+}</code></pre>
+      <p>The full list of profile ceilings, and the errors you will see when one is exceeded, is in <a href="152-graphics-profiles.html#gates">Tutorial 152: Reach vs HiDef</a>.</p>
 
       <h2>Heightmap loading</h2>
       <p>A heightmap is a greyscale image where each pixel's intensity encodes the elevation at that grid point. Load it as a <code>Texture2D</code> and then read back the pixel data to extract height values:</p>
@@ -106,7 +125,10 @@
 #include "Microsoft/Xna/Framework/Graphics/IndexBuffer.hpp"
 #include "Microsoft/Xna/Framework/Graphics/BasicEffect.hpp"
 #include "Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
+#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
 #include "Microsoft/Xna/Framework/Graphics/VertexPositionNormalTexture.hpp"
+#include &lt;algorithm&gt;
+#include &lt;cstdint&gt;
 #include &lt;vector&gt;
 #include &lt;memory&gt;
 #include &lt;string&gt;
@@ -116,43 +138,70 @@ using namespace Microsoft::Xna::Framework::Graphics;
 
 class HeightmapTerrain {
 public:
-    HeightmapTerrain(GraphicsDevice& gd,
-                     const std::string& heightmapPath,
+    HeightmapTerrain(GraphicsDevice&amp; gd,
+                     const std::string&amp; heightmapPath,
                      float worldScale,    // horizontal scale per cell
                      float heightScale);  // vertical scale (max height)
 
-    void Draw(const Matrix& view, const Matrix& projection);
+    // Baseline: lit, textured BasicEffect (grass only). Works on every 3D renderer.
+    void Draw(const Matrix&amp; view, const Matrix&amp; projection);
+    // Optional: the grass/rock/snow blend as a custom ShaderEffect (see below).
+    void DrawBlended(const Matrix&amp; view, const Matrix&amp; projection);
 
     // Query the height at world position (x, z) via bilinear interpolation
     float GetHeight(float x, float z) const;
 
 private:
-    void LoadHeightmap(GraphicsDevice& gd, const std::string& path);
-    void BuildBuffers(GraphicsDevice& gd);
-    void CalculateNormals();
+    // One vertex buffer and one 16-bit index buffer per chunk of the terrain.
+    // 64 x 64 cells = 65 x 65 = 4,225 vertices and 8,192 triangles: far inside
+    // every profile limit, and a natural unit for culling and LOD.
+    struct Chunk {
+        std::unique_ptr&lt;VertexBuffer&gt; vb;
+        std::unique_ptr&lt;IndexBuffer&gt;  ib;
+        int vertexCount    = 0;
+        int primitiveCount = 0;
+    };
+    static constexpr int kChunkCells = 64;
+
+    void LoadHeightmap(GraphicsDevice&amp; gd, const std::string&amp; path);
+    void CalculateNormals();          // fills normals_ (must run before BuildBuffers)
+    void BuildBuffers(GraphicsDevice&amp; gd);
 
     int   width_  = 0;
     int   height_ = 0;
     float worldScale_  = 1.0f;
     float heightScale_ = 1.0f;
 
-    std::vector&lt;float&gt; heightData_;  // row-major, [z * width + x]
+    std::vector&lt;float&gt;   heightData_;  // row-major, [z * width + x]
+    std::vector&lt;Vector3&gt; normals_;     // same indexing as heightData_
 
-    std::unique_ptr&lt;VertexBuffer&gt; vb_;
-    std::unique_ptr&lt;IndexBuffer&gt;  ib_;
+    std::vector&lt;Chunk&gt;            chunks_;
     std::unique_ptr&lt;BasicEffect&gt;  effect_;
+    std::unique_ptr&lt;ShaderEffect&gt; blendEffect_;   // null where custom shaders are unavailable
     std::unique_ptr&lt;Texture2D&gt;    grassTexture_;
     std::unique_ptr&lt;Texture2D&gt;    rockTexture_;
     std::unique_ptr&lt;Texture2D&gt;    snowTexture_;
 
-    int primitiveCount_ = 0;
     GraphicsDevice* gd_ = nullptr;
 };</code></pre>
 
       <h2>Loading the heightmap pixel data</h2>
-      <p><code>Texture2D::GetData</code> returns raw RGBA bytes. Because the image is greyscale, the R channel equals luminance. Divide by 255 to get a 0..1 float and multiply by <code>heightScale</code> to get world units:</p>
-      <pre><code class="language-cpp">void HeightmapTerrain::LoadHeightmap(GraphicsDevice& gd,
-                                      const std::string& path) {
+      <p><code>Texture2D::GetData</code> returns <code>Color</code> texels. Because the image is greyscale, the R channel equals luminance. Divide by 255 to get a 0..1 float and multiply by <code>heightScale</code> to get world units. Remember that the heightmap is loaded as a <code>Texture2D</code>, so its edges are capped at 2048 on Reach and 4096 on HiDef (see Requirements); larger worlds tile several heightmaps or read a raw height file yourself. First the constructor, which ties the pieces together in the right order:</p>
+      <pre><code class="language-cpp">HeightmapTerrain::HeightmapTerrain(GraphicsDevice&amp; gd,
+                                   const std::string&amp; heightmapPath,
+                                   float worldScale, float heightScale)
+    : worldScale_(worldScale), heightScale_(heightScale), gd_(&amp;gd) {
+    effect_       = std::make_unique&lt;BasicEffect&gt;(gd);
+    grassTexture_ = std::make_unique&lt;Texture2D&gt;("Content/textures/grass.png", gd);
+    rockTexture_  = std::make_unique&lt;Texture2D&gt;("Content/textures/rock.png",  gd);
+    snowTexture_  = std::make_unique&lt;Texture2D&gt;("Content/textures/snow.png",  gd);
+
+    LoadHeightmap(gd, heightmapPath);
+    CalculateNormals();   // before BuildBuffers: the vertices need the normals
+    BuildBuffers(gd);
+}</code></pre>
+      <pre><code class="language-cpp">void HeightmapTerrain::LoadHeightmap(GraphicsDevice&amp; gd,
+                                      const std::string&amp; path) {
     Texture2D tex(path, gd);
     width_  = tex.getWidthProperty();
     height_ = tex.getHeightProperty();
@@ -169,67 +218,79 @@ private:
 }</code></pre>
 
       <h2>Building the VertexBuffer and IndexBuffer</h2>
-      <p>Each grid cell is split into two triangles. The index buffer uses a standard grid topology. UV coordinates are tiled to allow detail textures to repeat without appearing stretched:</p>
-      <pre><code class="language-cpp">void HeightmapTerrain::BuildBuffers(GraphicsDevice& gd) {
-    std::vector&lt;VertexPositionNormalTexture&gt; vertices;
-    vertices.reserve(static_cast&lt;size_t&gt;(width_ * height_));
+      <p>Each grid cell is split into two triangles, and the grid is cut into chunks of 64 &times; 64 cells that share their border vertices&rsquo; positions and normals (so lighting is continuous across chunk seams). Every chunk gets its own vertex buffer and a <strong>16-bit</strong> index buffer with indices local to that chunk, which is what keeps the terrain inside the Reach profile. UV coordinates are tiled from the world position, so they are also continuous across chunks and let detail textures repeat without appearing stretched. Both buffers are created with <code>BufferUsage::WriteOnly</code>: the terrain is uploaded once and never read back (<code>WriteOnly</code> only forbids <code>GetData</code>; it does not by itself make a buffer &ldquo;static&rdquo;):</p>
+      <pre><code class="language-cpp">void HeightmapTerrain::BuildBuffers(GraphicsDevice&amp; gd) {
+    for (int z0 = 0; z0 &lt; height_ - 1; z0 += kChunkCells) {
+        for (int x0 = 0; x0 &lt; width_ - 1; x0 += kChunkCells) {
+            // Vertices x0..x1 by z0..z1 inclusive; neighbouring chunks share an edge.
+            const int x1 = std::min(x0 + kChunkCells, width_  - 1);
+            const int z1 = std::min(z0 + kChunkCells, height_ - 1);
+            const int cw = x1 - x0 + 1;   // vertices across
+            const int ch = z1 - z0 + 1;   // vertices down
 
-    for (int z = 0; z &lt; height_; ++z) {
-        for (int x = 0; x &lt; width_; ++x) {
-            float wx = x * worldScale_;
-            float wz = z * worldScale_;
-            float wy = heightData_[z * width_ + x];
+            std::vector&lt;VertexPositionNormalTexture&gt; vertices;
+            vertices.reserve(static_cast&lt;size_t&gt;(cw * ch));
+            for (int z = z0; z &lt;= z1; ++z) {
+                for (int x = x0; x &lt;= x1; ++x) {
+                    float wx = x * worldScale_;
+                    float wz = z * worldScale_;
+                    float wy = heightData_[z * width_ + x];
 
-            // UV tiles every 8 world units
-            float u = wx / 8.0f;
-            float v = wz / 8.0f;
+                    // UV tiles every 8 world units
+                    vertices.push_back({
+                        Vector3(wx, wy, wz),
+                        normals_[z * width_ + x],   // computed by CalculateNormals()
+                        Vector2(wx / 8.0f, wz / 8.0f)
+                    });
+                }
+            }
 
-            vertices.push_back({
-                Vector3(wx, wy, wz),
-                Vector3::Zero,  // normals computed below
-                Vector2(u, v)
-            });
+            // Two triangles per quad, indices local to this chunk (at most 65 x 65
+            // = 4,225 vertices, far below the 16-bit limit of 65,536).
+            std::vector&lt;uint16_t&gt; indices;
+            indices.reserve(static_cast&lt;size_t&gt;((cw - 1) * (ch - 1) * 6));
+            for (int z = 0; z &lt; ch - 1; ++z) {
+                for (int x = 0; x &lt; cw - 1; ++x) {
+                    uint16_t tl = static_cast&lt;uint16_t&gt;(z * cw + x);
+                    uint16_t tr = static_cast&lt;uint16_t&gt;(tl + 1);
+                    uint16_t bl = static_cast&lt;uint16_t&gt;(tl + cw);
+                    uint16_t br = static_cast&lt;uint16_t&gt;(bl + 1);
+                    // Triangle 1 (clockwise seen from above)
+                    indices.push_back(tl);
+                    indices.push_back(tr);
+                    indices.push_back(bl);
+                    // Triangle 2
+                    indices.push_back(tr);
+                    indices.push_back(br);
+                    indices.push_back(bl);
+                }
+            }
+
+            Chunk chunk;
+            chunk.vertexCount    = static_cast&lt;int&gt;(vertices.size());
+            chunk.primitiveCount = static_cast&lt;int&gt;(indices.size()) / 3;
+
+            chunk.vb = std::make_unique&lt;VertexBuffer&gt;(
+                gd, VertexPositionNormalTexture::getVertexDeclarationStatic(),
+                chunk.vertexCount, BufferUsage::WriteOnly);
+            chunk.vb-&gt;SetData(vertices.data(), chunk.vertexCount);
+
+            chunk.ib = std::make_unique&lt;IndexBuffer&gt;(
+                gd, IndexElementSize::SixteenBits,
+                static_cast&lt;int&gt;(indices.size()), BufferUsage::WriteOnly);
+            chunk.ib-&gt;SetData(indices.data(), static_cast&lt;int&gt;(indices.size()));
+
+            chunks_.push_back(std::move(chunk));
         }
     }
-
-    // Calculate smooth vertex normals before uploading
-    CalculateNormals();  // fills vertices[i].Normal in-place
-    // (pass vertices by ref to CalculateNormals in real code)
-
-    vb_ = std::make_unique&lt;VertexBuffer&gt;(
-        gd, VertexPositionNormalTexture::getVertexDeclarationStatic(),
-        static_cast&lt;int&gt;(vertices.size()), BufferUsage::None);
-    vb_-&gt;SetData(vertices.data(), static_cast&lt;int&gt;(vertices.size()));
-
-    // Build index buffer — two triangles per quad
-    std::vector&lt;uint32_t&gt; indices;
-    indices.reserve(static_cast&lt;size_t&gt;((width_ - 1) * (height_ - 1) * 6));
-    for (int z = 0; z &lt; height_ - 1; ++z) {
-        for (int x = 0; x &lt; width_ - 1; ++x) {
-            uint32_t tl = z * width_ + x;
-            uint32_t tr = tl + 1;
-            uint32_t bl = tl + width_;
-            uint32_t br = bl + 1;
-            // Triangle 1
-            indices.push_back(tl);
-            indices.push_back(bl);
-            indices.push_back(tr);
-            // Triangle 2
-            indices.push_back(tr);
-            indices.push_back(bl);
-            indices.push_back(br);
-        }
-    }
-    primitiveCount_ = static_cast&lt;int&gt;(indices.size()) / 3;
-
-    ib_ = std::make_unique&lt;IndexBuffer&gt;(
-        gd, IndexElementSize::ThirtyTwoBits,
-        static_cast&lt;int&gt;(indices.size()), BufferUsage::None);
-    ib_-&gt;SetData(indices.data(), static_cast&lt;int&gt;(indices.size()));
 }</code></pre>
+      <div class="callout callout--note">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>Winding.</strong> XNA (and CNA) treat clockwise triangles as front faces and the default state culls counter-clockwise ones. Seen from above (looking down the &minus;Y axis, +X to the right, +Z toward the bottom of the screen) the index order above is clockwise, so the top of the terrain is visible with the default rasterizer state. If your terrain looks like it is missing from above, swap two indices per triangle or set <code>RasterizerState::CullNone</code> while you debug. The winding was worked out by hand, not verified by rendering.</p>
+      </div>
 
       <h2>Normal calculation</h2>
-      <p>Smooth normals are computed by accumulating cross products of the surrounding triangles and then normalising. A simpler but slightly less accurate approach uses the central-difference of adjacent height samples:</p>
+      <p>Smooth normals are computed by accumulating cross products of the surrounding triangles and then normalising. A simpler but slightly less accurate approach uses the central-difference of adjacent height samples. The result goes into the <code>normals_</code> member, which <code>BuildBuffers</code> copies into each vertex (so this function must run first, as the constructor above does):</p>
       <pre><code class="language-cpp">void HeightmapTerrain::CalculateNormals() {
     // normals_ matches the heightData_ size
     std::vector&lt;Vector3&gt; normals(heightData_.size(), Vector3::Zero);
@@ -253,7 +314,27 @@ private:
 }</code></pre>
 
       <h2>Texture blending (grass / rock / snow)</h2>
-      <p>A common approach is to blend between terrain textures based on height and slope. In the vertex shader pass the normalised height to the fragment shader; the fragment shader lerps between grass, rock, and snow textures:</p>
+      <p>A common approach is to blend between terrain textures based on height and slope. In the vertex shader pass the world height and normal to the fragment shader; the fragment shader lerps between grass, rock, and snow textures. This needs a custom <code>ShaderEffect</code> (<a href="52-custom-shaders.html">Tutorial 52</a>), so it only runs on renderers that execute custom shader source, in that renderer&rsquo;s own language: the GLSL below is ES 3.00 (add <code>#version 300 es</code> and <code>precision highp float;</code> at the top of each file; <code>OPENGLES3</code> and <code>WEBGL2</code> run it as written, <code>OPENGL33</code> and <code>OPENGL4</code> want <code>#version 330 core</code>, <code>VULKAN</code> needs SPIR-V, <code>WEBGPU</code> WGSL, <code>DIRECTX11</code>/<code>DIRECTX12</code> HLSL). <code>FNA3D</code>, <code>SOFTWARE</code>, <code>METAL</code> and <code>PORTABLEGL</code> report <code>CustomEffects</code> false and stay on the <code>BasicEffect</code> path below.</p>
+      <pre><code class="language-glsl">// terrain.vert — pass world height and normal to the blend
+layout(location = 0) in vec3 aPosition;
+layout(location = 1) in vec3 aNormal;
+layout(location = 2) in vec2 aTexCoord;
+
+uniform mat4 World;
+uniform mat4 View;
+uniform mat4 Projection;
+
+out vec3  vWorldNormal;
+out vec2  vTexCoord;
+out float vHeight;
+
+void main() {
+    vec4 worldPos = World * vec4(aPosition, 1.0);
+    gl_Position   = Projection * View * worldPos;
+    vWorldNormal  = mat3(World) * aNormal;
+    vTexCoord     = aTexCoord;
+    vHeight       = worldPos.y;
+}</code></pre>
       <pre><code class="language-glsl">// terrain.frag — height-based texture blending
 uniform sampler2D GrassTexture;
 uniform sampler2D RockTexture;
@@ -283,24 +364,72 @@ void main() {
 }</code></pre>
 
       <h2>Draw method</h2>
-      <pre><code class="language-cpp">void HeightmapTerrain::Draw(const Matrix& view, const Matrix& projection) {
+      <p>The baseline draw uses <code>BasicEffect</code> with the grass texture and default lighting. <code>setTextureProperty</code> takes a <code>Texture2D*</code>, so pass <code>.get()</code>. Each chunk is one indexed draw, far below the per-draw primitive ceiling:</p>
+      <pre><code class="language-cpp">void HeightmapTerrain::Draw(const Matrix&amp; view, const Matrix&amp; projection) {
     effect_-&gt;setWorldProperty(Matrix::getIdentityProperty());
     effect_-&gt;setViewProperty(view);
     effect_-&gt;setProjectionProperty(projection);
     effect_-&gt;setLightingEnabledProperty(true);
-    effect_-&gt;setTextureProperty(*grassTexture_);
+    effect_-&gt;EnableDefaultLighting();
+    effect_-&gt;setTextureProperty(grassTexture_.get());   // a pointer, not a reference
     effect_-&gt;setTextureEnabledProperty(true);
 
-    gd_-&gt;SetVertexBuffer(vb_.get());
-    gd_-&gt;SetIndexBuffer(ib_.get());
+    for (auto&amp; chunk : chunks_) {   // add frustum culling here for large worlds
+        gd_-&gt;SetVertexBuffer(chunk.vb.get());
+        gd_-&gt;SetIndexBuffer(chunk.ib.get());
 
-    for (auto& pass : effect_-&gt;getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
-        pass.Apply();
-        gd_-&gt;DrawIndexedPrimitives(
-            PrimitiveType::TriangleList,
-            0, 0,
-            vb_-&gt;getVertexCountProperty(),
-            0, primitiveCount_);
+        for (auto&amp; pass : effect_-&gt;getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
+            pass.Apply();
+            gd_-&gt;DrawIndexedPrimitives(
+                PrimitiveType::TriangleList,
+                0, 0,
+                chunk.vertexCount,
+                0, chunk.primitiveCount);
+        }
+    }
+}</code></pre>
+      <p>To use the grass / rock / snow blend instead, create the <code>ShaderEffect</code> from the two shader files (only where the renderer runs custom shaders), point the samplers at units 0&ndash;2 once, and draw the same chunks with it:</p>
+      <pre><code class="language-cpp">// In the constructor, after the textures are loaded (skip on renderers with CustomEffects == false):
+if (gd.SupportsCapability(CNA::GraphicsCapability::CustomEffects)) {
+    blendEffect_ = std::make_unique&lt;ShaderEffect&gt;(
+        gd,
+        System::IO::File::ReadAllText("Content/effects/terrain.vert.glsl"),
+        System::IO::File::ReadAllText("Content/effects/terrain.frag.glsl"));
+    // The constructor does not throw on a compile failure; check it, and read
+    // GetCompileErrorEXT() for the compiler log.
+    if (!blendEffect_-&gt;IsEffectValid()) blendEffect_.reset();
+    if (blendEffect_) {
+        blendEffect_-&gt;Apply();
+        blendEffect_-&gt;SetUniformInt("GrassTexture", 0);
+        blendEffect_-&gt;SetUniformInt("RockTexture",  1);
+        blendEffect_-&gt;SetUniformInt("SnowTexture",  2);
+    }
+}
+
+void HeightmapTerrain::DrawBlended(const Matrix&amp; view, const Matrix&amp; projection) {
+    if (!blendEffect_) { Draw(view, projection); return; }   // fall back to BasicEffect
+
+    // ShaderEffect's matrix setter takes raw column-major floats.
+    auto setMat4 = [&amp;](const char* name, const Matrix&amp; m) {
+        float cm[16];
+        m.ToColumnMajor(cm);
+        blendEffect_-&gt;SetUniformMat4(name, cm);
+    };
+
+    blendEffect_-&gt;Apply();
+    setMat4("World",      Matrix::getIdentityProperty());
+    setMat4("View",       view);
+    setMat4("Projection", projection);
+    blendEffect_-&gt;SetUniformFloat("MaxHeight", heightScale_);
+    blendEffect_-&gt;SetTexture(0, *grassTexture_);
+    blendEffect_-&gt;SetTexture(1, *rockTexture_);
+    blendEffect_-&gt;SetTexture(2, *snowTexture_);
+
+    for (auto&amp; chunk : chunks_) {
+        gd_-&gt;SetVertexBuffer(chunk.vb.get());
+        gd_-&gt;SetIndexBuffer(chunk.ib.get());
+        gd_-&gt;DrawIndexedPrimitives(PrimitiveType::TriangleList,
+                                   0, 0, chunk.vertexCount, 0, chunk.primitiveCount);
     }
 }</code></pre>
 
@@ -309,9 +438,9 @@ void main() {
       <ul>
         <li><strong>Geo-MipMapping</strong> — divide the terrain into tiles and choose a lower-resolution mesh for tiles far from the camera. Special edge stitching prevents cracks between tiles at different LOD levels.</li>
         <li><strong>CDLOD (Continuous Distance-Dependent LOD)</strong> — a quadtree-based method that morphs vertices between LOD levels, producing crack-free continuous transitions.</li>
-        <li><strong>GPU tessellation</strong> — pass a coarse mesh to the GPU and use tessellation shaders to add detail near the camera. Available via OpenGL 4.0 / Vulkan compute; not yet exposed directly in CNA's Effect system but accessible through raw GL calls on the GL family of renderers.</li>
+        <li><strong>GPU tessellation</strong> — pass a coarse mesh to the GPU and use tessellation shaders to add detail near the camera. CNA has no tessellation stage and no raw-GL escape hatch in its public API (only the <code>VertexElementUsage::TessellateFactor</code> enumerator exists). The modern alternative in this snapshot is compute: <code>GraphicsCapability::ComputeShaders</code> (CNAEXT) is true on <code>WEBGPU</code> and <code>SDL_GPU</code>, and conditionally on <code>OPENGL4</code>, <code>VULKAN</code> and the desktop GL / GLES 3.1+ contexts of the EasyGL family (never on WebGL), which lets you generate or refine geometry on the GPU yourself.</li>
       </ul>
-      <p>For most games up to 4 km × 4 km at 1 m resolution, a 4097×4097 heightmap with simple distance-based tile LOD is sufficient without tessellation.</p>
+      <p>For most games up to 4 km × 4 km at 1 m resolution, a 4097×4097 grid with simple distance-based chunk LOD is sufficient without tessellation. That grid is about 16.8 million vertices, so it lives as roughly 4,100 chunks of the size above, and it cannot come from a single <code>Texture2D</code> (a texture edge is at most 4096 on HiDef, 2048 on Reach): tile several heightmaps or read a raw height file. Drawing only the chunks near the camera (frustum culling with the <a href="44-bounding-volumes.html">bounding volumes of Tutorial 44</a>) and swapping distant chunks for lower-resolution meshes is what keeps the draw count manageable.</p>
 
       <h2>Height query for collision and physics</h2>
       <p>To find the terrain height at an arbitrary world (x, z) position, compute the fractional grid coordinates and bilinearly interpolate between the four surrounding samples:</p>
@@ -357,7 +486,7 @@ void main() {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

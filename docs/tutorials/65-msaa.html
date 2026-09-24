@@ -21,7 +21,7 @@
   "headline": "Tutorial 65: MSAA Anti-Aliasing",
   "url": "https://libcna.com/docs/tutorials/65-msaa.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -90,14 +90,19 @@
         <p><strong>What you&rsquo;ll learn</strong></p>
         <ul>
           <li>What multisampling actually smooths, and what it does not.</li>
-          <li>Requesting it via <code>PreferMultiSampling</code> and <code>MultiSampleCount</code> on <code>GraphicsDeviceManager</code>.</li>
+          <li>Requesting it via <code>PreferMultiSampling</code> on <code>GraphicsDeviceManager</code>, and choosing a specific <code>MultiSampleCount</code> through the <code>PreparingDeviceSettings</code> event.</li>
           <li>Which renderers honour the request, and what the ones that cannot do instead.</li>
           <li>FXAA as a post-process alternative, and when to prefer it.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> &mdash; the settings are configured on the manager set up there. Renderer support differs sharply: <code>OPENGLES3</code> and <code>VULKAN</code> implement MSAA, while <code>SDL_RENDERER</code> accepts the flag and ignores it.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> &mdash; the settings are configured on the manager set up there. Renderer support differs sharply: <code>OPENGLES3</code> and <code>VULKAN</code> implement MSAA, <code>OPENGLES2</code>, <code>WEBGL1</code>, <code>METAL</code> and <code>PORTABLEGL</code> have none, and <code>SDL_RENDERER</code> accepts the flag and ignores it; the table under <a href="#renderer-support">Renderer Support</a> covers all 25 identities. MSAA itself needs no HiDef request, but the FXAA alternative and the engine-layer route need a renderer that executes custom shaders.</p>
       </div>
 
       <p>Aliasing — the "staircase" jagged edge effect on geometry silhouettes — is one of the most immediately visible quality issues in 3D rendering. This tutorial covers Multi-Sample Anti-Aliasing (MSAA), CNA's primary hardware-accelerated AA mode, and the FXAA post-process alternative for renderers and devices where MSAA is unavailable or too expensive.</p>
+
+      <div class="callout callout--note" id="requirements">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>Requirements.</strong> Back-buffer MSAA needs no HiDef request: the default <code>Reach</code> profile is enough, and there is no profile-specific code to add. What it needs is a renderer that multisamples (see <a href="#renderer-support">Renderer Support</a>). The FXAA alternative additionally needs a renderer that runs custom shaders, and an off-screen scene target whose edges stay within the profile&rsquo;s limit (2048 on Reach, 4096 on HiDef; see <a href="152-graphics-profiles.html#gates">Tutorial 152</a>). The engine-layer <code>RenderPipeline</code> route needs <code>-DCNA_CNAEXT=ON</code>.</p>
+      </div>
 
       <h2>What is MSAA?</h2>
       <p>Multi-Sample Anti-Aliasing (MSAA) works by rendering each pixel at multiple sub-pixel <em>sample positions</em> and averaging the results. For a 4x MSAA framebuffer, the GPU maintains four samples per pixel, each with an independent depth and stencil value. The fragment shader runs once per pixel (not once per sample), but the coverage test runs per-sample. At pixels where a triangle edge crosses, only some of the four samples fall inside the triangle; those samples get the triangle's colour and the others keep the background colour. When the frame is displayed, the four samples are averaged ("resolved"), producing a smooth anti-aliased edge.</p>
@@ -124,17 +129,23 @@ public:
 private:
     GraphicsDeviceManager graphics_;
 };</code></pre>
-      <p>The word "Prefer" in <code>PreferMultiSampling</code> is significant: if the hardware or driver does not support MSAA (or does not support the requested sample count), CNA will silently fall back to no MSAA rather than failing. Always check <code>GraphicsDevice.PresentationParameters.MultiSampleCount</code> at runtime to determine the actual sample count in use.</p>
+      <p>The word "Prefer" in <code>PreferMultiSampling</code> is significant: if the hardware or driver does not support MSAA (or does not support the requested sample count), CNA will silently fall back to fewer samples, or none, rather than failing. Ask <code>gd.SupportsCapability(CNA::GraphicsCapability::MultiSampleAntiAliasing)</code> to learn whether the renderer can multisample at all, and read <code>GraphicsDevice.PresentationParameters.MultiSampleCount</code> to learn the count in use &mdash; but only trust that read-back on the renderers marked in the table below; on the others it simply echoes the request.</p>
 
       <h2>GraphicsDeviceManager Settings</h2>
-      <p>The sample count can be specified explicitly. CNA picks the highest supported count up to and including the requested value:</p>
+      <p><code>GraphicsDeviceManager</code> has no sample-count property of its own; <code>PreferMultiSampling</code> is the whole switch. When it is <code>true</code> the manager requests <strong>8</strong> samples, and when it is <code>false</code> it forces the count to 0. The renderer then clamps that request to what it supports (see the table under Renderer Support). To ask for a different count, set it on the <code>PresentationParameters</code> inside the <code>PreparingDeviceSettings</code> event, which runs after the manager has filled in its defaults and before the device is created:</p>
       <pre><code class="language-cpp">graphics_.setPreferMultiSamplingProperty(true);
 
-// Request 4x MSAA. The actual count may be lower if not supported.
-// Common values: 1 (off), 2, 4, 8, 16.
-// Most integrated GPUs support up to 4x; discrete GPUs support up to 16x.
-graphics_.setMultiSampleCountProperty(4);</code></pre>
-      <p>These settings can also be changed at runtime by calling <code>GraphicsDeviceManager::ApplyChanges()</code> after modifying them, which recreates the swap chain with the new parameters. This is useful for an in-game graphics settings screen.</p>
+// Request 4x instead of the default 8. The renderer clamps the request to what the
+// device supports, so the actual count may be lower.
+// Useful values: 2, 4, 8 (1 is not a valid MSAA count and means "none").
+// Most integrated GPUs support up to 4x; discrete GPUs support more on some APIs.
+graphics_.PreparingDeviceSettings +=
+    [](System::Object*, const PreparingDeviceSettingsEventArgs&amp; e) {
+        e.getGraphicsDeviceInformationEXT()
+         .getPresentationParametersProperty()
+         .setMultiSampleCountProperty(4);
+    };</code></pre>
+      <p>These settings can also be changed at runtime by calling <code>GraphicsDeviceManager::ApplyChanges()</code> after modifying them, which re-applies the presentation parameters to the device (an in-place reset). This is useful for an in-game graphics settings screen. An off-screen target takes its own count: <code>RenderTarget2D(gd, w, h, false, SurfaceFormat::Color, DepthFormat::Depth24, 4)</code> rounds the count down to a power of two (1 becomes 0), and every target in a multiple-render-target set must have the same applied sample count.</p>
 
       <h2>MultiSampleCount — Choosing a Level</h2>
       <div class="table-wrap">
@@ -147,7 +158,7 @@ graphics_.setMultiSampleCountProperty(4);</code></pre>
             <tr><td>2x</td><td>Noticeable improvement</td><td>~1.5x</td><td>Mobile, battery-saving mode</td></tr>
             <tr><td>4x</td><td>Good — most edges smooth</td><td>~2x</td><td>Default for desktop/console</td></tr>
             <tr><td>8x</td><td>Very high</td><td>~3x</td><td>High-end desktop GPU</td></tr>
-            <tr><td>16x</td><td>Diminishing returns vs 8x</td><td>~4x</td><td>Benchmarks, screenshots</td></tr>
+            <tr><td>16x</td><td>Diminishing returns vs 8x</td><td>~4x</td><td>Benchmarks, screenshots (only where the device offers it)</td></tr>
           </tbody>
         </table>
       </div>
@@ -156,28 +167,60 @@ graphics_.setMultiSampleCountProperty(4);</code></pre>
       <pre><code class="language-cpp">void Initialize() override {
     Game::Initialize();
     auto&amp; pp = getGraphicsDeviceProperty().getPresentationParametersProperty();
-    // pp.getMultiSampleCountProperty() reports what the driver actually gave us
+    // pp.getMultiSampleCountProperty() reports what the renderer actually applied
+    // on the renderers marked "reports applied count" below; elsewhere it echoes
+    // the request, so also consult SupportsCapability(MultiSampleAntiAliasing).
     int actualSamples = pp.getMultiSampleCountProperty();
     // Log to console, display in a debug overlay, etc.
     (void)actualSamples;
 }</code></pre>
 
-      <h2>Renderer Support</h2>
+      <h2 id="renderer-support">Renderer Support</h2>
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>A renderer that cannot do MSAA clamps your request to 1.</strong> The requested <code>multiSampleCount</code> is handed to the renderer at construction, and the interface documents plainly that renderers without MSAA support silently clamp it. Nothing throws. <code>SDL_RENDERER</code> is the common case: <code>setPreferMultiSamplingProperty(true)</code> is accepted and has no effect, because SDL's 2D renderer exposes no MSAA control. Use FXAA (below) there.</p>
-        <p>Ask <code>GraphicsDevice::SupportsCapability(GraphicsCapability::MultiSampleAntiAliasing)</code> rather than guessing &mdash; but note that most base entries fail open. <code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code> and <code>SDL_GPU</code> supply no override at all. Reading back the achieved sample count, as the example below does, is the answer you can trust.</p>
+        <p><strong>A renderer that cannot do MSAA clamps your request to 1 (no multisampling).</strong> The requested <code>multiSampleCount</code> is handed to the renderer, and renderers without MSAA support silently clamp it. Nothing throws. <code>SDL_RENDERER</code> is the common case: <code>setPreferMultiSamplingProperty(true)</code> is accepted, the request is logged, and it has no effect, because SDL&rsquo;s 2D renderer exposes no MSAA control. Use FXAA (below) where a custom shader can run.</p>
+        <p>Ask <code>GraphicsDevice::SupportsCapability(GraphicsCapability::MultiSampleAntiAliasing)</code> rather than guessing. On <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL2</code> (needs <code>GL_MAX_SAMPLES</code> above 1), <code>VULKAN</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>SDL_GPU</code>, <code>WEBGPU</code> and <code>FNA3D</code> the answer comes from a real probe of the device; <code>OPENGL4</code> guarantees at least 4 samples; only <code>DIRECTX9</code> inherits the permissive shared default (true). Reading back the achieved sample count, as the example below does, is the answer you can trust <em>only</em> on the renderers that report it (last column).</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th scope="col">Renderer identities</th>
+              <th scope="col">Back-buffer MSAA</th>
+              <th scope="col">How the count is chosen</th>
+              <th scope="col">Reports applied count</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row"><code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL2</code></th><td>Yes, when <code>GL_MAX_SAMPLES</code> is above 1</td><td>Clamped to the GL context&rsquo;s maximum</td><td>Yes</td></tr>
+            <tr><th scope="row"><code>OPENGL4</code></th><td>Yes</td><td>GL 4 core guarantees at least 4</td><td>Yes</td></tr>
+            <tr><th scope="row"><code>VULKAN</code></th><td>Yes, when colour <em>and</em> depth sample counts allow more than 1</td><td>Intersection of <code>framebufferColorSampleCounts</code> and <code>framebufferDepthSampleCounts</code></td><td>Yes</td></tr>
+            <tr><th scope="row"><code>SDL_GPU</code></th><td>Yes</td><td>Clamps 8 to 4 to 2 against colour and depth support</td><td>Yes</td></tr>
+            <tr><th scope="row"><code>DIRECTX11</code>, <code>DIRECTX12</code></th><td>Yes, when a multisample quality level exists</td><td>The request is halved until one does; the capability probes a request of 4</td><td>Yes</td></tr>
+            <tr><th scope="row"><code>WEBGPU</code></th><td>Yes, when the 4x probe passes</td><td>4x only</td><td>Yes</td></tr>
+            <tr><th scope="row"><code>SOFTWARE</code></th><td>Yes (CPU, sample-correct)</td><td>0 or 4 only; other counts are rejected</td><td>Yes</td></tr>
+            <tr><th scope="row"><code>GDI</code></th><td>Opt-in 4x on its CPU 2D back buffer</td><td>One optional mode, 4x</td><td>Yes</td></tr>
+            <tr><th scope="row"><code>FNA3D</code></th><td>Yes, when <code>FNA3D_GetMaxMultiSampleCount</code> is above 1</td><td>Depends on the FNA3D driver chosen at run time</td><td>No (echoes the request)</td></tr>
+            <tr><th scope="row"><code>DIRECTX9</code></th><td>Inherited default (true), not probed</td><td>Not verified</td><td>No (echoes the request)</td></tr>
+            <tr><th scope="row"><code>HEADLESS</code></th><td>Default true, but nothing is rasterised</td><td>&mdash;</td><td>No</td></tr>
+            <tr><th scope="row"><code>OPENGLES2</code>, <code>WEBGL1</code></th><td>No (ES 2 generation has no multisampling)</td><td>Clamped to none</td><td>Yes (reports none)</td></tr>
+            <tr><th scope="row"><code>METAL</code>, <code>PORTABLEGL</code>, <code>STUB</code></th><td>No (one sample per pixel)</td><td>Clamped to none</td><td>No</td></tr>
+            <tr><th scope="row"><code>SDL_RENDERER</code></th><td>No; the request is logged and ignored</td><td>&mdash;</td><td>No</td></tr>
+            <tr><th scope="row"><code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>SVG_DOM</code></th><td>No (2D only)</td><td>&mdash;</td><td>No</td></tr>
+          </tbody>
+        </table>
       </div>
       <ul>
-        <li><strong>The GL family (internally EasyGL)</strong> — enables MSAA via <code>SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1)</code> and <code>SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, count)</code>, then calls <code>glEnable(GL_MULTISAMPLE)</code> after context creation. The actual sample count is confirmed with <code>glGetIntegerv(GL_SAMPLES, &amp;actual)</code>.</li>
-        <li><strong>The <code>VULKAN</code> renderer</strong> — creates the swap chain images with the requested <code>VkSampleCountFlagBits</code> (e.g., <code>VK_SAMPLE_COUNT_4_BIT</code>) and sets up a multisample resolve attachment in the render pass. Uses <code>vkGetPhysicalDeviceProperties</code> to query <code>framebufferColorSampleCounts</code> for hardware limits.</li>
+        <li><strong>The GL family (internally EasyGL)</strong> &mdash; the request travels in the platform&rsquo;s GL context description (<code>multisampleSamples</code>), which the SDL3, SDL2 and native X11 platform back ends honour (SDL uses <code>SDL_GL_MULTISAMPLEBUFFERS</code>/<code>SDL_GL_MULTISAMPLESAMPLES</code>, X11 <code>GLX_SAMPLES</code>); SDL&rsquo;s attributes are only one implementation. The achieved count is confirmed with <code>glGetIntegerv(GL_SAMPLES, &amp;actual)</code> and reported back.</li>
+        <li><strong>The <code>VULKAN</code> renderer</strong> &mdash; keeps the swap chain images single-sample and renders into a separate multisampled colour and depth target (for example <code>VK_SAMPLE_COUNT_4_BIT</code>), which it resolves into the swap chain image. It uses <code>vkGetPhysicalDeviceProperties</code> to query <code>framebufferColorSampleCounts</code> and <code>framebufferDepthSampleCounts</code> for hardware limits.</li>
       </ul>
 
       <h2>Complete MSAA Example</h2>
       <pre><code class="language-cpp">class MsaaGame final : public Game {
 public:
     MsaaGame() : graphics_(this) {
-        // Request 4x MSAA back buffer
+        // Prefer multisampling: the manager requests 8 samples and the renderer
+        // clamps that to what it supports (use PreparingDeviceSettings for 4).
         graphics_.setPreferMultiSamplingProperty(true);
         graphics_.setPreferredBackBufferWidthProperty(1280);
         graphics_.setPreferredBackBufferHeightProperty(720);
@@ -187,7 +230,8 @@ protected:
     void Initialize() override {
         Game::Initialize();
 
-        // Confirm actual MSAA level from the driver
+        // Confirm the MSAA level. This is the applied count on the renderers that
+        // report it (see the table); elsewhere it echoes the request.
         auto&amp; pp = getGraphicsDeviceProperty().getPresentationParametersProperty();
         actualSampleCount_ = pp.getMultiSampleCountProperty();
     }
@@ -225,7 +269,7 @@ protected:
             pass.Apply();
             gd.DrawPrimitives(PrimitiveType::TriangleList, 0, triCount_);
         }
-        gd.Present();
+        // No gd.Present(): Game presents after Draw() returns.
     }
 
 private:
@@ -269,7 +313,7 @@ int main() {
       <h2>FXAA: A Post-Process Alternative</h2>
       <p>Fast Approximate Anti-Aliasing (FXAA) is a screen-space post-processing technique that detects high-contrast edges in the final colour image and blurs them slightly. It runs as a single fullscreen fragment shader pass on the resolved (non-MSAA) framebuffer. Key properties:</p>
       <ul>
-        <li>Works on any renderer with render-target support, including <code>SDL_RENDERER</code>.</li>
+        <li>Works on any renderer that has render targets <em>and</em> executes a custom shader on a full-screen pass. <code>SDL_RENDERER</code> is not one of them: it has no programmable shader stage and throws on any custom <code>SpriteBatch</code> effect. The shader dialect is the renderer&rsquo;s own (see <a href="59-shadow-mapping.html#platform-limitations">Tutorial 59</a> for the table), and <code>FNA3D</code>, <code>SOFTWARE</code>, <code>METAL</code> and <code>PORTABLEGL</code> report <code>CustomEffects</code> false.</li>
         <li>No additional memory for multi-sample buffers.</li>
         <li>Detects edges from colour contrast, so it can also smooth texture edges and alpha-tested geometry.</li>
         <li>Introduces a small amount of blurring on fine detail (e.g., text, thin lines) as a side effect.</li>
@@ -350,7 +394,7 @@ void main() {
       <h3>Applying FXAA in the Draw Loop</h3>
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>The FXAA pass in this tutorial is a <code>ShaderEffect</code>.</strong> Alpha.1 also has a renderer-qualified path for XNA/FNA D3D9 Effect Framework bytecode, but it is not a portable source-shader compiler. Here the renderer-native shader is handed to <code>ShaderEffect</code> as source text. It has no <code>Parameters</code> collection; <code>u_screen</code> is bound by telling the sampler which unit to read and letting SpriteBatch supply the texture on unit 0. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+        <p><strong>The FXAA pass in this tutorial is a <code>ShaderEffect</code>.</strong> This snapshot also has a renderer-qualified path for compiled XNA/FNA Effect Framework bytecode (<code>FNA3D</code> always, thirteen more identities behind default-OFF <code>CNA_*_COMPILED_EFFECTS</code> options), but it is not a portable source-shader compiler. Here the renderer-native shader (GLSL ES 3.00, for <code>OPENGLES3</code> and <code>WEBGL2</code>; other renderers need their own dialect) is handed to <code>ShaderEffect</code> as source text. It has no <code>Parameters</code> collection; <code>u_screen</code> is bound by telling the sampler which unit to read and letting SpriteBatch supply the texture on unit 0. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
       </div>
       <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
 #include "System/IO/File.hpp"
@@ -364,8 +408,9 @@ void main() {
 //     System::IO::File::ReadAllText("Content/effects/fxaa.vert.glsl"),
 //     System::IO::File::ReadAllText("Content/effects/fxaa.frag.glsl"));
 //
-// // The constructor does not throw on a compile failure.
-// if (!fxaaEffect_-&gt;IsEffectValid()) { /* the GLSL did not compile */ }
+// // The constructor does not throw on a compile failure;
+// // GetCompileErrorEXT() returns the compiler log.
+// if (!fxaaEffect_-&gt;IsEffectValid()) { /* the shader did not compile */ }
 //
 // // u_screen reads texture unit 0, which is where SpriteBatch binds its texture.
 // fxaaEffect_-&gt;Apply();
@@ -385,16 +430,30 @@ void Draw(const GameTime&amp;) override {
 
     // Nothing to rebind per frame: SpriteBatch supplies the source texture on
     // unit 0, and the sampler's unit was set once in LoadContent().
+    // The sampler, depth-stencil and rasterizer parameters are pointers.
     spriteBatch_-&gt;Begin(SpriteSortMode::Immediate,
                          BlendState::Opaque,
-                         SamplerState::LinearClamp,
+                         &amp;SamplerState::LinearClamp,
                          nullptr, nullptr,
                          fxaaEffect_.get());
     spriteBatch_-&gt;Draw(*sceneRT_, Vector2::Zero, Color::White);
     spriteBatch_-&gt;End();
-
-    gd.Present();
+    // No gd.Present(): Game presents after Draw() returns.
 }</code></pre>
+
+      <h3>The engine-layer alternative: FxaaPass and RenderPipeline</h3>
+      <p>If you build with <code>-DCNA_CNAEXT=ON</code> (off by default, see <a href="115-cnaext-overview.html#engine">Tutorial 115</a>), you do not have to write the pass: <code>CNA::Graphics::RenderPipeline</code> owns the off-screen scene target and runs <code>FxaaPass</code> (and bloom, tone mapping and more) for you. <code>FxaaPass::isSupported()</code> is true only when the renderer has <code>CustomEffects</code> and the packaged shader compiled; otherwise the pipeline copies the frame through unchanged. The engine layer is documented by CNA as still moving, so pin the CNA revision you build against.</p>
+      <pre><code class="language-cpp">#include "CNA/Graphics/RenderPipeline.hpp"   // -DCNA_CNAEXT=ON
+
+// LoadContent
+pipeline_ = std::make_unique&lt;CNA::Graphics::RenderPipeline&gt;(gd);
+pipeline_-&gt;resize(1280, 720);
+pipeline_-&gt;getSettings().setFXAAEnabled(true);
+
+// Draw
+pipeline_-&gt;begin(Color::CornflowerBlue);   // binds the scene target
+drawScene(gd);
+pipeline_-&gt;end();                         // runs the enabled passes into the back buffer</code></pre>
 
       <h2>Choosing Between MSAA and FXAA</h2>
       <div class="table-wrap">
@@ -408,12 +467,12 @@ void Draw(const GameTime&amp;) override {
             <tr><td>Fine detail preservation</td><td>Perfect</td><td>Slightly blurry</td></tr>
             <tr><td>Memory overhead</td><td>4x framebuffer</td><td>1x (one RenderTarget2D)</td></tr>
             <tr><td>Shader overhead</td><td>Minimal</td><td>One fullscreen pass</td></tr>
-            <tr><td>Renderer requirement</td><td>A renderer that honours <code>multiSampleCount</code></td><td>Any renderer with render targets</td></tr>
+            <tr><td>Renderer requirement</td><td>A renderer that honours <code>multiSampleCount</code> (see the table above)</td><td>A renderer with render targets that executes a custom shader (not <code>SDL_RENDERER</code>)</td></tr>
             <tr><td>Deferred rendering compatible</td><td>Complex</td><td>Yes (post-lighting)</td></tr>
           </tbody>
         </table>
       </div>
-      <p>In practice, many games ship with both: MSAA for the forward-rendered geometry pass, and FXAA or TAA applied as a final post-process to handle remaining aliasing from shading. CNA supports this combination — enable MSAA on the back buffer for the main pass, then optionally add an FXAA pass before <code>Present()</code> for residual aliasing in shaded regions.</p>
+      <p>In practice, many games ship with both: MSAA for the forward-rendered geometry pass, and FXAA or TAA applied as a final post-process to handle remaining aliasing from shading. CNA supports this combination — enable MSAA on the back buffer for the main pass, then optionally add an FXAA pass at the end of <code>Draw</code> (the <code>Game</code> presents afterwards) for residual aliasing in shaded regions.</p>
 
       <nav class="docs-pagination" aria-label="Page navigation">
         <div class="docs-pagination-prev">
@@ -438,7 +497,7 @@ void Draw(const GameTime&amp;) override {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
