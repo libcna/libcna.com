@@ -13,70 +13,26 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 SITE = "https://libcna.com"
-UPDATED = "2026-08-20"
+UPDATED = "2026-09-24"
 EXCLUDED = {
     "404.html",
     "search.html",
 }
 
-# A global release footer changed every page. Only pages whose substantive content was
-# audited or rewritten get a new sitemap date.
-MATERIALLY_UPDATED = {
-    "about.html", "architecture.html", "contribute.html", "documentation.html",
-    "features.html", "index.html", "roadmap.html", "showcase.html", "tutorials.html",
-    "docs/3d-rendering.html", "docs/audio.html", "docs/building.html", "docs/c-api.html",
-    "docs/content-manager.html", "docs/content-pipeline-xnb.html", "docs/effects.html",
-    "docs/faq.html", "docs/getting-started.html", "docs/graphics-state.html", "docs/migration-from-monogame.html",
-    "docs/math-types.html", "docs/model-loading.html", "docs/packed-vector.html", "docs/platforms.html",
-    "docs/releases.html", "docs/render-targets.html", "docs/rendering-backends.html",
-    "docs/roadmap.html", "docs/runtime-renderer-selection.html", "docs/shader-effects.html",
-    "docs/storage.html", "docs/verification.html", "docs/xna-compatibility.html",
-    "docs/tutorials/01-introduction.html", "docs/tutorials/02-setup.html",
-    "docs/tutorials/03-first-window.html", "docs/tutorials/20-build-run.html",
-    "docs/tutorials/14-sound-effects.html", "docs/tutorials/15-background-music.html",
-    "docs/tutorials/21-spritebatch.html", "docs/tutorials/31-first-3d-triangle.html",
-    "docs/tutorials/32-basiceffect.html", "docs/tutorials/33-matrices.html",
-    "docs/tutorials/34-camera-3d.html", "docs/tutorials/35-model-loading.html",
-    "docs/tutorials/36-model-texturing.html", "docs/tutorials/37-multiple-lights.html",
-    "docs/tutorials/38-vertex-buffers.html", "docs/tutorials/39-depth-buffer.html",
-    "docs/tutorials/40-primitive-types.html", "docs/tutorials/51-custom-vertex.html",
-    "docs/tutorials/52-custom-shaders.html", "docs/tutorials/53-effect-parameter.html",
-    "docs/tutorials/54-alpha-test.html", "docs/tutorials/55-dual-texture.html",
-    "docs/tutorials/56-environment-map.html", "docs/tutorials/57-skinned-effect.html",
-    "docs/tutorials/58-normal-mapping.html",
-    "docs/tutorials/59-shadow-mapping.html", "docs/tutorials/60-instancing.html",
-    "docs/tutorials/61-occlusion-query.html", "docs/tutorials/62-mrt.html",
-    "docs/tutorials/65-msaa.html",
-    "docs/tutorials/63-stencil-buffer.html", "docs/tutorials/64-cubemaps.html",
-    "docs/tutorials/66-bloom.html", "docs/tutorials/67-deferred-rendering.html",
-    "docs/tutorials/68-terrain.html", "docs/tutorials/69-water.html",
-    "docs/tutorials/70-procedural-geometry.html",
-    "docs/tutorials/72-backend-selection.html", "docs/tutorials/80-cross-platform.html",
-    "docs/tutorials/73-profiling.html", "docs/tutorials/74-frustum-culling.html",
-    "docs/tutorials/75-lod.html", "docs/tutorials/81-emscripten.html",
-    "docs/tutorials/82-android.html", "docs/tutorials/83-migrate-monogame.html",
-    "docs/tutorials/84-migrate-xna.html", "docs/tutorials/85-vulkan-backend.html",
-    "docs/tutorials/86-bgfx-backend.html", "docs/tutorials/87-custom-backend.html",
-    "docs/tutorials/93-fps-game.html", "docs/tutorials/95-speedy-blupi.html",
-    "docs/tutorials/99-unit-testing.html",
-    "docs/tutorials/100-shipping.html",
-    "docs/tutorials/101-renderer-capabilities.html",
-    "docs/tutorials/102-opengl-family.html", "docs/tutorials/103-direct3d-windows.html",
-    "docs/tutorials/104-directx-ladder.html", "docs/tutorials/105-browser-renderers.html",
-    "docs/tutorials/106-vector-renderers.html", "docs/tutorials/107-cpu-renderers.html",
-    "docs/tutorials/108-fna3d.html", "docs/tutorials/109-metal-macos.html",
-    "docs/tutorials/110-gltf-models.html", "docs/tutorials/111-cnj-pipeline.html",
-    "docs/tutorials/112-gltf-animation.html", "docs/tutorials/114-pbr-materials.html",
-    "docs/tutorials/118-dynamic-audio.html", "docs/tutorials/119-3d-audio.html",
-    "docs/tutorials/120-xact.html", "docs/tutorials/122-media-library.html",
-    "docs/tutorials/117-devices-layer.html",
-    "docs/tutorials/125-pixel-testing.html", "docs/tutorials/126-multi-renderer-build.html",
-    "docs/tutorials/127-platform-audio-selection.html",
-    "docs/tutorials/128-compiled-xna-effects.html",
-    "docs/tutorials/129-c-api-first-program.html",
-}
+# Phase 1 audited every public page against CNA snapshot 009d40f5 (facts, footer, metadata), so every
+# page carries the snapshot date. A page that is regenerated later without a content audit should be
+# removed from this rule deliberately, not implicitly.
+MATERIALLY_UPDATED: set[str] = set()  # filled from the file system in main(); see all_public_pages()
 
 NEW_TAGS = {
+    "/docs/content-pipeline.html": ["content", "pipeline", "cna-content", "xnb", "cnb", "importer", "processor"],
+    "/docs/cnb-format.html": ["cnb", "format", "content", "binary", "zstd"],
+    "/docs/diagnostics.html": ["diagnostics", "statistics", "profiling", "trace", "metrics"],
+    "/docs/inspector.html": ["inspector", "debugging", "browser", "agent", "diagnostics"],
+    "/docs/tools.html": ["tools", "cli", "cna-content", "gltf", "cnb"],
+    "/docs/native-platforms.html": ["platform", "x11", "wayland", "win32", "sdl-free"],
+    "/docs/cnaext-engine.html": ["cnaext", "engine", "pbr", "shadows", "ibl", "extensions"],
+    "/docs/design-converters.html": ["design", "converters", "typeconverter", "framework.design"],
     "/network.html": ["network", "sites", "links", "bible", "demos", "metagl", "meshcraft", "easygl"],
     "/docs/releases.html": ["release", "version", "semver", "alpha", "prerelease", "abi"],
     "/docs/runtime-renderer-selection.html": ["renderer", "runtime", "selection", "fallback", "multi-renderer"],
@@ -153,8 +109,13 @@ def fallback_tags(url: str, title: str) -> list[str]:
     return list(dict.fromkeys(word for word in words if word not in ignored))[:8]
 
 
+def all_public_pages() -> set[str]:
+    return {path.relative_to(ROOT).as_posix() for path in public_pages()}
+
+
 def update_material_dates() -> None:
-    """Stamp JSON-LD only on pages whose release content materially changed."""
+    """Stamp JSON-LD dateModified on every audited public page."""
+    MATERIALLY_UPDATED.update(all_public_pages())
     pattern = re.compile(r'("dateModified"\s*:\s*")\d{4}-\d{2}-\d{2}("\s*)')
     for rel in sorted(MATERIALLY_UPDATED):
         path = ROOT / rel
@@ -196,7 +157,9 @@ def main() -> None:
         old_date, old_priority = old_sitemap.get(parser.canonical, (UPDATED, "0.6"))
         date = UPDATED if rel in MATERIALLY_UPDATED else old_date
         priority = "1.0" if rel == "index.html" else old_priority
-        if rel in {"docs/releases.html", "docs/runtime-renderer-selection.html", "docs/c-api.html"}:
+        if rel in {"docs/releases.html", "docs/runtime-renderer-selection.html", "docs/c-api.html",
+                   "docs/content-pipeline.html", "docs/cnb-format.html", "docs/diagnostics.html",
+                   "docs/inspector.html", "docs/native-platforms.html", "docs/cnaext-engine.html"}:
             priority = "0.8"
         sitemap_rows.append((parser.canonical, date, priority))
 
