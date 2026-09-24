@@ -1,6 +1,19 @@
 # libcna.com — CNA accuracy audit and website refresh
 
-## Current authoritative audit: CNA v0.1.0-alpha.1
+## Current authoritative audit: CNA snapshot 009d40f5 (Phase 1, 2026-09-24)
+
+**Pinned by `cnahead`:** `009d40f5dd085c4e674d3479675fac84b12b3e0a` (branch `next`, 2,877 commits after `v0.1.0-alpha.1`).
+**Ledger:** `audit/009d40f5-phase1-delta.md` · **Presentation baseline:** `audit/phase1-presentation-baseline.md` ·
+**Comparison:** `audit/phase1-presentation-comparison.md` · **Fact sheets:** `audit/data/facts/` · **Canonical numbers:** `data/current-facts.json`.
+
+Phase 1 updated the deployed site (`be35902`) in place to that exact snapshot without losing its presentation (0 unexplained losses against the
+mechanical baseline inventory). Validators: `scripts/validate_site.py`, `scripts/validate_presentation.py`, `scripts/compare_presentation.py`,
+`scripts/check_facts.py`, `scripts/check_retired_renderers.py`; indexes are rebuilt with `scripts/build_site_indexes.py`. The alpha.1 audit below is
+historical context only; its counts and statuses are superseded.
+
+---
+
+## Historical audit: CNA v0.1.0-alpha.1 (superseded)
 
 **Audit date:** 2026-08-20 (Europe/Prague)
 **Detailed delta ledger:** `audit/alpha1-delta.md`
