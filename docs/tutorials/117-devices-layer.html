@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 117: The CNA::Devices Layer: Building With It, and Without It - CNA Tutorials</title>
-  <meta name="description" content="CNA::Devices is compiled out of a stock build. Covers what CNA_DEVICES=OFF actually leaves behind, how to write one codebase that compiles both ways, what each of the ten classes sits on in SDL3, and the layer's degrade-to-a-value failure contract.">
+  <meta name="description" content="CNA::Devices is compiled out of a stock build. Covers what CNA_DEVICES=OFF actually leaves behind, how to write one codebase that compiles both ways, which platform service each of the ten classes goes through and how far it reaches on each platform, its failure contract, and how to test it without opening a real dialog.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/117-devices-layer.html">
   <meta property="og:title"       content="Tutorial 117: The CNA::Devices Layer: Building With It, and Without It - CNA Tutorials">
-  <meta property="og:description" content="CNA::Devices is compiled out of a stock build. Covers what CNA_DEVICES=OFF actually leaves behind, how to write one codebase that compiles both ways, what each of the ten classes sits on in SDL3, and the layer's degrade-to-a-value failure contract.">
+  <meta property="og:description" content="CNA::Devices is compiled out of a stock build. Covers what CNA_DEVICES=OFF actually leaves behind, how to write one codebase that compiles both ways, which platform service each of the ten classes goes through and how far it reaches on each platform, its failure contract, and how to test it without opening a real dialog.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/117-devices-layer.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 117: The CNA::Devices Layer: Building With It, and Without It",
   "url": "https://libcna.com/docs/tutorials/117-devices-layer.html",
   "datePublished": "2026-08-11",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -92,13 +92,13 @@
         <ul>
           <li>That <code>CNA::Devices</code> is compiled out of a stock build, and exactly what that leaves behind.</li>
           <li>How the <code>CNA_DEVICES</code> define reaches your code, and how to write one codebase that builds with and without it.</li>
-          <li>What each of the ten classes actually sits on in SDL3, and how far it reaches per platform.</li>
-          <li>The layer's failure contract &mdash; every capability degrades to a documented value, never an exception.</li>
+          <li>Which platform service each of the ten classes goes through, and how far it reaches on each of CNA&rsquo;s platform implementations.</li>
+          <li>The layer&rsquo;s failure contract &mdash; capabilities degrade to a documented value, with one constructor that throws &mdash; and how to test it without opening a real OS dialog.</li>
         </ul>
         <p><strong>Before you start</strong> &mdash; <a href="88-device-layer.html">Tutorial 88: Native OS Integration with CNA::Devices</a> is the class-by-class walkthrough of this layer, with a worked example for each entry point. This tutorial is about the part that surrounds it: getting the layer into your build at all, and shipping a game that still works when it is not there.</p>
       </div>
 
-      <p>XNA 4.0 had no file picker, no clipboard, no battery query and no webcam. There was nothing to reimplement, so <code>CNA::Devices</code> is not a reimplementation &mdash; it is a set of ten small classes over SDL3 that a real game needs and the XNA surface never offered. Every header says so in the same words: <em>&ldquo;CNA extension &mdash; no XNA/WP7 equivalent exists.&rdquo;</em></p>
+      <p>XNA 4.0 had no file picker, no clipboard, no battery query and no webcam. There was nothing to reimplement, so <code>CNA::Devices</code> is not a reimplementation &mdash; it is a set of ten small classes over CNA&rsquo;s platform contract that a real game needs and the XNA surface never offered. Every class header says so in the same words: <em>&ldquo;CNA extension &mdash; no XNA/WP7 equivalent exists.&rdquo;</em> The default platform is SDL3, but CNA also has SDL2, native X11, Wayland and Win32 platforms and two that draw nothing (<code>HEADLESS</code>, <code>TERMINAL</code>); the layer reaches only as far as the platform you selected.</p>
 
       <p>Which also means it is not part of the contract CNA promises to honour, and it is not in your build unless you ask.</p>
 
@@ -109,12 +109,12 @@
         <p><code>option(CNA_DEVICES "..." OFF)</code>. A stock build ships an <strong>empty <code>cna_devices_ext</code> library</strong> and <strong>none</strong> of its tests. This is not a stub layer that returns false at runtime &mdash; there is no code there at all.</p>
       </div>
 
-      <p>The mechanism is worth seeing, because it explains why the failure mode is a compile error rather than a link error or a runtime surprise. Every public header <em>and</em> every implementation file in the module is wrapped in <code>#ifdef CNA_DEVICES</code>. With the option off, the module's translation units still compile &mdash; they just compile to nothing, and the resulting static library has no symbols. The ten Devices-EXT test files are gated the same way, so their 56 statically discoverable GoogleTest-family definitions are not compiled either.</p>
+      <p>The mechanism is worth seeing, because it explains why the failure mode is a compile error rather than a link error or a runtime surprise. Every public header <em>and</em> every implementation file in the module is wrapped in <code>#ifdef CNA_DEVICES</code>. With the option off, the module's translation units still compile &mdash; they just compile to nothing, and the module contributes no symbols. The ten Devices-EXT test files are gated the same way, so their 56 statically discoverable GoogleTest-family definitions are not compiled either.</p>
 
       <p>Turning it on is one flag:</p>
 
       <pre><code class="language-bash">cmake -S . -B build -DCNA_DEVICES=ON
-cmake --build build -j3</code></pre>
+cmake --build build -j$(nproc)</code></pre>
 
       <p>Three CMake presets already set it, if you want a sanitizer build of this layer specifically:</p>
 
@@ -170,54 +170,86 @@ namespace MyGame::Native
 
       <p>Note what the fallbacks return. They are not invented: they are the exact values the real implementations produce when the capability is unavailable. That is deliberate, and it is the layer's most useful property.</p>
 
-      <h2 id="classes">The ten classes and what they sit on</h2>
+      <h2 id="classes">The ten classes and the platform services they go through</h2>
 
-      <p>Everything here is a thin, honest wrapper over one SDL3 primitive. Knowing which one tells you what to expect on a platform you have not tested yet.</p>
+      <p>Every class here is a thin wrapper over one service of the platform contract (<code>CNA::Platform::IPlatform</code>): dialogs, clipboard, system info and power, displays, tray, camera. The module links no native library and calls no SDL function itself; the platform you select with <code>CNA_PLATFORM</code> supplies each service or does not. That is what &ldquo;how far it reaches&rdquo; means: it is a property of the platform, not of the class.</p>
 
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Class</th><th>Shape</th><th>SDL3 primitive</th><th>Reach</th></tr></thead>
+        <thead><tr><th>Class</th><th>Shape</th><th>Platform service</th><th>How to ask</th></tr></thead>
         <tbody>
-          <tr><td><code>MessageBox</code></td><td>static, blocking</td><td><code>SDL_ShowMessageBox()</code></td><td><strong>Every platform</strong> &mdash; <code>getIsSupportedProperty()</code> is unconditionally true</td></tr>
-          <tr><td><code>Clipboard</code></td><td>static</td><td><code>SDL_GetClipboardText()</code> family</td><td>Main-thread only; permission-gated in the browser</td></tr>
-          <tr><td><code>UrlLauncher</code></td><td>static</td><td><code>SDL_OpenURL()</code></td><td>Desktop, Android, iOS, Web</td></tr>
-          <tr><td><code>PowerInfo</code></td><td>static</td><td><code>SDL_GetPowerInfo()</code></td><td>Windows, Linux, macOS, Android, iOS, Web</td></tr>
-          <tr><td><code>SystemInfo</code></td><td>static</td><td><code>SDL_GetNumLogicalCPUCores()</code>, <code>SDL_GetSystemRAM()</code></td><td>Every platform; Web approximates from <code>navigator.hardwareConcurrency</code></td></tr>
-          <tr><td><code>Locale</code></td><td>static</td><td><code>SDL_GetPreferredLocales()</code></td><td>Every platform; Web reads browser language settings</td></tr>
-          <tr><td><code>DisplayInfo</code></td><td>static, takes a <code>GameWindow</code></td><td><code>SDL_GetWindowDisplayScale()</code>, <code>SDL_GetWindowSafeArea()</code></td><td>Wherever the platform answers the query</td></tr>
-          <tr><td><code>FileDialog</code></td><td>static, <strong>asynchronous</strong></td><td><code>SDL_ShowOpenFileDialog()</code> family</td><td>Desktop <strong>and Android</strong>; not iOS, not Web</td></tr>
-          <tr><td><code>SystemTray</code></td><td>instance, non-copyable</td><td><code>SDL_CreateTray()</code> family</td><td><strong>Desktop only</strong> &mdash; no Android, iOS or Web renderer exists</td></tr>
-          <tr><td><code>Camera</code></td><td>instance, non-copyable</td><td><code>SDL_OpenCamera()</code>, <code>SDL_AcquireCameraFrame()</code></td><td>Wherever SDL3 has a camera driver compiled in</td></tr>
+          <tr><td><code>MessageBox</code></td><td>static, blocking</td><td>dialogs</td><td><code>getIsSupportedProperty()</code> answers the platform&rsquo;s <code>messageBox</code> capability</td></tr>
+          <tr><td><code>FileDialog</code></td><td>static, <strong>asynchronous</strong></td><td>dialogs</td><td><code>getIsSupportedProperty()</code>: false on Web and iOS targets, otherwise the platform&rsquo;s <code>nativeFileDialog</code> capability</td></tr>
+          <tr><td><code>Clipboard</code></td><td>static</td><td>clipboard</td><td>no query: an absent service gives <code>false</code> / an empty string</td></tr>
+          <tr><td><code>UrlLauncher</code></td><td>static</td><td>system info (<code>OpenUrl</code>)</td><td>no query: <code>Open()</code> returns <code>false</code></td></tr>
+          <tr><td><code>PowerInfo</code></td><td>static</td><td>system info (<code>GetPowerInfo</code>)</td><td>no query: <code>Unknown</code> state and <code>-1</code> readings</td></tr>
+          <tr><td><code>SystemInfo</code></td><td>static</td><td>system info</td><td>no query; see the value table below</td></tr>
+          <tr><td><code>Locale</code></td><td>static</td><td>system info (<code>GetPreferredLocales</code>)</td><td>no query: an empty list</td></tr>
+          <tr><td><code>DisplayInfo</code></td><td>static, takes a <code>GameWindow</code></td><td>displays, plus the window&rsquo;s own scale</td><td>no query; <code>0.0f</code> / <code>Rectangle::Empty</code></td></tr>
+          <tr><td><code>SystemTray</code></td><td>instance, non-copyable</td><td>tray</td><td><code>getIsSupportedProperty()</code>; <strong>the constructor throws if it is false</strong></td></tr>
+          <tr><td><code>Camera</code></td><td>instance, non-copyable</td><td>camera provider</td><td><code>getIsSupportedProperty()</code> and, per device, <code>getStateProperty()</code></td></tr>
         </tbody>
       </table>
       </div>
 
-      <p>Two rows in that table are the ones people get wrong. <code>FileDialog</code> has a <strong>real Android backend</strong> &mdash; it is not desktop-only, contrary to what the layer's own early design notes assumed. <code>SystemTray</code> genuinely is desktop-only, and no amount of runtime checking will change that. Read the iOS column as descriptive of SDL3's code, not as a supported target: CNA does not support iOS or tvOS at any level.</p>
+      <p>What each platform implementation provides, read from the capability flags each platform sets in <code>modules/platform/src</code>:</p>
 
-      <h2 id="failure">Failure is a value, not an exception</h2>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Platform</th><th>Message box</th><th>File dialog</th><th>Clipboard</th><th>Power</th><th>Tray</th><th>Camera</th></tr></thead>
+        <tbody>
+          <tr><td><code>SDL3</code> (default)</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>yes on Windows, Linux and macOS builds; no elsewhere</td><td>yes when SDL has a camera driver and can start it</td></tr>
+          <tr><td><code>SDL2</code></td><td>no</td><td>no</td><td>no</td><td>no</td><td>no</td><td>no</td></tr>
+          <tr><td><code>X11</code> (no SDL)</td><td>when its dialog service exists (drawn with Xlib)</td><td>needs the dialog service and the desktop portal</td><td>yes, with a display connection</td><td>yes when built with evdev support</td><td>when a tray host was running at start</td><td>no</td></tr>
+          <tr><td><code>WAYLAND</code> (no SDL)</td><td>when its dialog service has message boxes</td><td>when it has file dialogs</td><td>when the data-device service exists</td><td>yes</td><td>no</td><td>no</td></tr>
+          <tr><td><code>WIN32</code> (no SDL)</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td><td>no (deliberately)</td><td>no</td></tr>
+          <tr><td><code>HEADLESS</code>, <code>TERMINAL</code></td><td>no</td><td>no</td><td>no</td><td>no</td><td>no</td><td>no</td></tr>
+        </tbody>
+      </table>
+      </div>
 
-      <p>Nothing in this layer throws to tell you a capability is missing. Every entry point has a documented &ldquo;could not determine&rdquo; result, and your code is expected to branch on it. This is the single most useful thing to internalise about the layer, because it is what lets the same call site work on a laptop, a phone and a browser tab:</p>
+      <p>&ldquo;No&rdquo; means the capability flag is false and the service accessor returns null, so the class degrades to its documented value. On <code>SDL2</code>, <code>HEADLESS</code> and <code>TERMINAL</code> the system-info classes answer from a generic implementation: the core count from <code>std::thread::hardware_concurrency()</code>, <strong>0</strong> MB of RAM, no locales, an <code>Unknown</code> power state, and <code>UrlLauncher::Open()</code> returns <code>false</code>. Read this as a description of CNA&rsquo;s code, not a promise about any device: we did not run the layer on Android, iOS or the browser, and <strong>CNA does not support iOS or tvOS at any level</strong> &mdash; there is no toolchain file, and the <code>METAL</code> renderer&rsquo;s own configure gate states that both remain unvalidated.</p>
+
+      <p>Two things people get wrong. <code>FileDialog</code> has a real Android backend through the SDL3 platform, so it is not desktop-only, contrary to the layer&rsquo;s early design notes; and <code>SystemTray</code> is genuinely limited to Windows, Linux and macOS builds of the SDL3 platform, X11 sessions with a tray host, and nothing else &mdash; no runtime check will change that. Note also that the header comments on <code>MessageBox::getIsSupportedProperty()</code> and <code>FileDialog</code> still say &ldquo;always true&rdquo;; the code answers from the platform.</p>
+
+      <h2 id="failure">Failure is a value, with one exception</h2>
+
+      <p>Almost nothing in this layer throws to tell you a capability is missing. Every entry point has a documented &ldquo;could not determine&rdquo; result, and your code is expected to branch on it. This is what lets the same call site work on a laptop, a phone and a headless test runner:</p>
 
       <div class="table-wrap">
       <table>
         <thead><tr><th>Call</th><th>Unavailable result</th></tr></thead>
         <tbody>
-          <tr><td><code>PowerInfo::getStateProperty()</code></td><td><code>PowerState::Error</code> (the enum also has <code>Unknown</code>, <code>OnBattery</code>, <code>NoBattery</code>, <code>Charging</code>, <code>Charged</code>)</td></tr>
+          <tr><td><code>PowerInfo::getStateProperty()</code></td><td><code>PowerState::Unknown</code> where the platform cannot tell (<code>PowerState::Error</code> if its query failed; the enum also has <code>OnBattery</code>, <code>NoBattery</code>, <code>Charging</code>, <code>Charged</code>)</td></tr>
           <tr><td><code>PowerInfo::getBatteryPercentProperty()</code> / <code>getSecondsRemainingProperty()</code></td><td><code>-1</code> &mdash; and some platforms can report only one of the two, never both</td></tr>
           <tr><td><code>Clipboard::setTextProperty()</code>, <code>UrlLauncher::Open()</code></td><td><code>false</code></td></tr>
           <tr><td><code>Clipboard::getTextProperty()</code></td><td>empty string</td></tr>
-          <tr><td><code>DisplayInfo::getContentScaleProperty()</code></td><td><code>0.0f</code></td></tr>
+          <tr><td><code>DisplayInfo::getContentScaleProperty()</code></td><td><code>0.0f</code> without a platform window; otherwise the larger of the window&rsquo;s display scale and its display&rsquo;s content scale</td></tr>
           <tr><td><code>DisplayInfo::getSafeAreaProperty()</code></td><td><code>Rectangle::Empty</code></td></tr>
           <tr><td><code>Locale::getPreferredLocalesProperty()</code></td><td>empty vector</td></tr>
-          <tr><td><code>MessageBox::Show()</code></td><td><code>-1</code> if the dialog could not be shown</td></tr>
-          <tr><td><code>FileDialog</code> callback</td><td>empty file list &mdash; <strong>cancel and error look identical</strong></td></tr>
-          <tr><td><code>Camera::getStateProperty()</code></td><td><code>CameraState::NotSupported</code>; frame size reads <code>0</code></td></tr>
-          <tr><td><code>SystemInfo::getLogicalCpuCoreCountProperty()</code></td><td>never fails &mdash; always at least <code>1</code></td></tr>
+          <tr><td><code>MessageBox::Show()</code> / <code>ShowSimple()</code></td><td><code>-1</code> if the dialog could not be shown / does nothing</td></tr>
+          <tr><td><code>FileDialog</code> callback</td><td>empty file list when the dialog is unsupported &mdash; <strong>cancel and error look identical</strong>. If the platform throws while starting the dialog, the exception is swallowed and the callback is never called.</td></tr>
+          <tr><td><code>Camera::getStateProperty()</code></td><td><code>CameraState::NotSupported</code> when no camera could be opened; frame size reads <code>0</code></td></tr>
+          <tr><td><code>SystemInfo::getLogicalCpuCoreCountProperty()</code></td><td>documented as at least 1, and SDL3 answers that; a non-SDL platform answers <code>std::thread::hardware_concurrency()</code>, which the standard allows to be 0, so clamp it yourself: <code>std::max(1, cores)</code></td></tr>
+          <tr><td><code>SystemInfo::getSystemRamMegabytesProperty()</code></td><td><code>0</code> where the platform cannot tell</td></tr>
         </tbody>
       </table>
       </div>
 
-      <p>Two of these deserve a second look. <code>UrlLauncher::Open()</code> returning <code>true</code> means only that <em>something</em> was launched, not that the page loaded &mdash; and on mobile it may push your game to the background. And the <code>FileDialog</code> ambiguity is real: SDL3 itself distinguishes cancel from error, but this wrapper does not currently surface the difference, so never report &ldquo;save failed&rdquo; on an empty list.</p>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>The exception: <code>SystemTray</code>&rsquo;s constructor throws.</strong> It throws <code>CNA::Platform::PlatformNotSupportedException</code> when the platform has no tray service, and <code>CNA::Platform::PlatformException</code> if the service returns no icon. Guard it with <code>SystemTray::getIsSupportedProperty()</code>, and consider a <code>try</code>/<code>catch</code> as well, because a platform can report support on paper and still have nothing to attach to:</p>
+        <pre><code class="language-cpp">std::unique_ptr&lt;CNA::Devices::SystemTray&gt; tray;
+if (CNA::Devices::SystemTray::getIsSupportedProperty()) {
+    try {
+        tray = std::make_unique&lt;CNA::Devices::SystemTray&gt;("My Game -- running");
+    } catch (const CNA::Platform::PlatformException&amp;) {
+        // supported on paper, unavailable now: carry on without a tray icon
+    }
+}</code></pre>
+      </div>
+
+      <p>Two of the value rows deserve a second look. <code>UrlLauncher::Open()</code> returning <code>true</code> means only that <em>something</em> was launched, not that the page loaded &mdash; and on mobile it may push your game to the background. And the <code>FileDialog</code> ambiguity is real: SDL3 itself distinguishes cancel from error, but this wrapper does not currently surface the difference, so never report &ldquo;save failed&rdquo; on an empty list.</p>
 
       <h2 id="camera">Camera: a poll loop, not a callback</h2>
 
@@ -274,39 +306,68 @@ if (camera_-&gt;TryAcquireFrame(*frame_))
 
       <div class="callout callout--info">
         <span class="callout-icon">&#8505;</span>
-        <p><strong>First-implementation scope.</strong> One camera device (the first the platform reports &mdash; there is no device selection yet), synchronous permission polling with no SDL event-queue integration, and RGBA8-only frame delivery. <code>CameraState::Lost</code> is defined but the current renderer never reaches it.</p>
+        <p><strong>First-implementation scope.</strong> One camera device (the first the platform reports &mdash; there is no device selection yet), synchronous permission polling with no SDL event-queue integration, and RGBA8-only frame delivery. <code>CameraState::Closed</code> is defined but the current implementation never returns it (a camera that could not be opened reports <code>NotSupported</code>); the SDL3 platform reports <code>Lost</code> for a device whose negotiated format is not RGBA8. Only the SDL3 platform provides a camera at all.</p>
       </div>
 
       <h2 id="testing">Testing, and the two classes you must never let loose</h2>
 
-      <p>Four classes take an injectable renderer, and two of them are non-negotiable in an automated test. The reasons are concrete rather than stylistic: a real file dialog on Linux launches a <code>zenity</code> process that waits forever for a human &mdash; this actually happened during the layer's own development and left orphaned processes on a real desktop &mdash; and a real message box blocks the calling thread until someone clicks.</p>
+      <p>Two classes are non-negotiable in an automated test. A real file dialog on Linux launches a <code>zenity</code> process that waits forever for a human &mdash; this actually happened during the layer&rsquo;s own development and left orphaned processes on a real desktop &mdash; and a real message box blocks the calling thread until someone clicks. Earlier snapshots protected against this with a <code>SetBackendForTesting()</code> hook on the public classes; <strong>that hook no longer exists</strong>. The seam is now the platform contract: the layer asks <code>CNA::Platform::GetCurrentPlatform()</code> for its services, so a test installs a platform whose dialog service <em>records instead of showing</em>.</p>
 
-      <div class="table-wrap">
-      <table>
-        <thead><tr><th>Class</th><th>How the renderer is swapped</th><th>Why there</th></tr></thead>
-        <tbody>
-          <tr><td><code>FileDialog</code></td><td><code>SetBackendForTesting()</code>, process-wide</td><td>Nothing runs until you call <code>Show*</code>, so a later swap is still in time</td></tr>
-          <tr><td><code>MessageBox</code></td><td><code>SetBackendForTesting()</code>, process-wide</td><td>Same &mdash; pass <code>nullptr</code> to restore the real renderer</td></tr>
-          <tr><td><code>SystemTray</code></td><td>Constructor parameter</td><td>The real renderer creates the icon <em>in the constructor</em>; a later swap would be too late</td></tr>
-          <tr><td><code>Camera</code></td><td>Constructor parameter</td><td>The real renderer opens the device immediately, for the same reason</td></tr>
-        </tbody>
-      </table>
-      </div>
+      <p>CNA&rsquo;s own tests use two small header-only helpers, <code>CNA::Platform::Testing::CannedDialogPlatform</code> (a platform whose dialogs record their calls and deliver scripted results) and <code>ScopedCurrentPlatform</code> (installs a platform for a scope and restores the previous one, even if an assertion returns early). They live in the CNA repository&rsquo;s test tree, <code>modules/platform/tests/CNA/Platform/</code>, and are <strong>not an installed public header</strong>: add that directory to your test target&rsquo;s include path, or copy the idea. The public pieces they rest on are <code>CNA::Platform::SetCurrentPlatform(IPlatform*)</code>, <code>ResetCurrentPlatform()</code> and the <code>IPlatformDialogs</code> interface.</p>
 
-      <p>CNA's own coverage follows exactly this rule: <strong>56 statically discoverable GoogleTest-family definitions across 10 test files</strong> under the Devices extension module, driving injectable backends rather than real native dialogs or trays &mdash; which is what makes them safe on a headless runner. This is a source count, not a pass claim; run the configured build.</p>
+      <pre><code class="language-cpp">#include "CNA/Devices/FileDialog.hpp"
+#include "CNA/Devices/MessageBox.hpp"
+#include "CNA/Platform/CannedDialogs.hpp"     // from modules/platform/tests
+
+using CNA::Platform::Testing::CannedDialogPlatform;
+using CNA::Platform::Testing::ScopedCurrentPlatform;
+
+void MessageBoxNeverShowsInATest()
+{
+    CannedDialogPlatform platform;                    // records instead of showing
+    ScopedCurrentPlatform installed(platform);        // restored when this scope ends
+
+    platform.Canned().chosenButton = 1;               // the "user" clicks the second button
+    const int clicked = CNA::Devices::MessageBox::Show(
+        CNA::Devices::MessageBoxType::Warning, "Quit", "You have unsaved progress.",
+        {"Save and quit", "Quit anyway"});
+
+    assert(clicked == 1);
+    assert(platform.Canned().messageBoxes.size() == 1);
+    assert(platform.Canned().messageBoxes.front().title == "Quit");
+}
+
+void FileDialogNeverShowsInATest()
+{
+    CannedDialogPlatform platform;
+    ScopedCurrentPlatform installed(platform);
+
+    platform.Canned().chosenPaths = {"/tmp/slot1.sav"};   // what every dialog's callback receives
+    std::vector&lt;std::string&gt; received;
+    CNA::Devices::FileDialog::ShowOpenFile(
+        [&amp;](const std::vector&lt;std::string&gt;&amp; files) { received = files; },
+        {{"Saved game", "sav"}});                          // the canned platform calls back at once
+
+    assert(received.size() == 1 &amp;&amp; received.front() == "/tmp/slot1.sav");
+    assert(platform.Canned().fileDialogs.front().kind == "open");
+}</code></pre>
+
+      <p>The same approach covers the rest of the layer: <code>SystemTray</code> and <code>Camera</code> take no injected backend either &mdash; they use the current platform&rsquo;s tray and camera services, and CNA has canned platforms for those too (<code>CannedTray.hpp</code>, <code>CannedCamera.hpp</code>). <code>SetBackendForTesting()</code> still exists in CNA, but only on the <code>Microsoft::Devices::Sensors</code> classes.</p>
+
+      <p>CNA&rsquo;s own coverage follows exactly this rule: <strong>56 statically discoverable GoogleTest-family definitions across 10 test files</strong> under the Devices extension module, driving canned platforms rather than real native dialogs or trays &mdash; which is what makes them safe on a headless runner. This is a source count, not a pass claim; run the configured build:</p>
 
       <pre><code class="language-bash">cmake -S . -B build -DCNA_DEVICES=ON -DCNA_BUILD_TESTS=ON
-cmake --build build --target CnaTests -j3
+cmake --build build --target CnaTests -j$(nproc)
 ./build/CnaTests --gtest_filter='ClipboardTests.*:PowerInfoTests.*:CameraTests.*'</code></pre>
 
-      <div class="callout callout--warn">
-        <span class="callout-icon">&#9888;</span>
-        <p><strong>The CI job that covers this layer is dormant on ordinary development pushes.</strong> <code>devices-tests.yml</code> triggers only on <code>master</code>/<code>main</code>, and CNA's default branch is <code>develop</code>. Do not read a green branch as evidence that the devices suite ran.</p>
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>CI coverage.</strong> The <em>Devices and Sensors Tests</em> workflow (<code>devices-tests.yml</code>) builds the <code>devices-ubsan</code> preset (<code>CNA_DEVICES=ON</code>) and runs these ten suites under Xvfb, alongside the <code>Microsoft::Devices</code> suites. It triggers on pushes and pull requests to <code>next</code>, <code>develop</code> and <code>main</code> that touch the module paths (and on manual dispatch); earlier snapshots had it watching only <code>master</code> and <code>main</code>. A workflow existing is not a green run &mdash; we did not see one.</p>
       </div>
 
       <h2 id="not-sensors">One thing this is not</h2>
 
-      <p>Do not confuse <code>CNA::Devices</code> with <code>Microsoft::Devices</code>. The latter is the Windows Phone 7 sensor layer &mdash; <code>Accelerometer</code>, <code>Gyroscope</code>, <code>Compass</code>, <code>Motion</code>, <code>VibrateController</code> &mdash; and it is a genuine reimplementation of a real API that really existed. The two namespaces share the <code>CNA_DEVICES</code> build flag and nothing else. Sensors are covered by <a href="50-accelerometer.html">Tutorial 50</a> and the <a href="../sensors.html">Sensors reference</a>.</p>
+      <p>Do not confuse <code>CNA::Devices</code> with <code>Microsoft::Devices</code>. The latter is the Windows Phone 7 sensor layer &mdash; <code>Accelerometer</code>, <code>Gyroscope</code>, <code>Compass</code>, <code>Motion</code>, <code>VibrateController</code> &mdash; and it is a genuine reimplementation of a real API that really existed. It lives in a separate module (<code>modules/devices</code>) that is <strong>always compiled</strong> and is not behind <code>CNA_DEVICES</code>; the two namespaces share a directory-name prefix, a CI workflow and a strict-API harness, and nothing else. Sensors are covered by <a href="50-accelerometer.html">Tutorial 50</a> and the <a href="../sensors.html">Sensors reference</a>.</p>
 
       <h2 id="next">Where to go next</h2>
       <ul>
@@ -327,7 +388,7 @@ cmake --build build --target CnaTests -j3
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

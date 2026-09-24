@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 116: CNAEXT Post-Process Effects: ASCII, CRT, Depth and Colour Matrix - CNA Tutorials</title>
-  <meta name="description" content="CNA's four post-process effects attach at three different layers. Covers AsciiPostProcessEffect (not an Effect subclass, and why that matters), the ShaderEffect-based CRTEffect and DepthEffect, and why ColorMatrixEffect runs only on the CPU sprite path.">
+  <meta name="description" content="CNA's four original post-process effects attach at three different layers: AsciiPostProcessEffect (not an Effect subclass), the ShaderEffect-based CRTEffect and DepthEffect with their per-renderer shader-package boundary, and ColorMatrixEffect on the CPU sprite path; plus how they join the CNAEXT RenderPipeline.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/116-post-process-effects.html">
   <meta property="og:title"       content="Tutorial 116: CNAEXT Post-Process Effects: ASCII, CRT, Depth and Colour Matrix - CNA Tutorials">
-  <meta property="og:description" content="CNA's four post-process effects attach at three different layers. Covers AsciiPostProcessEffect (not an Effect subclass, and why that matters), the ShaderEffect-based CRTEffect and DepthEffect, and why ColorMatrixEffect runs only on the CPU sprite path.">
+  <meta property="og:description" content="CNA's four original post-process effects attach at three different layers: AsciiPostProcessEffect (not an Effect subclass), the ShaderEffect-based CRTEffect and DepthEffect with their per-renderer shader-package boundary, and ColorMatrixEffect on the CPU sprite path; plus how they join the CNAEXT RenderPipeline.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/116-post-process-effects.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 116: CNAEXT Post-Process Effects: ASCII, CRT, Depth and Colour Matrix",
   "url": "https://libcna.com/docs/tutorials/116-post-process-effects.html",
   "datePublished": "2026-08-11",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -94,19 +94,20 @@
           <li>Why <code>AsciiPostProcessEffect</code> is <em>not</em> an <code>Effect</code> &mdash; and why that is what makes it work everywhere.</li>
           <li>How <code>CRTEffect</code> and <code>DepthEffect</code> differ from it, and which renderers actually execute them.</li>
           <li>Why <code>ColorMatrixEffect</code> runs on the CPU sprite path only, and why other renderers refuse to fake it.</li>
+          <li>How these four relate to the much larger engine-layer <code>RenderPipeline</code>, and how to put one of them in its pass chain.</li>
         </ul>
         <p><strong>Before you start</strong> &mdash; <a href="24-post-processing.html">Tutorial 24: Post-Processing with Render Targets</a> covers the render-to-texture-then-redraw pattern every effect on this page is built on, and <a href="115-cnaext-overview.html">Tutorial 115: CNAEXT</a> explains what &ldquo;CNAEXT&rdquo; means and why three of these four effects are missing from a stock build.</p>
       </div>
 
-      <p>CNA ships four post-process effects that have no XNA precedent at all. It is tempting to treat them as four instances of one pattern &mdash; construct, configure, bind, done. They are not. Each one attaches to CNA at a <strong>different layer</strong>, and that single fact decides which renderers execute it, what it costs per frame, and how you have to structure your <code>Draw()</code>.</p>
+      <p>CNA ships four post-process effects that have no XNA precedent at all. They were the whole of the CNAEXT engine layer at alpha.1; at this snapshot that layer has grown to 98 headers, with a <code>RenderPipeline</code> and nineteen pass classes (bloom, tonemapping, FXAA, SSAO and more), and these four are the layer&rsquo;s oldest members. <a href="#pipeline">A section below</a> shows how they fit into it. It is tempting to treat the four as instances of one pattern &mdash; construct, configure, bind, done. They are not. Each one attaches to CNA at a <strong>different layer</strong>, and that single fact decides which renderers execute it, what it costs per frame, and how you have to structure your <code>Draw()</code>.</p>
 
       <div class="table-wrap">
       <table>
         <thead><tr><th>Effect</th><th>What it is</th><th>Build flag</th><th>Executes on</th></tr></thead>
         <tbody>
           <tr><td><code>AsciiPostProcessEffect</code></td><td>Standalone class &mdash; <strong>not</strong> an <code>Effect</code></td><td><code>CNA_CNAEXT</code></td><td>Any renderer that can read pixels back</td></tr>
-          <tr><td><code>CRTEffect</code></td><td><code>ShaderEffect</code> subclass (GLSL)</td><td><code>CNA_CNAEXT</code></td><td>Shader-capable renderers only</td></tr>
-          <tr><td><code>DepthEffect</code></td><td><code>ShaderEffect</code> subclass (GLSL)</td><td><code>CNA_CNAEXT</code></td><td>Shader-capable renderers only</td></tr>
+          <tr><td><code>CRTEffect</code></td><td><code>ShaderEffect</code> subclass built from a multi-language shader package</td><td><code>CNA_CNAEXT</code></td><td>Renderers that take one of its shader variants: EasyGL family, <code>OPENGL4</code>, <code>VULKAN</code>, <code>WEBGPU</code>, <code>SDL_GPU</code> (libshaderc builds)</td></tr>
+          <tr><td><code>DepthEffect</code></td><td><code>ShaderEffect</code> subclass built from a multi-language shader package</td><td><code>CNA_CNAEXT</code></td><td>The same set as <code>CRTEffect</code></td></tr>
           <tr><td><code>ColorMatrixEffect</code></td><td><code>Effect</code> subclass with no shader at all</td><td>none &mdash; always built</td><td>The shared CPU <code>SpriteBatch</code> path only</td></tr>
         </tbody>
       </table>
@@ -120,7 +121,9 @@
       </div>
 
       <pre><code class="language-bash">cmake -S . -B build -DCNA_CNAEXT=ON
-cmake --build build -j3</code></pre>
+cmake --build build -j$(nproc)</code></pre>
+
+      <p>The repository&rsquo;s own <code>cnaext</code> preset (<code>cmake --preset cnaext</code>) does the same for <code>OPENGLES3</code> in Debug with tests on. The option is off by default and no CI workflow builds it; the <a href="../cnaext-engine.html">engine-layer reference</a> has the status and evidence.</p>
 
       <p><code>ColorMatrixEffect</code> is the exception: it lives with the XNA graphics types, not in the extension module, and is compiled into every build. It is still tagged with CNA's <code>CNAEXT</code> marker macro, so it will turn into a compile error under <code>CNA_STRICT_XNA_API</code> &mdash; see <a href="115-cnaext-overview.html">Tutorial 115</a>.</p>
 
@@ -181,15 +184,16 @@ ascii_-&gt;Draw(*sceneTarget_);        // stretched to fill the current viewport
 
       <p>This is not an oversight and it is not temporary sloppiness. A shader-only GPU path is architecturally possible on shader-capable renderers, and it is <em>deliberately</em> deferred, because it would stop working on exactly the 2D-only and non-shader renderers this effect exists to keep supporting uniformly. The portable path is the feature.</p>
 
-      <p>Two consequences follow directly. First, an effect that never draws costs nothing &mdash; do not construct and <code>Draw()</code> it on frames where the glyph look is off. Second, on the renderers with no back buffer to read at all &mdash; <code>HEADLESS</code> and <code>STUB</code> &mdash; the readback is rejected with <code>System::NotSupportedException</code>. That is a documented capability boundary, not a defect; CNA's own test for this effect catches that exception and reports a skip. See <a href="125-pixel-testing.html">Tutorial 125</a>.</p>
+      <p>Two consequences follow directly. First, an effect that never draws costs nothing &mdash; do not construct and <code>Draw()</code> it on frames where the glyph look is off. Second, on <code>HEADLESS</code>, which has no back buffer to read, the readback is rejected with <code>System::NotSupportedException</code>; <code>STUB</code> draws nothing at all. That is a documented capability boundary, not a defect; CNA's own test for this effect catches the exception and reports a skip. See <a href="125-pixel-testing.html">Tutorial 125</a>. The effect needs no shaders, so CNA registers its examples for every renderer identity.</p>
 
       <h2 id="shader-effects">CRTEffect and DepthEffect: real ShaderEffects</h2>
 
-      <p>These two are the opposite design. Both derive from <code>ShaderEffect</code> and carry a built-in GLSL program, so they bind exactly like any custom shader you write yourself &mdash; and they inherit that path's renderer restrictions wholesale.</p>
+      <p>These two are the opposite design. Both derive from <code>ShaderEffect</code> and carry a built-in shader package (GLSL ES, desktop GLSL, SPIR-V and WGSL variants of the same program), so they bind exactly like any custom shader you write yourself &mdash; and they inherit that path's renderer restrictions wholesale.</p>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>These run only where custom <code>ShaderEffect</code>s run.</strong> That is the five GL-profile identities, plus <code>OPENGL2</code>, <code>OPENGL4</code>, <code>VULKAN</code>, <code>SDL_GPU</code>, <code>SOKOL</code>, <code>LLGL</code>, <code>MAGNUM</code>, <code>DIRECTX9</code>, <code>DIRECTX11</code> and <code>DIRECTX12</code>. Elsewhere the outcome is one of three: <code>BGFX</code> and <code>SOFTWARE</code> accept the effect and silently ignore the source you supplied; <code>GDI</code>, <code>METAL</code>, <code>HTML_DOM</code> and <code>SVG_DOM</code> throw; <code>FNA3D</code> cannot compile custom shaders at all. <code>HEADLESS</code> records the call and renders nothing.</p>
+        <p><strong>These run only where the renderer takes one of their shader variants.</strong> <code>CRTEffect</code> and <code>DepthEffect</code> build their <code>ShaderEffect</code> from a <code>ShaderPackageEXT</code> with four fragment variants &mdash; GLSL ES, desktop GLSL, Vulkan SPIR-V and WGSL &mdash; and a variant runs only where <code>GraphicsDevice::SupportsShaderLanguageEXT()</code> accepts its language. That is: the EasyGL family (desktop GLSL for <code>OPENGL33</code>; GLSL ES for <code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>WEBGL1</code>, <code>WEBGL2</code>), <code>OPENGL4</code> (desktop GLSL), <code>VULKAN</code> and <code>SDL_GPU</code> (SPIR-V; <code>SDL_GPU</code> only in builds where <code>CustomEffects</code> is true, i.e. with libshaderc) and <code>WEBGPU</code> (WGSL). The two ES-2-generation profiles report GLSL ES, but the packaged payloads are written for GLSL ES 3.00; we did not verify them on a live ES 2.0 or WebGL 1 context.</p>
+        <p>Elsewhere the effect is constructed but its shader does not run. <code>DIRECTX9</code>, <code>DIRECTX11</code> and <code>DIRECTX12</code> compile HLSL with <code>D3DCompile</code>; no HLSL variant exists, so the GLSL ES fallback text fails to compile, the error is logged, and <code>GetCompileErrorEXT()</code> returns it. <code>SOFTWARE</code> reports <code>CustomEffects</code> false (the source is accepted but never executed); <code>METAL</code>, <code>FNA3D</code> and <code>PORTABLEGL</code> report false; <code>HEADLESS</code> records the call and renders nothing; <code>STUB</code> does nothing; and the seven 2D-only identities have no 3D pipeline. Ask, do not guess: <code>device.SupportsShaderLanguageEXT(CNA::ShaderLanguageEXT::SpirV, CNA::ShaderStageEXT::Fragment)</code>, or <code>device.ExecutesShaderEffectSourceEXT()</code> for the source-executing renderers.</p>
       </div>
 
       <p>If your game must look the same on a 2D-only renderer, these two are not the tool &mdash; <code>AsciiPostProcessEffect</code> or <code>ColorMatrixEffect</code> is. Check <a href="../rendering-backends.html">the renderer reference</a> before you build a visual identity on either of them.</p>
@@ -227,7 +231,7 @@ spriteBatch_-&gt;End();</code></pre>
 
       <p>The mechanism is easy to see once stated: curvature and vignette measure position from the drawn quad's own texture coordinate, which is only a meaningful proxy for &ldquo;where on screen am I&rdquo; when the entire frame <em>is</em> one quad. (Scanlines and the RGB mask index by real screen pixels and do not have this problem, but the single-pass requirement is documented for the whole effect.)</p>
 
-      <p>So: render the scene into a render target with no effect bound, then redraw that one composited texture full-screen through <code>CRTEffect</code>. Note the <code>FlipVertically</code> &mdash; render target contents are stored bottom-up, and without it the composited frame comes out upside down:</p>
+      <p>So: render the scene into a render target with no effect bound, then redraw that one composited texture full-screen through <code>CRTEffect</code>. No <code>FlipVertically</code> is needed: a <code>RenderTarget2D</code> handed to <code>SpriteBatch</code> samples in the same top-left orientation as an ordinary <code>Texture2D</code>, on every renderer (CNA&rsquo;s own CRT demo draws it with a plain destination rectangle). Adding a flip here would turn the frame upside down.</p>
 
       <pre><code class="language-cpp">#include "CNA/Graphics/CRTEffect.hpp"
 
@@ -250,9 +254,7 @@ crt_-&gt;setMaskType(CRTMaskType::ApertureGrille);   // or ::ShadowMask, or ::No
 SamplerState pointClamp = SamplerState::PointClamp;
 spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::Opaque,
                     &amp;pointClamp, nullptr, nullptr, crt_.get());
-spriteBatch_-&gt;Draw(*sceneTarget_, Rectangle(0, 0, 640, 480),
-                   Rectangle(0, 0, 640, 480), Color::White,
-                   0.0f, Vector2::Zero, SpriteEffects::FlipVertically, 0.0f);
+spriteBatch_-&gt;Draw(*sceneTarget_, Rectangle(0, 0, 640, 480), Color::White);
 spriteBatch_-&gt;End();</code></pre>
 
       <p>Every parameter is clamped to <code>[0,1]</code> and has a moderate default, so an unconfigured <code>CRTEffect</code> already looks reasonable. The two effects are deliberately separate classes rather than one with options, because CRT emulation and colour-depth reduction are independent concerns and plenty of retro-look games want only one. To chain them, use the same multi-pass shape with <code>DepthEffect</code> as the first pass: scene &rarr; <code>DepthEffect</code> &rarr; render target &rarr; <code>CRTEffect</code> &rarr; backbuffer.</p>
@@ -291,6 +293,37 @@ tint.Reset();   // back to identity and a zero offset</code></pre>
 
       <p>That is why <code>GDI</code> &mdash; which rejects every other custom effect for <code>SpriteBatch</code> outright &mdash; accepts this one specifically: it is small and fixed enough that a CPU rasterizer can implement it exactly, with no shader source to parse or silently ignore. If you need a colour transform that survives on a 2D CPU renderer, this is the mechanism. If you need one on a GPU renderer, write a <code>ShaderEffect</code> (<a href="52-custom-shaders.html">Tutorial 52</a>).</p>
 
+      <h2 id="pipeline">These four and the RenderPipeline</h2>
+
+      <p>Everything above wraps <em>your</em> render-to-texture code around one effect. The engine layer&rsquo;s <code>CNA::Graphics::RenderPipeline</code> does the wrapping for you: you call <code>begin()</code> and <code>end()</code> around whatever you already draw, and the enabled passes run in a fixed chain between an off-screen scene target and the back buffer. Its settings object turns on the built-in passes; a pass of your own &mdash; including any <code>ShaderEffect</code>, so <code>CRTEffect</code> and <code>DepthEffect</code> &mdash; joins the chain through <code>CNA::Graphics::EffectPass</code> and <code>addUserPass()</code>, and <code>AsciiPostProcessEffect</code> already has a wrapper, <code>AsciiPass</code>.</p>
+
+      <pre><code class="language-cpp">#include "CNA/Graphics/CNAEXT.hpp"
+
+using CNA::Graphics::CRTEffect;
+using CNA::Graphics::RenderPipeline;
+using CNA::Graphics::TonemappingMode;
+
+RenderPipeline pipeline(device);
+pipeline.resize(960, 540);
+
+auto&amp; settings = pipeline.getSettings();
+settings.setHDREnabled(true);
+settings.setBloomEnabled(true);
+settings.setTonemappingMode(TonemappingMode::Aces);
+settings.setFXAAEnabled(true);
+
+// Any ShaderEffect can join the chain as a full-screen pass. CNA::Graphics::EffectPass is not
+// Microsoft::Xna::Framework::Graphics::EffectPass -- qualify it.
+CRTEffect crt(device);
+CNA::Graphics::EffectPass crtPass(device, &amp;crt, "crt");
+pipeline.addUserPass(&amp;crtPass);   // borrowed: crt and crtPass must outlive the pipeline
+
+pipeline.begin(Color::Black);
+DrawMyWholeScene();
+pipeline.end();</code></pre>
+
+      <p>Two things make this the better structure when it is available. A pass that is unsupported on the current renderer <strong>copies its input through</strong> instead of breaking the frame, and a user pass runs after the built-in ones, so a CRT look sits on top of an already-tonemapped image. And with nothing enabled the pipeline renders straight to the back buffer, so wrapping an existing game costs nothing until you switch something on. The same caveats apply: the layer is experimental, the shader passes run only on the renderers listed above, and HDR needs the <code>HiDef</code> graphics profile. The <a href="../cnaext-engine.html">engine-layer reference</a> has the pass list, the per-feature requirements and the evidence.</p>
+
       <h2 id="choosing">Choosing between them</h2>
 
       <div class="table-wrap">
@@ -298,11 +331,12 @@ tint.Reset();   // back to identity and a zero offset</code></pre>
         <thead><tr><th>If you want&hellip;</th><th>Use</th><th>And accept</th></tr></thead>
         <tbody>
           <tr><td>A glyph-grid look on any renderer, including 2D-only ones</td><td><code>AsciiPostProcessEffect</code></td><td>A GPU-to-CPU readback per <code>Draw()</code>; <code>CNA_CNAEXT=ON</code></td></tr>
-          <tr><td>Scanlines, curvature, vignette, sub-pixel mask</td><td><code>CRTEffect</code></td><td>Shader-capable renderers only; one full-screen source; <code>CNA_CNAEXT=ON</code></td></tr>
-          <tr><td>Retro colour depth or a fixed historical palette</td><td><code>DepthEffect</code></td><td>Shader-capable renderers only; <code>CNA_CNAEXT=ON</code></td></tr>
+          <tr><td>Scanlines, curvature, vignette, sub-pixel mask</td><td><code>CRTEffect</code></td><td>Only renderers that take one of its shader variants (see above); one full-screen source; <code>CNA_CNAEXT=ON</code></td></tr>
+          <tr><td>Retro colour depth or a fixed historical palette</td><td><code>DepthEffect</code></td><td>Only renderers that take one of its shader variants; <code>CNA_CNAEXT=ON</code></td></tr>
           <tr><td>A fixed colour transform on a CPU 2D renderer</td><td><code>ColorMatrixEffect</code></td><td>The CPU <code>SpriteBatch</code> path only &mdash; a no-op elsewhere, by design</td></tr>
+          <tr><td>Bloom, tonemapping, FXAA, SSAO, fog, depth of field &hellip;</td><td>The engine layer&rsquo;s <code>RenderPipeline</code> passes (next section)</td><td><code>CNA_CNAEXT=ON</code>; HiDef for HDR; same renderer set as the shader effects</td></tr>
           <tr><td>Renderer-native custom shader</td><td>Your own <code>ShaderEffect</code></td><td>Language or binary expected by the active renderer</td></tr>
-          <tr><td>XNA/FNA compiled Effect</td><td><code>Effect</code> / XNB <code>EffectReader</code></td><td>D3D9 Effect Framework bytecode on a capable renderer build</td></tr>
+          <tr><td>XNA/FNA compiled Effect</td><td><code>Effect</code> / XNB <code>EffectReader</code></td><td>D3D9 Effect Framework bytecode on a renderer build with compiled effects enabled (14 of the 25 identities)</td></tr>
         </tbody>
       </table>
       </div>
@@ -310,6 +344,7 @@ tint.Reset();   // back to identity and a zero offset</code></pre>
       <h2 id="next">Where to go next</h2>
       <ul>
         <li><a href="115-cnaext-overview.html">Tutorial 115: CNAEXT &mdash; extending beyond XNA</a></li>
+        <li><a href="../cnaext-engine.html">CNAEXT engine-layer reference</a>, and its worked examples <a href="153-image-based-lighting.html">Tutorial 153 (image-based lighting)</a> and <a href="154-cascaded-shadows.html">Tutorial 154 (cascaded shadows)</a></li>
         <li><a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a></li>
         <li><a href="24-post-processing.html">Tutorial 24: Post-Processing with Render Targets</a></li>
         <li><a href="125-pixel-testing.html">Tutorial 125: Headless and pixel testing</a></li>
@@ -326,7 +361,7 @@ tint.Reset();   // back to identity and a zero offset</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

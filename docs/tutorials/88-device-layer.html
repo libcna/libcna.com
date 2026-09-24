@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 88: Native OS Integration with CNA::Devices - CNA</title>
-  <meta name="description" content="CNA's non-XNA device layer: native file dialogs and message boxes, clipboard, URL launcher, battery and system info, locale, system tray and camera, all behind the CNA_DEVICES build flag.">
+  <meta name="description" content="CNA's non-XNA device layer: native file dialogs and message boxes, clipboard, URL launcher, battery and system info, locale, system tray and camera, all behind the CNA_DEVICES build flag and all dependent on the selected platform implementation.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/88-device-layer.html">
   <meta property="og:title"       content="Tutorial 88: Native OS Integration with CNA::Devices - CNA">
-  <meta property="og:description" content="CNA's non-XNA device layer: native file dialogs and message boxes, clipboard, URL launcher, battery and system info, locale, system tray and camera, all behind the CNA_DEVICES build flag.">
+  <meta property="og:description" content="CNA's non-XNA device layer: native file dialogs and message boxes, clipboard, URL launcher, battery and system info, locale, system tray and camera, all behind the CNA_DEVICES build flag and all dependent on the selected platform implementation.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/88-device-layer.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 88: Native OS Integration with CNA::Devices",
   "url": "https://libcna.com/docs/tutorials/88-device-layer.html",
   "datePublished": "2026-07-18",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -93,14 +93,16 @@
             <li>What lives in the <code>CNA::Devices</code> namespace and why none of it is XNA.</li>
             <li>Showing native message boxes (synchronous) and file dialogs (asynchronous, callback-delivered).</li>
             <li>Reading the clipboard, launching URLs, and querying battery, CPU, RAM, locale and safe-area.</li>
-            <li>Injecting fake renderers so automated tests never open a real OS dialog.</li>
+            <li>Which of it each platform implementation provides, and how to test it with a canned platform so automated tests never open a real OS dialog.</li>
           </ul>
           <p><strong>Before you start</strong> &mdash; <a href="19-save-load.html">Tutorial 19: Saving and Loading Data</a> (this layer is what puts a real "Save As&hellip;" dialog in front of it) and <a href="20-build-run.html">Tutorial 20: Building and Running Your Game</a> (you must reconfigure CMake). Requires <code>-DCNA_DEVICES=ON</code>; the option defaults to <strong>OFF</strong>, so on a stock build none of these headers compile.</p>
         </div>
 
         <h2>What this layer is</h2>
         <p>Everything under <code>include/CNA/Devices/</code> is a CNA extension. Each header states it in the same words: <em>"CNA extension &mdash; no XNA/WP7 equivalent exists."</em> XNA 4.0 had no native file picker, no clipboard, no battery query, so there was nothing to reimplement &mdash; these classes exist because a real game needs them and the XNA surface never offered them.</p>
-        <p>Do not confuse this with <code>Microsoft::Devices</code>, the Windows Phone 7 sensor layer (accelerometer, compass), which is a genuine reimplementation of a real WP7 API and is covered separately. The two share a build flag but nothing else.</p>
+        <p>Do not confuse this with <code>Microsoft::Devices</code>, the Windows Phone 7 sensor layer (accelerometer, compass), which is a genuine reimplementation of a real WP7 API and is covered separately. It lives in a separate module that is always compiled, not behind <code>CNA_DEVICES</code>.</p>
+
+        <p>Each class here is a thin wrapper over a service of the <em>platform</em> you selected with <code>CNA_PLATFORM</code> (SDL3 by default; also SDL2, X11, Wayland, Win32, and the non-windowing <code>HEADLESS</code> and <code>TERMINAL</code>). What works therefore depends on that choice; <a href="117-devices-layer.html#classes">Tutorial 117</a> has the full class-by-platform table, and this tutorial shows the calls.</p>
 
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
@@ -129,28 +131,30 @@
         </div>
 
         <h2>Message boxes are synchronous</h2>
-        <p><code>MessageBox</code> blocks the calling thread until the user answers. <code>getIsSupportedProperty()</code> is unconditionally <code>true</code> &mdash; a real native renderer exists on every platform CNA targets, including Web/Emscripten.</p>
+        <p><code>MessageBox</code> blocks the calling thread until the user answers. <code>getIsSupportedProperty()</code> answers the selected platform&rsquo;s <code>messageBox</code> capability: true on the SDL3 and Win32 platforms, conditional on the dialog service on X11 and Wayland, and false on SDL2, <code>HEADLESS</code> and <code>TERMINAL</code>. Where it is false, <code>ShowSimple()</code> does nothing and <code>Show()</code> returns <code>-1</code>.</p>
         <pre><code class="language-cpp">#include "CNA/Devices/MessageBox.hpp"
 #include "CNA/Devices/MessageBoxType.hpp"
 
 using namespace CNA::Devices;
 
-// Single-button alert, platform's own default wording.
-MessageBox::ShowSimple(MessageBoxType::Error,
-                       "Load failed",
-                       "The save file is corrupt and was not loaded.");
+if (MessageBox::getIsSupportedProperty()) {
+    // Single-button alert, platform's own default wording.
+    MessageBox::ShowSimple(MessageBoxType::Error,
+                           "Load failed",
+                           "The save file is corrupt and was not loaded.");
 
-// Custom buttons; returns the index the user clicked, or -1 if the
-// dialog could not be shown at all.
-const int choice = MessageBox::Show(
-    MessageBoxType::Warning,
-    "Quit",
-    "You have unsaved progress.",
-    { "Save and quit", "Quit anyway", "Cancel" });
+    // Custom buttons; returns the index the user clicked, or -1 if the
+    // dialog could not be shown at all.
+    const int choice = MessageBox::Show(
+        MessageBoxType::Warning,
+        "Quit",
+        "You have unsaved progress.",
+        { "Save and quit", "Quit anyway", "Cancel" });
 
-if (choice == 0)      { SaveGame(); Exit(); }
-else if (choice == 1) { Exit(); }
-// choice == 2 or -1: stay in the game</code></pre>
+    if (choice == 0)      { SaveGame(); Exit(); }
+    else if (choice == 1) { Exit(); }
+    // choice == 2 or -1: stay in the game
+}</code></pre>
         <p><code>MessageBoxType</code> has exactly three values: <code>Error</code>, <code>Warning</code>, <code>Information</code>.</p>
 
         <h2>File dialogs are asynchronous</h2>
@@ -163,8 +167,8 @@ else if (choice == 1) { Exit(); }
 using namespace CNA::Devices;
 
 if (!FileDialog::getIsSupportedProperty()) {
-    // No native dialog renderer on this platform (iOS, Web/Emscripten).
-    // Fall back to a fixed save slot.
+    // No native file dialog here (a Web or iOS target, or a platform without a
+    // dialog service). Fall back to a fixed save slot.
     return;
 }
 
@@ -197,18 +201,22 @@ FileDialog::ShowSaveFile(
         </ul>
         <p>A <code>FileDialogFilter</code> is two strings: <code>Name</code> (the user-readable label) and <code>Pattern</code> (semicolon-separated extensions such as <code>"doc;docx"</code>, or a single <code>"*"</code>). Patterns may only contain alphanumerics, hyphens, underscores and periods.</p>
 
-        <p>Platform reach differs between the two dialog classes, and it is worth knowing before you design a UI around either. Read the iOS column as descriptive of the code, not as a supported target: <strong>CNA does not support iOS or tvOS at any level</strong> &mdash; there is no toolchain file, and the <code>METAL</code> renderer's own configure gate states that both remain unvalidated.</p>
+        <p>Reach differs between the two dialog classes and, above all, between platform implementations. This is read from the capability flags each platform sets in <code>modules/platform/src</code>; it describes CNA&rsquo;s code, not a run on every target. Read anything about iOS as descriptive of the code, not as a supported target: <strong>CNA does not support iOS or tvOS at any level</strong> &mdash; there is no toolchain file, and the <code>METAL</code> renderer&rsquo;s own configure gate states that both remain unvalidated.</p>
         <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Capability</th><th>Desktop</th><th>Android</th><th>iOS</th><th>Web/Emscripten</th></tr>
+            <tr><th>Platform</th><th><code>MessageBox</code></th><th><code>FileDialog</code></th></tr>
           </thead>
           <tbody>
-            <tr><td><code>MessageBox</code></td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
-            <tr><td><code>FileDialog</code></td><td>yes</td><td>yes</td><td>no</td><td>no</td></tr>
+            <tr><td><code>SDL3</code> (default)</td><td>yes</td><td>yes (Windows, Linux, macOS and Android backends; none for iOS or the browser)</td></tr>
+            <tr><td><code>WIN32</code></td><td>yes</td><td>yes</td></tr>
+            <tr><td><code>X11</code></td><td>when its dialog service exists</td><td>when the dialog service <em>and</em> the desktop portal exist</td></tr>
+            <tr><td><code>WAYLAND</code></td><td>when its dialog service has message boxes</td><td>when its dialog service has file dialogs</td></tr>
+            <tr><td><code>SDL2</code>, <code>HEADLESS</code>, <code>TERMINAL</code></td><td>no</td><td>no</td></tr>
           </tbody>
         </table>
         </div>
+        <p><code>FileDialog::getIsSupportedProperty()</code> additionally returns false for Web and iOS targets whatever the platform says. If the platform throws while opening a dialog, the wrapper swallows the exception and the callback is never called.</p>
         <p>Dialogs shown by <code>FileDialog</code> are currently non-modal &mdash; the layer always passes <code>nullptr</code> for SDL3's parent-window parameter, so a dialog is never tied to a specific game window.</p>
 
         <h2>Clipboard and URL launcher</h2>
@@ -247,8 +255,8 @@ if (power == PowerState::OnBattery &amp;&amp; pct &gt;= 0 &amp;&amp; pct &lt; 20
 }
 
 // Size a worker pool and pick a quality preset.
-const int cores = SystemInfo::getLogicalCpuCoreCountProperty();  // always &gt;= 1
-const int ramMB = SystemInfo::getSystemRamMegabytesProperty();
+const int cores = std::max(1, SystemInfo::getLogicalCpuCoreCountProperty());  // clamp: non-SDL platforms can report 0
+const int ramMB = SystemInfo::getSystemRamMegabytesProperty();     // 0 where the platform cannot tell
 
 // First preferred locale wins.
 for (const LocaleInfo&amp; loc : Locale::getPreferredLocalesProperty()) {
@@ -257,7 +265,7 @@ for (const LocaleInfo&amp; loc : Locale::getPreferredLocalesProperty()) {
         break;
     }
 }</code></pre>
-        <p><code>PowerState</code> has six values: <code>Error</code>, <code>Unknown</code>, <code>OnBattery</code>, <code>NoBattery</code>, <code>Charging</code>, <code>Charged</code>. Both <code>getBatteryPercentProperty()</code> and <code>getSecondsRemainingProperty()</code> return <code>-1</code> when the value cannot be determined or there is no battery &mdash; and the header cautions that some platforms can report only a percentage or only a time estimate, never both. Treat battery readings as a hint, not truth.</p>
+        <p><code>PowerState</code> has six values: <code>Error</code>, <code>Unknown</code>, <code>OnBattery</code>, <code>NoBattery</code>, <code>Charging</code>, <code>Charged</code>; a platform that cannot tell (SDL2, <code>HEADLESS</code>, <code>TERMINAL</code>) reports <code>Unknown</code>. Both <code>getBatteryPercentProperty()</code> and <code>getSecondsRemainingProperty()</code> return <code>-1</code> when the value cannot be determined or there is no battery &mdash; and the header cautions that some platforms can report only a percentage or only a time estimate, never both. Treat battery readings as a hint, not truth.</p>
 
         <p><code>DisplayInfo</code> is the one class here that needs a window:</p>
         <pre><code class="language-cpp">#include "CNA/Devices/DisplayInfo.hpp"
@@ -269,7 +277,7 @@ const Rectangle safe  = CNA::Devices::DisplayInfo::getSafeAreaProperty(Window);
 // Lay HUD elements inside `safe` so a notch or rounded corner never clips them.</code></pre>
 
         <h2>System tray</h2>
-        <p><code>SystemTray</code> is an instance class, non-copyable, and owns its renderer. <code>AddEntry</code> returns the index you use for every later mutation.</p>
+        <p><code>SystemTray</code> is an instance class, non-copyable, and owns its platform tray icon. <code>AddEntry</code> returns the index you use for every later mutation. Unlike the rest of the layer, <strong>its constructor throws</strong> (<code>PlatformNotSupportedException</code>, a <code>PlatformException</code>) when the platform has no tray service, so check <code>getIsSupportedProperty()</code> first and catch the exception for the case where a platform reports support and still has nothing to attach to.</p>
         <pre><code class="language-cpp">#include "CNA/Devices/SystemTray.hpp"
 
 using namespace CNA::Devices;
@@ -278,23 +286,28 @@ if (!SystemTray::getIsSupportedProperty()) {
     return;
 }
 
-SystemTray tray("My Game — running");
+try {
+    SystemTray tray("My Game — running");
 
-const std::size_t muteIdx = tray.AddEntry(
-    "Mute audio",
-    /*checkable*/      true,
-    /*initiallyChecked*/  false,
-    /*initiallyEnabled*/  true,
-    []() { ToggleMute(); });
+    const std::size_t muteIdx = tray.AddEntry(
+        "Mute audio",
+        /*checkable*/      true,
+        /*initiallyChecked*/  false,
+        /*initiallyEnabled*/  true,
+        []() { ToggleMute(); });
 
-tray.AddEntry("Quit", false, false, true, []() { RequestExit(); });
+    tray.AddEntry("Quit", false, false, true, []() { RequestExit(); });
 
-// Later:
-tray.setTooltipProperty("My Game — paused");
-tray.SetEntryChecked(muteIdx, true);
-const bool muted = tray.GetEntryChecked(muteIdx);
-tray.SetEntryEnabled(muteIdx, false);
-tray.SetEntryLabel(muteIdx, "Mute audio (locked)");</code></pre>
+    // Later:
+    tray.setTooltipProperty("My Game — paused");
+    tray.SetEntryChecked(muteIdx, true);
+    const bool muted = tray.GetEntryChecked(muteIdx);
+    tray.SetEntryEnabled(muteIdx, false);
+    tray.SetEntryLabel(muteIdx, "Mute audio (locked)");
+} catch (const CNA::Platform::PlatformException&amp;) {
+    // supported on paper, unavailable now: carry on without a tray icon
+}</code></pre>
+        <p>In real code the <code>SystemTray</code> is a member that lives as long as your game, not a local as in this compact sketch; the icon disappears when the object is destroyed.</p>
 
         <h2>Camera</h2>
         <p><code>Camera</code> hands you frames as a <code>Texture2D</code>, so a webcam feed can go straight into a <code>SpriteBatch</code> draw. <code>TryAcquireFrame</code> returns <code>false</code> when no new frame is ready &mdash; poll it, do not block on it.</p>
@@ -315,47 +328,35 @@ if (camera.getStateProperty() == CameraState::Ready) {
         // frameTexture now holds the latest frame
     }
 }</code></pre>
-        <p><code>CameraState</code> models the full permission lifecycle: <code>NotSupported</code>, <code>Closed</code>, <code>Opening</code>, <code>Denied</code>, <code>Ready</code>, <code>Lost</code>. <code>Opening</code> and <code>Denied</code> exist because on most platforms the OS asks the user for camera permission &mdash; a camera that is not <code>Ready</code> yet is not necessarily broken.</p>
+        <p><code>CameraState</code> models the full permission lifecycle: <code>NotSupported</code>, <code>Closed</code>, <code>Opening</code>, <code>Denied</code>, <code>Ready</code>, <code>Lost</code> (the current implementation never returns <code>Closed</code>). <code>Opening</code> and <code>Denied</code> exist because on most platforms the OS asks the user for camera permission &mdash; a camera that is not <code>Ready</code> yet is not necessarily broken. The texture you pass to <code>TryAcquireFrame</code> must already match the camera&rsquo;s frame size exactly, or the call returns <code>false</code> without touching it; <a href="117-devices-layer.html#camera">Tutorial 117</a> shows the full poll loop. Only the SDL3 platform provides a camera.</p>
 
         <h2>Testing without opening real dialogs</h2>
-        <p><code>FileDialog</code> and <code>MessageBox</code> both route through a <code>Detail::I*Renderer</code> interface rather than calling SDL3 directly, and both expose <code>SetBackendForTesting</code>. This is not incidental &mdash; the headers spell out why these two matter more than the rest of the layer: a real file dialog can leave a <code>zenity</code> process open forever waiting for a human, and a real message box blocks the calling thread until someone clicks. An automated test must never reach the real renderer.</p>
-        <pre><code class="language-cpp">#include "CNA/Devices/FileDialog.hpp"
-#include "CNA/Devices/Detail/IFileDialogBackend.hpp"
+        <p>A real file dialog can leave a <code>zenity</code> process open forever waiting for a human, and a real message box blocks the calling thread until someone clicks, so an automated test must never reach the real service. Earlier snapshots exposed a <code>SetBackendForTesting</code> hook on <code>FileDialog</code> and <code>MessageBox</code>; <strong>it no longer exists</strong>. The layer now asks the current platform for its dialog service, so a test installs a platform whose dialogs <em>record instead of showing</em>. CNA&rsquo;s own tests do it with <code>CNA::Platform::Testing::CannedDialogPlatform</code> and <code>ScopedCurrentPlatform</code>, header-only helpers in the CNA repository&rsquo;s <code>modules/platform/tests/CNA/Platform/</code> tree (not an installed public header):</p>
+        <pre><code class="language-cpp">#include "CNA/Devices/MessageBox.hpp"
+#include "CNA/Platform/CannedDialogs.hpp"     // from modules/platform/tests
 
-class FakeFileDialogBackend final : public CNA::Devices::Detail::IFileDialogBackend {
-public:
-    void ShowOpenFile(CNA::Devices::Detail::FileDialogResultCallback onResult,
-                      const std::vector&lt;CNA::Devices::FileDialogFilter&gt;&amp;,
-                      const std::string&amp;,
-                      bool) override {
-        onResult({ "/fixtures/slot1.sav" });   // answer instantly
-    }
+using CNA::Platform::Testing::CannedDialogPlatform;
+using CNA::Platform::Testing::ScopedCurrentPlatform;
 
-    void ShowSaveFile(CNA::Devices::Detail::FileDialogResultCallback onResult,
-                      const std::vector&lt;CNA::Devices::FileDialogFilter&gt;&amp;,
-                      const std::string&amp;) override {
-        onResult({ "/tmp/out.sav" });
-    }
+void MessageBoxNeverShowsInATest()
+{
+    CannedDialogPlatform platform;                    // records instead of showing
+    ScopedCurrentPlatform installed(platform);        // restored when this scope ends
 
-    void ShowOpenFolder(CNA::Devices::Detail::FileDialogResultCallback onResult,
-                        const std::string&amp;,
-                        bool) override {
-        onResult({});                          // simulate cancel
-    }
-};
+    platform.Canned().chosenButton = 1;               // the "user" clicks the second button
+    const int clicked = CNA::Devices::MessageBox::Show(
+        CNA::Devices::MessageBoxType::Warning, "Quit", "You have unsaved progress.",
+        {"Save and quit", "Quit anyway"});
 
-// In test setup:
-CNA::Devices::FileDialog::SetBackendForTesting(
-    std::make_unique&lt;FakeFileDialogBackend&gt;());
-
-// In test teardown — nullptr restores the real platform renderer:
-CNA::Devices::FileDialog::SetBackendForTesting(nullptr);</code></pre>
-        <p>The same pattern applies to <code>MessageBox::SetBackendForTesting</code>. <code>SystemTray</code> and <code>Camera</code> take their renderer through a constructor overload instead, since they are instance classes.</p>
+    assert(clicked == 1);
+    assert(platform.Canned().messageBoxes.size() == 1);
+}</code></pre>
+        <p>The public pieces underneath are <code>CNA::Platform::SetCurrentPlatform(IPlatform*)</code> and the <code>IPlatformDialogs</code> interface, so you can write your own recording fake instead of borrowing CNA&rsquo;s. <code>SystemTray</code> and <code>Camera</code> use the current platform&rsquo;s tray and camera services in the same way (CNA has <code>CannedTray.hpp</code> and <code>CannedCamera.hpp</code>). <a href="117-devices-layer.html#testing">Tutorial 117</a> has the file-dialog case and the CI details.</p>
 
         <h2>The neighbouring extension surfaces</h2>
         <p>Two other CNA-only namespaces are easy to confuse with this one, and neither is gated behind <code>CNA_DEVICES</code>:</p>
         <ul>
-          <li><code>CNA::Input</code> (<code>Joysticks</code>, <code>Haptics</code>, <code>InputDevices</code>, <code>Sensors</code>, <code>Power</code>) &mdash; always compiled. Its members carry the <code>CNAEXT</code> macro and <code>EXT</code>-suffixed names such as <code>Joysticks::GetJoysticksEXT()</code>. <code>CNAEXT</code> expands to <code>[[deprecated("CNAEXT: not part of the XNA 4.0 API surface")]]</code> under the strict-purity build, so a project that wants to stay XNA-pure gets a compiler warning the moment it touches one. Under a normal build it expands to nothing.</li>
+          <li><code>CNA::Input</code> (<code>Joysticks</code>, <code>Haptics</code>, <code>InputDevices</code>, <code>Sensors</code>, <code>Power</code>, and its own <code>Clipboard</code>) &mdash; always compiled. Its members carry the <code>CNAEXT</code> macro and <code>EXT</code>-suffixed names such as <code>Joysticks::GetJoysticksEXT()</code>. <code>CNAEXT</code> expands to <code>[[deprecated("CNAEXT: not part of the XNA 4.0 API surface")]]</code> under the strict-purity build, so a project that wants to stay XNA-pure gets a compiler warning the moment it touches one. Under a normal build it expands to nothing.</li>
           <li><code>CNA::Logger</code> &mdash; also always compiled. <code>Logger::Info(msg, LogCategory::RENDER)</code> and friends, plus conditional variants (<code>InfoIf</code>, <code>WarnIf</code>, &hellip;). Levels run <code>FATAL</code>, <code>ERROR</code>, <code>WARN</code>, <code>INFO</code>, <code>DEBUG</code>, <code>TRACE</code>, and <code>EXPERIMENT</code>; categories are <code>APPLICATION</code>, <code>ERROR</code>, <code>SYSTEM</code>, <code>AUDIO</code>, <code>VIDEO</code>, <code>RENDER</code>, <code>INPUT</code>, <code>TEST</code>, <code>GPU</code>.</li>
         </ul>
         <p>Note that <code>CNA::Input::Power</code> and <code>CNA::Devices::PowerInfo</code> both report battery status through different shapes &mdash; <code>Power::GetInfoEXT(secondsLeft, percent)</code> uses out-parameters, <code>PowerInfo</code> uses three separate property getters. Pick one and stay consistent; the <code>CNA::Devices</code> form does not require the <code>CNAEXT</code> escape but does require the build flag.</p>
@@ -384,7 +385,7 @@ CNA::Devices::FileDialog::SetBackendForTesting(nullptr);</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

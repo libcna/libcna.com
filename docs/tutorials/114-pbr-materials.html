@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 114: PBR Materials with PbrEffect and SkinnedPbrEffect - CNA Tutorials</title>
-  <meta name="description" content="glTF 2.0 metallic-roughness PBR in CNA alpha.1: seven maps, material factors and state, per-map UV handling, importer selection, and renderer-qualified coverage.">
+  <meta name="description" content="glTF 2.0 metallic-roughness PBR in CNA snapshot 009d40f5: seven maps, material factors and state, lights, shadow receiving and image-based lighting, per-map UV handling, importer selection, and renderer-qualified coverage.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/114-pbr-materials.html">
   <meta property="og:title"       content="Tutorial 114: PBR Materials with PbrEffect and SkinnedPbrEffect - CNA Tutorials">
-  <meta property="og:description" content="glTF 2.0 metallic-roughness PBR in CNA alpha.1: seven maps, material factors and state, per-map UV handling, importer selection, and renderer-qualified coverage.">
+  <meta property="og:description" content="glTF 2.0 metallic-roughness PBR in CNA snapshot 009d40f5: seven maps, material factors and state, lights, shadow receiving and image-based lighting, per-map UV handling, importer selection, and renderer-qualified coverage.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/114-pbr-materials.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 114: PBR Materials with PbrEffect and SkinnedPbrEffect",
   "url": "https://libcna.com/docs/tutorials/114-pbr-materials.html",
   "datePublished": "2026-08-11",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -91,16 +91,16 @@
         <p><strong>What you&rsquo;ll learn</strong></p>
         <ul>
           <li>The <code>PbrEffect</code> material surface &mdash; seven maps, factors, alpha state, UV selectors and transforms.</li>
-          <li>Why a PBR effect is still lit by three directional lights, and what that rules out.</li>
+          <li>How a PBR effect is lit: three directional lights, plus shadow receiving and image-based lighting &mdash; and which renderers honour them.</li>
           <li><code>SkinnedPbrEffect</code>, and how it differs from <code>SkinnedEffect</code>.</li>
-          <li>The alpha.1 importer rule: metallic-roughness remains PBR even with no maps or with vertex colour.</li>
+          <li>The importer rule (unchanged since alpha.1): metallic-roughness remains PBR even with no maps or with vertex colour.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="32-basiceffect.html">Tutorial 32: BasicEffect</a> for the stock-effect model these follow, and <a href="110-gltf-models.html">Tutorial 110</a> for getting a PBR-authored model in.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="32-basiceffect.html">Tutorial 32: BasicEffect</a> for the stock-effect model these follow, and <a href="110-gltf-models.html">Tutorial 110</a> for getting a PBR-authored model in. Everything here is always compiled; only the environment <em>generator</em> mentioned in <a href="#lighting">the lighting section</a> needs <code>-DCNA_CNAEXT=ON</code>.</p>
       </div>
 
       <p><code>PbrEffect</code> and <code>SkinnedPbrEffect</code> implement glTF 2.0&rsquo;s metallic-roughness material model against the specification&rsquo;s own reference BRDF: a GGX normal distribution, Smith-Schlick-GGX visibility, and Schlick Fresnel. They are CNAEXT effects with the familiar stock-effect workflow &mdash; construct one, set properties, bind it, draw.</p>
 
-      <p>They are also unambiguously <strong>CNAEXT</strong>. Real XNA 4.0 predates the physically-based content pipeline entirely; there is no XNA or FNA equivalent to mirror, so nothing here is an attempt at API fidelity. <a href="115-cnaext-overview.html">Tutorial 115</a> explains what that marker means for your build.</p>
+      <p>They are also unambiguously <strong>CNAEXT</strong>. Real XNA 4.0 predates the physically-based content pipeline entirely; there is no XNA or FNA equivalent to mirror, so nothing here is an attempt at API fidelity. The <code>CNAEXT</code> marker sits on the members that have no XNA equivalent rather than on the class declaration, and none of it depends on a build option. <a href="115-cnaext-overview.html">Tutorial 115</a> explains what the marker means for your build.</p>
 
       <h2 id="surface">The material surface</h2>
 
@@ -174,9 +174,27 @@ effect.EnableDefaultLighting();</code></pre>
 
       <pre><code class="language-cpp">effect.SetOwnedNormalMap(std::shared_ptr&lt;Texture2D&gt;(std::move(decodedNormalMap)));</code></pre>
 
-      <h2 id="lighting">Lit by three directional lights, not an environment</h2>
+      <h3>Alpha, sidedness and colour space</h3>
 
-      <p><code>PbrEffect</code> implements <code>IEffectMatrices</code>, <code>IEffectFog</code> and <code>IEffectLights</code>, so its lighting and fog surface is the one you already know from <code>BasicEffect</code>: <code>DirectionalLight0</code> through <code>DirectionalLight2</code>, <code>setAmbientLightColorProperty()</code>, <code>EnableDefaultLighting()</code>, and the four fog properties.</p>
+      <p>Beyond the maps and factors, the effect carries the rest of a glTF material&rsquo;s state. Some of it is <em>carried</em> rather than <em>applied</em>: it travels with the material, and your draw code acts on it.</p>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>State</th><th>Accessors</th><th>Behaviour</th></tr></thead>
+        <tbody>
+          <tr><td>Alpha mode</td><td><code>getAlphaModeEXTProperty()</code> / <code>setAlphaModeEXTProperty(AlphaModeEXT)</code></td><td><code>Opaque</code> (default), <code>Mask</code> (fragments below the cutoff are discarded) or <code>Blend</code>. For <code>Blend</code> the PBR effects emit straight RGB: select <code>BlendState::NonPremultiplied</code> and draw back to front. CNA preserves the part order and does not sort.</td></tr>
+          <tr><td>Alpha cutoff</td><td><code>getAlphaCutoffEXTProperty()</code> / <code>setAlphaCutoffEXTProperty(float)</code></td><td>Default <code>0.5f</code>; used when the mode is <code>Mask</code>.</td></tr>
+          <tr><td>Double-sided</td><td><code>getDoubleSidedEXTProperty()</code> / <code>setDoubleSidedEXTProperty(bool)</code></td><td>Carried, <strong>not applied</strong>: <code>Model::Draw</code> does not change the device&rsquo;s <code>RasterizerState</code>. For a double-sided material, set <code>RasterizerState::CullNone</code> yourself.</td></tr>
+          <tr><td>Texture colour space</td><td><code>get/setBaseColorTextureIsSrgbEXTProperty()</code>, <code>get/setEmissiveTextureIsSrgbEXTProperty()</code></td><td>Both default to <code>true</code>, glTF&rsquo;s rule: the shader decodes the <em>sample</em>, never the factor. The specular-colour map has its own flag.</td></tr>
+          <tr><td>Output encoding</td><td><code>getEncodeOutputToSrgbEXTProperty()</code> / <code>setEncodeOutputToSrgbEXTProperty(bool)</code></td><td>Defaults to <code>true</code>, right for a plain UNORM back buffer. Turn it off when drawing into an sRGB target or when a later pass does its own tone mapping, or the transfer is applied twice. Alpha is never encoded.</td></tr>
+          <tr><td>UV sets and transforms</td><td><code>setTextureCoordinateSetEXTProperty(slot, set)</code>, <code>setTextureTransformEXTProperty(slot, TextureTransformEXT)</code></td><td>Per-map UV selection and <code>KHR_texture_transform</code>; see <a href="#uvsets">Per-map UV channels and transforms</a>.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h2 id="lighting">Lights, shadows and image-based lighting</h2>
+
+      <p><code>PbrEffect</code> implements <code>IEffectMatrices</code>, <code>IEffectFog</code> and <code>IEffectLights</code>, so its lighting and fog surface is the one you already know from <code>BasicEffect</code>: <code>DirectionalLight0</code> through <code>DirectionalLight2</code>, <code>setAmbientLightColorProperty()</code>, <code>EnableDefaultLighting()</code>, and the four fog properties. Since alpha.1 it also implements <code>IShadowReceiverEXT</code> and accepts an <code>ImageBasedLightEXT</code>; those two are the new part of this section.</p>
 
       <pre><code class="language-cpp">DirectionalLight&amp; key = effect.getDirectionalLight0Property();
 key.setEnabledProperty(true);
@@ -185,10 +203,36 @@ key.setDiffuseColorProperty(Vector3(1.0f, 0.96f, 0.9f));
 
 effect.setAmbientLightColorProperty(Vector3(0.05f, 0.06f, 0.08f));</code></pre>
 
-      <div class="callout callout--note">
-        <span class="callout-icon">&#8505;</span>
-        <p><strong>There is no image-based lighting.</strong> No irradiance map, no prefiltered environment, no BRDF lookup table. Metal reflects the analytic lights and the ambient term, and nothing else &mdash; so a mirror-smooth metal sphere in an empty scene will look dark and flat rather than wrong. Give rough metals a little ambient and a fill light and they read correctly.</p>
+      <p>Without an environment &mdash; the default, and the only option on a renderer that ignores one &mdash; a metal reflects the analytic lights and the ambient term and nothing else, so a mirror-smooth metal sphere in an empty scene looks dark and flat rather than wrong. Give rough metals a little ambient and a fill light and they read correctly.</p>
+
+      <h3>Image-based lighting</h3>
+
+      <p>Both effects have <code>setImageBasedLightEXT(const ImageBasedLightEXT&amp;)</code> and <code>getImageBasedLightEXT()</code>. The struct carries the three split-sum products &mdash; an <code>Irradiance</code> cube for diffuse light, a <code>PrefilteredSpecular</code> cube whose mip level is roughness, and a <code>BrdfLut</code> table &mdash; plus <code>PrefilteredMipCount</code> and an <code>Intensity</code>. <code>IsValidEXT()</code> is true only when all three textures are set; an invalid bundle is treated as no environment. The struct holds raw pointers, so the textures it names must outlive the effect&rsquo;s draws.</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ImageBasedLightEXT.hpp"
+
+ImageBasedLightEXT ibl;
+ibl.Irradiance          = irradianceCube;      // TextureCube*
+ibl.PrefilteredSpecular = prefilteredCube;     // TextureCube*, mip chain = roughness ramp
+ibl.BrdfLut             = brdfTable;           // Texture2D*
+ibl.PrefilteredMipCount = 5;
+ibl.Intensity           = 1.0f;
+
+if (device.SupportsImageBasedLightingEXT())    // see the renderer table below
+    effect.setImageBasedLightEXT(ibl);</code></pre>
+
+      <p>The three textures come from <code>CNA::Graphics::EnvironmentProcessor</code> (<code>convertEquirectangular</code>, <code>generateIrradiance</code>, <code>generatePrefilteredSpecular</code>, <code>generateBrdfLut</code>), a CPU-side generator in the engine layer that exists only with <code>-DCNA_CNAEXT=ON</code>; <code>ImageBasedLightEXT</code> and the effect side are always compiled. <a href="153-image-based-lighting.html">Tutorial 153</a> builds the whole chain end to end.</p>
+
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>An environment replaces the flat ambient colour; it does not add to it.</strong> While a valid <code>ImageBasedLightEXT</code> is set, <code>PbrEffect</code> zeroes its ambient colour, because the two stand for the same light. On a renderer that accepts the struct but does not shade from it you get an unlit-ambient surface rather than a double-lit one &mdash; the safer wrong picture, but still wrong. Set the environment only where <code>SupportsImageBasedLightingEXT()</code> is true and give the other renderers the flat ambient and fill light.</p>
       </div>
+
+      <h3>Shadows</h3>
+
+      <p><code>IShadowReceiverEXT</code> is the always-compiled receiving half of shadows, implemented by <code>BasicEffect</code>, <code>SkinnedEffect</code>, <code>PbrEffect</code> and <code>SkinnedPbrEffect</code>: <code>setShadowMapEXT</code>, <code>setLightViewProjectionEXT</code>, <code>setShadowsEnabledEXT</code>, <code>setShadowDepthBiasEXT</code>, <code>setShadowFilterRadiusEXT</code>, <code>setShadowCascadesEXT</code> (a <code>ShadowCascadeStateEXT</code> of up to four cascades) and <code>setPunctualLightEXT</code> (a <code>PunctualLightEXT</code> point or spot light with a cube or 2D shadow). The maps come from the engine layer&rsquo;s <code>ShadowMap</code>, <code>CascadedShadowMap</code>, <code>CubeShadowMap</code> and <code>SpotShadowMap</code> (again <code>CNA_CNAEXT=ON</code>), or from a pass you write yourself; <a href="154-cascaded-shadows.html">Tutorial 154</a> does the cascaded case. A shadow attenuates the direct lights only; the environment term is untouched.</p>
+
+      <p>Shadow sampling is honoured only where <code>GraphicsDevice::SupportsShadowSamplingEXT()</code> is true. Everywhere else the state is accepted and ignored, which gives an unshadowed image and no error.</p>
 
       <p>One divergence from the other stock effects: <code>setLightingEnabledProperty(false)</code> is refused. A physically-based material with no lighting has no defined meaning, so the effect mirrors the same constraint real XNA&rsquo;s <code>SkinnedEffect</code> already imposes.</p>
 
@@ -216,7 +260,7 @@ effect.setAmbientLightColorProperty(Vector3(0.05f, 0.06f, 0.08f));</code></pre>
 
       <h2 id="import">How the importer decides</h2>
 
-      <p>You will usually not construct these effects yourself &mdash; the glTF importer picks one per mesh part. In alpha.1 the choice follows the material model, not the presence of a particular texture.</p>
+      <p>You will usually not construct these effects yourself &mdash; the glTF importer picks one per mesh part. The choice follows the material model, not the presence of a particular texture, and this has held since alpha.1.</p>
 
       <div class="callout callout--info">
         <span class="callout-icon">&#8505;</span>
@@ -238,12 +282,14 @@ effect.setAmbientLightColorProperty(Vector3(0.05f, 0.06f, 0.08f));</code></pre>
 
       <p>PBR takes priority over the legacy dual-texture approximation. Vertex colour multiplies the PBR base colour in both rigid and skinned layouts; it no longer changes the selected material model.</p>
 
-      <p>Once the importer has chosen, the maps and factors are wired in for you, including <code>KHR_materials_emissive_strength</code>, whose multiplier is folded into the emissive factor before the emissive texture is applied. To adjust an imported material at runtime, cast and set:</p>
+      <p>Once the importer has chosen, the maps and factors are wired in for you, including <code>KHR_materials_emissive_strength</code>, whose multiplier is folded into the emissive factor before the emissive texture is applied. To adjust an imported material at runtime, cast and set. <code>PbrEffect</code> and <code>SkinnedPbrEffect</code> are separate classes, so cast for both (and note that a loop written for <code>BasicEffect</code> skips imported glTF parts entirely):</p>
 
-      <pre><code class="language-cpp">for (ModelMesh* mesh : model-&gt;getMeshesProperty()) {
+      <pre><code class="language-cpp">for (ModelMesh* mesh : model.getMeshesProperty()) {
     for (ModelMeshPart* part : mesh-&gt;getMeshPartsProperty()) {
         if (auto* pbr = dynamic_cast&lt;PbrEffect*&gt;(part-&gt;getEffectProperty())) {
             pbr-&gt;setRoughnessFactorProperty(0.8f);   // scuff the whole surface
+        } else if (auto* skinned = dynamic_cast&lt;SkinnedPbrEffect*&gt;(part-&gt;getEffectProperty())) {
+            skinned-&gt;setRoughnessFactorProperty(0.8f);
         }
     }
 }</code></pre>
@@ -252,43 +298,47 @@ effect.setAmbientLightColorProperty(Vector3(0.05f, 0.06f, 0.08f));</code></pre>
 
       <div class="callout callout--info">
         <span class="callout-icon">&#8505;</span>
-        <p><strong>Factor-only PBR is fixed in alpha.1.</strong> A clean CAD export or procedural material with no texture maps remains a <code>PbrEffect</code>/<code>SkinnedPbrEffect</code>. Base colour, metallic, roughness, emissive and opacity factors survive, along with alpha mode/cutoff and double-sided state.</p>
+        <p><strong>Factor-only PBR was fixed in alpha.1, and still holds.</strong> A clean CAD export or procedural material with no texture maps remains a <code>PbrEffect</code>/<code>SkinnedPbrEffect</code>. Base colour, metallic, roughness, emissive and opacity factors survive, along with alpha mode/cutoff and double-sided state.</p>
       </div>
 
       <p>The same rule covers a primitive with no material object: glTF defines that case as its default metallic-roughness material, so CNA creates the corresponding PBR effect rather than silently substituting a different lighting model.</p>
 
       <h2 id="renderers">Renderer coverage</h2>
 
-      <p>Sixteen implementation families consume the universal alpha.1 PBR draw parameters:</p>
+      <p>Eight renderer implementation families implement the universal PBR draw parameters, plus a reduced CPU cross-check and two renderers that refuse. This table lists all 25 public identities; the last column is the separate question of shadow and environment <em>sampling</em>:</p>
 
       <div class="table-wrap">
       <table>
-        <thead><tr><th>Disposition</th><th>Implementation families</th><th>Boundary</th></tr></thead>
+        <thead><tr><th>Disposition</th><th>Renderer identities</th><th>Boundary</th><th>Shadow and environment sampling</th></tr></thead>
         <tbody>
-          <tr><td><span class="status-badge status-done">Full PBR</span></td><td>bgfx, Diligent, DirectX 9/11/12, EasyGL, IGL, LLGL, Magnum, Metal, OpenGL 2/4, SDL_GPU, Vulkan, WebGPU, Wicked</td><td>Both rigid and skinned PBR paths exist; WebGPU skinning is implemented.</td></tr>
-          <tr><td><span class="status-badge status-partial">Specular maps partial</span></td><td>Metal and Wicked</td><td>They consume the IOR/specular factors but not the two optional <code>KHR_materials_specular</code> maps. The other 14 full families sample both maps.</td></tr>
-          <tr><td><span class="status-badge status-partial">Reduced CPU cross-check</span></td><td>Software</td><td>Consumes base-colour UV selection/transform and colour products, but has no metallic-roughness BRDF or lighting.</td></tr>
-          <tr><td><span class="status-badge status-partial">Vertex-colour refusal</span></td><td>Metal and Wicked</td><td>Alpha.1 explicitly refuses the coloured stride-60/80 PBR draw instead of accepting it with wrong colour semantics.</td></tr>
+          <tr><td><span class="status-badge status-done">Full PBR</span></td><td><code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL1</code>, <code>WEBGL2</code>, <code>OPENGL4</code>, <code>SDL_GPU</code>, <code>VULKAN</code>, <code>WEBGPU</code> (eight implementation families, twelve identities)</td><td>Both rigid and skinned PBR paths exist and both <code>KHR_materials_specular</code> maps are sampled.</td><td>Honoured on the five EasyGL identities and on <code>OPENGL4</code>, <code>SDL_GPU</code>, <code>VULKAN</code> and <code>WEBGPU</code> (nine identities); <strong>not</strong> on <code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code>.</td></tr>
+          <tr><td><span class="status-badge status-partial">Specular maps partial</span></td><td><code>METAL</code></td><td>Consumes the IOR and specular factors but not the two optional <code>KHR_materials_specular</code> maps.</td><td>No.</td></tr>
+          <tr><td><span class="status-badge status-partial">Vertex-colour refusal</span></td><td><code>METAL</code></td><td>Refuses the coloured stride-60/80 PBR draw instead of accepting it with wrong colour semantics.</td><td>No.</td></tr>
+          <tr><td><span class="status-badge status-partial">Reduced CPU cross-check</span></td><td><code>SOFTWARE</code></td><td>Consumes base-colour UV selection/transform and colour products, but has no metallic-roughness BRDF or lighting.</td><td>No.</td></tr>
+          <tr><td><span class="status-badge status-planned">Refuses the draw</span></td><td><code>FNA3D</code>, <code>PORTABLEGL</code></td><td>A <code>PbrEffect</code>/<code>SkinnedPbrEffect</code> draw is refused by name; neither renderer has a metallic-roughness path and neither substitutes a stock effect.</td><td>No.</td></tr>
+          <tr><td><span class="status-badge status-planned">No PBR pixels</span></td><td><code>HEADLESS</code>, <code>STUB</code>, and the seven 2D-only identities</td><td><code>HEADLESS</code> validates and traces; <code>STUB</code> does nothing; the 2D-only renderers have no 3D pipeline.</td><td>No.</td></tr>
         </tbody>
       </table>
       </div>
 
-      <p>These are implementation families, not public identity counts: EasyGL alone serves five renderer identities. A renderer outside the table is not evidence of equivalent PBR support; query its capabilities and test the concrete build rather than assuming a generic fallback is visually correct.</p>
+      <p>These are implementation families as much as identities: EasyGL alone serves five of the identities above. A renderer outside the first row is not evidence of equivalent PBR support; query its capabilities and test the concrete build rather than assuming a generic fallback is visually correct. The list is pinned by a CNA test that audits every renderer directory mentioning the PBR normal-map parameter (nine directories: the eight full families and METAL; SOFTWARE is added separately). That is a statement about code paths, not about pixels compared against a reference renderer.</p>
 
-      <p>The tag's Windows Direct3D workflow lanes are manually dispatched; alpha.1 has no automatic MinGW/Wine lane. See <a href="72-backend-selection.html">Tutorial 72</a> for the single- and multi-renderer modes, and verify PBR on the concrete renderer and driver you intend to ship.</p>
+      <p>The Windows Direct3D workflow (<code>d3d-windows-ci.yml</code>) is manually dispatched at this snapshot, so the DirectX rows rest on the code and on Wine/DXVK or cross-build evidence described in CNA&rsquo;s own documents, not on an automatic Windows run. See <a href="72-backend-selection.html">Tutorial 72</a> for the single- and multi-renderer modes, and verify PBR on the concrete renderer and driver you intend to ship.</p>
 
       <h2 id="uvsets">Per-map UV channels and transforms</h2>
 
-      <p>glTF lets every texture reference pick its own <code>TEXCOORD</code> set and apply an independent <code>KHR_texture_transform</code>. Alpha.1 carries the first two distinct authored sets into renderer-facing UV0/UV1, records a selector for each of the five core maps and both specular maps, and transports every map&rsquo;s scale/rotation/translation independently.</p>
+      <p>glTF lets every texture reference pick its own <code>TEXCOORD</code> set and apply an independent <code>KHR_texture_transform</code>. The importer carries the first two distinct authored sets into renderer-facing UV0/UV1, records a selector for each of the five core maps and both specular maps (<code>setTextureCoordinateSetEXTProperty(slot, set)</code>), and transports every map&rsquo;s scale/rotation/translation independently (<code>setTextureTransformEXTProperty(slot, TextureTransformEXT{Offset, Scale, Rotation})</code>).</p>
 
       <p>A material requesting a third distinct authored set exceeds the two-channel vertex layouts. CNA falls that map back to packed channel 0 and adds a stable diagnostic to <code>Model::getGltfImportReportEXTProperty()</code>; both direct glTF and converter-generated <code>.cnj</code> models expose the report.</p>
 
       <h2 id="next">Where to go next</h2>
       <ul>
+        <li><a href="153-image-based-lighting.html">Tutorial 153: Image-based lighting</a> &mdash; the environment path of this tutorial, end to end.</li>
+        <li><a href="154-cascaded-shadows.html">Tutorial 154: Cascaded shadow maps</a> &mdash; shadows on a <code>BasicEffect</code> or <code>PbrEffect</code>.</li>
         <li><a href="115-cnaext-overview.html">Tutorial 115: CNAEXT</a> &mdash; what the marker on these effects actually does.</li>
         <li><a href="112-gltf-animation.html">Tutorial 112: Skeletal Animation from glTF</a> &mdash; driving <code>SkinnedPbrEffect</code>.</li>
         <li><a href="37-multiple-lights.html">Tutorial 37: Multiple Lights</a> &mdash; the three-light convention in depth.</li>
-        <li><a href="../effects.html">Effects reference</a></li>
+        <li><a href="../effects.html">Effects reference</a> and the <a href="../cnaext-engine.html">CNAEXT engine-layer reference</a></li>
       </ul>
 </article>
     </div>
@@ -300,7 +350,7 @@ effect.setAmbientLightColorProperty(Vector3(0.05f, 0.06f, 0.08f));</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
