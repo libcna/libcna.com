@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 99: Unit Testing CNA Game Logic - CNA</title>
-  <meta name="description" content="Test CNA game logic with GoogleTest: alpha.1's configuration-scoped suite, headless initialization, math and ECS isolation, resource mocking, and CI integration.">
+  <meta name="description" content="Test CNA game logic with GoogleTest: how CNA's own configuration-scoped suite is laid out (focused per-module targets), headless initialization, the GPU-test display policy, resource mocking, and CI integration.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/99-unit-testing.html">
   <meta property="og:title"       content="Tutorial 99: Unit Testing CNA Game Logic - CNA">
-  <meta property="og:description" content="Test CNA game logic with GoogleTest: alpha.1's configuration-scoped suite, headless initialization, math and ECS isolation, resource mocking, and CI integration.">
+  <meta property="og:description" content="Test CNA game logic with GoogleTest: how CNA's own configuration-scoped suite is laid out (focused per-module targets), headless initialization, the GPU-test display policy, resource mocking, and CI integration.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/99-unit-testing.html">
@@ -19,10 +19,10 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "Tutorial 99: Unit Testing CNA Game Logic",
-  "description": "Test your CNA game logic with GoogleTest: what CNA's own suite actually contains, headless initialisation, mocking disposable resources, and CI integration.",
+  "description": "Test your CNA game logic with GoogleTest: how CNA's own suite is laid out, headless initialisation, the GPU-test display policy, mocking disposable resources, and CI integration.",
   "url": "https://libcna.com/docs/tutorials/99-unit-testing.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -95,36 +95,45 @@
             <li>Wiring GoogleTest into your project alongside CNA's own suite.</li>
             <li>Initialising CNA headlessly for tests, and mocking disposable resources.</li>
             <li>Running the tests in CI.</li>
+            <li>How CNA's own suite is organised: the aggregate <code>CnaTests</code>, the focused per-module targets, and where GPU tests open their windows.</li>
           </ul>
           <p><strong>Before you start</strong> &mdash; <a href="02-setup.html">Tutorial 02: Setting Up Your Dev Environment</a> (you already ran <code>ctest</code> against CNA's suite there) and <a href="71-memory-management.html">Tutorial 71: Memory Management in C++</a> (the <code>IDisposable</code> pattern being mocked). The <code>HEADLESS</code> renderer exists for exactly this case.</p>
         </div>
 
         <h2>CNA's own test suite</h2>
         <p>
-          At alpha.1, CNA ships <strong>568 C++ test source files containing 8,263 statically discoverable GoogleTest-family definitions</strong> &mdash; covering math types
+          At CNA snapshot <code>009d40f5</code> (a development snapshot after alpha.1; alpha.1 counted 568 files and 8,263 definitions with the same commands), CNA ships <strong>904 C++ test source files, 871 of which contain 12,610 statically discoverable GoogleTest-family definitions</strong> &mdash; covering math types
           (Vector2, Vector3, Matrix, Quaternion), geometry (BoundingBox, BoundingFrustum, Plane, Ray), curves
           (Bezier, Hermite), game loop semantics (fixed versus variable timestep), PackedVector precision and
-          colour conversions, among much else.
+          colour conversions, the build-time content pipeline, platforms, audio and much else. A further 879 standalone <code>*_test.cpp</code> pixel programs under <code>examples/</code> have their own <code>main()</code> and are <em>not</em> in those figures.
         </p>
         <p>
           The exact executables and CTest registrations are configuration-scoped: renderer, platform, audio
           implementation, host and feature options determine what is compiled. A multi-renderer build can include
           several renderer test sets, so do not treat a source-tree count as the expected output of one <code>ctest -N</code>.
         </p>
-<pre><code class="language-bash">cmake --build build --target CnaTests
-ctest --test-dir build --output-on-failure</code></pre>
+        <p>
+          Test sources live beside the code they test, in <code>modules/&lt;name&gt;/tests/</code> and <code>modules/renderers/&lt;family&gt;/tests/</code>, and CMake collects them by module. Besides the aggregate <code>CnaTests</code>, each module builds its own <strong>focused</strong> executable &mdash; <code>CnaMathTests</code>, <code>CnaCoreTests</code>, <code>CnaAudioTests</code>, <code>CnaContentTests</code>, <code>CnaGraphicsTests</code>, <code>CnaStorageTests</code> and so on, 22 in all. They are iteration targets (excluded from <code>all</code>, not extra CTest entries) so you can rebuild one module without linking everything; <a href="160-run-parity-fixtures-and-bounded-tests.html">Tutorial 160</a> lists them and shows how to run them.
+        </p>
+<pre><code class="language-bash">cmake --build build --target CnaTests           # everything, one binary
+ctest --test-dir build --output-on-failure
+
+cmake --build build --target CnaMathTests       # one module (run from the repository root)
+./build/CnaMathTests --gtest_filter='Vector2Test.*'</code></pre>
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
           <p><strong>These are counts of what exists, not a claim that they all pass.</strong> Nobody &mdash; this
-          page included &mdash; can tell you the pass rate for your configuration without running it. Alpha.1's
-          <code>general-tests-ci.yml</code> is intended to run the full default CTest registration and then distinguish
-          four named known failures from new regressions. At this tag, however, its configure command still selects the
-          removed <code>EASYGL</code> identity, so it fails before that suite runs. Two EasyGL rows in <code>input-ci.yml</code>
-          have the same defect; the valid SDL_RENDERER, Vulkan and bgfx rows are separate evidence. The GPU pixel/oracle
-          matrix is not continuously gated either. Run your configuration and read its output.</p>
+          page included &mdash; can tell you the pass rate for your configuration without running it. CNA's
+          <code>general-tests-ci.yml</code> runs the full default CTest registration on <code>OPENGLES3</code> under Xvfb and then
+          distinguishes named known failures from new regressions; its allowlist has one entry at this snapshot
+          (<code>EasyGL_GraphicsDevice_ReferenceStencil</code>). The alpha.1 defect where its configure command
+          named a renderer CMake no longer accepts is fixed, and <code>input-ci.yml</code> now runs four valid rows (OPENGLES3,
+          ASan+UBSan on OPENGLES3, SDL_RENDERER and VULKAN). Whether those jobs are green was not verified, and
+          the GPU pixel/oracle matrix is not continuously gated: no workflow runs the XNA oracle corpus. Run your configuration and read its output.</p>
           <p>Two CTest details worth knowing: labels follow the current renderer names, so <code>ctest -L DIRECTX9</code>
           works and <code>ctest -L D3D9</code> matches nothing; and <code>cmake --build ... --target CNA</code> no longer
-          works at all, because <code>CNA</code> is an <code>INTERFACE</code> library with no sources.</p>
+          works at all, because <code>CNA</code> is an <code>INTERFACE</code> library with no sources. CNA's own <code>tests</code> preset also notes that running the
+          <code>CnaTests</code> binary directly (with <code>SDL_AUDIODRIVER=dummy</code>) is more reliable than <code>ctest</code>, which starts one short-lived process per test case.</p>
         </div>
 
         <h2>Testing pure logic separately from rendering</h2>
@@ -145,7 +154,7 @@ private:
 };</code></pre>
 
         <h2>GoogleTest integration</h2>
-<pre><code class="language-cpp"># CMakeLists.txt for tests
+<pre><code class="language-cmake"># CMakeLists.txt for tests
 cmake_minimum_required(VERSION 3.20)
 project(MyGameTests CXX)
 set(CMAKE_CXX_STANDARD 23)
@@ -232,18 +241,28 @@ TEST(Vector2, Lerp) {
 
         <h2>Headless CNA init for testing</h2>
         <p>
-          Some tests need CNA initialized but no window. Set the environment variable
-          <code>SDL_VIDEODRIVER=offscreen</code> before running tests to prevent SDL3 from opening a
-          real window.
+          Some tests need CNA initialized but no visible window. The best answer is a build that never creates one
+          (the <code>HEADLESS</code> renderer, below). If you do test against a GPU renderer, give the tests a display that is not your
+          desktop. For your <em>own</em> test binaries, SDL3's offscreen video driver is one option, provided your
+          renderer can create its context on it:
         </p>
-<pre><code class="language-bash"># Run tests headless (no display required)
-SDL_VIDEODRIVER=offscreen ctest --test-dir build --output-on-failure</code></pre>
+<pre><code class="language-bash"># Your own tests, headless (no display required); verify that your renderer accepts this driver
+SDL_VIDEODRIVER=offscreen ctest --test-dir build --output-on-failure
+
+# CNA's own window-creating renderer tests pin SDL_VIDEODRIVER=x11 themselves, so give them a virtual display
+xvfb-run -a ctest --test-dir build --output-on-failure</code></pre>
+        <p>
+          That second form works because CNA no longer forces a display onto its tests: <code>CNA_TEST_DISPLAY</code> is empty by
+          default, so window-creating tests inherit the caller's <code>DISPLAY</code>. Naming your live desktop (<code>:0</code>) is
+          opt-in and needs <code>-DCNA_TEST_ALLOW_LIVE_DISPLAY=ON</code>; any other value, such as an Xvfb on <code>:99</code>, is
+          honoured; and no test falls back to your Wayland compositor. <a href="160-run-parity-fixtures-and-bounded-tests.html">Tutorial 160</a>
+          covers the private-compositor runner and the display policy in full.
+        </p>
 <pre><code class="language-cpp">// In a test fixture that needs GraphicsDevice:
 class GraphicsTest : public ::testing::Test {
 protected:
     void SetUp() override {
-        // CNA headless: SDL_VIDEODRIVER=offscreen must be set
-        // or skip GPU tests on CI
+        // Skip GPU tests on CI boxes that provide no display at all.
         if (!getenv("DISPLAY") &amp;&amp; !getenv("WAYLAND_DISPLAY")) {
             GTEST_SKIP() &lt;&lt; "No display available";
         }
@@ -257,7 +276,8 @@ protected:
           <code>IGraphicsRenderer</code> contract without a GPU or a window, and still validates arguments and
           tracks resource lifetimes &mdash; so it catches misuse instead of silently swallowing it. It produces no
           pixels; if you need real pixels without a GPU, <code>SOFTWARE</code> is a genuine CPU rasteriser you read
-          back with <code>GetBackBufferData()</code>. See <a href="72-backend-selection.html">Tutorial 72</a>.</p>
+          back with <code>GetBackBufferData()</code> (which needs the <code>HiDef</code> graphics profile; see
+          <a href="125-pixel-testing.html">Tutorial 125</a>). See <a href="72-backend-selection.html">Tutorial 72</a>.</p>
         </div>
 
         <h2>Mocking IDisposable resources</h2>
@@ -281,31 +301,42 @@ TEST(ContentCache, DisposesOnEvict) {
 }</code></pre>
 
         <h2>CI integration</h2>
+        <p>
+          A sketch for <em>your</em> game repository; adapt the paths. It assumes your top-level <code>CMakeLists.txt</code> pulls CNA in with
+          <code>add_subdirectory</code> and that CNA, <code>sharp-runtime</code>, <code>easy-gl</code> and <code>meta-gl</code> are checked out as siblings.
+          At this snapshot both <strong>CNA and <code>sharp-runtime</code> must be on their <code>next</code> branch</strong>; the default branches hold alpha.1-era code.
+        </p>
 <pre><code class="language-yaml"># .github/workflows/tests.yml
 name: CNA Tests
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
         with: { submodules: true }   # non-recursive is correct, and much faster
       - name: Install dependencies
         run: |
-          sudo apt-get install -y cmake g++-14 libgl1-mesa-dev \
-            libavcodec-dev libavformat-dev libavutil-dev libswresample-dev
-          # FFmpeg dev packages are REQUIRED on Linux — configure fails without them.
-          # A default Linux build also needs the sharp-runtime, easy-gl and meta-gl
-          # sibling checkouts beside cna/, because the Linux default renderer is OPENGLES3.
+          sudo apt-get install -y cmake ninja-build g++-14 xvfb libgl1-mesa-dev
+          # Video (FFmpeg) is OPTIONAL: install libavcodec-dev libavformat-dev libavutil-dev
+          # libswresample-dev only if your game plays video (CNA_ENABLE_VIDEO=AUTO picks it up).
+          # The default Linux renderer is OPENGLES3, which needs the easy-gl and meta-gl siblings;
+          # sharp-runtime is always required and must be its 'next' branch.
       - name: Configure
-        run: cmake -S . -B build -DCNA_GRAPHICS_RENDERER=OPENGLES3 -DCMAKE_BUILD_TYPE=Debug
+        run: cmake -S . -B build -G Ninja -DCNA_GRAPHICS_RENDERER=OPENGLES3 -DCMAKE_BUILD_TYPE=Debug
       - name: Build
-        run: cmake --build build --target CnaTests MyGameTests -j4
+        run: cmake --build build --target CnaTests MyGameTests
       - name: Run CNA tests
-        run: ctest --test-dir build --output-on-failure
-        env: { SDL_VIDEODRIVER: offscreen }
+        # Window-creating tests inherit DISPLAY (CNA_TEST_DISPLAY is empty by default)
+        run: xvfb-run -a ctest --test-dir build --output-on-failure
+        env: { SDL_AUDIODRIVER: dummy }
       - name: Run game tests
         run: ./build/MyGameTests</code></pre>
+        <p>
+          For CI that must not depend on a display at all, configure a second build with <code>-DCNA_GRAPHICS_RENDERER=HEADLESS</code>
+          and run only your logic tests there. To see what a large CNA job runs and how CNA's own workflows are split, see
+          <a href="../verification.html#ci">Verification &amp; Known Issues</a>.
+        </p>
 
         <nav class="docs-pagination" aria-label="Page navigation">
           <div class="docs-pagination-prev">
@@ -331,7 +362,7 @@ jobs:
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
