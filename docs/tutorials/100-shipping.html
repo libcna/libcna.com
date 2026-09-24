@@ -22,7 +22,7 @@
   "description": "Release builds, per-platform packaging, licence compliance and a final checklist — including the platform gaps (no web saves, no video off Linux/macOS) you have to ship around.",
   "url": "https://libcna.com/docs/tutorials/100-shipping.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -109,27 +109,27 @@
             <tr>
               <td><strong>No save persistence on the web</strong></td>
               <td>Emscripten builds only</td>
-              <td><code>SDL_GetPrefPath</code> resolves to volatile MEMFS; CNA mounts no IDBFS and never calls <code>FS.syncfs</code>, so every save is silently discarded on reload. Implement persistence yourself (<code>localStorage</code> / IndexedDB via <code>EM_JS</code>) or ship the web build as a demo without saves. See <a href="81-emscripten.html">Tutorial 81</a>.</td>
+              <td><code>StorageDevice</code> writes into Emscripten&rsquo;s in-memory virtual filesystem; CNA mounts no IDBFS and never calls <code>FS.syncfs</code>, so every save is silently discarded on reload. Implement persistence yourself (<code>localStorage</code> / IndexedDB via <code>EM_JS</code>) or ship the web build as a demo without saves. See <a href="81-emscripten.html">Tutorial 81</a> and <a href="124-web-gotchas.html">Tutorial 124</a>.</td>
             </tr>
             <tr>
               <td><strong>No video</strong></td>
-              <td>Windows, Web and Android</td>
-              <td>The video translation units are excluded from those builds. Headers still exist, so code using <code>Video</code>/<code>VideoPlayer</code> <em>compiles</em> and then <strong>fails to link</strong>. Guard it out per platform, or drop cutscenes from those targets.</td>
+              <td>Windows, Web, Android and iOS</td>
+              <td>FFmpeg is never built for those targets. <code>Video</code>/<code>VideoPlayer</code> still compile and link there, but opening a <code>Video</code> or calling <code>VideoPlayer::Play</code> throws <code>System::NotSupportedException</code>. Guard it with <code>#ifdef CNA_VIDEO_AVAILABLE</code> (defined only when the FFmpeg backend is built in), or drop cutscenes from those targets.</td>
             </tr>
             <tr>
-              <td><strong>FFmpeg is a hard requirement</strong></td>
+              <td><strong>FFmpeg is optional, and linked only when found</strong></td>
               <td>Linux and macOS builds</td>
-              <td>No option disables it &mdash; configure fails without the dev packages. Your shipped Linux binary therefore links FFmpeg runtime libraries, so bundle them (AppImage handles this) and account for their licences.</td>
+              <td><code>CNA_ENABLE_VIDEO</code> defaults to <code>AUTO</code>: FFmpeg is linked only when its four development packages were found at configure time (or forced with <code>ON</code>; <code>OFF</code> skips it). If yours was, the shipped binary links FFmpeg runtime libraries, so bundle them (AppImage handles this) and account for their licences. If you do not need video, configure with <code>-DCNA_ENABLE_VIDEO=OFF</code> and ship without them.</td>
             </tr>
             <tr>
-              <td><strong><code>Game</code> must be heap-allocated on the web</strong></td>
+              <td><strong><code>Game</code> lifetime on the web (changed since alpha.1)</strong></td>
               <td>Emscripten builds only</td>
-              <td>A stack-allocated <code>Game</code> is silently corrupted and fails frames later as an indirect-call fault. Allocate with <code>new</code>/<code>std::make_unique</code>.</td>
+              <td>alpha.1 required a heap-allocated <code>Game</code>; a stack-allocated one was silently corrupted. In this snapshot <code>Game::Run()</code> suspends through Asyncify and returns normally, so a local <code>Game</code> is fine &mdash; provided your final executable links <code>CNA::EmscriptenAsyncify</code> (see <a href="81-emscripten.html">Tutorial 81</a>). If you ship against the alpha.1 tag, allocate with <code>new</code>/<code>std::make_unique</code>.</td>
             </tr>
           </tbody>
         </table>
         </div>
-        <p>Two more worth knowing before you commit to a target. <strong>iOS support is narrow and experimental</strong>: alpha.1 CI final-links an SDL_RENDERER device app and launches a one-frame simulator smoke path, but does not establish physical-device or pixel correctness; tvOS is unsupported. <strong>Compiled effects are renderer-qualified</strong>: XNA/FNA D3D9 Effect Framework bytecode works on FNA3D and on explicitly enabled SDL_GPU, EasyGL-family and Vulkan builds. Other formats or renderers need <code>ShaderEffect</code> in the active renderer's language (see <a href="52-custom-shaders.html">Tutorial 52</a>).</p>
+        <p>Two more worth knowing before you commit to a target. <strong>iOS support is narrow and experimental</strong>: the Apple workflow is configured to final-link an SDL_RENDERER device app and launch a one-frame simulator smoke path, but does not establish physical-device or pixel correctness; tvOS is unsupported. <strong>Compiled effects are renderer-qualified</strong>: XNA/FNA D3D9 Effect Framework bytecode works on FNA3D and, when the matching <code>*_COMPILED_EFFECTS</code> option is switched on, on EasyGL-family, Vulkan, WebGPU, Software, DirectX 9/11/12, SDL_GPU and OpenGL4 builds (a default configure enables it on FNA3D only). Other formats or renderers need <code>ShaderEffect</code> in the active renderer's language (see <a href="52-custom-shaders.html">Tutorial 52</a>).</p>
 
         <h2>Release CMake build</h2>
 <pre><code class="language-bash"># Release build with maximum optimization
@@ -146,14 +146,19 @@ cmake --build build-release</code></pre>
           build directory.</p>
           <p><strong>The C++ framework is still consumed from source.</strong> It does not publish a general installed C++
           package for games; consumers normally <code>add_subdirectory</code> the CNA tree. The exception is the
-          experimental <code>CNA_BUILD_C_API</code> surface, whose source declares a <code>CNACApi</code> install component and
-          <code>CNA::CApi</code>/<code>CNA::CApiStatic</code> targets. Alpha.1 cannot compile that final C implementation because its renderer identity map omits NanoVG, so it is not a shippable package. The CPack configuration later on this page packages
+          experimental <code>CNA_BUILD_C_API</code> surface (which requires <code>CNA_ENABLE_NET=ON</code>), whose source declares a <code>CNACApi</code> install component and
+          <code>CNA::CApi</code>/<code>CNA::CApiStatic</code> targets. No CI job builds that library and its release gate reports it as not ready, so it is not a shippable package. The CPack configuration later on this page packages
           <em>your</em> game, not CNA.</p>
           <p><strong>Pick a renderer deliberately.</strong> A default build compiles one; <code>CNA_GRAPHICS_RENDERERS</code>
-          can opt into a compatible set with pre-device runtime selection. The value must be one of the 50 current
-          identities &mdash; old names such as <code>EASYGL</code>, <code>D3D9</code>, <code>D3D11</code>, <code>D3D12</code>,
-          <code>DX3</code> and <code>ASCII</code> fail configuration. See
+          can opt into a compatible set with pre-device runtime selection. The value must be one of the 25 current
+          identities &mdash; a name outside them fails configuration by name, and old spellings such as <code>EASYGL</code>, <code>D3D9</code>, <code>D3D11</code>, <code>D3D12</code>,
+          <code>DX3</code> and <code>ASCII</code> are among the values it rejects. See
           <a href="72-backend-selection.html">Tutorial 72</a>.</p>
+        </div>
+
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>Know what your binary loads.</strong> At this snapshot the vendored SDL3, SDL3_image and SDL3_mixer are shared libraries on Linux, macOS, Windows and Android, and on native Linux with CMake 3.27 or newer the engine itself is a shared <code>libcna.so</code> (<code>CNA_SHARED_LIBRARY</code>, on by default). CNA has no <code>install()</code> rules for any of them. Run <code>ldd</code> (Linux) or an equivalent on your release executable and ship every non-system library it lists, or configure with <code>-DCNA_SHARED_LIBRARY=OFF</code> to link the engine statically. The CMake <code>install(TARGETS MyGame)</code> steps below install your executable only.</p>
         </div>
 
         <h2>Stripping debug symbols</h2>
@@ -213,16 +218,16 @@ Icon=mygame
 Categories=Game;</code></pre>
 
         <h2>Web deployment (GitHub Pages / itch.io)</h2>
-<pre><code class="language-bash"># Build for web. OPENGLES3 is NOT valid here — it is gated to non-Emscripten
-# targets. The Emscripten renderers are WEBGL2 (default), WEBGL1, CANVAS,
-# HTML_DOM and SVG_DOM.
-cmake -S . -B build-wasm \
-  -DCMAKE_TOOLCHAIN_FILE=$EMSDK/upstream/emscripten/cmake/Modules/Platform/Emscripten.cmake \
+<pre><code class="language-bash"># Build for web (emsdk 6.0.3 is the version CNA's CI pins). OPENGLES3 is NOT valid
+# here -- it is gated to non-Emscripten targets. The Emscripten renderers are
+# WEBGL2 (default), WEBGL1, CANVAS, HTML_DOM and SVG_DOM.
+emcmake cmake -S . -B build-wasm \
   -DCNA_GRAPHICS_RENDERER=WEBGL2 -DCMAKE_BUILD_TYPE=Release
 cmake --build build-wasm
 
-# CNA ships a "web" preset that configures exactly this:
-#   cmake --preset web
+# CNA also ships a "web" preset (it builds CNA's cna_house3d_demo; it names no
+# toolchain file, so run it through emcmake):
+#   emcmake cmake --preset web
 
 # Deploy to GitHub Pages (gh-pages branch):
 git checkout gh-pages
@@ -261,11 +266,13 @@ zipalign -v 4 app-release-unsigned.apk my-game-release.apk
           <li>SDL3_image: zlib license</li>
           <li>SDL3_mixer: zlib license</li>
           <li>If using Vulkan: the Vulkan SDK components are Apache 2.0</li>
+          <li>Depending on the options you built with, code CNA itself vendors or fetches: Draco (Apache 2.0, when <code>CNA_ENABLE_DRACO</code> is on, which is the default except under Emscripten), ENet (MIT, when <code>CNA_ENABLE_NET</code> is on, the default), <code>stb_vorbis</code> and <code>dr_libs</code> (public domain or MIT, in the ALSA audio backend&rsquo;s own mixer), FNA3D and MojoShader (zlib, only for the <code>FNA3D</code> renderer), <code>wgpu-native</code> (Apache 2.0 / MIT, only for <code>WEBGPU</code>)</li>
+          <li>If you enabled FFmpeg video: FFmpeg&rsquo;s own licence, which depends on how the FFmpeg you linked was configured (LGPL or GPL)</li>
           <li>If using Box2D: MIT license</li>
           <li>If using Bullet: zlib license</li>
         </ul>
         <p>
-          All permissive &mdash; no copyleft restrictions. Include a <code>LICENSES.txt</code> in your
+          CNA&rsquo;s own <code>THIRD_PARTY_NOTICES.md</code> is the authoritative list of what it vendors or fetches and under which licence; check it against the options you built with. Nothing above is legal advice. Include a <code>LICENSES.txt</code> in your
           distribution:
         </p>
 <pre><code class="language-none">CNA -- Microsoft Public License (Ms-PL)
@@ -311,7 +318,7 @@ include(CPack)
 
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
-          <p><strong>CNA's own CI will not have caught every shipping environment for you.</strong> Alpha.1 contains 21 workflow files spanning intended general tests, focused subsystems, Emscripten, Apple/Metal, platform abstraction, runtime multi-renderer selection and five declared C API gates. Its intended unfiltered general job and two Input rows fail configuration because they still select the removed <code>EASYGL</code> identity, while the C API final target separately fails its renderer-count assertion. Windows D3D/GDI lanes are manual, and the remaining matrix is not exhaustive across 50 identities, real drivers, Android devices or physical iOS hardware. Test on the platforms you actually ship to.</p>
+          <p><strong>CNA's own CI will not have caught every shipping environment for you.</strong> This snapshot contains 20 workflow files (17 of them run automatically) spanning general tests, focused subsystems, Emscripten and browser runs, Apple/Metal, a platform-implementation matrix (SDL3, SDL2, native X11 with and without a GPU, mingw-w64 plus Wine for the Win32 platform module, terminal and headless), runtime multi-renderer selection and five declared C API gates. Windows Direct3D and GDI lanes are manual, no workflow builds the native Wayland backend, the Android target or the C API library, and the Linux GPU tests run on Mesa software drivers under Xvfb, so the matrix is not exhaustive across 25 identities, real drivers, Android devices or physical iOS hardware. Test on the platforms you actually ship to.</p>
         </div>
 
         <p>Shipping checklist:</p>
@@ -319,13 +326,13 @@ include(CPack)
           <li>Release build compiled with -O2/-O3 and LTO enabled</li>
           <li>Debug symbols stripped from release binary (separate .debug file kept)</li>
           <li>All assets copied to distribution directory</li>
-          <li>CNA's test suite run on the target platform &mdash; alpha.1 contains 568 C++ test sources and 8,263 statically discoverable GoogleTest-family definitions, but the compiled and CTest-registered subset depends on the complete build configuration. Run it and read the output; do not assume a pass rate.</li>
+          <li>CNA's test suite run on the target platform &mdash; this snapshot contains 904 C++ test source files and 12,610 statically discoverable GoogleTest-family definitions, but the compiled and CTest-registered subset depends on the complete build configuration. Run it and read the output; do not assume a pass rate.</li>
           <li>Game runs without crash on fresh OS install (no missing DLLs / .so files)</li>
-          <li>Audio tested (SoundEffect, background music). Note <code>.m4a</code>/<code>.aac</code> are unplayable &mdash; SDL3_mixer has no AAC decoder &mdash; and a WaveBank with XMA/WMA content logs to stderr and returns <code>nullptr</code> rather than throwing, so the sound is simply missing.</li>
+          <li>Audio tested (SoundEffect, background music) with the audio implementation you ship (<code>SDL3</code> and <code>ALSA</code> provide a mixer; <code>SDL2</code> and <code>NULL</code> do not play XNA audio). Note <code>.m4a</code>/<code>.aac</code> are unplayable &mdash; neither SDL3_mixer as configured nor CNA&rsquo;s own mixer has an AAC decoder &mdash; and a WaveBank with XMA/WMA content logs to stderr and returns <code>nullptr</code> rather than throwing, so the sound is simply missing.</li>
           <li>Input tested (keyboard, controller if supported)</li>
           <li>Window resizing and fullscreen toggle tested</li>
           <li>LICENSES.txt included in distribution</li>
-          <li>Web build tested in Chrome and Firefox &mdash; including a page reload, to confirm you are not relying on saves that do not persist</li>
+          <li>Web build tested in Chrome and Firefox &mdash; including a page reload, to confirm you are not relying on saves that do not persist, and a run that reaches <code>Exit()</code> if your game exits</li>
           <li>Android APK signed with release keystore</li>
         </ul>
 
@@ -353,7 +360,7 @@ include(CPack)
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

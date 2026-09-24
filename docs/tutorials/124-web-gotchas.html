@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 124: WebAssembly Gotchas: Game Lifetime, Storage and Video - CNA Tutorials</title>
-  <meta name="description" content="Three things that break CNA games in the browser but not on the desktop: a stack-allocated Game is silently corrupted, StorageDevice saves never persist, and Video/VideoPlayer are excluded from web builds at link time.">
+  <meta name="description" content="Three things that behave differently for CNA games in the browser: what changed about Game lifetime since alpha.1 (a stack-allocated Game is now fine if you link Asyncify), StorageDevice saves never persist, and Video/VideoPlayer throw NotSupportedException because FFmpeg is never built for the web.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/124-web-gotchas.html">
   <meta property="og:title"       content="Tutorial 124: WebAssembly Gotchas: Game Lifetime, Storage and Video - CNA Tutorials">
-  <meta property="og:description" content="Three things that break CNA games in the browser but not on the desktop: a stack-allocated Game is silently corrupted, StorageDevice saves never persist, and Video/VideoPlayer are excluded from web builds at link time.">
+  <meta property="og:description" content="Three things that behave differently for CNA games in the browser: what changed about Game lifetime since alpha.1 (a stack-allocated Game is now fine if you link Asyncify), StorageDevice saves never persist, and Video/VideoPlayer throw NotSupportedException because FFmpeg is never built for the web.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/124-web-gotchas.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 124: WebAssembly Gotchas: Game Lifetime, Storage and Video",
   "url": "https://libcna.com/docs/tutorials/124-web-gotchas.html",
   "datePublished": "2026-08-11",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -90,49 +90,53 @@
         <span class="callout-icon">&#8505;</span>
         <p><strong>What you&rsquo;ll learn</strong></p>
         <ul>
-          <li>Why a stack-allocated <code>Game</code> is silently corrupted on the web, and how to avoid it.</li>
+          <li>Why alpha.1 needed a heap-allocated <code>Game</code> on the web, what replaced that rule, and the one link option you still need.</li>
           <li>That saved games do not persist at all in the browser, and what to do instead.</li>
-          <li>That <code>Video</code> and <code>VideoPlayer</code> are absent from web builds &mdash; at link time, not run time.</li>
+          <li>That <code>Video</code> and <code>VideoPlayer</code> link on the web but throw <code>NotSupportedException</code>, and how to guard them at build time.</li>
           <li>Which renderers you can actually select under Emscripten.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="81-emscripten.html">Tutorial 81: Building for WebAssembly</a> covers the toolchain and the build itself. This tutorial is about the three things that will bite you <em>after</em> the build succeeds.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="81-emscripten.html">Tutorial 81: Building for WebAssembly</a> covers the toolchain and the build itself. This tutorial is about the three things that will bite you <em>after</em> the build succeeds &mdash; one of which is mostly history in this snapshot, but still bites anyone on the alpha.1 tag.</p>
       </div>
 
-      <p>A CNA game that runs perfectly on the desktop can compile for the browser, start up, and then misbehave in ways that make no sense &mdash; a crash several frames later with no stack, saves that vanish on refresh, a link error mentioning symbols you never touched. All three have the same cause: the browser is not a small desktop, and CNA is explicit about where it stops pretending otherwise.</p>
+      <p>A CNA game that runs perfectly on the desktop can compile for the browser, start up, and then misbehave in ways that make no sense &mdash; a crash several frames later with no stack (alpha.1), saves that vanish on refresh, a video call that throws. All three have the same cause: the browser is not a small desktop, and CNA is explicit about where it stops pretending otherwise.</p>
 
-      <h2 id="game-lifetime">1. Your Game must be heap-allocated</h2>
+      <h2 id="game-lifetime">1. Game lifetime: what changed since alpha.1</h2>
 
-      <div class="callout callout--warn">
-        <span class="callout-icon">&#9888;</span>
-        <p><strong>On Emscripten, allocate your <code>Game</code> subclass with <code>new</code>. A stack-allocated one is silently corrupted.</strong> This is the single most important thing on this page, because it does not fail loudly.</p>
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>In this snapshot a stack-allocated <code>Game</code> is fine on Emscripten &mdash; if your final executable links <code>CNA::EmscriptenAsyncify</code>.</strong> On the alpha.1 tag it was not: the heap-allocation rule below applied there, and still applies to anyone building against that tag.</p>
       </div>
 
-      <p>The mechanism is worth understanding, because the symptom is so far from the cause. Emscripten's <code>emscripten_set_main_loop(..., simulateInfiniteLoop = 1)</code> is implemented as a raw JavaScript <code>throw 'unwind'</code>. Under <code>-fwasm-exceptions</code>, the cleanup landing pad that C++ generates for a local object with a non-trivial destructor <em>genuinely catches it</em>. So your <code>Game</code>'s destructor runs, for real, at the <code>Run()</code> call site &mdash; freeing the <code>GraphicsDeviceManager</code> and leaving <code>Game::graphicsDeviceManager_</code> dangling while the main loop is still scheduled to run.</p>
+      <h3>What alpha.1 did</h3>
+      <p>The mechanism is worth understanding, because the symptom was so far from the cause. At alpha.1 <code>Game::Run()</code> ended in <code>emscripten_set_main_loop(..., simulateInfiniteLoop = 1)</code>, which Emscripten implements as a raw JavaScript <code>throw 'unwind'</code>. Under <code>-fwasm-exceptions</code>, the cleanup landing pad that C++ generates for a local object with a non-trivial destructor <em>genuinely catches it</em>. So a local <code>Game</code>'s destructor ran, for real, at the <code>Run()</code> call site &mdash; freeing the <code>GraphicsDeviceManager</code> and leaving <code>Game::graphicsDeviceManager_</code> dangling while the main loop was still scheduled to run.</p>
 
-      <p>Nothing reports an error. The game keeps going, and then some frames later the WebAssembly runtime faults with something like <code>table index is out of bounds</code> or <code>null function or function signature mismatch</code>.</p>
+      <p>Nothing reported an error. The game kept going, and then some frames later the WebAssembly runtime faulted with something like <code>table index is out of bounds</code> or <code>null function or function signature mismatch</code>. The workaround was to allocate the game with <code>new</code> and never delete it.</p>
 
-      <pre><code class="language-cpp">// WRONG on Emscripten - compiles, starts, then corrupts itself
+      <h3>What this snapshot does</h3>
+      <p>Since <code>Game::Run()</code> was reworked (commit <code>dccfb88f8</code>, 22 August 2026), the Emscripten <code>RunLoop()</code> runs one frame body and then awaits <code>requestAnimationFrame()</code> through <code>EM_ASYNC_JS</code>, suspending the <em>same</em> WebAssembly stack through Asyncify between frames. The caller is never unwound, so <code>Game::Run()</code> keeps XNA&rsquo;s blocking contract: it runs until <code>Exit()</code> and then returns. Ordinary ownership works on the web exactly as it does natively:</p>
+
+      <pre><code class="language-cpp">// Correct on every target in this snapshot, Emscripten included
 int main()
 {
-    MyGame game;          // stack-allocated: destructor runs on the unwind throw
-    game.Run();
-    return 0;
-}
-
-// CORRECT - the Game outlives Run() because nothing destroys it
-int main()
-{
-    auto* game = new MyGame();   // deliberately never deleted
-    game-&gt;Run();
+    MyGame game;          // a local object is fine
+    game.Run();           // returns after Exit()
     return 0;
 }</code></pre>
 
-      <p>Deliberately leaking here is the right call: on the web the page teardown reclaims everything anyway, and the alternative is a use-after-free. Native builds are unaffected, so if you share one <code>main()</code> across targets, guard it:</p>
+      <p>The price is the link step. CNA links Asyncify into executables that live inside its own source tree automatically; an external final executable that uses a blocking <code>Game::Run()</code> must link it itself:</p>
 
-      <pre><code class="language-cpp">int main()
+      <pre><code class="language-cmake">target_link_libraries(MyGame PRIVATE CNA CNA::EmscriptenAsyncify)   # -sASYNCIFY=1</code></pre>
+
+      <p>(<code>CNA::EmscriptenAbi</code> is the compatibility composition of the JavaScript-lowered exception ABI and Asyncify.) Without Asyncify the frame loop cannot suspend, which is a build-configuration problem to fix rather than something to work around by leaking the <code>Game</code>.</p>
+
+      <h3>Building against alpha.1?</h3>
+      <p>If you are on the <code>v0.1.0-alpha.1</code> tag rather than the <code>next</code> branch, keep the old rule. The alpha.1 code is:</p>
+
+      <pre><code class="language-cpp">// alpha.1 only
+int main()
 {
 #ifdef __EMSCRIPTEN__
-    auto* game = new MyGame();
+    auto* game = new MyGame();   // deliberately never deleted: page teardown reclaims everything
     game-&gt;Run();
 #else
     MyGame game;
@@ -141,6 +145,8 @@ int main()
     return 0;
 }</code></pre>
 
+      <p>The guarded form is harmless at this snapshot too, so a codebase that must build against both can keep it. CNA&rsquo;s own <code>docs/emscripten-mainloop-game-lifetime.md</code> records the new contract and keeps a spike that reproduces the old unwinding behaviour.</p>
+
       <h2 id="no-storage">2. Saved games do not persist</h2>
 
       <div class="callout callout--warn">
@@ -148,9 +154,9 @@ int main()
         <p><strong>Every save written through <code>StorageDevice</code>/<code>StorageContainer</code> is discarded when the page reloads.</strong> The write succeeds and reports success &mdash; the data simply is not there next time.</p>
       </div>
 
-      <p>Under Emscripten, <code>SDL_GetPrefPath()</code> resolves into MEMFS, Emscripten's in-memory filesystem. CNA mounts no IDBFS and never calls <code>FS.syncfs</code>, so nothing is ever copied into IndexedDB. The XNA storage API works exactly as documented, against a filesystem that ceases to exist when the tab closes.</p>
+      <p>Under Emscripten, <code>StorageDevice</code> resolves its per-user directory (<code>$XDG_DATA_HOME/&lt;game&gt;</code> or <code>$HOME/.local/share/&lt;game&gt;</code>, exactly as on Linux) inside Emscripten's virtual filesystem, which is in-memory (MEMFS) by default. CNA mounts no IDBFS and never calls <code>FS.syncfs</code>, so nothing is ever copied into IndexedDB. The XNA storage API works exactly as documented, against a filesystem that ceases to exist when the tab closes.</p>
 
-      <p>If your game targets the browser and needs persistence, do not route it through <code>StorageDevice</code>. Write through your own <code>localStorage</code> or IndexedDB path instead, and keep the XNA storage path for native builds:</p>
+            <p>If your game targets the browser and needs persistence, do not route it through <code>StorageDevice</code>. Write through your own <code>localStorage</code> or IndexedDB path instead, and keep the XNA storage path for native builds:</p>
 
       <pre><code class="language-cpp">#ifdef __EMSCRIPTEN__
 #include &lt;emscripten.h&gt;
@@ -169,21 +175,24 @@ void SaveProgress(const std::string&amp; json)
 
       <p>See <a href="19-save-load.html">Tutorial 19: Saving and Loading Data</a> for the native path, and the <a href="../storage.html">Storage reference</a>.</p>
 
-      <h2 id="no-video">3. Video is not in the build at all</h2>
+      <div class="callout callout--note">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>A note on sharp-runtime&rsquo;s IsolatedStorage.</strong> The sibling sharp-runtime library has its own <code>System::IO::IsolatedStorage</code> API whose Emscripten path assumes <em>your startup code</em> mounts an IDBFS filesystem at <code>/save</code>, and which calls <code>FS.syncfs</code> when a stream closes. That is a different API from CNA&rsquo;s <code>StorageDevice</code>, CNA itself mounts nothing, and this tutorial has not verified it as a persistence route for XNA-style saves &mdash; treat it as something to investigate, not as a supported answer.</p>
+      </div>
 
-      <p>On Windows, Emscripten and Android, CNA's three video translation units are <strong>excluded from the build entirely</strong>. The headers still exist, so code that calls <code>Video</code> or <code>VideoPlayer</code> compiles cleanly &mdash; and then fails at <strong>link time</strong> with undefined symbols.</p>
+      <h2 id="no-video">3. Video needs FFmpeg, which the web never gets</h2>
 
-      <p>This catches people out because it is not a runtime stub you can probe for. There is no "is video supported" query to call; the symbols are missing. Guard video features with your own build-time switch:</p>
+      <p>On Windows, Emscripten, Android and iOS, CNA never builds its FFmpeg video backend. The <code>Video</code> and <code>VideoPlayer</code> types are present in every build and <strong>link fine</strong>, so code that calls them compiles cleanly &mdash; but the first operation that needs a decoder throws <code>System::NotSupportedException</code> at <strong>run time</strong> (constructing a <code>Video</code> from an existing file, or calling <code>VideoPlayer::Play</code>), with a message saying CNA was built without the optional FFmpeg video backend. (alpha.1 behaved differently: there the video symbols were missing and the failure was a link error.)</p>
 
-      <pre><code class="language-cpp">#if !defined(__EMSCRIPTEN__) &amp;&amp; !defined(_WIN32) &amp;&amp; !defined(__ANDROID__)
-    #define GAME_HAS_VIDEO 1
-#endif
+      <p>You can decide at build time. When the FFmpeg backend is built in, CNA defines <code>CNA_VIDEO_AVAILABLE</code> for everything that links <code>CNA</code>; on the web it is never defined:</p>
 
-#ifdef GAME_HAS_VIDEO
-    videoPlayer-&gt;Play(introVideo);
+      <pre><code class="language-cpp">#ifdef CNA_VIDEO_AVAILABLE
+    videoPlayer-&gt;Play(introVideo);   // videoPlayer: VideoPlayer*, introVideo: Video*
 #else
     SkipToMainMenu();
 #endif</code></pre>
+
+      <p>Catching <code>System::NotSupportedException</code> around the same calls also works as a run-time fallback. On native Linux and macOS the same switch applies: FFmpeg is optional (<code>CNA_ENABLE_VIDEO=AUTO|ON|OFF</code>), so a build made without the FFmpeg development packages behaves like the web build here.</p>
 
       <h2 id="renderers">Which renderers you can choose</h2>
 
@@ -206,11 +215,11 @@ void SaveProgress(const std::string&amp; json)
 
       <h2 id="checklist">Pre-ship checklist</h2>
       <ul>
-        <li>Is your <code>Game</code> heap-allocated under <code>__EMSCRIPTEN__</code>?</li>
+        <li>Does your final web executable link <code>CNA::EmscriptenAsyncify</code> (and, if you build against alpha.1 instead, is your <code>Game</code> heap-allocated)?</li>
         <li>Does anything call <code>StorageDevice</code> expecting it to survive a reload?</li>
-        <li>Does anything reference <code>VideoPlayer</code> without a build-time guard?</li>
+        <li>Does anything reference <code>VideoPlayer</code> without a <code>CNA_VIDEO_AVAILABLE</code> guard or an exception handler?</li>
         <li>Have you actually reloaded the page mid-game and checked what came back?</li>
-        <li>Have you tested in a real browser, not just Node? Only <code>HTML_DOM</code> has automatic browser CI &mdash; everything else is on you.</li>
+        <li>Have you tested in a real browser, not just Node? Only <code>HTML_DOM</code> has an automatic browser-runtime workflow (a separate multi-renderer workflow builds and links <code>WEBGL2;CANVAS;HTML_DOM;SVG_DOM</code> but does not run them) &mdash; everything else is on you.</li>
       </ul>
 
       <h2 id="next">Where to go next</h2>
@@ -230,7 +239,7 @@ void SaveProgress(const std::string&amp; json)
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

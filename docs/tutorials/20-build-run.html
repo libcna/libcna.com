@@ -21,7 +21,7 @@
   "headline": "Tutorial 20: Building and Running Your Game",
   "url": "https://libcna.com/docs/tutorials/20-build-run.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -112,26 +112,37 @@ cmake --build build-release --target MyGame --parallel
 ./build-release/MyGame
 </code></pre>
 
-      <p>Release mode enables <code>-O3</code> (GCC/Clang) or <code>/O2</code> (MSVC) and strips debug symbols. Expect 3–10x faster rendering on CPU-bound scenes compared to Debug.</p>
+      <p>CMake&rsquo;s Release configuration enables optimization (<code>-O3</code> with GCC/Clang, <code>/O2</code> with MSVC) and defines <code>NDEBUG</code>; it also leaves out the debug information a Debug build carries. CNA sets no default build type, so always pass <code>-DCMAKE_BUILD_TYPE=Release</code> (or a preset) yourself. CPU-bound scenes, and the CPU-rasterizer renderers in particular, run dramatically faster than in Debug; measure your own game rather than trusting a fixed ratio.</p>
+      <p>Two things to know about a CNA build tree. On native Linux with CMake 3.27 or newer and GCC or Clang, CNA links itself once into <code>libcna.so</code> (<code>CNA_SHARED_LIBRARY</code>, on by default) and your executable links that library; pass <code>-DCNA_SHARED_LIBRARY=OFF</code> for a statically linked engine. And your project consumes CNA with <code>add_subdirectory</code>, so set <code>CNA_BUILD_TESTS</code> and <code>CNA_BUILD_EXAMPLES</code> to <code>OFF</code> before adding it (as in <a href="03-first-window.html">Tutorial 03</a>) or every CNA test and demo is built with your game.</p>
 
-      <h2>ctest sanity check</h2>
-      <p>Before shipping, run the CNA test suite to confirm your dependencies and build configuration are sane:</p>
+      <h2>Test sanity check</h2>
+      <p>Before shipping, run CNA&rsquo;s test suite on the machine and configuration you ship from, to confirm your dependencies and build configuration are sane. Do this in a CNA checkout build (as in <a href="02-setup.html">Tutorial 02</a>) rather than through your game&rsquo;s project, so you get exactly CNA&rsquo;s own test targets:</p>
 
-      <pre><code class="language-cpp">cmake --build build-release --target CnaTests
-ctest --test-dir build-release --output-on-failure --parallel 4
+      <pre><code class="language-bash">cd ../cna
+cmake -S . -B build-release \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCNA_GRAPHICS_RENDERER=OPENGLES3
+
+# One of the 22 focused test executables (fast):
+cmake --build build-release --target CnaMathTests
+./build-release/CnaMathTests
+
+# The aggregate binary, run directly; use xvfb-run on a machine without a display:
+cmake --build build-release --target CnaTests
+SDL_AUDIODRIVER=dummy xvfb-run -a ./build-release/CnaTests
 </code></pre>
 
-      <p>The suite should come back clean. How many tests run depends on the exact configuration: general GoogleTest cases are joined by renderer/platform-specific registrations for the implementations compiled into that build. If something fails, record the renderer, platform and audio selections with the result.</p>
+      <p>The suite should come back clean. How many tests run depends on the exact configuration: general GoogleTest cases are joined by renderer/platform-specific registrations for the implementations compiled into that build. CNA&rsquo;s own <code>tests</code> preset recommends running the <code>CnaTests</code> binary directly rather than a bare <code>ctest</code>: CTest starts one process per case, and the registered inventory also includes example and smoke executables that the <code>CnaTests</code> target does not build. Use <code>ctest -R &lt;pattern&gt;</code> for individual cases. If something fails, record the renderer, platform and audio selections with the result.</p>
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p>Do not try <code>cmake --build build-release --target CNA</code>. <code>CNA</code> is an <code>INTERFACE</code> library with no sources, so there is nothing to build under that name and CMake will refuse. Build your own game target, build <code>CnaTests</code>, or omit <code>--target</code> entirely.</p>
+        <p>Do not try <code>cmake --build build-release --target CNA</code>. <code>CNA</code> is an <code>INTERFACE</code> library with no sources, so there is nothing to build under that name and CMake will refuse. Build your own game target, build <code>CnaTests</code> or one of the focused test targets, or omit <code>--target</code> entirely.</p>
       </div>
 
       <h2>Windows executable</h2>
-      <pre><code class="language-cpp">:: Configure (PowerShell or cmd.exe)
+      <pre><code class="language-bash">:: Configure (PowerShell or cmd.exe)
 cmake -S . -B build-win-release ^
       -DCMAKE_BUILD_TYPE=Release ^
-      -DCNA_GRAPHICS_RENDERER=OPENGLES3
+      -DCNA_GRAPHICS_RENDERER=SDL_RENDERER
 
 :: Build
 cmake --build build-win-release --target MyGame --config Release
@@ -140,9 +151,9 @@ cmake --build build-win-release --target MyGame --config Release
 build-win-release\Release\MyGame.exe
 </code></pre>
 
-      <p>On Windows with MSVC, <code>SDL3.dll</code> is placed alongside the executable automatically by the build system. No additional DLL redistribution steps are required for self-contained distribution.</p>
+      <p>The vendored SDL3, SDL3_image and SDL3_mixer are shared libraries on Windows (<code>SDL3.dll</code> and friends). CNA&rsquo;s own demos copy them next to the executable with a helper CNA defines, <code>cna_copy_sdl_runtime(&lt;target&gt;)</code>; that helper is not applied to your target automatically, so call it yourself after <code>add_subdirectory</code> (<code>if(WIN32) cna_copy_sdl_runtime(MyGame) endif()</code>) or copy the DLLs by hand. A MinGW build also needs its C++ runtime DLLs, for which CNA provides <code>cna_copy_mingw_cxx_runtime(&lt;target&gt;)</code>. FFmpeg is never built for Windows, so <code>Video</code> is unavailable there.</p>
 
-      <p>The command above keeps <code>OPENGLES3</code> so that the same renderer runs on Linux and Windows. If you want a native Direct3D path instead, fourteen renderers are gated to a Windows configure &mdash; among them <code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>DIRECT2D</code> and <code>GDI</code>. Swap the flag, for example <code>-DCNA_GRAPHICS_RENDERER=DIRECTX11</code>; naming one of them on a non-Windows configure is a hard <code>FATAL_ERROR</code>. The repository's Wine/DXVK and vkd3d-proton scripts and its native-Windows workflows are manual paths in alpha.1, so test on the machines you intend to ship to.</p>
+      <p>The command above uses <code>SDL_RENDERER</code>, the Windows default: it is 2D only, and it needs no sibling checkouts beyond <code>sharp-runtime</code>. If you want a native Direct3D path instead, five renderers are gated to a Windows configure &mdash; <code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>DIRECT2D</code> and <code>GDI</code>. Swap the flag, for example <code>-DCNA_GRAPHICS_RENDERER=DIRECTX11</code>; naming one of them on a non-Windows configure is a hard <code>FATAL_ERROR</code>. The repository&rsquo;s native-Windows workflows (MSVC builds of the Direct3D, Direct2D and GDI renderers) are manual-dispatch only; the automatic Windows-related lane cross-builds just the native Win32 <em>platform</em> module with mingw-w64 and runs it under Wine. Test on the machines you intend to ship to.</p>
 
       <h2>Linux executable packaging</h2>
       <p>For distributing to end users on Linux, bundle your executable with its assets:</p>
@@ -161,17 +172,22 @@ cmake --install build-release --prefix dist/linux-x64
 #   README.txt
 </code></pre>
 
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Check what the installed binary needs.</strong> CNA has no <code>install()</code> rules for the C++ framework, so <code>install(TARGETS MyGame)</code> installs only your executable. At this snapshot the vendored SDL libraries are shared libraries built into <code>.sdl-prebuilt-*</code> inside the CNA checkout, and with the default <code>CNA_SHARED_LIBRARY=ON</code> the engine itself is <code>libcna.so</code> in your build tree. A binary that runs from the build directory can therefore fail on another machine (or after <code>cmake --install</code> strips the build RPATH). Run <code>ldd</code> on the installed executable, ship what it lists that is not a system library, or configure with <code>-DCNA_SHARED_LIBRARY=OFF</code> to fold the engine back into the executable.</p>
+      </div>
+
       <p>For AppImage packaging, run <code>linuxdeploy</code> on the install prefix. For Flatpak, add a CNA module to your manifest and point to the install prefix.</p>
 
       <h2>Emscripten WebAssembly build</h2>
-      <p>CNA supports Emscripten 3.1+ for web deployment. You need the Emscripten SDK installed and activated (<code>source emsdk_env.sh</code>).</p>
+      <p>CNA&rsquo;s CI builds for the web with Emscripten SDK <strong>6.0.3</strong> and no other version; older releases are unproven. Install and activate that release (<code>./emsdk install 6.0.3 &amp;&amp; ./emsdk activate 6.0.3</code>, then <code>source emsdk_env.sh</code>), and see <a href="81-emscripten.html">Tutorial 81</a> for the full walkthrough.</p>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
         <p><strong>Web builds need a web renderer.</strong> <code>OPENGLES3</code>, <code>OPENGLES2</code> and <code>OPENGL33</code> are hard-gated <em>off</em> under Emscripten and will stop the configure with a <code>FATAL_ERROR</code>. The browser renderers are <code>WEBGL2</code> (the Emscripten default), <code>WEBGL1</code>, <code>CANVAS</code>, <code>HTML_DOM</code> and <code>SVG_DOM</code>.</p>
       </div>
 
-      <pre><code class="language-cpp">## Configure with the Emscripten toolchain
+      <pre><code class="language-bash">## Configure with the Emscripten toolchain
 emcmake cmake -S . -B build-web \
       -DCMAKE_BUILD_TYPE=Release \
       -DCNA_GRAPHICS_RENDERER=WEBGL2
@@ -186,61 +202,63 @@ cmake --build build-web --target MyGame
 ##   build-web/MyGame.data   (packaged assets)
 </code></pre>
 
-      <p>Assets are packaged into the <code>.data</code> file by Emscripten's <code>--preload-file</code> mechanism. In your <code>CMakeLists.txt</code>:</p>
+      <p>Assets are packaged into the <code>.data</code> file by Emscripten&rsquo;s <code>--preload-file</code> mechanism. A blocking <code>Game::Run()</code> on the web needs Asyncify, and CNA does not add it to executables outside its own source tree, so your final executable links <code>CNA::EmscriptenAsyncify</code> itself. In your <code>CMakeLists.txt</code>:</p>
 
-      <pre><code class="language-cpp">if(EMSCRIPTEN)
-    set_target_properties(MyGame PROPERTIES
-        SUFFIX ".html"
-        LINK_FLAGS
-            "-s USE_SDL=3 \
-             -s USE_SDL_IMAGE=3 \
-             -s USE_SDL_MIXER=3 \
-             -s ASYNCIFY \
-             -s ALLOW_MEMORY_GROWTH=1 \
-             --preload-file ${CMAKE_SOURCE_DIR}/assets@/assets"
-    )
+      <pre><code class="language-cmake">if(EMSCRIPTEN)
+    set_target_properties(MyGame PROPERTIES SUFFIX ".html")
+    # -sASYNCIFY=1 (a blocking Game::Run() suspends between browser frames)
+    target_link_libraries(MyGame PRIVATE CNA::EmscriptenAsyncify)
+    target_link_options(MyGame PRIVATE
+        -sALLOW_MEMORY_GROWTH=1
+        -sFORCE_FILESYSTEM=1
+        "SHELL:--preload-file ${CMAKE_SOURCE_DIR}/assets@/assets")
+    # -sMIN_WEBGL_VERSION / -sMAX_WEBGL_VERSION for WEBGL1 or WEBGL2 builds
+    cna_apply_emscripten_renderer_link_contract(MyGame)
 endif()
 </code></pre>
+      <p>CNA builds SDL3 itself from its submodule (statically, under Emscripten), so no <code>-sUSE_SDL</code> port flags are needed. CNA&rsquo;s CI links CNA&rsquo;s own example programs, not an external consumer, so if your link fails compare with how <code>cna_demo_2d</code> is linked in <code>modules/graphics/examples/CMakeLists.txt</code>.</p>
 
       <p>Serve the output directory with any HTTP server — browsers block <code>file://</code> access to <code>.wasm</code> files:</p>
 
-      <pre><code class="language-cpp">cd build-web
+      <pre><code class="language-bash">cd build-web
 python3 -m http.server 8080
 # Open http://localhost:8080/MyGame.html
 </code></pre>
 
-      <p>CNA also ships a <code>web</code> CMake preset that configures a WEBGL2 release build for you: <code>emcmake cmake --preset web</code>.</p>
+      <p>CNA also ships a <code>web</code> CMake preset that configures a <code>WEBGL2</code> release build of CNA&rsquo;s <code>cna_house3d_demo</code> into <code>cmake-build-web</code>. The preset carries no toolchain file, so run it through Emscripten&rsquo;s wrapper: <code>emcmake cmake --preset web</code>, then <code>cmake --build --preset web</code>.</p>
 
-      <h3>Three things the web build does differently</h3>
+      <h3>What the web build does differently</h3>
       <ul>
-        <li><strong><code>Game</code> must be heap-allocated.</strong> A stack-allocated <code>Game</code> is silently corrupted under Emscripten's main-loop model &mdash; you get no diagnostic, just wrong behaviour. Write <code>auto* game = new MyGame(); game-&gt;Run();</code> rather than <code>MyGame game; game.Run();</code> in your web entry point.</li>
-        <li><strong>No save persistence.</strong> Anything written through <code>StorageDevice</code> lives in volatile MEMFS and is gone on reload. See <a href="19-save-load.html">Tutorial 19</a>.</li>
-        <li><strong>No video playback.</strong> The video translation units are excluded from Emscripten builds, so <code>Video</code> and <code>VideoPlayer</code> are missing symbols. The headers still exist, which means calling code compiles happily and then fails at link time. The same is true on Windows and Android.</li>
+        <li><strong>Stack-allocated <code>Game</code> objects are fine in this snapshot.</strong> alpha.1 unwound the caller of <code>Game::Run()</code> and required a heap-allocated <code>Game</code>. Since <code>Game::Run()</code> now suspends through Asyncify and returns normally, <code>MyGame game; game.Run();</code> works on the web as it does natively &mdash; provided your executable links <code>CNA::EmscriptenAsyncify</code> as shown above. If you build against the alpha.1 tag instead, allocate with <code>new</code>.</li>
+        <li><strong>No save persistence.</strong> <code>StorageDevice</code> writes into Emscripten&rsquo;s virtual filesystem, which is in-memory by default; CNA mounts no IDBFS and never calls <code>FS.syncfs</code>, so saves are gone on reload. See <a href="19-save-load.html">Tutorial 19</a> and <a href="124-web-gotchas.html">Tutorial 124</a>.</li>
+        <li><strong>No video playback.</strong> FFmpeg is never built for Emscripten. The <code>Video</code> and <code>VideoPlayer</code> types still link, but opening a <code>Video</code> or calling <code>VideoPlayer::Play</code> throws <code>System::NotSupportedException</code>. Guard video features with <code>#ifdef CNA_VIDEO_AVAILABLE</code>. The same is true on Windows, Android and iOS.</li>
       </ul>
 
       <h2>Android APK overview</h2>
-      <p>Android support in CNA uses SDL3's Android build infrastructure. The high-level steps are:</p>
+      <p>Android support in CNA uses SDL3&rsquo;s Android build infrastructure. The high-level steps are:</p>
 
       <ol>
-        <li>Install Android NDK r25+ and Android SDK with API level 24+.</li>
+        <li>Install an Android NDK and SDK. The one Android project in CNA&rsquo;s tree (the Devices demo) pins NDK <code>30.0.14904198</code>, <code>minSdkVersion 24</code>, <code>targetSdkVersion 35</code> and the <code>arm64-v8a</code> ABI only; nothing in CMake checks these, and no other combination is verified.</li>
         <li>Copy the SDL3 Android project template from <code>third_party/SDL/android-project/</code>.</li>
         <li>Configure the Gradle build to reference your CNA library as a native dependency.</li>
         <li>Place assets in <code>src/main/assets/</code>.</li>
         <li>Run <code>./gradlew assembleRelease</code> to produce an APK.</li>
       </ol>
 
-      <pre><code class="language-cpp">## CMake cross-compile for Android ARM64
+      <pre><code class="language-bash">## CMake cross-compile for Android ARM64
 cmake -S . -B build-android \
       -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
       -DANDROID_ABI=arm64-v8a \
       -DANDROID_PLATFORM=android-24 \
-      -DCNA_GRAPHICS_RENDERER=OPENGLES3 \
+      -DCNA_BUILD_TESTS=OFF \
+      -DCNA_BUILD_EXAMPLES=OFF \
+      -DCNA_GRAPHICS_RENDERER=SDL_RENDERER \
       -DCMAKE_BUILD_TYPE=Release
 
 cmake --build build-android --target MyGame
 </code></pre>
 
-      <p>See the <a href="../platforms.html">Platforms documentation</a> for a full step-by-step Android setup guide. Be aware that Android code paths exist and are maintained, but no CI job builds or runs them, so treat an Android build as something you verify yourself. Video playback is unavailable there for the same reason as on the web.</p>
+      <p>See <a href="82-android.html">Tutorial 82</a> for the Gradle/JNI shape. Be aware that Android code paths exist, but there is no CMake preset and no CI job that builds or runs them, so treat an Android build as something you verify yourself. <code>SDL_RENDERER</code> is the Android default; <code>OPENGLES3</code> additionally needs the EasyGL and meta-gl siblings and a device with OpenGL ES 3.0, and has no Android build evidence here. FFmpeg is never built for Android, so video is unavailable for the same reason as on the web.</p>
 
       <h2>Packaging assets with CPack</h2>
       <p>CPack can produce a ZIP, DEB, or NSIS installer automatically:</p>
@@ -272,7 +290,9 @@ project(MyGame VERSION 1.0.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Pull in CNA (assumes sibling directory layout)
+# Pull in CNA (assumes sibling directory layout), without its own tests and demos
+set(CNA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(CNA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 add_subdirectory(../cna cna-build)
 
 add_executable(MyGame
@@ -324,7 +344,7 @@ include(CPack)
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
