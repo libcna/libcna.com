@@ -21,7 +21,7 @@
   "headline": "Tutorial 93: Building a First-Person 3D Game",
   "url": "https://libcna.com/docs/tutorials/93-fps-game.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -94,7 +94,7 @@
             <li>Raycasting for hit detection against world geometry.</li>
             <li>A simple enemy state machine, and a minimap drawn to a render target.</li>
           </ul>
-          <p><strong>Before you start</strong> &mdash; <a href="34-camera-3d.html">Tutorial 34: 3D Camera Setup and Control</a> (the camera this builds on), <a href="44-bounding-volumes.html">Tutorial 44: Bounding Volumes and Spatial Queries</a> (ray/volume intersection) and <a href="23-render-targets.html">Tutorial 23: Render Targets for Off-Screen Rendering</a> (the minimap). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the thirteen 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls. Requires a renderer with render-target support.</p>
+          <p><strong>Before you start</strong> &mdash; <a href="34-camera-3d.html">Tutorial 34: 3D Camera Setup and Control</a> (the camera this builds on), <a href="44-bounding-volumes.html">Tutorial 44: Bounding Volumes and Spatial Queries</a> (ray/volume intersection) and <a href="23-render-targets.html">Tutorial 23: Render Targets for Off-Screen Rendering</a> (the minimap). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls by default, and <code>STUB</code> reports no 3D capability at all. The minimap also needs a renderer with render-target support, which every 3D renderer has except <code>PORTABLEGL</code>.</p>
         </div>
 
         <h2>FPS camera (mouse look + WASD)</h2>
@@ -129,11 +129,13 @@ public:
         if (ks.IsKeyDown(Keys::D)) Position += right   * speed;
     }
 
+    // Same convention as Tutorial 34: yaw 0 looks down -Z (XNA's "forward"),
+    // positive yaw turns right, and a positive pitch (mouse moved down) looks down.
     Vector3 Forward() const {
         return Vector3(
             std::cos(Pitch) * std::sin(Yaw),
            -std::sin(Pitch),
-            std::cos(Pitch) * std::cos(Yaw));
+           -std::cos(Pitch) * std::cos(Yaw));
     }
 
     Matrix ViewMatrix() const {
@@ -141,22 +143,27 @@ public:
     }
 };</code></pre>
 
+        <p>A purity note: the compound operators <code>Vector3::operator+=</code>, <code>-=</code> and <code>*=</code> used above and below are CNAEXT conveniences, deprecated under <code>CNA_STRICT_XNA_API</code>; the XNA-pure spelling is <code>Position = Position + forward * speed;</code>. The mouse-look here re-centres the cursor every frame, as in Tutorial 34; the CNAEXT <code>Mouse::setIsRelativeMouseModeEXTProperty(true)</code> is the alternative.</p>
+
         <h2>Raycasting for hit detection</h2>
 <pre><code class="language-cpp">struct HitResult { bool hit; Vector3 point; float distance; };
 
 HitResult Raycast(const Vector3&amp; origin, const Vector3&amp; dir,
                   const std::vector&lt;BoundingBox&gt;&amp; boxes) {
     HitResult best { false, {}, std::numeric_limits&lt;float&gt;::max() };
-    for (auto&amp; box : boxes) {
-        float near, far;
-        if (box.Intersects(Ray(origin, dir), near)) {
-            if (near &lt; best.distance) {
-                best = { true, origin + dir * near, near };
-            }
+    const Ray ray(origin, dir);                 // dir must be normalised
+    for (const BoundingBox&amp; box : boxes) {
+        // BoundingBox::Intersects(Ray) returns the distance along the ray,
+        // or an empty std::optional when the ray misses.
+        std::optional&lt;float&gt; t = box.Intersects(ray);
+        if (t &amp;&amp; *t &lt; best.distance) {
+            best = { true, origin + dir * *t, *t };
         }
     }
     return best;
 }</code></pre>
+
+        <p>Do not name the distances <code>near</code> and <code>far</code>: on Windows those are macros from the platform headers and will break the build.</p>
 
         <h2>Enemy AI (simple state machine)</h2>
 <pre><code class="language-cpp">enum class EnemyState { Idle, Chase, Attack, Dead };
@@ -207,15 +214,18 @@ private:
 };</code></pre>
 
         <h2>Minimap on RenderTarget2D</h2>
-<pre><code class="language-cpp">// Create minimap render target
+<pre><code class="language-cpp">// Create minimap render target (128 x 128 is a power of two and well inside the
+// default Reach profile's 2048 texture-size limit; Color is a Reach-legal format)
 minimap_ = std::make_unique&lt;RenderTarget2D&gt;(
     getGraphicsDeviceProperty(), 128, 128,
     false, SurfaceFormat::Color, DepthFormat::None);
 
+// Call this at the START of Draw(), before the main scene: switching render targets
+// is not guaranteed to preserve the back buffer's contents.
 void DrawMinimap(GraphicsDevice&amp; gd, SpriteBatch&amp; sb) {
-    // Render to minimap RT
-    gd.SetRenderTarget(*minimap_);
-    gd.Clear(Color(20, 20, 20, 180));
+    // Render to minimap RT (SetRenderTarget takes a RenderTarget2D*)
+    gd.SetRenderTarget(minimap_.get());
+    gd.Clear(Color(20, 20, 20, 255));
     sb.Begin();
     // Draw rooms, corridors, enemies as colored dots
     for (auto&amp; e : enemies_) {
@@ -227,15 +237,17 @@ void DrawMinimap(GraphicsDevice&amp; gd, SpriteBatch&amp; sb) {
     sb.Draw(*pixel_, Rectangle((int)pp.X-3, (int)pp.Y-3, 6, 6), Color::Yellow);
     sb.End();
     gd.SetRenderTarget(nullptr);
+}
 
-    // Draw minimap RT onto screen HUD (top-right corner)
-    sb.Begin();
-    sb.Draw(*minimap_, Vector2(800-138, 10), nullptr,
-            Color::White, 0, Vector2::Zero, 1.0f, SpriteEffects::None, 0);
-    sb.End();
-}</code></pre>
+// Later in Draw(), after the 3D scene: put the minimap on the HUD (top-right corner)
+sb.Begin();
+sb.Draw(*minimap_, Vector2(800-138, 10), Color::White);   // a RenderTarget2D is a Texture2D
+sb.End();
+// SpriteBatch does not restore the blend, depth, sampler or rasterizer state it changes,
+// so set them back before the next frame's 3D pass (see Tutorial 31).</code></pre>
 
         <h2>FPS camera class + raycasting hit test</h2>
+        <p>The complete program below puts the pieces together: mouse-look and WASD, red cube enemies that chase you, a left-click that casts a ray from the eye and removes the nearest enemy it hits, and the minimap drawn to a <code>RenderTarget2D</code> and shown in the corner. It stays inside the default Reach profile: no 32-bit indices, no float render targets, no multiple render targets.</p>
 <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Game.hpp"
 #include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
 #include "Microsoft/Xna/Framework/Graphics/BasicEffect.hpp"
@@ -243,6 +255,11 @@ void DrawMinimap(GraphicsDevice&amp; gd, SpriteBatch&amp; sb) {
 #include "Microsoft/Xna/Framework/Graphics/VertexBuffer.hpp"
 #include "Microsoft/Xna/Framework/Graphics/VertexPositionColor.hpp"
 #include "Microsoft/Xna/Framework/Graphics/RenderTarget2D.hpp"
+#include "Microsoft/Xna/Framework/Graphics/BlendState.hpp"
+#include "Microsoft/Xna/Framework/Graphics/DepthStencilState.hpp"
+#include "Microsoft/Xna/Framework/Graphics/RasterizerState.hpp"
+#include "Microsoft/Xna/Framework/Graphics/SamplerState.hpp"
+#include "Microsoft/Xna/Framework/Input/ButtonState.hpp"
 #include "Microsoft/Xna/Framework/Input/Keyboard.hpp"
 #include "Microsoft/Xna/Framework/Input/Mouse.hpp"
 #include "Microsoft/Xna/Framework/Input/Keys.hpp"
@@ -250,6 +267,7 @@ void DrawMinimap(GraphicsDevice&amp; gd, SpriteBatch&amp; sb) {
 #include "Microsoft/Xna/Framework/Ray.hpp"
 #include &lt;vector&gt;
 #include &lt;memory&gt;
+#include &lt;optional&gt;
 #include &lt;cmath&gt;
 #include &lt;algorithm&gt;
 #include &lt;limits&gt;
@@ -267,16 +285,17 @@ public:
 
 protected:
     void LoadContent() override {
-        effect_  = std::make_unique&lt;BasicEffect&gt;(getGraphicsDeviceProperty());
-        sb_      = std::make_unique&lt;SpriteBatch&gt;(getGraphicsDeviceProperty());
-        pixel_   = std::make_unique&lt;Texture2D&gt;(getGraphicsDeviceProperty(), 1, 1);
+        auto&amp; gd = getGraphicsDeviceProperty();
+        effect_  = std::make_unique&lt;BasicEffect&gt;(gd);
+        effect_-&gt;VertexColorEnabled = true;
+        sb_      = std::make_unique&lt;SpriteBatch&gt;(gd);
+        pixel_   = std::make_unique&lt;Texture2D&gt;(gd, 1, 1);
         Color w  = Color::White;
         pixel_-&gt;SetData(&amp;w, 1);
         minimap_ = std::make_unique&lt;RenderTarget2D&gt;(
-            getGraphicsDeviceProperty(), 128, 128,
-            false, SurfaceFormat::Color, DepthFormat::None);
+            gd, 128, 128, false, SurfaceFormat::Color, DepthFormat::None);
 
-        // Floor quad
+        // Floor: a strip of two triangles, clockwise as seen from above
         VertexPositionColor floor[] = {
             { Vector3(-10,0,-10), Color(80,80,80) },
             { Vector3( 10,0,-10), Color(80,80,80) },
@@ -284,12 +303,13 @@ protected:
             { Vector3( 10,0, 10), Color(80,80,80) },
         };
         floorVB_ = std::make_unique&lt;VertexBuffer&gt;(
-            getGraphicsDeviceProperty(),
-            VertexPositionColor::getVertexDeclarationStatic(), 4, BufferUsage::None);
+            gd, VertexPositionColor::getVertexDeclarationStatic(), 4, BufferUsage::WriteOnly);
         floorVB_-&gt;SetData(floor, 4);
 
-        camPos_  = Vector3(0, 1.7f, 0);
-        enemies_.push_back({ Vector3(3, 0.5f, -5) });
+        BuildEnemyCube();
+
+        camPos_ = Vector3(0, 1.7f, 0);
+        enemies_ = { { Vector3(3, 0.5f, -5) }, { Vector3(-4, 0.5f, -7) }, { Vector3(0, 0.5f, -9) } };
         setIsMouseVisibleProperty(false);
     }
 
@@ -302,9 +322,7 @@ protected:
         pitch_  = std::clamp(pitch_ + dy, -1.5f, 1.5f);
         Mouse::SetPosition(400, 300);
 
-        Vector3 fwd(std::cos(pitch_)*std::sin(yaw_),
-                   -std::sin(pitch_),
-                    std::cos(pitch_)*std::cos(yaw_));
+        Vector3 fwd = Forward();
         Vector3 right = Vector3::Cross(fwd, Vector3::Up);
         right.Normalize();
         auto ks = Keyboard::GetState();
@@ -315,38 +333,73 @@ protected:
         if (ks.IsKeyDown(Keys::D)) camPos_ += right  * sp;
         if (ks.IsKeyDown(Keys::Escape)) Exit();
 
+        // Fire on the frame the left button goes down: ray from the eye along the view direction
+        bool down = ms.getLeftButtonProperty() == ButtonState::Pressed;
+        if (down &amp;&amp; !wasDown_) Fire(fwd);
+        wasDown_ = down;
+
         for (auto&amp; e : enemies_) e.Update(gt, camPos_);
     }
 
     void Draw(const GameTime&amp;) override {
         auto&amp; gd = getGraphicsDeviceProperty();
+
+        // Off-screen pass first: switching render targets is not guaranteed to keep the
+        // back buffer's contents, so do it before the main scene is drawn.
+        DrawMinimap(gd);
+
         gd.Clear(Color(30, 30, 50));
 
-        Vector3 fwd(std::cos(pitch_)*std::sin(yaw_),
-                   -std::sin(pitch_),
-                    std::cos(pitch_)*std::cos(yaw_));
-        Matrix view = Matrix::CreateLookAt(camPos_, camPos_+fwd, Vector3::Up);
+        // SpriteBatch (used by the minimap and the HUD) leaves its own blend, depth,
+        // sampler and rasterizer state behind: restore the 3D state every frame.
+        gd.setBlendStateProperty(BlendState::Opaque);
+        gd.setDepthStencilStateProperty(DepthStencilState::Default);
+        gd.setRasterizerStateProperty(RasterizerState::CullCounterClockwise);
+        gd.getSamplerStatesProperty()[0] = SamplerState::LinearClamp;
+
+        Matrix view = Matrix::CreateLookAt(camPos_, camPos_ + Forward(), Vector3::Up);
         Matrix proj = Matrix::CreatePerspectiveFieldOfView(
             MathHelper::ToRadians(75.0f), 800.0f/600.0f, 0.1f, 100.0f);
 
         effect_-&gt;setViewProperty(view);
         effect_-&gt;setProjectionProperty(proj);
-        effect_-&gt;VertexColorEnabled = true;
-        effect_-&gt;setWorldProperty(Matrix::getIdentityProperty());
 
+        // Floor
+        effect_-&gt;setWorldProperty(Matrix::getIdentityProperty());
         gd.SetVertexBuffer(floorVB_.get());
         for (auto&amp; p : effect_-&gt;getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
             p.Apply();
             gd.DrawPrimitives(PrimitiveType::TriangleStrip, 0, 2);
         }
 
-        gd.Present();
+        // Enemies: one shared red cube, moved with a world matrix
+        gd.SetVertexBuffer(cubeVB_.get());
+        for (auto&amp; e : enemies_) {
+            if (!e.alive) continue;
+            effect_-&gt;setWorldProperty(Matrix::CreateTranslation(e.pos));
+            for (auto&amp; p : effect_-&gt;getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
+                p.Apply();
+                gd.DrawPrimitives(PrimitiveType::TriangleList, 0, 12);
+            }
+        }
+
+        // HUD: minimap in the top-right corner and a crosshair
+        sb_-&gt;Begin();
+        sb_-&gt;Draw(*minimap_, Vector2(800 - 138, 10), Color::White);
+        sb_-&gt;Draw(*pixel_, Rectangle(400 - 2, 300 - 2, 4, 4), Color::White);
+        sb_-&gt;End();
+        // No gd.Present(): Game presents in EndDraw, after Draw() returns.
     }
 
 private:
     struct SimpleEnemy {
         Vector3 pos;
+        bool    alive = true;
+        BoundingBox Bounds() const {
+            return BoundingBox(pos - Vector3(0.5f, 0.5f, 0.5f), pos + Vector3(0.5f, 0.5f, 0.5f));
+        }
         void Update(GameTime&amp; gt, const Vector3&amp; pp) {
+            if (!alive) return;
             float dt = static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty());
             Vector3 d = pp - pos; d.Y = 0;
             float len = std::sqrt(d.X*d.X+d.Z*d.Z);
@@ -354,15 +407,76 @@ private:
         }
     };
 
+    // Same convention as Tutorial 34: yaw 0 looks down -Z, positive yaw turns right.
+    Vector3 Forward() const {
+        return Vector3(std::cos(pitch_)*std::sin(yaw_),
+                      -std::sin(pitch_),
+                      -std::cos(pitch_)*std::cos(yaw_));
+    }
+
+    void Fire(const Vector3&amp; dir) {
+        // BoundingBox::Intersects(Ray) returns the distance along the ray, or an empty optional.
+        const Ray ray(camPos_, dir);
+        SimpleEnemy* nearest = nullptr;
+        float nearestT = std::numeric_limits&lt;float&gt;::max();
+        for (auto&amp; e : enemies_) {
+            if (!e.alive) continue;
+            std::optional&lt;float&gt; t = e.Bounds().Intersects(ray);
+            if (t &amp;&amp; *t &lt; nearestT) { nearestT = *t; nearest = &amp;e; }
+        }
+        if (nearest) nearest-&gt;alive = false;       // a one-shot kill
+    }
+
+    Vector2 WorldToMinimap(const Vector3&amp; p) const {
+        // The world spans -10..10 on X and Z; the minimap is 128 x 128 pixels
+        return Vector2((p.X + 10.0f) / 20.0f * 128.0f, (p.Z + 10.0f) / 20.0f * 128.0f);
+    }
+
+    void DrawMinimap(GraphicsDevice&amp; gd) {
+        gd.SetRenderTarget(minimap_.get());
+        gd.Clear(Color(20, 20, 20, 255));
+        sb_-&gt;Begin();
+        for (auto&amp; e : enemies_) {
+            if (!e.alive) continue;
+            Vector2 mp = WorldToMinimap(e.pos);
+            sb_-&gt;Draw(*pixel_, Rectangle((int)mp.X - 2, (int)mp.Y - 2, 4, 4), Color::Red);
+        }
+        Vector2 pp = WorldToMinimap(camPos_);
+        sb_-&gt;Draw(*pixel_, Rectangle((int)pp.X - 3, (int)pp.Y - 3, 6, 6), Color::Yellow);
+        sb_-&gt;End();
+        gd.SetRenderTarget(nullptr);
+    }
+
+    void BuildEnemyCube() {
+        const float h = 0.5f;
+        const Vector3 c[8] = {
+            {-h,-h,-h},{+h,-h,-h},{+h,+h,-h},{-h,+h,-h},
+            {-h,-h,+h},{+h,-h,+h},{+h,+h,+h},{-h,+h,+h}
+        };
+        // 12 triangles, each wound clockwise as seen from outside (front-facing under
+        // the default CullCounterClockwise state)
+        const int faces[36] = {
+            0,1,2, 0,2,3,  4,6,5, 4,7,6,  0,3,7, 0,7,4,
+            1,5,6, 1,6,2,  3,2,6, 3,6,7,  0,4,5, 0,5,1
+        };
+        std::vector&lt;VertexPositionColor&gt; verts;
+        for (int i : faces) verts.push_back({ c[i], Color::Red });
+        cubeVB_ = std::make_unique&lt;VertexBuffer&gt;(
+            getGraphicsDeviceProperty(), VertexPositionColor::getVertexDeclarationStatic(),
+            static_cast&lt;int&gt;(verts.size()), BufferUsage::WriteOnly);
+        cubeVB_-&gt;SetData(verts.data(), static_cast&lt;int&gt;(verts.size()));
+    }
+
     GraphicsDeviceManager               graphics_;
     std::unique_ptr&lt;BasicEffect&gt;        effect_;
     std::unique_ptr&lt;SpriteBatch&gt;        sb_;
     std::unique_ptr&lt;Texture2D&gt;          pixel_;
     std::unique_ptr&lt;RenderTarget2D&gt;     minimap_;
-    std::unique_ptr&lt;VertexBuffer&gt;       floorVB_;
+    std::unique_ptr&lt;VertexBuffer&gt;       floorVB_, cubeVB_;
     std::vector&lt;SimpleEnemy&gt;            enemies_;
     Vector3 camPos_;
     float   yaw_ = 0, pitch_ = 0;
+    bool    wasDown_ = false;
 };
 
 int main() { FPSGame game; game.Run(); }</code></pre>
@@ -391,7 +505,7 @@ int main() { FPSGame game; game.Run(); }</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

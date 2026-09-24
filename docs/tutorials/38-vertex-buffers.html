@@ -21,7 +21,7 @@
   "headline": "Tutorial 38: Vertex Buffers and Index Buffers",
   "url": "https://libcna.com/docs/tutorials/38-vertex-buffers.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -92,58 +92,66 @@
           <li>Static versus dynamic <code>VertexBuffer</code>, and uploading with <code>SetData&lt;T&gt;</code>.</li>
           <li>What a <code>VertexDeclaration</code> describes.</li>
           <li>16-bit versus 32-bit <code>IndexBuffer</code>, and <code>DrawIndexedPrimitives</code>.</li>
-          <li><code>BufferUsage::WriteOnly</code> and updating a dynamic buffer each frame.</li>
+          <li>What <code>BufferUsage::WriteOnly</code> really means, and how to update a buffer every frame with <code>DynamicVertexBuffer</code> and <code>SetDataOptions::Discard</code>.</li>
+          <li>Why a buffer that is currently bound cannot simply be overwritten, and why 32-bit indices need the HiDef graphics profile.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> &mdash; this is the depth pass over the buffer you created there. Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> &mdash; this is the depth pass over the buffer you created there. Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls by default, and <code>STUB</code> reports no 3D capability at all.</p>
       </div>
 
       <p>Previous tutorials used <code>VertexBuffer</code> informally. Here we go deeper: static vs. dynamic buffers, index buffers for vertex reuse, <code>VertexDeclaration</code>, and how to stream per-frame data into a dynamic buffer for procedural geometry.</p>
 
       <h2>VertexBuffer Creation (Static vs Dynamic)</h2>
-      <p>The <code>BufferUsage</code> enum controls how the GPU driver allocates and manages the buffer memory:</p>
+      <p>The <code>BufferUsage</code> argument is a <em>readability</em> hint, not a static/dynamic switch. It decides one thing you can observe in CNA: whether the CPU may read the data back with <code>GetData</code>.</p>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>BufferUsage</th><th>CPU access</th><th>Use case</th></tr></thead>
+        <thead><tr><th>BufferUsage</th><th><code>GetData</code></th><th><code>SetData</code></th><th>Use it for</th></tr></thead>
         <tbody>
-          <tr><td><code>WriteOnly</code></td><td>Write-only, once at creation</td><td>Static terrain, buildings, any mesh that never changes</td></tr>
-          <tr><td><code>None</code></td><td>Read and write at any time</td><td>Particle systems, cloth simulation, procedural animation</td></tr>
+          <tr><td><code>WriteOnly</code></td><td>Throws <code>System::NotSupportedException</code> (&ldquo;Calling GetData on a resource that was created with BufferUsage.WriteOnly is not supported.&rdquo;)</td><td>Allowed, any number of times (subject to the in-use rule below)</td><td>Buffers you will never read back &mdash; static meshes and streamed dynamic buffers alike</td></tr>
+          <tr><td><code>None</code></td><td>Allowed</td><td>Allowed</td><td>Buffers you want to read back (tools, tests, CPU picking)</td></tr>
         </tbody>
       </table>
       </div>
+      <p>XNA documents <code>WriteOnly</code> as a memory-placement hint; CNA does not verify any speed benefit, so treat it as a promise about reading, nothing more. What makes a buffer <em>dynamic</em> is the class: use <code>DynamicVertexBuffer</code> (and <code>DynamicIndexBuffer</code>) for data you rewrite every frame, together with <code>SetDataOptions::Discard</code> or <code>NoOverwrite</code>. Both classes exist in CNA and behave like their XNA namesakes.</p>
       <pre><code class="language-cpp">// Static buffer — upload once, draw many times
 auto staticVB = std::make_unique&lt;VertexBuffer&gt;(
     gd, VertexPositionColor::getVertexDeclarationStatic(),
     vertexCount, BufferUsage::WriteOnly);
 staticVB-&gt;SetData(vertices, vertexCount);
 
-// Dynamic buffer — updated every frame
-auto dynamicVB = std::make_unique&lt;VertexBuffer&gt;(
+// Dynamic buffer — rewritten every frame
+auto dynamicVB = std::make_unique&lt;DynamicVertexBuffer&gt;(
     gd, VertexPositionColor::getVertexDeclarationStatic(),
-    MAX_VERTS, BufferUsage::None);
-// Call SetData again in Update() each frame</code></pre>
+    MAX_VERTS, BufferUsage::WriteOnly);
+// Each frame, in Update():
+//   dynamicVB-&gt;SetData(verts, 0, count, SetDataOptions::Discard);</code></pre>
 
       <h2>SetData&lt;T&gt;</h2>
-      <p><code>VertexBuffer::SetData</code> is a template that accepts any vertex struct. The element stride is derived automatically from <code>sizeof(T)</code>:</p>
-      <pre><code class="language-cpp">// Full upload
+      <p><code>VertexBuffer::SetData</code> accepts the built-in vertex structs and, as a template, any trivially-copyable vertex struct of your own. Its overloads are easy to misread, so here is what each argument means:</p>
+      <pre><code class="language-cpp">// Full upload of the first "count" source vertices into the start of the buffer
 vb-&gt;SetData(vertices, count);
 
-// Partial upload — update only elements [offset, offset+count)
-vb-&gt;SetData(vertices + offset, count, offset);
+// Upload a slice of the SOURCE array: source elements [startIndex, startIndex + elementCount).
+// The second argument is where reading from your array starts, not where writing to the buffer starts.
+vb-&gt;SetData(vertices, startIndex, elementCount);
 
-// Dynamic update each frame (inside Update())
+// XNA's windowed form: write into the buffer starting at a BYTE offset
+vb-&gt;SetData(offsetInBytes, vertices, startIndex, elementCount, vertexStride);
+
+// Dynamic update each frame (inside Update()), on a DynamicVertexBuffer
 for (int i = 0; i &lt; GRID_W * GRID_H; ++i) {
     gridVerts[i].Position.Y =
         std::sin(totalTime + gridVerts[i].Position.X * 2.0f) * 0.3f;
 }
-dynamicVB-&gt;SetData(gridVerts, GRID_W * GRID_H);</code></pre>
+dynamicVB-&gt;SetData(gridVerts, 0, GRID_W * GRID_H, SetDataOptions::Discard);</code></pre>
+      <p>About the stride: for the built-in vertex structs CNA packs your values into the layout their <code>VertexDeclaration</code> describes. For a struct of your own, <code>sizeof(T)</code> only sets how many source bytes each element occupies; the stride used when drawing always comes from the declaration you gave the <code>VertexBuffer</code>.</p>
 
       <h2>VertexDeclaration</h2>
       <p>A <code>VertexDeclaration</code> describes the memory layout of a single vertex to the GPU — which attributes exist, their formats, and their byte offsets within the struct. Built-in vertex types expose a static <code>VertexDeclaration</code> member:</p>
       <pre><code class="language-cpp">VertexPositionColor::getVertexDeclarationStatic()       // Position(float3) + Color(byte4)
 VertexPositionTexture::getVertexDeclarationStatic()     // Position(float3) + TexCoord(float2)
-VertexPositionNormalTexture::getVertexDeclarationStatic()  // Position + Normal + UV
-VertexPositionNormalTexture::getVertexDeclarationStatic() // Position + Normal + TexCoord</code></pre>
-      <p>Pass the declaration when constructing a <code>VertexBuffer</code>. CNA forwards it to the renderer to set up vertex attribute pointers before each draw call.</p>
+VertexPositionColorTexture::getVertexDeclarationStatic()   // Position + Color + TexCoord
+VertexPositionNormalTexture::getVertexDeclarationStatic()  // Position + Normal + TexCoord</code></pre>
+      <p>Pass the declaration when constructing a <code>VertexBuffer</code>. CNA forwards it to the renderer to set up vertex attribute pointers before each draw call. The device also validates it: at most 16 elements and 255 bytes per vertex, and under the default Reach profile the element formats stop at <code>NormalizedShort4</code> (<code>HalfVector2</code>/<code>HalfVector4</code> need HiDef). A violation throws <code>System::NotSupportedException</code>.</p>
 
       <h2>IndexBuffer (16-bit vs 32-bit)</h2>
       <p>An <code>IndexBuffer</code> holds an ordered list of indices into the vertex buffer. Instead of duplicating vertex data for shared edges, you store each vertex once and reference it multiple times:</p>
@@ -156,18 +164,22 @@ auto ib = std::make_unique&lt;IndexBuffer&gt;(
 ib-&gt;SetData(indices, 6);</code></pre>
       <div class="table-wrap">
       <table>
-        <thead><tr><th>IndexElementSize</th><th>Index type</th><th>Max vertices</th></tr></thead>
+        <thead><tr><th>IndexElementSize</th><th>Index type</th><th>Addressable vertices</th><th>Graphics profile needed</th></tr></thead>
         <tbody>
-          <tr><td><code>SixteenBits</code></td><td><code>uint16_t</code></td><td>65,535</td></tr>
-          <tr><td><code>ThirtyTwoBits</code></td><td><code>uint32_t</code></td><td>4,294,967,295</td></tr>
+          <tr><td><code>SixteenBits</code></td><td><code>uint16_t</code></td><td>65,535</td><td>Reach (the default) or HiDef</td></tr>
+          <tr><td><code>ThirtyTwoBits</code></td><td><code>uint32_t</code></td><td>4,294,967,295</td><td><strong>HiDef only</strong></td></tr>
         </tbody>
       </table>
       </div>
       <p>Prefer 16-bit indices for small meshes: they use half the GPU memory bandwidth and can improve cache utilisation.</p>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>32-bit indices are refused by the default profile.</strong> CNA enforces XNA&rsquo;s graphics-profile ceilings on every renderer, and the default profile is <strong>Reach</strong>. Under Reach, <code>new IndexBuffer(..., IndexElementSize::ThirtyTwoBits, ...)</code> and 32-bit user indices throw <code>System::NotSupportedException</code> (&ldquo;Thirty-two-bit index buffers are not supported by the Reach graphics profile.&rdquo;); a single draw call of more than 65,535 primitives throws too (the HiDef limit is 1,048,575); and an index buffer may not exceed 67,108,863 bytes on either profile. Ask for HiDef before the device is created with <code>graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef);</code>. <a href="152-graphics-profiles.html">Tutorial 152</a> covers this end to end. Even on HiDef the renderer must implement 32-bit buffers (the <code>GDI</code> renderer, for example, does not).</p>
+      </div>
 
       <h2>DrawIndexedPrimitives</h2>
       <pre><code class="language-cpp">gd.SetVertexBuffer(vb.get());
-gd.SetIndexBuffer(ib.get());
+gd.setIndicesProperty(ib.get());   // XNA's GraphicsDevice.Indices; SetIndexBuffer(ib.get()) is a CNAEXT alias
 
 for (auto&amp; pass : effect-&gt;getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
     pass.Apply();
@@ -183,33 +195,41 @@ for (auto&amp; pass : effect-&gt;getCurrentTechniqueProperty()-&gt;getPassesProp
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p>Always bind <em>both</em> <code>VertexBuffer</code> and <code>IndexBuffer</code> on the device before calling <code>DrawIndexedPrimitives</code>. Forgetting either results in undefined behaviour or a runtime error.</p>
+        <p>Always bind <em>both</em> <code>VertexBuffer</code> and <code>IndexBuffer</code> on the device before calling <code>DrawIndexedPrimitives</code>. Drawing with no effect applied, no index buffer or no vertex buffer bound throws <code>System::InvalidOperationException</code>.</p>
       </div>
 
       <h2>BufferUsage::WriteOnly vs None</h2>
-      <p><code>WriteOnly</code> signals to the driver that the application will never read back vertex data from the GPU. This allows the driver to place the buffer in the most efficient GPU-local memory region. Attempting to read a <code>WriteOnly</code> buffer from the CPU is undefined behaviour.</p>
-      <p><code>None</code> permits CPU reads and repeated writes. Use it whenever you call <code>SetData</code> after the buffer has been drawn at least once (typical for dynamic meshes).</p>
+      <p><code>WriteOnly</code> is a promise that the application will never read vertex data back. CNA enforces the promise: every <code>GetData</code> on such a buffer throws <code>System::NotSupportedException</code> (this is defined behaviour, not undefined behaviour). <code>SetData</code> on a <code>WriteOnly</code> buffer remains legal, as often as you like.</p>
+      <p><code>None</code> permits <code>GetData</code> as well. It is <em>not</em> what makes a buffer dynamic, and you do not need it to call <code>SetData</code> after the buffer has been drawn; the streaming rules below are what matter for that.</p>
 
       <h2>Updating Dynamic Buffers</h2>
-      <p>For large meshes that change every frame, use partial updates to avoid uploading unchanged regions:</p>
-      <pre><code class="language-cpp">// Only update the portion that changed
-vb-&gt;SetData(dirtyVerts, dirtyCount, dirtyOffset);
+      <p>There is one rule that every per-frame update has to respect. A buffer that is <strong>currently bound</strong> on the device cannot be overwritten by an ordinary <code>SetData</code>: CNA throws <code>System::InvalidOperationException</code> (&ldquo;The vertex buffer resource is in use.&rdquo;; &ldquo;The index buffer resource is in use.&rdquo; for an <code>IndexBuffer</code>). The same applies to a <code>Texture2D</code> that is bound to a sampler slot. Binding lasts until you bind something else, so a buffer you drew last frame is still bound when <code>Update()</code> runs this frame. There are three ways out:</p>
+      <pre><code class="language-cpp">// 1. The XNA streaming idiom: a DynamicVertexBuffer written with Discard (or NoOverwrite).
+//    This is always allowed, even while the buffer is bound.
+dynamicVB-&gt;SetData(verts, 0, count, SetDataOptions::Discard);
 
-// For streaming data (ring-buffer pattern): advance offset each frame
-// and wrap around when you reach the end of the buffer</code></pre>
-      <p>Never recreate the <code>VertexBuffer</code> object each frame — allocation is expensive. Allocate once with the maximum size you will ever need and update its contents.</p>
+// 2. Same for indices: DynamicIndexBuffer + Discard / NoOverwrite.
+
+// 3. Unbind first, then use a plain SetData on any VertexBuffer.
+gd.SetVertexBuffer(nullptr);
+vb-&gt;SetData(verts, count);</code></pre>
+      <p><code>Discard</code> means &ldquo;I am replacing everything; the old contents no longer matter&rdquo; and lets a renderer hand back fresh storage while the GPU still reads the old; <code>NoOverwrite</code> means &ldquo;I promise not to touch data still in use&rdquo;, for appending to a ring buffer. Most CNA renderers honour both as real hints; a few treat every call as <code>Discard</code>.</p>
+      <p>A caution about <em>partial</em> updates. CNA keeps a CPU-side copy of each buffer and re-submits the <strong>whole</strong> logical buffer to the renderer on every <code>SetData</code>, including a windowed one. A window changes which bytes you rewrite, not what is transferred, so do not expect partial updates to save upload bandwidth; they save you from recomputing and copying the unchanged part on the CPU. (Under <code>Discard</code>, the part of the buffer you did not write becomes zeroes.)</p>
+      <p>Never recreate the <code>VertexBuffer</code> object each frame &mdash; allocation is expensive. Allocate once with the maximum size you will ever need and update its contents.</p>
 
       <h2>Full Example: Static Quad + Dynamic Sine-Wave Grid</h2>
       <p>The demo shows two techniques. Press <kbd>Space</kbd> to toggle between them:</p>
       <ul>
         <li><strong>Static quad</strong> — 4 vertices, 6 indices, <code>BufferUsage::WriteOnly</code>, drawn with <code>DrawIndexedPrimitives</code>.</li>
-        <li><strong>Dynamic grid</strong> — 16×16 sine-wave surface whose vertex Y positions are updated every frame via <code>SetData</code>, <code>BufferUsage::None</code>.</li>
+        <li><strong>Dynamic grid</strong> — 16×16 sine-wave surface whose vertex Y positions are rewritten every frame into a <code>DynamicVertexBuffer</code> with <code>SetDataOptions::Discard</code>, so the update is legal even though the buffer is still bound from the previous frame.</li>
       </ul>
       <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Game.hpp"
 #include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
 #include "Microsoft/Xna/Framework/Graphics/BasicEffect.hpp"
 #include "Microsoft/Xna/Framework/Graphics/VertexBuffer.hpp"
+#include "Microsoft/Xna/Framework/Graphics/DynamicVertexBuffer.hpp"
 #include "Microsoft/Xna/Framework/Graphics/IndexBuffer.hpp"
+#include "Microsoft/Xna/Framework/Graphics/SetDataOptions.hpp"
 #include "Microsoft/Xna/Framework/Graphics/VertexPositionColor.hpp"
 #include "Microsoft/Xna/Framework/Input/Keyboard.hpp"
 #include &lt;cmath&gt;
@@ -257,7 +277,10 @@ protected:
                 v.Color = Color::Lerp(Color::Blue, Color::Yellow, t);
             }
         }
-        dynamicVB_-&gt;SetData(gridVerts_.data(), static_cast&lt;int&gt;(gridVerts_.size()));
+        // Discard is what makes this legal: on the frames when the grid is showing,
+        // dynamicVB_ is still bound to the device from the previous Draw().
+        dynamicVB_-&gt;SetData(gridVerts_.data(), 0, static_cast&lt;int&gt;(gridVerts_.size()),
+                            SetDataOptions::Discard);
     }
 
     void Draw(const GameTime&amp;) override {
@@ -273,7 +296,7 @@ protected:
         if (!showGrid_) {
             // --- Static quad via DrawIndexedPrimitives ---
             gd.SetVertexBuffer(staticVB_.get());
-            gd.SetIndexBuffer(staticIB_.get());
+            gd.setIndicesProperty(staticIB_.get());
             for (auto&amp; pass : effect_-&gt;getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
                 pass.Apply();
                 gd.DrawIndexedPrimitives(PrimitiveType::TriangleList,
@@ -282,7 +305,7 @@ protected:
         } else {
             // --- Dynamic sine-wave grid ---
             gd.SetVertexBuffer(dynamicVB_.get());
-            gd.SetIndexBuffer(gridIB_.get());
+            gd.setIndicesProperty(gridIB_.get());
             for (auto&amp; pass : effect_-&gt;getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
                 pass.Apply();
                 int triCount = (GW - 1) * (GH - 1) * 2;
@@ -290,7 +313,7 @@ protected:
                     0, 0, GW * GH, 0, triCount);
             }
         }
-        gd.Present();
+        // No gd.Present(): Game presents in EndDraw, after Draw() returns.
     }
 
 private:
@@ -331,10 +354,10 @@ private:
             }
 
         auto&amp; gd = getGraphicsDeviceProperty();
-        dynamicVB_ = std::make_unique&lt;VertexBuffer&gt;(gd,
+        dynamicVB_ = std::make_unique&lt;DynamicVertexBuffer&gt;(gd,
             VertexPositionColor::getVertexDeclarationStatic(),
-            GW * GH, BufferUsage::None);   // dynamic!
-        dynamicVB_-&gt;SetData(gridVerts_.data(), GW * GH);
+            GW * GH, BufferUsage::WriteOnly);   // dynamic: rewritten every frame
+        dynamicVB_-&gt;SetData(gridVerts_.data(), 0, GW * GH, SetDataOptions::Discard);
 
         gridIB_ = std::make_unique&lt;IndexBuffer&gt;(gd,
             IndexElementSize::SixteenBits,
@@ -344,7 +367,8 @@ private:
 
     GraphicsDeviceManager graphics_;
     std::unique_ptr&lt;BasicEffect&gt;  effect_;
-    std::unique_ptr&lt;VertexBuffer&gt; staticVB_, dynamicVB_;
+    std::unique_ptr&lt;VertexBuffer&gt;        staticVB_;
+    std::unique_ptr&lt;DynamicVertexBuffer&gt; dynamicVB_;
     std::unique_ptr&lt;IndexBuffer&gt;  staticIB_, gridIB_;
     std::vector&lt;VertexPositionColor&gt; gridVerts_;
     float time_ = 0.0f;
@@ -356,9 +380,10 @@ int main() { BufferDemoGame g; g.Run(); }</code></pre>
 
       <h2>Key Points</h2>
       <ul>
-        <li>Use <code>BufferUsage::WriteOnly</code> for static geometry; <code>BufferUsage::None</code> for geometry updated each frame.</li>
-        <li>Never recreate a <code>VertexBuffer</code> each frame — allocate once at max capacity and call <code>SetData</code> to stream new data.</li>
-        <li>16-bit index buffers (<code>SixteenBits</code>) are sufficient for most meshes and use half the memory of 32-bit.</li>
+        <li><code>BufferUsage</code> only controls readability: <code>WriteOnly</code> makes <code>GetData</code> throw; <code>SetData</code> stays legal. Use <code>DynamicVertexBuffer</code>/<code>DynamicIndexBuffer</code> with <code>SetDataOptions::Discard</code> or <code>NoOverwrite</code> for data you rewrite every frame.</li>
+        <li>An ordinary <code>SetData</code> on a buffer that is currently bound (or on a texture bound to a sampler) throws <code>InvalidOperationException</code>; Discard/NoOverwrite on a dynamic buffer, or unbinding first, avoid it.</li>
+        <li>Never recreate a <code>VertexBuffer</code> each frame — allocate once at max capacity and call <code>SetData</code> to stream new data. Partial updates re-submit the whole buffer, so they do not save bandwidth.</li>
+        <li>16-bit index buffers (<code>SixteenBits</code>) are sufficient for most meshes and use half the memory of 32-bit; 32-bit indices (and draws over 65,535 primitives) need the HiDef graphics profile — see <a href="152-graphics-profiles.html">Tutorial 152</a>.</li>
         <li>Bind both vertex and index buffer before calling <code>DrawIndexedPrimitives</code>.</li>
         <li><code>DrawIndexedPrimitives</code> accepts a <code>baseVertex</code> offset so multiple meshes can share a single large vertex buffer.</li>
       </ul>
@@ -386,7 +411,7 @@ int main() { BufferDemoGame g; g.Run(); }</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

@@ -21,7 +21,7 @@
   "headline": "Tutorial 39: Depth Buffer and Z-Fighting",
   "url": "https://libcna.com/docs/tutorials/39-depth-buffer.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -91,10 +91,10 @@
         <ul>
           <li>How depth testing decides what is visible.</li>
           <li>The <code>DepthFormat</code> options and the stock <code>DepthStencilState</code> presets.</li>
-          <li>Turning depth off to draw UI on top of a 3D scene.</li>
-          <li>What causes z-fighting, and sorting transparent geometry back to front.</li>
+          <li>Turning depth off to draw UI on top of a 3D scene, and restoring it afterwards.</li>
+          <li>What causes z-fighting, sorting transparent geometry back to front, and how to draw a sky behind everything.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> (3D geometry to occlude) and <a href="22-blend-modes.html">Tutorial 22: Blend Modes and Alpha Compositing</a> (transparency is what forces manual sorting). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> (3D geometry to occlude) and <a href="22-blend-modes.html">Tutorial 22: Blend Modes and Alpha Compositing</a> (transparency is what forces manual sorting). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls by default, and <code>STUB</code> reports no 3D capability at all.</p>
       </div>
 
       <p>The depth buffer is the invisible safety net that makes 3D rendering work correctly — it ensures that closer objects always obscure farther ones without you having to sort geometry by hand. This tutorial explains how it works, how to control it with <code>DepthStencilState</code>, and how to deal with its two most common failure modes: z-fighting and transparent objects.</p>
@@ -110,37 +110,40 @@
       <ol>
         <li>Compute the fragment's depth value <em>d</em>.</li>
         <li>Read the stored depth for that pixel.</li>
-        <li>If <em>d &lt; stored</em> (fragment is closer), write the fragment's colour to the colour buffer and update the depth buffer with <em>d</em>.</li>
+        <li>If <em>d</em> passes the depth comparison against the stored value &mdash; with the default <code>DepthStencilState</code> that is <em>d &le; stored</em>, because XNA&rsquo;s default <code>DepthBufferFunction</code> is <code>LessEqual</code> &mdash; write the fragment's colour to the colour buffer and update the depth buffer with <em>d</em>.</li>
         <li>Otherwise, discard the fragment.</li>
       </ol>
       <p>This means draw order does not matter for opaque geometry — the GPU automatically keeps only the closest fragment for each pixel.</p>
 
       <h2>DepthFormat Enum</h2>
-      <p>The depth buffer format is set in <code>PresentationParameters</code> before the graphics device is created:</p>
-      <pre><code class="language-cpp">PresentationParameters pp;
-pp.DepthStencilFormat = DepthFormat::Depth24;        // 24-bit depth (recommended)
-pp.DepthStencilFormat = DepthFormat::Depth24Stencil8; // 24-bit depth + 8-bit stencil
-pp.DepthStencilFormat = DepthFormat::Depth16;         // 16-bit, lower precision
-pp.DepthStencilFormat = DepthFormat::None;            // no depth buffer at all (2D only)</code></pre>
-      <p><code>Depth24</code> is the standard choice. <code>Depth24Stencil8</code> adds a stencil channel used for effects like outlines, shadow volumes, and portals. Avoid <code>Depth16</code> for 3D scenes — the reduced precision increases z-fighting.</p>
+      <p>In a <code>Game</code> the graphics device is created for you by <code>GraphicsDeviceManager</code>, so the depth format is a <em>preference</em> you set on the manager, before <code>Run()</code> (or followed by <code>ApplyChanges()</code> once the device exists). The manager&rsquo;s default is <code>Depth24</code>:</p>
+      <pre><code class="language-cpp">// In your Game's constructor (graphics_ is the GraphicsDeviceManager):
+graphics_.setPreferredDepthStencilFormatProperty(DepthFormat::Depth24);         // 24-bit depth (the default)
+graphics_.setPreferredDepthStencilFormatProperty(DepthFormat::Depth24Stencil8); // 24-bit depth + 8-bit stencil
+graphics_.setPreferredDepthStencilFormatProperty(DepthFormat::Depth16);         // 16-bit, lower precision
+graphics_.setPreferredDepthStencilFormatProperty(DepthFormat::None);            // no depth buffer at all (2D only)
+// After the device exists (for example from a settings menu):
+// graphics_.ApplyChanges();</code></pre>
+      <p>If you build a <code>PresentationParameters</code> by hand, note that it has no public field: use <code>pp.setDepthStencilFormatProperty(DepthFormat::Depth24)</code>, and that its own default is <code>DepthFormat::None</code>. Render targets choose their own depth format in the <code>RenderTarget2D</code> constructor. Also remember that what a renderer <em>applies</em> can differ from what you asked for: some renderers always create a back-buffer depth buffer, and <code>SDL_GPU</code> normalises the request to a format its device supports.</p>
+      <p><code>Depth24</code> is the standard choice. <code>Depth24Stencil8</code> adds a stencil channel used for effects like outlines, shadow volumes, and portals; you must request it explicitly, because the manager&rsquo;s default <code>Depth24</code> has no stencil bits. Avoid <code>Depth16</code> for 3D scenes — the reduced precision increases z-fighting.</p>
 
       <h2>DepthStencilState.Default</h2>
-      <p><code>DepthStencilState::Default</code> enables both depth testing and depth writing. It is the correct state for rendering opaque 3D geometry:</p>
+      <p><code>DepthStencilState::Default</code> enables both depth testing and depth writing, with <code>CompareFunction::LessEqual</code> (XNA&rsquo;s default). It is the correct state for rendering opaque 3D geometry:</p>
       <pre><code class="language-cpp">// Applied automatically on GraphicsDevice reset, but set it explicitly
 // after any state change to be safe
 gd.setDepthStencilStateProperty(DepthStencilState::Default);</code></pre>
-      <p>Common built-in states:</p>
+      <p>There are exactly three built-in presets:</p>
       <div class="table-wrap">
       <table>
         <thead><tr><th>State</th><th>Depth test</th><th>Depth write</th><th>Use case</th></tr></thead>
         <tbody>
-          <tr><td><code>Default</code></td><td>On (Less)</td><td>On</td><td>Opaque 3D geometry</td></tr>
-          <tr><td><code>None</code></td><td>Off</td><td>Off</td><td>2D UI / HUD over 3D</td></tr>
-          <tr><td><code>Read</code></td><td>On (Less)</td><td>Off</td><td>Transparent objects, particles</td></tr>
-          <tr><td><code>DepthRead</code></td><td>On</td><td>Off</td><td>Alias for Read in some XNA versions</td></tr>
+          <tr><td><code>Default</code></td><td>On (LessEqual)</td><td>On</td><td>Opaque 3D geometry</td></tr>
+          <tr><td><code>DepthRead</code></td><td>On (LessEqual)</td><td>Off</td><td>Transparent objects, particles, decals</td></tr>
+          <tr><td><code>None</code></td><td>Off</td><td>Off</td><td>2D UI / HUD over 3D, and a sky drawn first</td></tr>
         </tbody>
       </table>
       </div>
+      <p>There is no <code>DepthStencilState::Read</code>; <code>DepthRead</code> is the name of the &ldquo;test on, write off&rdquo; preset. Build your own <code>DepthStencilState</code> object when you need a different comparison. A state object becomes immutable once it has been set on a device, so finish configuring it first.</p>
 
       <h2>Disabling Depth Test for UI</h2>
       <p>2D UI elements (health bars, menus, subtitles) should always draw on top of the 3D world regardless of the depth values their polygons happen to produce. Use <code>DepthStencilState::None</code> before your UI pass:</p>
@@ -154,16 +157,19 @@ spriteBatch-&gt;Begin();
 DrawHUD();
 spriteBatch-&gt;End();
 
-// Restore for next frame's 3D pass
+// Restore for the next 3D pass
 gd.setDepthStencilStateProperty(DepthStencilState::Default);</code></pre>
+      <p>The explicit <code>None</code> above is belt and braces: <code>SpriteBatch::Begin</code> applies its own depth-stencil state anyway (<code>None</code> unless you pass one). What is <em>not</em> optional is the restore line at the end. <code>SpriteBatch</code> does not put back the depth-stencil, blend, sampler-0 or rasterizer state it changed, so a 3D pass that follows a HUD would otherwise draw with depth testing off.</p>
 
       <h2>Z-Fighting Causes and Fixes</h2>
       <p>Z-fighting is the flickering you see when two coplanar (or nearly coplanar) surfaces compete for the same depth value. Common scenarios: a decal placed exactly on a wall, a road drawn exactly on top of terrain.</p>
       <p>Root cause: depth values are stored at finite precision. Two surfaces at nearly identical depth round to the same integer, so which one "wins" flips frame to frame depending on floating-point evaluation order.</p>
 
-      <p><strong>Fix 1 — Small translation bias:</strong> Push the foreground surface slightly toward the camera:</p>
-      <pre><code class="language-cpp">// Decal world matrix — offset 1mm toward camera
+      <p><strong>Fix 1 — Separate the surfaces:</strong> Push the foreground surface slightly toward the viewer <em>along the surface normal</em>. Translating along an arbitrary axis is not &ldquo;toward the camera&rdquo;:</p>
+      <pre><code class="language-cpp">// A decal lying in its local XZ plane, so its local +Y is the surface normal.
+// Lift it 1 mm along that normal (towards a viewer on the normal side) before the base world matrix.
 Matrix decalWorld = Matrix::CreateTranslation(0, 0.001f, 0) * baseWorld;</code></pre>
+      <p>XNA also gives you <code>RasterizerState::setDepthBiasProperty</code> and <code>setSlopeScaleDepthBiasProperty</code> (negative values pull a surface toward the camera), and CNA passes both to the renderer. The magnitude that works depends on the renderer and depth format (CNA&rsquo;s own Vulkan test needs very large negative values, because Vulkan scales the constant factor by the format&rsquo;s resolution) and this page has not verified every renderer, so treat the bias as a per-renderer tuning knob and prefer real geometric separation.</p>
 
       <p><strong>Fix 2 — Increase the near plane:</strong> Depth precision is non-linear and concentrates near the camera. Bringing the near plane from 0.01 to 0.1 dramatically improves precision at typical play distances:</p>
       <pre><code class="language-cpp">Matrix proj = Matrix::CreatePerspectiveFieldOfView(
@@ -172,7 +178,7 @@ Matrix decalWorld = Matrix::CreateTranslation(0, 0.001f, 0) * baseWorld;</code><
     1000.0f  // far
 );</code></pre>
 
-      <p><strong>Fix 3 — Use Depth24 not Depth16:</strong> 16-bit depth gives only 65536 distinct values across the entire depth range. 24-bit gives 16 million. For any 3D scene, always request <code>DepthFormat::Depth24</code>.</p>
+      <p><strong>Fix 3 — Use Depth24 not Depth16:</strong> 16-bit depth gives only 65536 distinct values across the entire depth range. 24-bit gives 16 million. For any 3D scene, request <code>DepthFormat::Depth24</code> (already the manager&rsquo;s default).</p>
 
       <h2>Sorting Transparent Objects</h2>
       <p>Transparent objects (alpha-blended geometry) <em>cannot</em> use the depth buffer to composite correctly because blending requires the background colour to already be in the colour buffer when the fragment is written. If you write depth for transparent fragments, closer transparent objects will silently block farther ones that should be visible through them.</p>
@@ -181,7 +187,7 @@ Matrix decalWorld = Matrix::CreateTranslation(0, 0.001f, 0) * baseWorld;</code><
 DepthStencilState depthReadOnly;
 depthReadOnly.setDepthBufferEnableProperty(true);
 depthReadOnly.setDepthBufferWriteEnableProperty(false);
-depthReadOnly.setDepthBufferFunctionProperty(CompareFunction::Less);
+depthReadOnly.setDepthBufferFunctionProperty(CompareFunction::LessEqual);   // same as the DepthRead preset
 
 // Sort transparent objects back-to-front
 std::sort(transparentObjects.begin(), transparentObjects.end(),
@@ -196,12 +202,14 @@ gd.setBlendStateProperty(BlendState::AlphaBlend);
 for (auto&amp; obj : transparentObjects)
     DrawTransparentObject(obj);</code></pre>
 
-      <h2>Full Example: Transparent Quads + Skybox Depth Trick</h2>
-      <p>The demo renders three coloured transparent quads sorted back-to-front, then a skybox drawn <em>last</em> using a special <code>DepthStencilState</code> that passes all depth tests but writes nothing — filling only pixels not yet drawn by any opaque or transparent geometry:</p>
+      <h2>Full Example: Transparent Quads + Skybox Depth Trick (Sky First)</h2>
+      <p>The demo draws a dark-blue sky quad <em>first</em> with depth testing and depth writing off, then an opaque floor with the default state, then three coloured transparent quads sorted back-to-front with <code>DepthRead</code>-style state (test on, write off). Drawing the sky first is the simplest correct way to put something behind everything: it needs no special depth comparison, and everything drawn later simply covers it.</p>
+      <p>A caution about the tempting alternative. Drawing the sky <em>last</em> with <code>CompareFunction::Always</code> is wrong: <code>Always</code> passes every fragment, so the sky would paint over all the geometry already drawn. The correct &ldquo;last&rdquo; variant (which saves overdraw) uses <code>CompareFunction::LessEqual</code> with depth writes off <em>and</em> forces the sky to the far plane (<code>z = w</code> in a custom vertex shader), so it passes only where the cleared depth value of 1.0 is still untouched. That needs a shader you write yourself, which is why the stock-effect demo below draws the sky first.</p>
       <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Game.hpp"
 #include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
 #include "Microsoft/Xna/Framework/Graphics/BasicEffect.hpp"
 #include "Microsoft/Xna/Framework/Graphics/VertexBuffer.hpp"
+#include "Microsoft/Xna/Framework/Graphics/IndexBuffer.hpp"
 #include "Microsoft/Xna/Framework/Graphics/VertexPositionColor.hpp"
 #include "Microsoft/Xna/Framework/Graphics/BlendState.hpp"
 #include "Microsoft/Xna/Framework/Graphics/DepthStencilState.hpp"
@@ -223,6 +231,7 @@ public:
     DepthDemoGame() : graphics_(this) {
         graphics_.setPreferredBackBufferWidthProperty(800);
         graphics_.setPreferredBackBufferHeightProperty(600);
+        graphics_.setPreferredDepthStencilFormatProperty(DepthFormat::Depth24);  // the default
     }
 
 protected:
@@ -239,15 +248,11 @@ protected:
 
         BuildQuadBuffer();
 
-        // Custom DSS: depth test always passes, no writes — for skybox
-        skyboxDSS_.setDepthBufferEnableProperty(true);
-        skyboxDSS_.setDepthBufferWriteEnableProperty(false);
-        skyboxDSS_.setDepthBufferFunctionProperty(CompareFunction::Always);
-
-        // DSS for transparent objects: test (less), no write
+        // DSS for transparent objects: test (LessEqual), no write.
+        // This is exactly the DepthStencilState::DepthRead preset, built by hand to show the fields.
         transparentDSS_.setDepthBufferEnableProperty(true);
         transparentDSS_.setDepthBufferWriteEnableProperty(false);
-        transparentDSS_.setDepthBufferFunctionProperty(CompareFunction::Less);
+        transparentDSS_.setDepthBufferFunctionProperty(CompareFunction::LessEqual);
     }
 
     void Update(GameTime&amp; gt) override {
@@ -267,12 +272,18 @@ protected:
         Matrix proj = Matrix::CreatePerspectiveFieldOfView(
             MathHelper::PiOver4, 800.0f / 600.0f, 0.1f, 100.0f);
 
-        // --- 1. Draw opaque geometry (if any) with default DSS ---
-        gd.setDepthStencilStateProperty(DepthStencilState::Default);
+        // --- 1. Sky FIRST: no depth test, no depth write, so it only paints colour ---
+        // Everything drawn afterwards covers it wherever geometry exists, and the
+        // depth buffer still holds the cleared far value under the sky.
+        gd.setDepthStencilStateProperty(DepthStencilState::None);
         gd.setBlendStateProperty(BlendState::Opaque);
+        DrawSky(view, proj);
+
+        // --- 2. Opaque geometry with the default DSS (test + write) ---
+        gd.setDepthStencilStateProperty(DepthStencilState::Default);
         DrawFloor(view, proj);
 
-        // --- 2. Sort and draw transparent quads ---
+        // --- 3. Sort and draw transparent quads back-to-front ---
         std::sort(quads_.begin(), quads_.end(),
             [&amp;camPos](const TransparentQuad&amp; a, const TransparentQuad&amp; b) {
                 return Vector3::DistanceSquared(a.position, camPos) &gt;
@@ -286,19 +297,12 @@ protected:
             Matrix world = Matrix::CreateTranslation(q.position);
             DrawColoredQuad(q.color, world, view, proj);
         }
-
-        // --- 3. Draw skybox LAST with always-pass depth, no write ---
-        // The skybox fills pixels not touched by any earlier draw call.
-        gd.setDepthStencilStateProperty(skyboxDSS_);
-        gd.setBlendStateProperty(BlendState::Opaque);
-        DrawSkybox(view, proj);
-
-        gd.Present();
+        // No gd.Present(): Game presents in EndDraw, after Draw() returns.
     }
 
 private:
     void BuildQuadBuffer() {
-        // Unit quad centred at origin in XY plane
+        // Unit quad centred at origin in XY plane, wound clockwise as seen from +Z
         VertexPositionColor verts[4] = {
             { {-0.4f,  0.4f, 0}, Color::White },
             { { 0.4f,  0.4f, 0}, Color::White },
@@ -321,10 +325,13 @@ private:
         effect_-&gt;setWorldProperty(world);
         effect_-&gt;setViewProperty(view);
         effect_-&gt;setProjectionProperty(proj);
-        // Tint the white quad with the desired colour via DiffuseColor
+        // Tint the white quad with the colour via DiffuseColor. ToVector3() drops the
+        // alpha, so it has to be passed separately; BasicEffect premultiplies it,
+        // which is what BlendState::AlphaBlend (One, InverseSourceAlpha) expects.
         effect_-&gt;setDiffuseColorProperty(c.ToVector3());
+        effect_-&gt;setAlphaProperty(c.getAProperty() / 255.0f);
         gd.SetVertexBuffer(quadVB_.get());
-        gd.SetIndexBuffer(quadIB_.get());
+        gd.setIndicesProperty(quadIB_.get());
         for (auto&amp; pass : effect_-&gt;getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
             pass.Apply();
             gd.DrawIndexedPrimitives(PrimitiveType::TriangleList, 0, 0, 4, 0, 2);
@@ -332,18 +339,19 @@ private:
     }
 
     void DrawFloor(Matrix view, Matrix proj) {
-        Matrix world = Matrix::CreateRotationX(MathHelper::PiOver2) *
+        // Lay the quad flat (-90 degrees about X turns its +Z face to face up), widen it,
+        // and drop it below the camera so the camera sees the front side.
+        Matrix world = Matrix::CreateScale(6.0f) *
+                       Matrix::CreateRotationX(-MathHelper::PiOver2) *
                        Matrix::CreateTranslation(0, -0.6f, -2);
-        effect_-&gt;setDiffuseColorProperty({0.4f, 0.4f, 0.4f});
         DrawColoredQuad(Color::Gray, world, view, proj);
     }
 
-    void DrawSkybox(Matrix view, Matrix proj) {
+    void DrawSky(Matrix view, Matrix proj) {
         // A large quad behind everything — represents the sky
         Matrix world = Matrix::CreateScale(10) *
                        Matrix::CreateTranslation(0, 0, -5);
-        effect_-&gt;setDiffuseColorProperty({0.1f, 0.2f, 0.5f});  // dark blue sky
-        DrawColoredQuad(Color::White, world, view, proj);
+        DrawColoredQuad(Color(25, 51, 128, 255), world, view, proj);   // dark blue sky
     }
 
     GraphicsDeviceManager graphics_;
@@ -351,7 +359,6 @@ private:
     std::unique_ptr&lt;VertexBuffer&gt; quadVB_;
     std::unique_ptr&lt;IndexBuffer&gt;  quadIB_;
     std::vector&lt;TransparentQuad&gt;  quads_;
-    DepthStencilState skyboxDSS_;
     DepthStencilState transparentDSS_;
     float time_ = 0.0f;
 };
@@ -361,12 +368,12 @@ int main() { DepthDemoGame g; g.Run(); }</code></pre>
       <h2>Key Points</h2>
       <ul>
         <li>Clear both colour and depth buffers at the start of every frame.</li>
-        <li>Use <code>DepthFormat::Depth24</code> for all 3D scenes — never <code>Depth16</code>.</li>
-        <li>Draw opaque geometry with <code>DepthStencilState::Default</code> (test + write).</li>
-        <li>Draw transparent geometry with depth test on, depth write off, sorted back-to-front.</li>
-        <li>Draw UI with <code>DepthStencilState::None</code> so it always appears on top.</li>
-        <li>Fix z-fighting with a small translation bias on the foreground surface, or by increasing the near plane distance.</li>
-        <li>The skybox trick: render last with <code>CompareFunction::Always</code> and no depth write, so it fills only undrawn pixels.</li>
+        <li>Use <code>DepthFormat::Depth24</code> (the <code>GraphicsDeviceManager</code> default) for 3D scenes — avoid <code>Depth16</code>. Request <code>Depth24Stencil8</code> if you need stencil.</li>
+        <li>Draw opaque geometry with <code>DepthStencilState::Default</code> (test + write, <code>LessEqual</code>).</li>
+        <li>Draw transparent geometry with <code>DepthStencilState::DepthRead</code> (test on, write off), sorted back-to-front; set its alpha with <code>setAlphaProperty</code>, because <code>Color::ToVector3()</code> drops it.</li>
+        <li>Draw UI with <code>DepthStencilState::None</code> so it always appears on top, and restore your 3D states afterwards: <code>SpriteBatch</code> does not.</li>
+        <li>Fix z-fighting by separating the surfaces along their normal, by increasing the near plane distance, or (renderer-dependent) with <code>RasterizerState</code> depth bias.</li>
+        <li>Put a sky behind everything by drawing it first with <code>DepthStencilState::None</code>; drawing it last with <code>CompareFunction::Always</code> would overwrite the whole scene.</li>
       </ul>
 
       <nav class="docs-pagination" aria-label="Page navigation">
@@ -392,7 +399,7 @@ int main() { DepthDemoGame g; g.Run(); }</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

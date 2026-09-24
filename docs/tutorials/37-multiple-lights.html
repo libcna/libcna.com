@@ -21,7 +21,7 @@
   "headline": "Tutorial 37: Multiple Light Sources",
   "url": "https://libcna.com/docs/tutorials/37-multiple-lights.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -91,9 +91,9 @@
         <ul>
           <li>Why <code>BasicEffect</code> stops at three directional lights.</li>
           <li>Faking point lights, and splitting a scene across draw calls with different effects.</li>
-          <li>When to give up and write a custom shader instead.</li>
+          <li>What this snapshot adds beyond three lights: one shadow-capable point or spot light, clustered many-light shading, and custom shaders.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="32-basiceffect.html">Tutorial 32: BasicEffect and 3D Lighting</a> &mdash; this starts from the three-light rig set up there. Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="32-basiceffect.html">Tutorial 32: BasicEffect and 3D Lighting</a> &mdash; this starts from the three-light rig set up there. Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls by default, and <code>STUB</code> reports no 3D capability at all.</p>
       </div>
 
       <p><code>BasicEffect</code> supports exactly three directional lights. This tutorial shows how to configure them for cinematic three-point lighting, how to approximate point lights, and when to reach for a custom shader instead.</p>
@@ -116,14 +116,14 @@ effect.DirectionalLight2.setDiffuseColorProperty({0.5f, 0.5f, 0.5f});   // rim</
 
       <figure class="card">
         <img src="../../img/oracle/multilight_textured_quad.png" alt="A flatly shaded mid-grey square on a cornflower-blue background, the result of three directional lights summed on a front-facing textured quad." width="256" height="256" loading="lazy">
-        <p>All three directional light slots active on a flat, front-facing textured quad. Because the quad has one normal and directional lights have no falloff, the three contributions sum to a single uniform value across the whole face &mdash; the limitation this tutorial is about. This is genuine Microsoft XNA 4.0 runtime output from CNA's oracle corpus (<code>tools/xna-oracle/</code>), which CNA's DIRECTX9 renderer is diffed against at <code>--tolerance 0</code>.</p>
+        <p>All three directional light slots active on a flat, front-facing textured quad. Because the quad has one normal and directional lights have no falloff, the three contributions sum to a single uniform value across the whole face &mdash; the limitation this tutorial is about. This is genuine Microsoft XNA 4.0 runtime output from CNA's oracle corpus (<code>tools/xna-oracle/</code>, captured under Wine + DXVK on Linux), against which CNA's DIRECTX9 renderer is diffed at <code>--tolerance 0</code> by hand, outside CI.</p>
       </figure>
 
       <h2>Simulating Point Lights (BasicEffect Workaround)</h2>
       <p>A point light emits in all directions from a single position in world space. BasicEffect has no native point-light support, but you can approximate one per object by computing the direction vector from the light position to the object's centre and updating <code>DirectionalLight0</code> before each draw call:</p>
       <pre><code class="language-cpp">// Per-object light direction update
 Vector3 lightPos = {3, 4, 2};
-Vector3 objectCentre = world.Translation();
+Vector3 objectCentre = world.getTranslationProperty();
 Vector3 toLight = Vector3::Normalize(lightPos - objectCentre);
 
 effect.DirectionalLight0.setDirectionProperty(-toLight);  // direction points away from light
@@ -133,13 +133,20 @@ DrawObject();</code></pre>
 
       <h2>Multiple Draw Calls with Different Effects</h2>
       <p>If objects truly need independent lighting (e.g., an outdoor scene and an indoor area rendered in the same frame), create multiple <code>BasicEffect</code> instances with different light configurations and assign each to the relevant <code>ModelMeshPart</code>:</p>
-      <pre><code class="language-cpp">// Assign different effect instances per mesh part
-indoorModel-&gt;Meshes[0].MeshParts[0].Effect = indoorEffect;
-outdoorModel-&gt;Meshes[0].MeshParts[0].Effect = outdoorEffect;
+      <pre><code class="language-cpp">// Load&lt;Model&gt; returns the Model by value (see Tutorial 35), so use '.' not '-&gt;'.
+Model indoorModel  = getContentProperty().Load&lt;Model&gt;("models/indoor");
+Model outdoorModel = getContentProperty().Load&lt;Model&gt;("models/outdoor");
+
+// Assign different effect instances per mesh part. setEffectProperty takes a raw
+// Effect* and does not take ownership: keep indoorEffect / outdoorEffect alive
+// (for example as members) for as long as the models draw with them.
+indoorModel.getMeshesProperty()[0]-&gt;getMeshPartsProperty()[0]-&gt;setEffectProperty(&amp;indoorEffect);
+outdoorModel.getMeshesProperty()[0]-&gt;getMeshPartsProperty()[0]-&gt;setEffectProperty(&amp;outdoorEffect);
 
 // Draw — each part uses its own lighting config
-indoorModel-&gt;Draw(world, view, proj);
-outdoorModel-&gt;Draw(world, view, proj);</code></pre>
+indoorModel.Draw(world, view, proj);
+outdoorModel.Draw(world, view, proj);</code></pre>
+      <p><code>Model::Draw</code> requires every part&rsquo;s effect to implement <code>IEffectMatrices</code> and throws <code>InvalidOperationException</code> otherwise; <code>BasicEffect</code> does. Note also that models imported from glTF are given <code>PbrEffect</code>/<code>SkinnedPbrEffect</code> unless the material is unlit, so a <code>dynamic_cast&lt;BasicEffect*&gt;</code> on a glTF part usually fails; assign your own <code>BasicEffect</code> as above, or downcast to <code>IEffectLights</code> for lighting.</p>
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
@@ -148,15 +155,67 @@ outdoorModel-&gt;Draw(world, view, proj);</code></pre>
 
       <h2>EnvironmentMapEffect for Ambient</h2>
       <p>CNA includes <code>EnvironmentMapEffect</code> for cube-map based reflective ambient lighting. It reads from a <code>TextureCube</code> to give surfaces a sense of the surrounding environment without tracing rays:</p>
-      <pre><code class="language-cpp">auto envEffect = std::make_unique&lt;EnvironmentMapEffect&gt;(gd);
-envEffect-&gt;setEnvironmentMapProperty(skyCubeMap);
-envEffect-&gt;setEnvironmentMapAmountProperty(0.4f);   // 40% reflection blend
-envEffect-&gt;setFresnelFactorProperty(1.0f);
-mesh.MeshParts[0].Effect = std::move(envEffect);</code></pre>
-      <p>Combine with <code>BasicEffect</code> for primary directional lighting — render the mesh twice or assign <code>EnvironmentMapEffect</code> only to reflective parts (glass, metal).</p>
+      <pre><code class="language-cpp">// envEffect_ is a std::unique_ptr&lt;EnvironmentMapEffect&gt; member, so it outlives the model
+envEffect_ = std::make_unique&lt;EnvironmentMapEffect&gt;(gd);
+envEffect_-&gt;setEnvironmentMapProperty(skyCubeMap);        // a TextureCube*
+envEffect_-&gt;setEnvironmentMapAmountProperty(0.4f);         // 40% reflection blend
+envEffect_-&gt;setFresnelFactorProperty(1.0f);
+envEffect_-&gt;EnableDefaultLighting();                       // it has the three directional lights too
+mesh-&gt;getMeshPartsProperty()[0]-&gt;setEffectProperty(envEffect_.get());   // not owned by the part</code></pre>
+      <p><code>EnvironmentMapEffect</code> implements <code>IEffectLights</code> itself: it carries the same three directional lights, <code>EnableDefaultLighting()</code> and <code>setLightingEnabledProperty</code> as <code>BasicEffect</code>, so a reflective part needs no second pass for its directional lighting. Assign it only to the reflective parts (glass, metal) and leave the rest on <code>BasicEffect</code>.</p>
+
+      <h2>One Shadow-Capable Point or Spot Light (CNAEXT)</h2>
+      <p>The three directional slots are still the whole XNA-compatible story, but this snapshot adds one <em>positional</em> light on top of them. <code>BasicEffect</code>, <code>SkinnedEffect</code>, <code>PbrEffect</code> and <code>SkinnedPbrEffect</code> accept a single <code>PunctualLightEXT</code> (a point or a spot light, with optional shadow) through <code>setPunctualLightEXT</code>. These members are always compiled; they do not need <code>CNA_CNAEXT</code>. The budget is one per draw, deliberately: each extra shadowed light is another full shadow-generation pass, and six of them for a point light.</p>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/PunctualLightEXT.hpp"
+
+PunctualLightEXT lamp;
+lamp.Kind         = PunctualLightKindEXT::Point;    // or Spot (then set Direction, InnerAngle, OuterAngle)
+lamp.Position     = Vector3(0.0f, 2.0f, 1.0f);      // world space
+lamp.DiffuseColor = Vector3(1.0f, 0.8f, 0.5f);
+lamp.Range        = 12.0f;                           // nothing is lit past this distance
+// ShadowCube / ShadowMap left null: the light is lit but casts no shadow.
+effect_-&gt;setPunctualLightEXT(lamp);</code></pre>
+      <p>The light is only <em>honoured</em> by renderers whose shaders implement it: the five GL-family identities (<code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL1</code>, <code>WEBGL2</code>), <code>OPENGL4</code>, <code>VULKAN</code>, <code>SDL_GPU</code> and <code>WEBGPU</code>. On the others the state is accepted and ignored, which shows up as an unlit result rather than an error. Producing the shadow cube or spot map itself is engine-layer work (<code>CubeShadowMap</code>, <code>SpotShadowMap</code>, behind <code>CNA_CNAEXT=ON</code>); the always-compiled part is the receiving side shown here. See the <code>PunctualLightEXT</code> header for the meaning of every field.</p>
+
+      <h2>Many Lights: ClusteredForwardEffect (CNAEXT engine layer)</h2>
+      <p>For scenes that really need dozens or hundreds of lights, the engine layer has a clustered forward effect: the geometry is drawn once, and each fragment walks only the lights of its own screen-space cluster, up to <code>ClusteredForwardEffect::kMaxLightsPerFragment</code> = 128. It exists only when CNA is configured with <code>-DCNA_CNAEXT=ON</code> (default OFF, and no CI workflow builds it), its interface is not an ABI guarantee, and it needs a renderer that executes shader-effect source, so always ask <code>isSupported()</code> first. The shape of a frame, taken from CNA&rsquo;s own <a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics-ext/examples/cnaext_clustered_lights_test.cpp" target="_blank" rel="noopener"><code>cnaext_clustered_lights_test.cpp</code></a>:</p>
+      <pre><code class="language-cpp">#include "CNA/Graphics/ClusteredForwardEffect.hpp"
+#include "CNA/Graphics/ClusteredLightAssignment.hpp"
+#include "CNA/Graphics/ClusteredLightBuffer.hpp"
+#include "CNA/Graphics/ClusteredLightGrid.hpp"
+#include "CNA/Graphics/ClusteredLightSetEXT.hpp"
+using namespace CNA::Graphics;
+
+ClusteredForwardEffect effect(device);
+if (!effect.isSupported()) return;                 // this renderer cannot run it
+
+ClusteredLightSetEXT lights;
+for (int i = 0; i &lt; 200; ++i) {
+    ClusteredLightEXT light;
+    light.Type      = ClusteredLightType::Point;
+    light.Position  = Vector3(float(i % 20) - 10.0f, 1.0f, float(i / 20) - 5.0f);
+    light.Range     = 4.0f;
+    light.Intensity = 6.0f;
+    light.Color     = Vector3(1.0f, 0.9f, 0.8f);
+    lights.add(light);
+}
+
+ClusteredLightGrid grid;
+grid.setProjection(proj, 0.5f, 120.0f);            // the projection's near / far planes
+ClusteredLightAssignment assignment;
+assignment.assign(grid, view, lights.collectBounds());
+ClusteredLightBuffer buffer(device);
+buffer.upload(lights, grid, assignment);
+
+effect.setBaseColor(Vector3(0.8f, 0.8f, 0.8f));
+effect.setRoughness(0.45f);
+effect.begin(Matrix::getIdentityProperty(), view, proj, cameraPosition, buffer);
+effect.getEffect()-&gt;Apply();
+device.DrawUserPrimitives(PrimitiveType::TriangleList, verts, 0, triangleCount);</code></pre>
+      <p>It is a separate effect rather than a <code>PbrEffect</code> extension, so you give up <code>PbrEffect</code>&rsquo;s texture set and its shadowed punctual light in exchange for the light count. Its vertex format is position then normal (the example draws <code>VertexPositionNormalTexture</code>).</p>
 
       <h2>Custom Shader for More Lights</h2>
-      <p>For scenes requiring true point lights, spotlights, or more than three light sources, write a custom GLSL/HLSL effect using CNA's <code>Effect</code> class. The fragment shader loops over a light array stored in a uniform buffer:</p>
+      <p>For a light model of your own, write a custom shader. The XNA-shaped route is a compiled Effect Framework <code>.xnb</code> (see below); the CNA-native route is <code>ShaderEffect</code> (CNAEXT), whose source is per renderer dialect (GLSL desktop/ES, HLSL, WGSL, SPIR-V, &hellip;). The fragment shader loops over a light array stored in a uniform buffer:</p>
       <pre><code class="language-cpp">// GLSL fragment shader excerpt (multi-light forward rendering)
 // uniform PointLight lights[8];
 // ...
@@ -168,7 +227,7 @@ mesh.MeshParts[0].Effect = std::move(envEffect);</code></pre>
 //     result += max(dot(N, L), 0.0) * lights[i].color * albedo * attenuation;
 // }
 // fragColor = vec4(result, 1.0);</code></pre>
-      <p>For XNA/FNA D3D9 Effect Framework bytecode on a capable renderer build, load the XNB as <code>content.Load&lt;std::shared_ptr&lt;Effect&gt;&gt;(...)</code> and set reflected parameters through <code>effect-&gt;getParametersProperty()["lightCount"]</code>. For renderer-native source such as the GLSL excerpt above, use <code>ShaderEffect</code> and its <code>SetUniformXxx()</code> methods instead.</p>
+      <p>For XNA/FNA D3D9 Effect Framework bytecode, load the XNB as <code>getContentProperty().Load&lt;std::shared_ptr&lt;Effect&gt;&gt;(...)</code> and set reflected parameters through <code>effect-&gt;getParametersProperty()["lightCount"]-&gt;SetValue(...)</code> (<code>operator[](name)</code> returns an <code>EffectParameter*</code>). This needs a renderer with a compiled-effect runtime: <code>FNA3D</code> always, and 13 more identities in 9 more families (the five GL identities, <code>SDL_GPU</code>, <code>VULKAN</code>, <code>WEBGPU</code>, <code>SOFTWARE</code>, <code>OPENGL4</code>, <code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code>) but only when the matching <code>CNA_*_COMPILED_EFFECTS</code> build option was switched on (all default OFF). A default configuration reports <code>CompiledEffects</code> true on <code>FNA3D</code> only. For renderer-native source such as the GLSL excerpt above, use <code>ShaderEffect</code> and its <code>SetUniformXxx()</code> methods instead (with array setters such as <code>SetUniformVec3Array</code> and <code>SetUniformMat4Array</code> for light arrays).</p>
 
       <h2>Full Example: Three-Point Lighting Rig</h2>
       <p>This demo implements classic three-point lighting: a warm yellow key light (simulated sun), a cool blue fill, and a white rim light from behind. The cube rotates slowly; pressing <kbd>D</kbd> animates the sun direction to simulate time of day.</p>
@@ -254,7 +313,7 @@ protected:
             gd.DrawIndexedPrimitives(PrimitiveType::TriangleList,
                 0, 0, 24, 0, 12);
         }
-        gd.Present();
+        // No gd.Present(): Game presents in EndDraw, after Draw() returns.
     }
 
 private:
@@ -270,8 +329,11 @@ private:
             verts[f*4+2] = { c + right*0.5f - up*0.5f, n, Vector2(1, 1) };
             verts[f*4+3] = { c - right*0.5f - up*0.5f, n, Vector2(0, 1) };
             int b = f*6, v = f*4;
-            idx[b+0]=v; idx[b+1]=v+1; idx[b+2]=v+2;
-            idx[b+3]=v; idx[b+4]=v+2; idx[b+5]=v+3;
+            // The corners above run counter-clockwise as seen from outside, but XNA
+            // front faces are CLOCKWISE (the default rasteriser state culls counter-
+            // clockwise triangles), so emit each triangle in the reverse order.
+            idx[b+0]=v; idx[b+1]=v+2; idx[b+2]=v+1;
+            idx[b+3]=v; idx[b+4]=v+3; idx[b+5]=v+2;
         };
         face(0,  Vector3::Forward,  Vector3::Up,       Vector3::Right);
         face(1,  Vector3::Backward, Vector3::Up,       Vector3::Left);
@@ -306,7 +368,7 @@ int main() { ThreeLightGame g; g.Run(); }</code></pre>
         <li><code>BasicEffect</code> has exactly three directional light slots; directional lights have no world position.</li>
         <li>Call <code>EnableDefaultLighting()</code> as a starting point, then override individual light colours and directions.</li>
         <li>Approximate point lights per-object by computing a direction vector each draw call.</li>
-        <li>For more than three lights, write a custom <code>Effect</code> with a light array in the fragment shader.</li>
+        <li>This snapshot adds one shadow-capable point or spot light (<code>setPunctualLightEXT</code>, always compiled) and, with <code>CNA_CNAEXT=ON</code>, <code>ClusteredForwardEffect</code> for up to 128 lights per fragment. For any other light model write a <code>ShaderEffect</code> or a compiled effect with a light array.</li>
         <li>Keep draw call count low on mobile and low-end targets — each state change has CPU cost.</li>
       </ul>
 
@@ -333,7 +395,7 @@ int main() { ThreeLightGame g; g.Run(); }</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
