@@ -18,7 +18,7 @@
   "headline": "Tutorial 07: Working with Colors",
   "url": "https://libcna.com/docs/tutorials/07-colors.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -155,31 +155,39 @@ Color orange(255, 128, 0);
 Color semiBlue(0, 0, 255, 128);  // 50% transparent blue
 
 // From normalized floats [0.0f, 1.0f] — note the f suffix
-Color warm(1.0f, 0.5f, 0.0f, 1.0f);  // same as (255,127,0,255)
+Color warm(1.0f, 0.5f, 0.0f, 1.0f);  // (255,128,0,255): 127.5 rounds to the even neighbour
 
-// Copy and modify alpha
+// Copy the RGB of another colour with a new alpha (straight alpha,
+// the same RGB bytes; see "Transparency and Alpha" below)
 Color c = Color::Red;
-Color fadeRed = Color(c, 128);  // Red at 50% alpha</code></pre>
+Color redA128 = Color(c.getRProperty(), c.getGProperty(), c.getBProperty(),
+                      static_cast&lt;bytecs&gt;(128));</code></pre>
+      <p>The float constructors <strong>saturate</strong> out-of-range values and <strong>round to the nearest integer, with exact ties going to the even neighbour</strong> (NaN becomes 0). That is XNA 4.0&rsquo;s own behaviour, measured against the real runtime. The alpha.1 release truncated instead, so the <code>0.5f</code> above gave 127 there and gives 128 in this snapshot. <code>Color::Lerp</code> and <code>Color::Multiply</code>, on the other hand, still truncate, exactly as XNA does.</p>
       <p>The float constructor is useful when you compute colors algorithmically, for example when using sine waves for pulsing effects:</p>
       <pre><code class="language-cpp">float t = static_cast&lt;float&gt;(gameTime.getTotalGameTimeProperty().getTotalSecondsProperty());
 float pulse = (std::sin(t * 3.0f) + 1.0f) * 0.5f;  // 0..1
 Color glowColor(pulse, 0.2f, 1.0f - pulse, 1.0f);   // blue-to-red glow</code></pre>
 
       <h2 id="color-arithmetic">Color Arithmetic</h2>
-      <p>CNA's <code>Color</code> supports several static utility methods for combining colors:</p>
-      <pre><code class="language-cpp">// Multiply two colors channel-by-channel (values clamped to [0,255])
-// Used for tinting: multiplying by White gives the original color.
-// Multiplying by a dark color darkens.
-Color tinted = Color::Multiply(Color::Red, 0.5f);  // dark red
+      <p>Like XNA&rsquo;s, CNA&rsquo;s <code>Color</code> deliberately has a small arithmetic surface: <code>Color::Multiply(color, scale)</code> and the equivalent <code>operator*</code> (<code>color * scale</code>, plus <code>scale * color</code> as a CNA extension), <code>Color::Lerp</code>, and conversion to <code>Vector3</code>/<code>Vector4</code> with <code>ToVector3()</code>/<code>ToVector4()</code>. There is no <code>Color::Add</code> or <code>Color::Subtract</code>.</p>
+      <pre><code class="language-cpp">// Scale ALL FOUR channels (R, G, B and A) by a float; results are clamped
+// to [0,255] and truncated. Multiplying by less than 1 darkens AND fades.
+Color tinted = Color::Multiply(Color::Red, 0.5f);   // (127, 0, 0, 127)
+Color same   = Color::Red * 0.5f;                   // identical, operator form
 
-// Add two colors (saturates at 255) — useful for additive blending
-Color bright = Color::Add(Color::Red, Color(50, 50, 0, 0));
+// Adding two colors: do the arithmetic in Vector4 (0..1 floats), then
+// convert back. The Color(Vector4) constructor saturates at 1.0 for you.
+Vector4 sum = Color::Red.ToVector4() + Color(50, 50, 0, 0).ToVector4();
+Color bright(sum);                                  // (255, 50, 0, 255)</code></pre>
+      <p>Because <code>Multiply</code> scales alpha too, it is <em>not</em> a pure brightness control:</p>
+      <pre><code class="language-cpp">// Alpha is scaled as well: this is CornflowerBlue at 60% brightness AND 60% opacity
+Color sixty = Color::Multiply(Color::CornflowerBlue, 0.6f);   // (60, 89, 142, 153)
 
-// Subtract (clamps at 0) — rare but available
-Color dim = Color::Subtract(Color::White, Color(100, 0, 0, 0));</code></pre>
-      <p>The most common arithmetic operation is multiplying by a scalar to darken or brighten:</p>
-      <pre><code class="language-cpp">// Darken a color to 60% brightness
-Color halfBright = Color::Multiply(Color::CornflowerBlue, 0.6f);</code></pre>
+// To darken only RGB and keep the colour opaque, rebuild the colour:
+Color darker(static_cast&lt;int&gt;(Color::CornflowerBlue.getRProperty() * 0.6f),
+             static_cast&lt;int&gt;(Color::CornflowerBlue.getGProperty() * 0.6f),
+             static_cast&lt;int&gt;(Color::CornflowerBlue.getBProperty() * 0.6f));</code></pre>
+      <p>The scaling behaviour is the whole point under <code>BlendState::AlphaBlend</code>, the default: it expects <em>premultiplied</em> colours, and <code>colour * opacity</code> produces exactly that. See the next sections.</p>
 
       <h2 id="color-lerp">Lerping Between Colors</h2>
       <p>Linear interpolation between two colors creates smooth transitions — fade-outs, damage flashes, day/night cycles.</p>
@@ -201,17 +209,26 @@ Color barColor = Color::Lerp(Color::Red, Color::Green, healthFraction);</code></
 
       <h2 id="transparency">Transparency and Alpha</h2>
       <p>The alpha channel controls how transparent a color is. Alpha = 255 is fully opaque; alpha = 0 is fully invisible. Values in between give partial transparency.</p>
-      <p>Alpha blending in <code>SpriteBatch</code> is enabled by default using <code>BlendState::AlphaBlend</code>. You do not need to do anything special — just set the alpha of your color and it will blend with what is underneath.</p>
-      <pre><code class="language-cpp">// A tooltip background with semi-transparent dark panel
+      <p>Alpha blending in <code>SpriteBatch</code> is enabled by default using <code>BlendState::AlphaBlend</code>. There is one catch that trips up almost everyone coming to XNA: <strong><code>AlphaBlend</code> is a <em>premultiplied</em>-alpha blend</strong> (<code>result = src + dst * (1 - src.a)</code>). It expects the RGB you draw with to be <em>already multiplied</em> by alpha. So the way to draw something at 40% opacity is to scale all four channels together, which is what <code>colour * 0.4f</code> does:</p>
+      <pre><code class="language-cpp">// A tooltip background with semi-transparent dark panel.
+// Black is the same premultiplied or not, so this one is fine as written:
 Color tooltipBg(0, 0, 0, 180);  // 70% opaque black
 spriteBatch_-&gt;Draw(*pixel_, tooltipRect, tooltipBg);
 
-// Fade text: reduce alpha as time passes
+// Fade text: scale the whole colour (RGB and A) by the opacity
 float fadeAlpha = 1.0f - elapsedFadeTime_ / fadeOutDuration_;
-Color textColor = Color(255, 255, 255, static_cast&lt;bytecs&gt;(fadeAlpha * 255));</code></pre>
-      <p>To create a color that is just a copy of another with a different alpha:</p>
-      <pre><code class="language-cpp">Color original  = Color::CornflowerBlue;
-Color withAlpha = Color(original, 128);  // same RGB, alpha = 128</code></pre>
+Color textColor = Color::White * fadeAlpha;</code></pre>
+      <p>A colour such as <code>Color(255, 255, 255, 100)</code> keeps full-strength RGB with alpha 100. Under <code>AlphaBlend</code> that draws (nearly) solid white rather than a translucent one, because the blend adds the full-strength colour on top of the darkened background. If you have a colour with straight (non-premultiplied) alpha, convert it with <code>Color::FromNonPremultiplied</code>, or draw with <code>BlendState::NonPremultiplied</code> instead (<a href="22-blend-modes.html">Tutorial 22</a>).</p>
+      <p>To create a color that is a copy of another with a different opacity:</p>
+      <pre><code class="language-cpp">Color original = Color::CornflowerBlue;
+
+// Premultiplied result for AlphaBlend: same hue at 50% opacity
+Color withAlpha = Color::FromNonPremultiplied(original.getRProperty(),
+                                              original.getGProperty(),
+                                              original.getBProperty(), 128);
+
+// Equivalent: scale the opaque colour
+Color halfOpaque = original * 0.5f;</code></pre>
 
       <h2 id="color-with-spritebatch">Using Color with SpriteBatch</h2>
       <p>Every <code>SpriteBatch::Draw</code> and <code>DrawString</code> call accepts a color parameter. This color is a <em>tint</em>: the texture pixels are multiplied by it channel by channel.</p>
@@ -230,14 +247,15 @@ if (isHurt_) {
     spriteBatch_-&gt;Draw(*playerTex_, position_, Color::White);
 }
 
-// Ghost effect: semi-transparent
-Color ghost(255, 255, 255, 100);
+// Ghost effect: semi-transparent (40% of white = premultiplied 40% opacity)
+Color ghost = Color::White * 0.4f;
 spriteBatch_-&gt;Draw(*playerTex_, ghostPosition_, ghost);
 
 // Fade-in at game start
 float alpha = std::min(1.0f, elapsedTime_ / fadeInDuration_);
-Color fadeColor(255, 255, 255, static_cast&lt;bytecs&gt;(alpha * 255));
+Color fadeColor = Color::White * alpha;
 spriteBatch_-&gt;Draw(*titleTex_, titlePos_, fadeColor);</code></pre>
+      <p>These examples assume your textures are premultiplied, which is the case for textures that went through the XNA content pipeline or CNA&rsquo;s <code>cna-content</code> tool with default settings. A plain <code>.png</code> loaded straight from disk is <em>not</em> premultiplied, so draw it with <code>BlendState::NonPremultiplied</code> (see <a href="22-blend-modes.html">Tutorial 22</a>).</p>
 
       <p>Colors are one of the most versatile tools in 2D game development. In <a href="08-textures.html">Tutorial 08</a> you will load real image files and draw them with full control over position, scale, rotation, and color.</p>
 
@@ -264,7 +282,7 @@ spriteBatch_-&gt;Draw(*titleTex_, titlePos_, fadeColor);</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

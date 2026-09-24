@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 17: 2D Camera and Viewport - CNA Tutorials</title>
-  <meta name="description" content="Implement a 2D scrolling camera in CNA using Matrix transforms, SpriteBatch.Begin(transformMatrix), and Viewport clamping.">
+  <meta name="description" content="Implement a 2D scrolling camera in CNA using Matrix transforms, SpriteBatch::Begin(transformMatrix), and Viewport clamping.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/17-camera-2d.html">
   <meta property="og:title"       content="Tutorial 17: 2D Camera and Viewport - CNA Tutorials">
-  <meta property="og:description" content="Implement a 2D scrolling camera in CNA using Matrix transforms, SpriteBatch.Begin(transformMatrix), and Viewport clamping.">
+  <meta property="og:description" content="Implement a 2D scrolling camera in CNA using Matrix transforms, SpriteBatch::Begin(transformMatrix), and Viewport clamping.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/17-camera-2d.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 17: 2D Camera and Viewport",
   "url": "https://libcna.com/docs/tutorials/17-camera-2d.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -124,38 +124,39 @@ spriteBatch_-&gt;Begin(SpriteSortMode::Deferred,
       <p>An object at world position (500, 300) will now appear at screen position (500 - camX, 300 - camY).</p>
 
       <h2>SpriteBatch::Begin() transformMatrix parameter</h2>
-      <p>The full <code>Begin()</code> signature in CNA is:</p>
+      <p>The overload that takes a transform (the XNA 4.0 one, with every parameter) is:</p>
 
       <pre><code class="language-cpp">void SpriteBatch::Begin(
-    SpriteSortMode          sortMode        = SpriteSortMode::Deferred,
-    BlendState*             blendState      = nullptr,
-    SamplerState*           samplerState    = nullptr,
-    DepthStencilState*      depthStencil    = nullptr,
-    RasterizerState*        rasterizerState = nullptr,
-    Effect*                 effect          = nullptr,
-    std::optional&lt;Matrix&gt;  transformMatrix = std::nullopt
+    SpriteSortMode          sortMode,
+    BlendState              blendState,      // by value; a const BlendState* overload exists too
+    const SamplerState*     samplerState,    // nullptr = LinearClamp
+    const DepthStencilState* depthStencil,   // nullptr = None
+    const RasterizerState*  rasterizerState, // nullptr = CullCounterClockwise
+    Effect*                 effect,          // nullptr = the built-in sprite effect
+    Matrix                  transformMatrix  // by value
 );
 </code></pre>
 
-      <p>Passing a <code>Matrix</code> in the last argument is the standard hook for 2D cameras, parallax scrolling, and screen shake. The matrix is applied uniformly to all sprites drawn between this <code>Begin()</code>/<code>End()</code> pair.</p>
+      <p>There are no default arguments: <code>Begin()</code> with no arguments, <code>Begin(sortMode, blendState)</code>, and the longer forms (with and without <code>effect</code> / <code>transformMatrix</code>) are separate overloads, so to pass a matrix you spell out every parameter before it, as in the example above. Passing a <code>Matrix</code> in the last argument is the standard hook for 2D cameras, parallax scrolling, and screen shake. The matrix is applied uniformly to all sprites drawn between this <code>Begin()</code>/<code>End()</code> pair.</p>
 
       <h2>Viewport struct</h2>
-      <p><code>Viewport</code> describes the portion of the back buffer that receives rendering output. It also provides helper methods for converting between screen and world space:</p>
+      <p><code>Viewport</code> describes the portion of the back buffer that receives rendering output. It also provides <code>Project()</code> and <code>Unproject()</code> for converting between 3D world space and screen space (for a 2D camera the matrix code below is simpler):</p>
 
       <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/Viewport.hpp"
 
 Viewport vp = getGraphicsDeviceProperty().getViewportProperty();
 
-// Viewport fields
-intcs x      = vp.X;        // left edge in pixels
-intcs y      = vp.Y;        // top edge in pixels
-intcs width  = vp.getWidthProperty();    // width in pixels
-intcs height = vp.getHeightProperty();   // height in pixels
-Single minZ  = vp.MinDepth; // usually 0.0f
-Single maxZ  = vp.MaxDepth; // usually 1.0f
+// Viewport properties (accessors, as everywhere in CNA)
+int   x      = vp.getXProperty();        // left edge in pixels
+int   y      = vp.getYProperty();        // top edge in pixels
+int   width  = vp.getWidthProperty();    // width in pixels
+int   height = vp.getHeightProperty();   // height in pixels
+float minZ   = vp.getMinDepthProperty(); // usually 0.0f
+float maxZ   = vp.getMaxDepthProperty(); // usually 1.0f
 
 // Screen centre
-Vector2 centre((Single)vp.getWidthProperty() / 2.0f, (Single)vp.getHeightProperty() / 2.0f);
+Vector2 centre(static_cast&lt;float&gt;(vp.getWidthProperty()) / 2.0f,
+               static_cast&lt;float&gt;(vp.getHeightProperty()) / 2.0f);
 </code></pre>
 
       <h2>Camera2D class pattern</h2>
@@ -163,57 +164,65 @@ Vector2 centre((Single)vp.getWidthProperty() / 2.0f, (Single)vp.getHeightPropert
 
       <pre><code class="language-cpp">// Camera2D.hpp
 #pragma once
+#include &lt;algorithm&gt;
 #include "Microsoft/Xna/Framework/Matrix.hpp"
 #include "Microsoft/Xna/Framework/Vector2.hpp"
+#include "Microsoft/Xna/Framework/Vector3.hpp"
 #include "Microsoft/Xna/Framework/MathHelper.hpp"
+
+// CNA's types live in namespaces; using-declarations keep the class short.
+using Microsoft::Xna::Framework::Matrix;
+using Microsoft::Xna::Framework::Vector2;
+using Microsoft::Xna::Framework::Vector3;
 
 class Camera2D {
 public:
-    Camera2D(intcs viewportWidth, intcs viewportHeight)
+    Camera2D(int viewportWidth, int viewportHeight)
         : viewportW_(viewportWidth), viewportH_(viewportHeight) {}
 
     // Getters / setters
-    void     setPositionProperty(Vector2 p)  { position_ = p; dirty_ = true; }
-    Vector2  getPositionProperty()     const { return position_; }
-    void     setZoom(Single z)       { zoom_ = std::max(0.1f, z); dirty_ = true; }
-    Single   getZoom()         const { return zoom_; }
-    void     setRotation(Single r)   { rotation_ = r; dirty_ = true; }
-    Single   getRotation()     const { return rotation_; }
+    void    setPositionProperty(Vector2 p)  { position_ = p; dirty_ = true; }
+    Vector2 getPositionProperty() const { return position_; }
+    void    setZoom(float z)        { zoom_ = std::max(0.1f, z); dirty_ = true; }
+    float   getZoom()         const { return zoom_; }
+    void    setRotation(float r)    { rotation_ = r; dirty_ = true; }
+    float   getRotation()     const { return rotation_; }
 
     // Build transform matrix (lazy)
     Matrix getTransform() {
         if (dirty_) {
-            Vector2 origin((Single)viewportW_ / 2.0f, (Single)viewportH_ / 2.0f);
+            Vector2 origin(static_cast&lt;float&gt;(viewportW_) / 2.0f,
+                           static_cast&lt;float&gt;(viewportH_) / 2.0f);
             cached_ =
-                Matrix::CreateTranslation(Vector3(-position_, 0.0f)) *
-                Matrix::CreateRotationZ(-rotation_)                  *
-                Matrix::CreateScale(zoom_, zoom_, 1.0f)              *
-                Matrix::CreateTranslation(Vector3(origin, 0.0f));
+                Matrix::CreateTranslation(Vector3(-position_.X, -position_.Y, 0.0f)) *
+                Matrix::CreateRotationZ(-rotation_)                                   *
+                Matrix::CreateScale(zoom_, zoom_, 1.0f)                               *
+                Matrix::CreateTranslation(Vector3(origin.X, origin.Y, 0.0f));
             dirty_ = false;
         }
         return cached_;
     }
 
-    // Convert screen point to world position
-    Vector2 ScreenToWorld(Vector2 screen) const {
-        Matrix inv = Matrix::Invert(const_cast&lt;Camera2D*&gt;(this)-&gt;getTransform());
+    // Convert a screen point (e.g. the mouse position) to a world position
+    Vector2 ScreenToWorld(Vector2 screen) {
+        Matrix inv = Matrix::Invert(getTransform());
         return Vector2::Transform(screen, inv);
     }
 
     // Clamp camera so it does not scroll outside a world rectangle
-    void ClampToWorld(intcs worldWidth, intcs worldHeight) {
-        Single halfW = (Single)viewportW_ / (2.0f * zoom_);
-        Single halfH = (Single)viewportH_ / (2.0f * zoom_);
-        position_.X = std::clamp(position_.X, halfW, (Single)worldWidth  - halfW);
-        position_.Y = std::clamp(position_.Y, halfH, (Single)worldHeight - halfH);
+    void ClampToWorld(int worldWidth, int worldHeight) {
+        float halfW = static_cast&lt;float&gt;(viewportW_) / (2.0f * zoom_);
+        float halfH = static_cast&lt;float&gt;(viewportH_) / (2.0f * zoom_);
+        position_.X = std::clamp(position_.X, halfW, static_cast&lt;float&gt;(worldWidth)  - halfW);
+        position_.Y = std::clamp(position_.Y, halfH, static_cast&lt;float&gt;(worldHeight) - halfH);
         dirty_ = true;
     }
 
 private:
-    intcs   viewportW_, viewportH_;
+    int     viewportW_, viewportH_;
     Vector2 position_  = Vector2::Zero;
-    Single  zoom_      = 1.0f;
-    Single  rotation_  = 0.0f;
+    float   zoom_      = 1.0f;
+    float   rotation_  = 0.0f;
     bool    dirty_     = true;
     Matrix  cached_;
 };
@@ -221,7 +230,8 @@ private:
 
       <h2>Follow-player camera</h2>
 
-      <pre><code class="language-cpp">#include &lt;memory&gt;
+      <pre><code class="language-cpp">#include &lt;algorithm&gt;
+#include &lt;memory&gt;
 #include "Microsoft/Xna/Framework/Game.hpp"
 #include "Microsoft/Xna/Framework/Color.hpp"
 #include "Microsoft/Xna/Framework/Input/Keyboard.hpp"
@@ -235,8 +245,8 @@ using namespace Microsoft::Xna::Framework;
 using namespace Microsoft::Xna::Framework::Graphics;
 using namespace Microsoft::Xna::Framework::Input;
 
-static constexpr intcs WORLD_W = 3200;
-static constexpr intcs WORLD_H = 2400;
+static constexpr int WORLD_W = 3200;
+static constexpr int WORLD_H = 2400;
 
 class CameraDemo final : public Game {
 public:
@@ -252,24 +262,26 @@ protected:
         worldTex_    = getContentProperty().Load&lt;Texture2D&gt;("Sprites/world_background");
 
         camera_ = std::make_unique&lt;Camera2D&gt;(800, 600);
-        playerPos_ = Vector2((Single)WORLD_W / 2.0f, (Single)WORLD_H / 2.0f);
+        playerPos_ = Vector2(static_cast&lt;float&gt;(WORLD_W) / 2.0f,
+                             static_cast&lt;float&gt;(WORLD_H) / 2.0f);
     }
 
     void Update(GameTime&amp; gt) override {
         auto kb = Keyboard::GetState();
-        Single dt = (Single)gt.getElapsedGameTimeProperty().getTotalSecondsProperty();
+        float dt = static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty());
 
         // Move player in world space
-        const Single speed = 250.0f;
+        const float speed = 250.0f;
         if (kb.IsKeyDown(Keys::Left))  playerPos_.X -= speed * dt;
         if (kb.IsKeyDown(Keys::Right)) playerPos_.X += speed * dt;
         if (kb.IsKeyDown(Keys::Up))    playerPos_.Y -= speed * dt;
         if (kb.IsKeyDown(Keys::Down))  playerPos_.Y += speed * dt;
 
-        playerPos_.X = std::clamp(playerPos_.X, 0.0f, (Single)WORLD_W);
-        playerPos_.Y = std::clamp(playerPos_.Y, 0.0f, (Single)WORLD_H);
+        playerPos_.X = std::clamp(playerPos_.X, 0.0f, static_cast&lt;float&gt;(WORLD_W));
+        playerPos_.Y = std::clamp(playerPos_.Y, 0.0f, static_cast&lt;float&gt;(WORLD_H));
 
-        // Smooth follow: lerp camera toward player centre
+        // Smooth follow: lerp camera toward player centre.
+        // (On the very first Update dt is 0, so the camera simply does not move yet.)
         Vector2 target = playerPos_ + Vector2(24.0f, 32.0f);
         Vector2 camPos = Vector2::Lerp(camera_-&gt;getPositionProperty(), target, 5.0f * dt);
         camera_-&gt;setPositionProperty(camPos);
@@ -298,8 +310,7 @@ protected:
         spriteBatch_-&gt;Begin();
         // Draw minimap, health bar, etc. here
         spriteBatch_-&gt;End();
-
-        gd.Present();
+        // Game::EndDraw() presents the frame after Draw() returns.
     }
 
 private:
@@ -316,22 +327,25 @@ int main() { CameraDemo game; game.Run(); }
       <h2>Screen shake</h2>
       <p>Screen shake is a small random offset added to the camera position each frame, decaying over time:</p>
 
-      <pre><code class="language-cpp">// Add to Camera2D or Game class:
-Single shakeIntensity_ = 0.0f;
-Single shakeDuration_  = 0.0f;
+      <pre><code class="language-cpp">// Add to your Game class (needs &lt;cstdlib&gt; for std::rand):
+float   shakeIntensity_   = 0.0f;
+float   shakeDuration_    = 0.0f;
+float   originalDuration_ = 1.0f;
+Vector2 basePosition_;               // where the camera would be without shake
 
-void Shake(Single intensity, Single duration) {
-    shakeIntensity_ = intensity;
-    shakeDuration_  = duration;
+void Shake(float intensity, float duration) {
+    shakeIntensity_   = intensity;
+    shakeDuration_    = duration;
+    originalDuration_ = duration;
 }
 
-// In Update():
+// In Update(), after the camera has been moved to basePosition_:
 if (shakeDuration_ &gt; 0) {
     shakeDuration_ -= dt;
-    Single s = shakeIntensity_ * (shakeDuration_ / originalDuration_);
+    float s = shakeIntensity_ * (shakeDuration_ / originalDuration_);
     Vector2 offset(
-        ((Single)rand() / RAND_MAX * 2.0f - 1.0f) * s,
-        ((Single)rand() / RAND_MAX * 2.0f - 1.0f) * s
+        (static_cast&lt;float&gt;(std::rand()) / RAND_MAX * 2.0f - 1.0f) * s,
+        (static_cast&lt;float&gt;(std::rand()) / RAND_MAX * 2.0f - 1.0f) * s
     );
     camera_-&gt;setPositionProperty(basePosition_ + offset);
 }
@@ -360,7 +374,7 @@ if (shakeDuration_ &gt; 0) {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

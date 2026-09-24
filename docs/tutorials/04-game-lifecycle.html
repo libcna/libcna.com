@@ -4,9 +4,9 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 04: The Game Class Lifecycle - CNA Tutorials</title>
-  <meta name="description" content="Understand the order CNA calls Initialize, LoadContent, Update, Draw, UnloadContent, and OnExiting in your Game subclass.">
+  <meta name="description" content="Understand the order CNA calls Initialize, LoadContent, Update, Draw, OnExiting, and UnloadContent in your Game subclass.">
   <meta property="og:title" content="Tutorial 04: The Game Class Lifecycle - CNA Tutorials">
-  <meta property="og:description" content="Understand the order CNA calls Initialize, LoadContent, Update, Draw, UnloadContent, and OnExiting in your Game subclass.">
+  <meta property="og:description" content="Understand the order CNA calls Initialize, LoadContent, Update, Draw, OnExiting, and UnloadContent in your Game subclass.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/04-game-lifecycle.html">
@@ -18,7 +18,7 @@
   "headline": "Tutorial 04: The Game Class Lifecycle",
   "url": "https://libcna.com/docs/tutorials/04-game-lifecycle.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -86,7 +86,7 @@
         <span class="callout-icon">&#8505;</span>
         <p><strong>What you&rsquo;ll learn</strong></p>
         <ul>
-          <li>The order CNA calls <code>Initialize</code>, <code>LoadContent</code>, <code>Update</code>, <code>Draw</code>, <code>UnloadContent</code> and <code>OnExiting</code>.</li>
+          <li>The order CNA calls <code>Initialize</code>, <code>LoadContent</code>, <code>Update</code>, <code>Draw</code>, <code>OnExiting</code> and <code>UnloadContent</code> &mdash; and why <code>LoadContent</code> runs inside <code>Game::Initialize()</code>.</li>
           <li>Which work belongs in the constructor versus <code>Initialize()</code>.</li>
           <li>Why content loading has its own callback rather than living in the constructor.</li>
         </ul>
@@ -102,8 +102,8 @@
           <li><a href="#load-content">LoadContent()</a></li>
           <li><a href="#update">Update(GameTime)</a></li>
           <li><a href="#draw">Draw(GameTime)</a></li>
-          <li><a href="#unload-content">UnloadContent()</a></li>
           <li><a href="#on-exiting">OnExiting()</a></li>
+          <li><a href="#unload-content">UnloadContent()</a></li>
           <li><a href="#lifecycle-demo">Full Lifecycle Demo</a></li>
         </ol>
       </nav>
@@ -114,33 +114,43 @@
       <p>The full sequence looks like this:</p>
       <pre><code class="language-cpp">game.Run()
   └─&gt; Constructor          (already called before Run())
-  └─&gt; Initialize()          once, after graphics device created
-  └─&gt; LoadContent()         once, after Initialize()
+  └─&gt; [window and graphics device created]
+  └─&gt; Initialize()          once
+        └─&gt; Game::Initialize() initialises the components, then calls&hellip;
+              └─&gt; LoadContent()   once
   └─&gt; [game loop begins]
-      ├─&gt; Update(gameTime)  every frame (or at fixed rate)
-      └─&gt; Draw(gameTime)    every frame
-  └─&gt; [exit signal received]
-  └─&gt; UnloadContent()       once
-  └─&gt; OnExiting()           once
+      ├─&gt; Update(gameTime)  every frame (or at a fixed rate)
+      └─&gt; Draw(gameTime)    every frame, then CNA presents the frame
+  └─&gt; [Exit() called or window closed]
+  └─&gt; OnExiting()           once, right after the loop ends
+  └─&gt; [Run() returns]
+game.Dispose()
+  └─&gt; UnloadContent()       once (device is being disposed)
   └─&gt; [destructor]</code></pre>
 
       <p>The separation between initialization phases is important:</p>
       <ul>
         <li>The <strong>constructor</strong> runs before the graphics device exists. Configure settings here, do not touch the GPU.</li>
         <li><strong>Initialize</strong> runs after the graphics device is created. Set up game services and non-content game components.</li>
-        <li><strong>LoadContent</strong> runs after Initialize. Load all textures, sounds, and fonts here.</li>
+        <li><strong>LoadContent</strong> is called by the base <code>Game::Initialize()</code> (exactly as in XNA), so it runs at the point where you call the base method. Load all textures, sounds, and fonts here.</li>
         <li><strong>Update / Draw</strong> run in a tight loop until the game exits.</li>
-        <li><strong>UnloadContent</strong> and <strong>OnExiting</strong> run once the loop ends.</li>
+        <li><strong>OnExiting</strong> runs once the loop ends. <strong>UnloadContent</strong> runs when the game is disposed, which happens when you call <code>game.Dispose()</code> after <code>Run()</code> returns.</li>
       </ul>
 
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>The first <code>Update</code> sees <code>dt&nbsp;=&nbsp;0</code>.</strong> In this snapshot CNA uses XNA&rsquo;s own game clock: the first call to <code>Update()</code> reports an <code>ElapsedGameTime</code> of zero, and <code>TotalGameTime</code> advances only after <code>Update()</code> returns. Code that divides by <code>dt</code> must guard against zero on frame one. (On the browser build the frame loop keeps its own fixed-step clock, so the first <code>Update</code> there gets a full step.)</p>
+      </div>
+
       <h2 id="constructor">Constructor</h2>
-      <p>The constructor is the first thing that runs. At this point the SDL window does not exist yet and the graphics device has not been created. The constructor is the right place to:</p>
+      <p>The constructor is the first thing that runs. At this point the window has not been set up for drawing and the graphics device has not been created (both happen just before <code>Initialize()</code>). The constructor is the right place to:</p>
       <ul>
         <li>Create the <code>GraphicsDeviceManager</code> (passing <code>this</code>)</li>
         <li>Set the preferred back buffer width and height</li>
         <li>Set the window title</li>
         <li>Choose whether the game is full screen</li>
         <li>Set <code>IsFixedTimeStep</code> and <code>TargetElapsedTime</code></li>
+        <li>Set the content root directory (<code>getContentProperty().setRootDirectoryProperty(...)</code>) &mdash; it must be in place before <code>LoadContent()</code> runs</li>
       </ul>
       <pre><code class="language-cpp">MyGame::MyGame()
     : graphics_(this)
@@ -164,7 +174,7 @@
       </div>
 
       <h2 id="initialize">Initialize()</h2>
-      <p><code>Initialize()</code> is called once, after the graphics device and window have been created but before <code>LoadContent()</code>. It is the right place to:</p>
+      <p><code>Initialize()</code> is called once, after the graphics device and window have been created. It is the right place to:</p>
       <ul>
         <li>Initialize game services</li>
         <li>Set up <code>GameComponent</code> objects</li>
@@ -172,43 +182,47 @@
         <li>Print device capabilities to the console</li>
       </ul>
       <pre><code class="language-cpp">void MyGame::Initialize() {
-    // Always call the base first — it calls Initialize() on all
-    // registered GameComponents.
+    // Anything LoadContent() depends on goes BEFORE the base call,
+    // because Game::Initialize() is what calls LoadContent().
+    std::srand(static_cast&lt;unsigned&gt;(std::time(nullptr)));
+
+    // The base call initialises all registered GameComponents,
+    // then runs LoadContent().
     Game::Initialize();
 
+    // LoadContent() has already finished here.
     auto&amp; vp = getGraphicsDeviceProperty().getViewportProperty();
     std::cout &lt;&lt; "[Initialize] Viewport: "
               &lt;&lt; vp.getWidthProperty() &lt;&lt; "x" &lt;&lt; vp.getHeightProperty() &lt;&lt; "\n";
 
-    // Example: seed random number generator
-    std::srand(static_cast&lt;unsigned&gt;(std::time(nullptr)));
-
     std::cout &lt;&lt; "[Initialize] Done\n";
 }</code></pre>
-      <p>Always call <code>Game::Initialize()</code> first in your override. The base implementation initialises all registered <code>GameComponent</code> objects.</p>
+      <p>Always call <code>Game::Initialize()</code> in your override &mdash; if you forget it, your components are never initialised <em>and</em> <code>LoadContent()</code> is never called. Code you place before the call runs before <code>LoadContent()</code>; code you place after it runs after <code>LoadContent()</code> has finished.</p>
 
       <h2 id="load-content">LoadContent()</h2>
-      <p><code>LoadContent()</code> is called once after <code>Initialize()</code>. Load all game assets here: textures, sprite fonts, sounds, and effects. This is also where you create <code>SpriteBatch</code>.</p>
+      <p><code>LoadContent()</code> is called once, from inside <code>Game::Initialize()</code>. Load all game assets here: textures, sprite fonts, sounds, and effects. This is also where you create <code>SpriteBatch</code>.</p>
       <pre><code class="language-cpp">void MyGame::LoadContent() {
     std::cout &lt;&lt; "[LoadContent] Loading assets\n";
 
     // Create SpriteBatch
     spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(getGraphicsDeviceProperty());
 
-    // Load a texture (using ContentManager)
+    // Load a texture (using ContentManager). Load&lt;T&gt; returns the asset BY VALUE.
     playerTexture_ = getContentProperty().Load&lt;Texture2D&gt;("textures/player");
 
-    // Load a sprite font
+    // Load a sprite font. SpriteFont has no default constructor, so the
+    // member is a std::optional&lt;SpriteFont&gt;.
     font_ = getContentProperty().Load&lt;SpriteFont&gt;("fonts/arial");
 
     std::cout &lt;&lt; "[LoadContent] Done\n";
 }</code></pre>
-      <p>If an asset fails to load, an exception is thrown here and the game exits cleanly before the loop starts.</p>
+      <p>The matching members are <code>Texture2D playerTexture_;</code> and <code>std::optional&lt;SpriteFont&gt; font_;</code>. <code>getContentProperty().Load&lt;T&gt;("name")</code> looks for <code>name.xnb</code>, then <code>name.cnb</code>, then a loose file such as <code>name.png</code>, under the content root (a <code>Content</code> folder relative to the process&rsquo;s working directory, unless you change it with <code>setRootDirectoryProperty</code>). If an asset cannot be loaded, a <code>ContentLoadException</code> is thrown (asking for the wrong type from a compiled asset, such as <code>Load&lt;Texture2D&gt;</code> on an <code>.xnb</code> that holds a <code>SpriteFont</code>, can surface as a <code>std::bad_any_cast</code> instead); nothing catches it for you, so it propagates out of <code>Run()</code> (CNA logs it first). Wrap <code>game.Run()</code> in <code>try</code>/<code>catch</code> in <code>main()</code> if you want a friendly error message.</p>
 
       <h2 id="update">Update(GameTime)</h2>
-      <p><code>Update(GameTime&amp; gameTime)</code> is called every frame (or at a fixed rate if <code>IsFixedTimeStep</code> is true). This is where all game logic runs: moving objects, checking collisions, reading input, updating AI.</p>
+      <p><code>Update(GameTime&amp; gameTime)</code> is called every frame (or at a fixed rate if <code>IsFixedTimeStep</code> is true; on a slow frame CNA may call it several times before the next <code>Draw</code>). This is where all game logic runs: moving objects, checking collisions, reading input, updating AI.</p>
       <pre><code class="language-cpp">void MyGame::Update(GameTime&amp; gameTime) {
-    // Delta time: how many seconds since the last Update call
+    // Delta time: how many seconds since the previous Update call.
+    // It is 0 on the very first call.
     float dt = static_cast&lt;float&gt;(gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty());
 
     // Move the player
@@ -227,7 +241,7 @@
       <p>Keep <code>Update()</code> free of rendering calls. Never call <code>SpriteBatch::Begin()</code> or <code>device.Clear()</code> inside <code>Update()</code>.</p>
 
       <h2 id="draw">Draw(GameTime)</h2>
-      <p><code>Draw(const GameTime&amp; gameTime)</code> is called every frame after <code>Update()</code>. All rendering happens here. The pattern is always: clear, draw, present.</p>
+      <p><code>Draw(const GameTime&amp; gameTime)</code> is called every frame after <code>Update()</code>. All rendering happens here. The pattern is: clear, draw &mdash; and CNA presents the finished frame for you when <code>Draw</code> returns.</p>
       <pre><code class="language-cpp">void MyGame::Draw(const GameTime&amp; gameTime) {
     auto&amp; device = getGraphicsDeviceProperty();
 
@@ -236,42 +250,54 @@
 
     // 2. Draw sprites
     spriteBatch_-&gt;Begin();
-    spriteBatch_-&gt;Draw(*playerTexture_, playerPosition_, Color::White);
+    spriteBatch_-&gt;Draw(playerTexture_, playerPosition_, Color::White);
     spriteBatch_-&gt;End();
 
-    // 3. Present the frame
-    device.Present();
+    // 3. Nothing else to do: Game::EndDraw() presents the frame
+    //    after Draw() returns. Do not call device.Present() yourself.
 }</code></pre>
       <p>Note that <code>Draw</code> takes a <code>const GameTime&amp;</code> (the const version) while <code>Update</code> takes a non-const <code>GameTime&amp;</code>. This matches the XNA signatures.</p>
-
-      <h2 id="unload-content">UnloadContent()</h2>
-      <p><code>UnloadContent()</code> is called once when the game loop exits, before the destructor runs. It gives you an explicit hook to release GPU resources in the right order.</p>
-      <pre><code class="language-cpp">void MyGame::UnloadContent() {
-    std::cout &lt;&lt; "[UnloadContent] Releasing assets\n";
-
-    // Smart pointers auto-release, but you can reset them explicitly
-    // to ensure GPU resources are freed before the device shuts down.
-    spriteBatch_.reset();
-    playerTexture_.reset();
-    font_.reset();
-
-    std::cout &lt;&lt; "[UnloadContent] Done\n";
-}</code></pre>
-      <p>With <code>std::unique_ptr</code>, resources are freed automatically when they go out of scope. <code>UnloadContent()</code> is mainly useful when you need to control release order, for example freeing textures before shutting down the graphics device.</p>
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>Do not call <code>Present()</code> in <code>Draw()</code>.</strong> After your <code>Draw</code> returns, the <code>Game</code> calls <code>EndDraw()</code>, which presents the back buffer. An extra <code>device.Present()</code> inside <code>Draw</code> presents every frame twice. Call it yourself only if you drive frames manually, without <code>Game::Run()</code>.</p>
+      </div>
 
       <h2 id="on-exiting">OnExiting()</h2>
-      <p><code>OnExiting()</code> is called after <code>UnloadContent()</code> when the game is about to quit. Use it to save game state, write config files, or show a farewell message.</p>
+      <p><code>OnExiting()</code> is called once, right after the game loop ends &mdash; when you call <code>Exit()</code> or the player closes the window &mdash; and before <code>UnloadContent()</code>. Use it to save game state, write config files, or show a farewell message. (It raises the <code>Exiting</code> event; call the base to keep that working.)</p>
       <pre><code class="language-cpp">void MyGame::OnExiting(System::Object* sender, const System::EventArgs&amp; args) {
     std::cout &lt;&lt; "[OnExiting] Saving game state\n";
     saveSettings();  // write your own save function
     Game::OnExiting(sender, args);  // call base
 }</code></pre>
 
+      <h2 id="unload-content">UnloadContent()</h2>
+      <p><code>UnloadContent()</code> is the hook for releasing your own GPU resources in the right order. CNA calls it once, when the game&rsquo;s graphics device is disposed &mdash; and that happens inside <code>game.Dispose()</code>, the C++ counterpart of the <code>using</code> block in XNA. The base implementation is empty, and the <code>ContentManager</code> is already disposed by the time your override runs, so use it for resources <em>you</em> created.</p>
+      <pre><code class="language-cpp">void MyGame::UnloadContent() {
+    std::cout &lt;&lt; "[UnloadContent] Releasing assets\n";
+
+    // Smart pointers auto-release, but you can reset them explicitly
+    // to ensure GPU resources are freed before the device shuts down.
+    spriteBatch_.reset();
+    font_.reset();
+
+    std::cout &lt;&lt; "[UnloadContent] Done\n";
+}
+
+int main() {
+    MyGame game;
+    game.Run();
+    game.Dispose();   // raises UnloadContent(); see the note below
+    return 0;
+}</code></pre>
+      <p>With <code>std::unique_ptr</code> and value members, resources are freed automatically when they go out of scope. <code>UnloadContent()</code> is mainly useful when you need to control release order, for example freeing textures before shutting down the graphics device.</p>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p>The destructor alone does <strong>not</strong> call <code>UnloadContent()</code>: <code>~Game()</code> only performs the finaliser-style <code>Dispose(false)</code>, which skips the device-disposal step. If your game relies on <code>UnloadContent()</code> running (for example to flush a file), call <code>game.Dispose()</code> after <code>Run()</code> returns, as the demo below does. The same is true in XNA, where <code>UnloadContent()</code> runs from <code>Dispose()</code>, not from the finaliser.</p>
+      </div>
+
       <h2 id="lifecycle-demo">Full Lifecycle Demo</h2>
       <p>Here is a complete game that logs every lifecycle event to standard output so you can see exactly when each method is called:</p>
-      <pre><code class="language-cpp">#pragma once
-
-#include &lt;iostream&gt;
+      <pre><code class="language-cpp">#include &lt;iostream&gt;
 #include &lt;memory&gt;
 
 #include "Microsoft/Xna/Framework/Game.hpp"
@@ -292,13 +318,14 @@ public:
     }
 
     ~LifecycleDemo() {
-        std::cout &lt;&lt; "[8] Destructor\n";
+        std::cout &lt;&lt; "[10] Destructor\n";
     }
 
 protected:
     void Initialize() override {
-        std::cout &lt;&lt; "[2] Initialize\n";
-        Game::Initialize();
+        std::cout &lt;&lt; "[2] Initialize - before the base call\n";
+        Game::Initialize();   // initialises components, then calls LoadContent()
+        std::cout &lt;&lt; "[4] Initialize - after the base call\n";
     }
 
     void LoadContent() override {
@@ -307,53 +334,61 @@ protected:
     }
 
     void Update(GameTime&amp; gameTime) override {
-        static int frame = 0;
-        if (frame == 0) std::cout &lt;&lt; "[4] First Update\n";
-        if (++frame == 180) {
-            std::cout &lt;&lt; "[4] Update - requesting exit after 180 frames\n";
+        if (updates_ == 0) {
+            float dt = static_cast&lt;float&gt;(
+                gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty());
+            std::cout &lt;&lt; "[5] First Update, dt = " &lt;&lt; dt &lt;&lt; " s\n";
+        }
+        if (++updates_ == 180) {
+            std::cout &lt;&lt; "[7] Update - requesting exit after 180 frames\n";
             Exit();
         }
     }
 
     void Draw(const GameTime&amp; gameTime) override {
-        static int frame = 0;
-        if (frame++ == 0) std::cout &lt;&lt; "[5] First Draw\n";
+        if (draws_++ == 0) std::cout &lt;&lt; "[6] First Draw\n";
         getGraphicsDeviceProperty().Clear(Color::CornflowerBlue);
-        getGraphicsDeviceProperty().Present();
-    }
-
-    void UnloadContent() override {
-        std::cout &lt;&lt; "[6] UnloadContent\n";
-        spriteBatch_.reset();
+        // No Present() here: Game::EndDraw() presents after Draw returns.
     }
 
     void OnExiting(System::Object* sender, const System::EventArgs&amp; args) override {
-        std::cout &lt;&lt; "[7] OnExiting\n";
+        std::cout &lt;&lt; "[8] OnExiting\n";
         Game::OnExiting(sender, args);
+    }
+
+    void UnloadContent() override {
+        std::cout &lt;&lt; "[9] UnloadContent\n";
+        spriteBatch_.reset();
     }
 
 private:
     GraphicsDeviceManager graphics_;
     std::unique_ptr&lt;SpriteBatch&gt; spriteBatch_;
+    int updates_ = 0;
+    int draws_ = 0;
 };
 
 int main() {
     LifecycleDemo game;
-    game.Run();
+    game.Run();       // returns after Exit()
+    game.Dispose();   // this is what triggers UnloadContent()
     return 0;
 }</code></pre>
 
       <p>Running this program prints:</p>
       <pre><code class="language-cpp">[1] Constructor
-[2] Initialize
+[2] Initialize - before the base call
 [3] LoadContent
-[4] First Update
-[5] First Draw
+[4] Initialize - after the base call
+[5] First Update, dt = 0 s
+[6] First Draw
 ... (Update and Draw called ~60 times per second) ...
-[4] Update - requesting exit after 180 frames
-[6] UnloadContent
-[7] OnExiting
-[8] Destructor</code></pre>
+[7] Update - requesting exit after 180 frames
+[8] OnExiting
+[9] UnloadContent
+[10] Destructor</code></pre>
+
+      <p>Note the two things this output shows that surprise people coming from other engines: <code>LoadContent</code> appears <em>between</em> the two halves of <code>Initialize</code>, and the first <code>Update</code> reports a zero elapsed time.</p>
 
       <p>Now that you understand the lifecycle, <a href="05-game-loop.html">Tutorial 05</a> digs into the game loop itself — how fixed and variable timestep work, and how to use delta time for frame-rate-independent movement.</p>
 
@@ -380,7 +415,7 @@ int main() {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

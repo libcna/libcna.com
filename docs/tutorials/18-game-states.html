@@ -21,7 +21,7 @@
   "headline": "Tutorial 18: Game States: Menus and Scenes",
   "url": "https://libcna.com/docs/tutorials/18-game-states.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -133,16 +133,22 @@ class GameState {
 public:
     virtual ~GameState() = default;
 
-    // Called once when the state becomes active
+    // Called once, when the state is pushed onto the stack
     virtual void Enter() {}
 
-    // Called once when the state is popped off the stack
+    // Called once, when the state is popped off the stack
     virtual void Exit() {}
 
-    // Called every frame while active
+    // Called when another state is pushed on top of this one (e.g. a pause menu)
+    virtual void Pause() {}
+
+    // Called when the state above this one is popped and this one is on top again
+    virtual void Resume() {}
+
+    // Called every frame while this state is on top of the stack
     virtual void Update(Microsoft::Xna::Framework::GameTime&amp; gt) = 0;
 
-    // Called every frame — draw below any overlay states
+    // Called every frame — states are drawn bottom-up, so overlays draw over the states below
     virtual void Draw(Microsoft::Xna::Framework::Graphics::SpriteBatch&amp; sb) = 0;
 
     // Reference back to manager so states can push/pop siblings
@@ -158,28 +164,45 @@ protected:
       <pre><code class="language-cpp">// StateManager.hpp
 #pragma once
 #include &lt;memory&gt;
+#include &lt;utility&gt;
 #include &lt;vector&gt;
 #include "GameState.hpp"
 
 class StateManager {
 public:
     void Push(std::unique_ptr&lt;GameState&gt; state) {
-        if (!stack_.empty()) stack_.back()-&gt;Exit();
+        if (!stack_.empty()) stack_.back()-&gt;Pause();
         state-&gt;setManager(this);
-        state-&gt;Enter();
         stack_.push_back(std::move(state));
+        stack_.back()-&gt;Enter();
     }
 
     void Pop() {
         if (stack_.empty()) return;
         stack_.back()-&gt;Exit();
         stack_.pop_back();
-        if (!stack_.empty()) stack_.back()-&gt;Enter();
+        if (!stack_.empty()) stack_.back()-&gt;Resume();
     }
 
+    // Replace the top state (linear navigation: menu -&gt; gameplay)
     void Replace(std::unique_ptr&lt;GameState&gt; state) {
-        Pop();
-        Push(std::move(state));
+        if (!stack_.empty()) {
+            stack_.back()-&gt;Exit();
+            stack_.pop_back();
+        }
+        state-&gt;setManager(this);
+        stack_.push_back(std::move(state));
+        stack_.back()-&gt;Enter();
+    }
+
+    // Replace the state directly UNDER the top one (used by FadeState below)
+    void ReplaceBelowTop(std::unique_ptr&lt;GameState&gt; state) {
+        if (stack_.size() &lt; 2) return;
+        std::unique_ptr&lt;GameState&gt;&amp; below = stack_[stack_.size() - 2];
+        below-&gt;Exit();
+        state-&gt;setManager(this);
+        below = std::move(state);
+        below-&gt;Enter();
     }
 
     void Update(Microsoft::Xna::Framework::GameTime&amp; gt) {
@@ -199,90 +222,72 @@ private:
 </code></pre>
 
       <h2>Transition effects — fade to black</h2>
-      <p>Wrap state transitions in a <code>FadeTransitionState</code> that draws a black overlay whose alpha ramps from 0 → 1 → 0, then activates the target state at the midpoint:</p>
+      <p>Wrap state transitions in a <code>FadeState</code>. You push it <em>on top of</em> the state you are leaving; it draws a black overlay whose alpha ramps from 0 → 1 → 0, swaps the state underneath at the midpoint (when the screen is fully black), and pops itself when the fade-in is done. Because the overlay is just another state, the states below keep drawing under it. It needs a 1×1 white texture and the screen rectangle, which the states share through a small context struct:</p>
+
+      <pre><code class="language-cpp">// GameContext.hpp — resources shared by every state
+#pragma once
+#include "Microsoft/Xna/Framework/Rectangle.hpp"
+#include "Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
+
+struct GameContext {
+    Microsoft::Xna::Framework::Graphics::Texture2D pixel;    // 1x1 white texture
+    Microsoft::Xna::Framework::Rectangle           screen;   // the whole back buffer
+};
+</code></pre>
 
       <pre><code class="language-cpp">// FadeState.hpp
 #pragma once
+#include &lt;algorithm&gt;
+#include "GameContext.hpp"
 #include "GameState.hpp"
 #include "StateManager.hpp"
+#include "Microsoft/Xna/Framework/Color.hpp"
 
+// Pushed ON TOP of the state you are leaving. It fades the screen to black, swaps
+// the state underneath at the midpoint, fades back in, then pops itself.
 class FadeState : public GameState {
 public:
-    FadeState(std::unique_ptr&lt;GameState&gt; next,
-              Single duration = 0.5f)
-        : next_(std::move(next)), halfDuration_(duration / 2.0f) {}
-
-    void Enter() override { timer_ = 0.0f; switched_ = false; }
+    FadeState(std::unique_ptr&lt;GameState&gt; next, const GameContext&amp; ctx,
+              float duration = 0.5f)
+        : next_(std::move(next)), ctx_(&amp;ctx), halfDuration_(duration / 2.0f) {}
 
     void Update(Microsoft::Xna::Framework::GameTime&amp; gt) override {
-        using namespace Microsoft::Xna::Framework;
-        timer_ += (Single)gt.getElapsedGameTimeProperty().getTotalSecondsProperty();
+        timer_ += static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty());
+
         if (!switched_ &amp;&amp; timer_ &gt;= halfDuration_) {
-            // Switch to target state at peak opacity
+            // Fully black: swap the state under the overlay
             switched_ = true;
-            manager_-&gt;Replace(std::move(next_));  // replaces *this*
+            manager_-&gt;ReplaceBelowTop(std::move(next_));
+        } else if (switched_ &amp;&amp; timer_ &gt;= 2.0f * halfDuration_) {
+            // Fade finished. This destroys *this*, so touch nothing afterwards.
+            manager_-&gt;Pop();
         }
     }
 
     void Draw(Microsoft::Xna::Framework::Graphics::SpriteBatch&amp; sb) override {
         using namespace Microsoft::Xna::Framework;
-        Single alpha;
-        if (!switched_)
-            alpha = timer_ / halfDuration_;          // fade in (0→1)
-        else
-            alpha = 1.0f - ((timer_ - halfDuration_) / halfDuration_); // fade out
-
+        float alpha = !switched_
+            ? timer_ / halfDuration_                           // fading out (0 -&gt; 1)
+            : 1.0f - (timer_ - halfDuration_) / halfDuration_; // fading in  (1 -&gt; 0)
         alpha = std::clamp(alpha, 0.0f, 1.0f);
-        Color overlay(0, 0, 0, (bytecs)(alpha * 255.0f));
-        // Draw a full-screen black quad using a 1x1 white pixel texture
-        sb.Draw(*pixel_, Rectangle(0, 0, 1920, 1080), overlay);
+
+        // Black scaled by alpha (premultiplied): a full-screen quad made
+        // from the shared 1x1 white texture
+        sb.Draw(ctx_-&gt;pixel, ctx_-&gt;screen, Color::Black * alpha);
     }
 
 private:
     std::unique_ptr&lt;GameState&gt; next_;
-    Single halfDuration_;
-    Single timer_    = 0.0f;
-    bool   switched_ = false;
-    // pixel_ must be injected or accessed via a shared resource system
-    Microsoft::Xna::Framework::Graphics::Texture2D* pixel_ = nullptr;
+    const GameContext*         ctx_;
+    float halfDuration_;
+    float timer_    = 0.0f;
+    bool  switched_ = false;
 };
 </code></pre>
 
       <h2>Complete example: MainMenuState and GameplayState</h2>
 
-      <pre><code class="language-cpp">// MainMenuState.hpp
-#pragma once
-#include "GameState.hpp"
-#include "Microsoft/Xna/Framework/Input/Keyboard.hpp"
-#include "Microsoft/Xna/Framework/Input/Keys.hpp"
-
-class GameplayState;   // forward
-
-class MainMenuState : public GameState {
-public:
-    void Enter() override {
-        // Start menu music, etc.
-    }
-
-    void Update(Microsoft::Xna::Framework::GameTime&amp; gt) override {
-        using namespace Microsoft::Xna::Framework::Input;
-        auto kb = Keyboard::GetState();
-        if (kb.IsKeyDown(Keys::Enter) &amp;&amp; !prevKb_.IsKeyDown(Keys::Enter)) {
-            // Transition to gameplay
-            manager_-&gt;Push(std::make_unique&lt;GameplayState&gt;());
-        }
-        prevKb_ = kb;
-    }
-
-    void Draw(Microsoft::Xna::Framework::Graphics::SpriteBatch&amp; sb) override {
-        // Draw menu background, title, "Press Enter" text
-    }
-
-private:
-    Microsoft::Xna::Framework::Input::KeyboardState prevKb_;
-};
-
-// GameplayState.hpp
+      <pre><code class="language-cpp">// GameplayState.hpp
 #pragma once
 #include "GameState.hpp"
 #include "Microsoft/Xna/Framework/Input/Keyboard.hpp"
@@ -291,13 +296,16 @@ private:
 class GameplayState : public GameState {
 public:
     void Enter() override {
-        // Reset score, load level, play game music
+        // Runs once, when pushed: reset score, load level, play game music
         score_ = 0;
     }
 
     void Exit() override {
-        // Stop game music, save high score, etc.
+        // Runs once, when popped: stop game music, save high score, etc.
     }
+
+    void Pause() override  { /* a pause menu was pushed on top: mute music... */ }
+    void Resume() override { /* ...and un-mute it when the pause menu is popped */ }
 
     void Update(Microsoft::Xna::Framework::GameTime&amp; gt) override {
         using namespace Microsoft::Xna::Framework::Input;
@@ -317,19 +325,84 @@ public:
     }
 
 private:
-    intcs score_ = 0;
+    int score_ = 0;
+    Microsoft::Xna::Framework::Input::KeyboardState prevKb_;
+};
+
+// MainMenuState.hpp
+#pragma once
+#include "FadeState.hpp"
+#include "GameContext.hpp"
+#include "GameplayState.hpp"
+#include "GameState.hpp"
+#include "StateManager.hpp"
+#include "Microsoft/Xna/Framework/Input/Keyboard.hpp"
+#include "Microsoft/Xna/Framework/Input/Keys.hpp"
+
+class MainMenuState : public GameState {
+public:
+    explicit MainMenuState(const GameContext&amp; ctx) : ctx_(&amp;ctx) {}
+
+    void Enter() override {
+        // Start menu music, etc.
+    }
+
+    void Update(Microsoft::Xna::Framework::GameTime&amp; gt) override {
+        using namespace Microsoft::Xna::Framework::Input;
+        auto kb = Keyboard::GetState();
+        if (kb.IsKeyDown(Keys::Enter) &amp;&amp; !prevKb_.IsKeyDown(Keys::Enter)) {
+            // Fade out, swap the menu for gameplay, fade back in.
+            // (Plain alternative: manager_-&gt;Replace(std::make_unique&lt;GameplayState&gt;());)
+            manager_-&gt;Push(std::make_unique&lt;FadeState&gt;(
+                std::make_unique&lt;GameplayState&gt;(), *ctx_));
+            return;   // we were just paused by the Push: do no more work this frame
+        }
+        prevKb_ = kb;
+    }
+
+    void Draw(Microsoft::Xna::Framework::Graphics::SpriteBatch&amp; sb) override {
+        // Draw menu background, title, "Press Enter" text
+    }
+
+private:
+    const GameContext* ctx_;
     Microsoft::Xna::Framework::Input::KeyboardState prevKb_;
 };
 
 // MyGame.cpp — wiring it all together
-class MyGame final : public Microsoft::Xna::Framework::Game {
+#include &lt;memory&gt;
+#include "Microsoft/Xna/Framework/Game.hpp"
+#include "Microsoft/Xna/Framework/Color.hpp"
+#include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
+#include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
+#include "Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
+#include "GameContext.hpp"
+#include "MainMenuState.hpp"
+#include "StateManager.hpp"
+
+using namespace Microsoft::Xna::Framework;
+using namespace Microsoft::Xna::Framework::Graphics;
+
+class MyGame final : public Game {
 public:
-    MyGame() : graphics_(this) {}
+    MyGame() : graphics_(this) {
+        graphics_.setPreferredBackBufferWidthProperty(800);
+        graphics_.setPreferredBackBufferHeightProperty(600);
+    }
 
 protected:
     void LoadContent() override {
-        spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(getGraphicsDeviceProperty());
-        states_.Push(std::make_unique&lt;MainMenuState&gt;());
+        auto&amp; gd = getGraphicsDeviceProperty();
+        spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(gd);
+
+        // Shared resources: a 1x1 white texture and the screen rectangle
+        ctx_.pixel  = Texture2D(gd, 1, 1);
+        Color white = Color::White;
+        ctx_.pixel.SetData(&amp;white, 1);
+        ctx_.screen = Rectangle(0, 0, gd.getViewportProperty().getWidthProperty(),
+                                      gd.getViewportProperty().getHeightProperty());
+
+        states_.Push(std::make_unique&lt;MainMenuState&gt;(ctx_));
     }
 
     void Update(GameTime&amp; gt) override {
@@ -338,24 +411,29 @@ protected:
     }
 
     void Draw(const GameTime&amp;) override {
-        auto&amp; gd = getGraphicsDeviceProperty();
-        gd.Clear(Color::Black);
+        getGraphicsDeviceProperty().Clear(Color::Black);
         spriteBatch_-&gt;Begin();
         states_.Draw(*spriteBatch_);
         spriteBatch_-&gt;End();
-        gd.Present();
+        // Game::EndDraw() presents the frame after Draw() returns.
     }
 
 private:
     GraphicsDeviceManager        graphics_;
     std::unique_ptr&lt;SpriteBatch&gt; spriteBatch_;
+    GameContext                  ctx_;
     StateManager                 states_;
 };
+
+int main() { MyGame game; game.Run(); }
 </code></pre>
 
       <h2>Design notes</h2>
       <ul>
         <li><strong>Push vs Replace</strong> — use <code>Push</code> for overlays (pause menu over gameplay). Use <code>Replace</code> for linear navigation (menu → gameplay).</li>
+        <li><strong>Enter/Exit vs Pause/Resume</strong> — <code>Enter()</code> and <code>Exit()</code> run exactly once, when a state is pushed and popped. Covering a state with an overlay only calls <code>Pause()</code>, and uncovering it calls <code>Resume()</code>, so pausing a game does not reset its score or restart its level.</li>
+        <li><strong>Do not touch <code>this</code> after <code>Push</code>/<code>Pop</code>/<code>Replace</code></strong> — <code>Pop</code> and <code>Replace</code> destroy the calling state. Make the call the last thing the state does in <code>Update()</code> (note the <code>return</code> after <code>Push</code> in <code>MainMenuState</code>, and the <code>Pop</code> at the very end of <code>FadeState</code>).</li>
+        <li><strong>Game loop hooks</strong> — the state manager lives inside your <code>Game</code> subclass; <code>MyGame::Update()</code> and <code>MyGame::Draw()</code> forward to it, and <code>Game</code> presents the frame after <code>Draw()</code> returns, so no state ever calls <code>Present()</code>.</li>
         <li><strong>Asset ownership</strong> — states should load their assets in <code>Enter()</code> and release them in <code>Exit()</code>, or use a shared resource cache to avoid redundant loads.</li>
         <li><strong>State communication</strong> — states can communicate via a shared context object rather than global variables. Pass it to state constructors.</li>
         <li><strong>Deep stacks</strong> — if you need the gameplay state to still update while the pause menu is displayed, have <code>StateManager::Update()</code> walk the stack bottom-up and call <code>UpdateBelow()</code> on states that opt in.</li>
@@ -384,7 +462,7 @@ private:
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

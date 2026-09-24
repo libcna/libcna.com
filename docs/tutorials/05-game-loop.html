@@ -18,7 +18,7 @@
   "headline": "Tutorial 05: The Game Loop: Update and Draw",
   "url": "https://libcna.com/docs/tutorials/05-game-loop.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -113,17 +113,21 @@
         <li><strong>Draw</strong> — render everything to the screen.</li>
       </ol>
       <p>This repeats at 30, 60, or as many frames per second as the hardware allows. CNA's <code>Game</code> class provides this loop automatically. When you call <code>game.Run()</code>, CNA enters the loop and calls your <code>Update()</code> and <code>Draw()</code> overrides until <code>Exit()</code> is called.</p>
-      <p>The simplest possible loop (variable timestep, uncapped FPS) looks like this internally:</p>
+      <p>The simplest possible loop (variable timestep, uncapped FPS) looks like this internally &mdash; a simplified sketch, not CNA&rsquo;s literal source:</p>
       <pre><code class="language-cpp">while (!exitRequested) {
+    handleEvents();
+
     auto now = clock.now();
-    gameTime.elapsedGameTime = now - lastTime;
-    gameTime.totalGameTime   += gameTime.elapsedGameTime;
+    gameTime.elapsedGameTime = firstUpdate ? 0 : now - lastTime;   // 0 on the very first Update
     lastTime = now;
 
-    handleEvents();
     Update(gameTime);
+    gameTime.totalGameTime += gameTime.elapsedGameTime;           // advances AFTER Update
+
     Draw(gameTime);
+    Present();                                                    // done by Game::EndDraw()
 }</code></pre>
+      <p>Two details of this order matter for your code: the very first <code>Update()</code> sees an elapsed time of zero, and <code>TotalGameTime</code> during an <code>Update()</code> is the time <em>before</em> that step, not including it. This is XNA&rsquo;s own clock behaviour, which CNA reproduces.</p>
 
       <h2 id="gametime">GameTime Explained</h2>
       <p><code>GameTime</code> is passed to both <code>Update()</code> and <code>Draw()</code>. It carries two time measurements:</p>
@@ -131,8 +135,8 @@
       <table>
         <thead><tr><th>Property</th><th>Type</th><th>Meaning</th></tr></thead>
         <tbody>
-          <tr><td><code>getElapsedGameTimeProperty()</code></td><td><code>TimeSpan</code></td><td>Time since the last Update/Draw call. Use this for movement.</td></tr>
-          <tr><td><code>getTotalGameTimeProperty()</code></td><td><code>TimeSpan</code></td><td>Total time the game has been running. Useful for animations keyed to absolute time.</td></tr>
+          <tr><td><code>getElapsedGameTimeProperty()</code></td><td><code>TimeSpan</code></td><td>Time since the previous <code>Update</code> (zero on the first one). Use this for movement.</td></tr>
+          <tr><td><code>getTotalGameTimeProperty()</code></td><td><code>TimeSpan</code></td><td>Total time the game has been running, as of the start of the current step. Useful for animations keyed to absolute time.</td></tr>
           <tr><td><code>getIsRunningSlowlyProperty()</code></td><td><code>bool</code></td><td>True if the fixed-timestep loop is running behind. Drop non-essential work.</td></tr>
         </tbody>
       </table>
@@ -153,18 +157,23 @@
       <p>CNA supports two update modes, controlled by <code>IsFixedTimeStep</code>:</p>
 
       <h3>Variable timestep (<code>IsFixedTimeStep = false</code>)</h3>
-      <p>Update and Draw are called as fast as the hardware allows. <code>ElapsedGameTime</code> varies every frame. Useful for uncapped-framerate games and benchmarks.</p>
+      <p>Update and Draw are called as fast as the hardware allows (exactly one <code>Update</code> per <code>Draw</code>). <code>ElapsedGameTime</code> varies every frame. Useful for uncapped-framerate games and benchmarks.</p>
       <ul>
         <li>Pros: maximum FPS, lowest latency.</li>
         <li>Cons: <code>ElapsedGameTime</code> can vary wildly on a slow machine, making physics unstable if not handled carefully.</li>
       </ul>
 
       <h3>Fixed timestep (<code>IsFixedTimeStep = true</code>, the default)</h3>
-      <p>CNA calls <code>Update()</code> at a fixed rate (default 60 Hz). If a frame takes too long, CNA calls <code>Update()</code> extra times to catch up before calling <code>Draw()</code>. <code>ElapsedGameTime</code> is always exactly <code>TargetElapsedTime</code> inside <code>Update()</code>.</p>
+      <p>CNA calls <code>Update()</code> at a fixed rate (default 60 Hz). If a frame takes too long, CNA calls <code>Update()</code> extra times to catch up before calling <code>Draw()</code>. <code>ElapsedGameTime</code> is exactly <code>TargetElapsedTime</code> inside every <code>Update()</code> except the very first, which sees zero.</p>
       <ul>
         <li>Pros: deterministic physics and game logic, easier to reason about.</li>
         <li>Cons: slightly more complex loop; on a slow machine the game logic can fall behind.</li>
       </ul>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>Browser builds.</strong> When CNA runs under Emscripten the frame body is driven by <code>requestAnimationFrame</code> and keeps its own fixed-step accumulator (with a 250&nbsp;ms clamp) that steps by <code>TargetElapsedTime</code>. Setting <code>IsFixedTimeStep = false</code> is not honoured there, and the first <code>Update</code> gets a full step instead of zero. Write game logic so it does not depend on either detail.</p>
+      </div>
 
       <h2 id="fixed-timestep-api">IsFixedTimeStep and TargetElapsedTime</h2>
       <p>Set these in the constructor:</p>
@@ -183,7 +192,7 @@ setTargetElapsedTimeProperty(TimeSpan::FromSeconds(1.0 / 30.0));</code></pre>
       <p>To disable fixed timestep (uncapped FPS):</p>
       <pre><code class="language-cpp">setIsFixedTimeStepProperty(false);</code></pre>
 
-      <p>When <code>IsRunningSlowly</code> is true the loop is catching up. Drop expensive optional work:</p>
+      <p>When <code>IsRunningSlowly</code> is true the loop is catching up (it turns on once the loop has had to run extra catch-up <code>Update</code> calls several times, and off again when it has caught up). Drop expensive optional work:</p>
       <pre><code class="language-cpp">void MyGame::Update(GameTime&amp; gameTime) {
     updatePhysics(gameTime);
     updateAI(gameTime);
@@ -215,6 +224,8 @@ void MyGame::Update(GameTime&amp; gameTime) {
       <pre><code class="language-cpp">class MovingSquare final : public Game {
 public:
     MovingSquare() : graphics_(this) {
+        graphics_.setPreferredBackBufferWidthProperty(800);
+        graphics_.setPreferredBackBufferHeightProperty(600);
         setIsFixedTimeStepProperty(true);
         setTargetElapsedTimeProperty(TimeSpan::FromSeconds(1.0 / 60.0));
     }
@@ -255,8 +266,7 @@ protected:
             Rectangle(static_cast&lt;int&gt;(x_), static_cast&lt;int&gt;(y_), 50, 50),
             Color::Yellow);
         spriteBatch_-&gt;End();
-
-        device.Present();
+        // No device.Present(): Game::EndDraw() presents after Draw() returns.
     }
 
 private:
@@ -295,7 +305,7 @@ private:
     // Rotation (radians)
     rotation_ += rotationSpeed_ * dt;
 }</code></pre>
-      <p>With fixed timestep, <code>dt</code> will always be exactly <code>TargetElapsedTime</code> (e.g., 1/60 ≈ 0.01667 seconds) so physics stays deterministic. With variable timestep, <code>dt</code> varies and you must cap it to avoid "spiral of death" on very slow frames:</p>
+      <p>With fixed timestep, <code>dt</code> will be exactly <code>TargetElapsedTime</code> (e.g., 1/60 ≈ 0.01667 seconds) on every update after the first, so physics stays deterministic. (The first update has <code>dt&nbsp;=&nbsp;0</code>, which is harmless when you <em>multiply</em> by <code>dt</code> but a division-by-zero trap if you ever divide by it.) With variable timestep, <code>dt</code> varies and you must cap it to avoid "spiral of death" on very slow frames:</p>
       <pre><code class="language-cpp">void MyGame::Update(GameTime&amp; gameTime) {
     float dt = static_cast&lt;float&gt;(gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty());
     dt = std::min(dt, 0.05f);  // cap at 50ms to prevent physics tunnelling
@@ -327,7 +337,7 @@ private:
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

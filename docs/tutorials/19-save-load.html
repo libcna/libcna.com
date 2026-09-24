@@ -21,7 +21,7 @@
   "headline": "Tutorial 19: Saving and Loading Data",
   "url": "https://libcna.com/docs/tutorials/19-save-load.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -98,13 +98,13 @@
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>There is no save persistence on the web.</strong> Under Emscripten, <code>SDL_GetPrefPath</code> returns a path inside the volatile in-memory MEMFS. CNA mounts no IDBFS and never calls <code>FS.syncfs</code>, so every file a web build writes is <strong>silently discarded when the page reloads</strong>. Nothing throws and nothing warns &mdash; the write appears to succeed. If your game targets the browser and needs to remember anything at all, you have to arrange your own persistence (for example by calling into <code>localStorage</code> or IndexedDB from JavaScript). Everything on this page applies to desktop and Android builds.</p>
+        <p><strong>There is no save persistence on the web.</strong> CNA mounts no persistent file system for Emscripten builds (no IDBFS, no <code>FS.syncfs</code>), so everything <code>StorageDevice</code> writes lives in Emscripten&rsquo;s default in-memory file system and is <strong>silently discarded when the page reloads</strong>. Nothing throws and nothing warns &mdash; the write appears to succeed. If your game targets the browser and needs to remember anything at all, you have to arrange your own persistence (for example by calling into <code>localStorage</code> or IndexedDB from JavaScript). Everything else on this page applies to desktop and Android builds.</p>
       </div>
 
-      <p>CNA implements the XNA 4.0 <code>StorageDevice</code> / <code>StorageContainer</code> API for reading and writing save data. The API abstracts over platform-specific paths, which it derives from <code>SDL_GetPrefPath</code>: on Linux that is under <code>~/.local/share/</code>, on Windows under <code>%APPDATA%</code>, on macOS under <code>~/Library/Application Support/</code>, and on Android the app's internal files directory.</p>
+      <p>CNA implements the XNA 4.0 <code>StorageDevice</code> / <code>StorageContainer</code> API for reading and writing save data. The API abstracts over platform-specific locations: on Linux a save lands under <code>~/.local/share/</code> (or <code>$XDG_DATA_HOME</code>), on Windows under <code>%LOCALAPPDATA%</code>, on macOS under <code>~/Library/Application Support/</code>, and on Android in the app&rsquo;s private files directory. The exact rules, and the folder name, are in <a href="#platform-save-paths">Platform save paths</a>.</p>
 
       <h2>StorageDevice overview</h2>
-      <p><code>StorageDevice</code> represents a physical or virtual storage medium. In XNA on Xbox 360 this was the memory unit or hard drive; in CNA it maps to the current platform's writable area. You obtain a <code>StorageDevice</code> asynchronously via <code>StorageDevice::BeginShowSelector()</code> (desktop platforms auto-select the default device).</p>
+      <p><code>StorageDevice</code> represents a physical or virtual storage medium. In XNA on Xbox 360 this was the memory unit or hard drive; in CNA it maps to the current platform&rsquo;s per-user writable area. You obtain a <code>StorageDevice</code> through <code>StorageDevice::BeginShowSelector()</code> and <code>EndShowSelector()</code>; on CNA no selector UI is shown and the pair completes immediately. There is no <code>StorageDevice::GetDefault()</code>.</p>
 
       <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Storage/StorageDevice.hpp"
 #include "Microsoft/Xna/Framework/Storage/StorageContainer.hpp"
@@ -113,65 +113,86 @@ using namespace Microsoft::Xna::Framework::Storage;
 </code></pre>
 
       <h2>StorageContainer</h2>
-      <p>A <code>StorageContainer</code> is a named folder within a <code>StorageDevice</code>. Each game typically uses one container per save slot. Open a container with <code>StorageDevice::OpenContainer()</code>:</p>
+      <p>A <code>StorageContainer</code> is a named folder within a <code>StorageDevice</code>. Each game typically uses one container per save slot. You open one with the <code>Begin</code>/<code>End</code> pair. There is no <code>OpenContainer()</code> shortcut and no <code>getPathProperty()</code>: you never receive a filesystem path, only the container object.</p>
 
-      <pre><code class="language-cpp">// Open (or create) a container named "SaveSlot1"
-auto container = device-&gt;OpenContainer("SaveSlot1");
-
-// Get the full filesystem path to write files into
-std::string savePath = container-&gt;getPathProperty();
-// e.g. ~/.local/share/MyGame/SaveSlot1/
+      <pre><code class="language-cpp">// Open (creating it on first use) a container named "SaveSlot1"
+auto pending   = device-&gt;BeginOpenContainer("SaveSlot1", nullptr, nullptr);
+auto container = device-&gt;EndOpenContainer(pending.get());   // std::unique_ptr&lt;StorageContainer&gt;
 </code></pre>
 
-      <p>Files inside the container are regular files — you can read and write them with standard C++ I/O or any serialisation library.</p>
+      <p>Everything inside the container is reached through the container object, and file contents are read and written as <code>System::IO::Stream</code>s (from the Sharp Runtime that CNA builds on), not with <code>std::ofstream</code>:</p>
 
-      <h2>Platform save paths</h2>
-
+      <div class="table-wrap">
       <table>
-        <thead><tr><th>Platform</th><th>Root save path</th></tr></thead>
+        <thead><tr><th scope="col">Member</th><th scope="col">What it does</th></tr></thead>
         <tbody>
-          <tr><td>Linux</td><td><code>~/.local/share/&lt;GameName&gt;/</code></td></tr>
-          <tr><td>Windows</td><td><code>%APPDATA%\&lt;GameName&gt;\</code></td></tr>
-          <tr><td>Android</td><td><code>/data/data/&lt;package&gt;/files/&lt;GameName&gt;/</code></td></tr>
-          <tr><td>macOS</td><td><code>~/Library/Application Support/&lt;GameName&gt;/</code></td></tr>
-          <tr><td>Web (Emscripten)</td><td>A volatile MEMFS path. <strong>Not persistent</strong> &mdash; discarded on page reload</td></tr>
+          <tr><td><code>CreateFile("save.json")</code></td><td>Creates the file, or truncates an existing one, and returns a <code>std::unique_ptr&lt;System::IO::Stream&gt;</code></td></tr>
+          <tr><td><code>OpenFile("save.json", FileMode::Open)</code></td><td>Opens a file with a <code>System::IO::FileMode</code> (optionally with <code>FileAccess</code> and <code>FileShare</code>); returns a stream</td></tr>
+          <tr><td><code>FileExists</code> / <code>DeleteFile</code></td><td>Test for, or remove, one file</td></tr>
+          <tr><td><code>GetFileNames()</code> / <code>GetFileNames("*.json")</code></td><td>List the files in the container, optionally with a <code>*</code>/<code>?</code> pattern</td></tr>
+          <tr><td><code>CreateDirectory</code> / <code>DirectoryExists</code> / <code>DeleteDirectory</code> / <code>GetDirectoryNames()</code></td><td>The same for sub-folders</td></tr>
+          <tr><td><code>Dispose()</code></td><td>Releases the container (the destructor does it for you)</td></tr>
         </tbody>
       </table>
+      </div>
 
-      <p>CNA sets the game name from <code>Game::setTitleProperty()</code> or, if not set, falls back to the executable name. The exact root comes from <code>SDL_GetPrefPath</code>, which also creates the directory on first use.</p>
+      <div class="callout callout--info">
+        <span class="callout-icon">&#9432;</span>
+        <p><strong>Names must stay inside the container.</strong> A container name, and every file or directory name you pass to a container, must be a relative path that stays inside it. Absolute paths, <code>..</code> escapes and symbolic links that lead outside throw <code>std::invalid_argument</code>. <code>StorageDevice::DeleteContainer(name)</code> applies the same rule, so a save slot cannot be used to delete anything else.</p>
+      </div>
+
+      <h2 id="platform-save-paths">Platform save paths</h2>
+
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Platform</th><th scope="col">Root save path</th></tr></thead>
+        <tbody>
+          <tr><td>Linux</td><td><code>$XDG_DATA_HOME/&lt;app&gt;/</code> if that variable is set, otherwise <code>~/.local/share/&lt;app&gt;/</code></td></tr>
+          <tr><td>Windows</td><td><code>%LOCALAPPDATA%\&lt;app&gt;\</code> (Local, not Roaming: it is not <code>%APPDATA%</code>)</td></tr>
+          <tr><td>macOS</td><td><code>~/Library/Application Support/&lt;app&gt;/</code></td></tr>
+          <tr><td>Android</td><td>the app-private files directory, then <code>&lt;app&gt;/</code></td></tr>
+          <tr><td>No home directory known</td><td><code>&lt;app&gt;/</code> under the current working directory</td></tr>
+          <tr><td>Web (Emscripten)</td><td>A path in Emscripten&rsquo;s default in-memory file system. <strong>Not persistent</strong> &mdash; discarded on page reload</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p>The variables are checked in the order shown (<code>XDG_DATA_HOME</code>, then <code>LOCALAPPDATA</code>, then <code>HOME</code>) on every operating system before the platform default applies. Below the root, a container occupies <code>&lt;root&gt;/&lt;containerName&gt;/AllPlayers/</code> (or <code>Player1</code>, <code>Player2</code>&hellip; if you obtained the device for a specific <code>PlayerIndex</code>).</p>
+
+      <p><code>&lt;app&gt;</code> is <strong>the literal string <code>game</code></strong> unless you call <code>StorageDevice::SetAppNameEXT("MyGame")</code> (a CNA extension) once at startup, before any storage access. Nothing derives it from the window title or the executable name, so two CNA games that never call <code>SetAppNameEXT</code> share one folder. <code>StorageDevice::GetStorageRootEXT()</code> returns the resulting absolute root, which is handy for telling players where their saves are. None of this depends on which CNA platform layer (SDL3, X11, Wayland, Win32&hellip;) the game runs on, and the directory is created on first use.</p>
 
       <h2>StorageDevice::BeginOpenContainer</h2>
-      <p>The XNA async pattern uses <code>IAsyncResult</code>. CNA implements this but also provides a synchronous shortcut for simpler use:</p>
+      <p>The XNA async pattern uses <code>IAsyncResult</code>. The <code>Begin*</code> calls return a <code>std::unique_ptr&lt;System::IAsyncResult&gt;</code>; you hand its raw pointer to the matching <code>End*</code> call, which returns its result as a <code>std::unique_ptr</code> too:</p>
 
-      <pre><code class="language-cpp">// Async-shaped (XNA-compatible):
-IAsyncResult* ar = device-&gt;BeginOpenContainer("SaveSlot1", nullptr, nullptr);
-// ... do other work ...
-auto container = device-&gt;EndOpenContainer(ar);
+      <pre><code class="language-cpp">// 1. The device: a "selector" that completes immediately on every CNA platform
+auto selector = StorageDevice::BeginShowSelector(nullptr, nullptr);   // callback, state
+std::unique_ptr&lt;StorageDevice&gt; device = StorageDevice::EndShowSelector(selector.get());
 
-// Synchronous shortcut (CNA extension — not in original XNA):
-auto container = device-&gt;OpenContainer("SaveSlot1");
+// 2. The container
+std::unique_ptr&lt;System::IAsyncResult&gt; pending =
+    device-&gt;BeginOpenContainer("SaveSlot1", nullptr, nullptr);       // callback, state
+std::unique_ptr&lt;StorageContainer&gt; container = device-&gt;EndOpenContainer(pending.get());
 </code></pre>
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>The <code>Begin*</code>/<code>End*</code> pair is not actually asynchronous.</strong> The work happens inline, and any callback you pass runs <em>before</em> <code>Begin*</code> returns &mdash; there is no background thread and no "do other work" window to exploit. This is faithful to XNA, whose storage async was also largely fake, but it does mean the async form buys you nothing over the synchronous shortcut except source compatibility with existing XNA code.</p>
+        <p><strong>The <code>Begin*</code>/<code>End*</code> pair is not actually asynchronous.</strong> The work happens inline, and any callback you pass runs <em>before</em> <code>Begin*</code> returns &mdash; there is no background thread and no "do other work" window to exploit. This is faithful to XNA, whose storage async was also largely fake. It is also the only form CNA offers: there is no synchronous shortcut, so wrap the two calls in a small helper (as <code>OpenSlot</code> below does).</p>
       </div>
 
       <h2>JSON serialization pattern</h2>
-      <p>CNA does not bundle a JSON library, but C++23's standard library makes it easy to write lightweight JSON manually. For production use, bundle a header-only library such as nlohmann/json or rapidjson.</p>
+      <p>CNA does not bundle a JSON library, but a flat save file is easy to write by hand, as below. For production use, bundle a header-only library such as nlohmann/json or rapidjson.</p>
 
       <h3>SaveData struct</h3>
       <pre><code class="language-cpp">// SaveData.hpp
 #pragma once
 #include &lt;string&gt;
-#include &lt;cstdint&gt;
 
 struct SaveData {
-    intcs   level       = 1;
-    intcs   score       = 0;
-    intcs   lives       = 3;
-    Single  musicVolume = 0.8f;
-    bool    sfxEnabled  = true;
+    int         level       = 1;
+    int         score       = 0;
+    int         lives       = 3;
+    float       musicVolume = 0.8f;
+    bool        sfxEnabled  = true;
     std::string playerName;
 
     // Manual JSON serialise
@@ -186,152 +207,204 @@ struct SaveData {
                "}\n";
     }
 
-    // Minimal JSON parse (replace with a real library in production)
-    static SaveData FromJson(const std::string&amp; json);
+    // Minimal parse for the flat object ToJson() writes. Fine for a tutorial;
+    // use a real JSON library (nlohmann/json, rapidjson...) for anything richer.
+    static SaveData FromJson(const std::string&amp; json) {
+        SaveData d;
+        d.level       = std::stoi(RawValue(json, "level",       "1"));
+        d.score       = std::stoi(RawValue(json, "score",       "0"));
+        d.lives       = std::stoi(RawValue(json, "lives",       "3"));
+        d.musicVolume = std::stof(RawValue(json, "musicVolume", "0.8"));
+        d.sfxEnabled  = RawValue(json, "sfxEnabled", "true") == "true";
+        d.playerName  = RawValue(json, "playerName", "");
+        return d;
+    }
+
+private:
+    // Text of the value after "key": up to the next comma / newline / brace,
+    // with any surrounding quotes and spaces removed
+    static std::string RawValue(const std::string&amp; json, const std::string&amp; key,
+                                const std::string&amp; fallback) {
+        std::size_t pos = json.find("\"" + key + "\"");
+        if (pos == std::string::npos) return fallback;
+        pos = json.find(':', pos);
+        if (pos == std::string::npos) return fallback;
+        std::size_t end = json.find_first_of(",\n}", pos);
+        std::string v = json.substr(pos + 1, end - pos - 1);
+        const char* trim = " \t\r\"";
+        std::size_t first = v.find_first_not_of(trim);
+        if (first == std::string::npos) return "";
+        return v.substr(first, v.find_last_not_of(trim) - first + 1);
+    }
 };
 </code></pre>
+      <p>The hand-written parser handles exactly the flat object <code>ToJson()</code> produces. A player name containing a comma, brace or quote would break it, which is one more reason to use a real library for real data.</p>
 
       <h3>Save function</h3>
-      <pre><code class="language-cpp">#include &lt;fstream&gt;
-#include &lt;filesystem&gt;
+      <p>Saving is: open the slot&rsquo;s container, create the file, write the text through a <code>StreamWriter</code>, close. Loading is the mirror image with <code>OpenFile</code> and a <code>StreamReader</code>:</p>
+      <pre><code class="language-cpp">// SaveGame.hpp
+#pragma once
+#include &lt;memory&gt;
+#include &lt;stdexcept&gt;
+#include &lt;string&gt;
 #include "Microsoft/Xna/Framework/Storage/StorageDevice.hpp"
 #include "Microsoft/Xna/Framework/Storage/StorageContainer.hpp"
+#include "System/IO/FileMode.hpp"
+#include "System/IO/StreamReader.hpp"
+#include "System/IO/StreamWriter.hpp"
 #include "SaveData.hpp"
 
-bool SaveGame(StorageDevice* device, intcs slot, const SaveData&amp; data) {
-    std::string containerName = "SaveSlot" + std::to_string(slot);
-    auto container = device-&gt;OpenContainer(containerName);
-    if (!container) return false;
+using namespace Microsoft::Xna::Framework::Storage;
 
-    std::string path = container-&gt;getPathProperty() + "/save.json";
-    std::filesystem::create_directories(container-&gt;getPathProperty());
-
-    std::ofstream out(path);
-    if (!out.is_open()) return false;
-    out &lt;&lt; data.ToJson();
-    return true;
+// Open (creating it on first use) the container for one save slot
+std::unique_ptr&lt;StorageContainer&gt; OpenSlot(StorageDevice&amp; device, int slot) {
+    auto pending = device.BeginOpenContainer("SaveSlot" + std::to_string(slot),
+                                             nullptr, nullptr);
+    return device.EndOpenContainer(pending.get());
 }
 
-bool LoadGame(StorageDevice* device, intcs slot, SaveData&amp; out) {
-    std::string containerName = "SaveSlot" + std::to_string(slot);
-    auto container = device-&gt;OpenContainer(containerName);
-    if (!container) return false;
+bool SaveGame(StorageDevice&amp; device, int slot, const SaveData&amp; data) {
+    try {
+        auto container = OpenSlot(device, slot);
 
-    std::string path = container-&gt;getPathProperty() + "/save.json";
-    std::ifstream in(path);
-    if (!in.is_open()) return false;
+        // CreateFile() = FileMode::Create: makes the file or overwrites it
+        std::unique_ptr&lt;System::IO::Stream&gt; stream = container-&gt;CreateFile("save.json");
 
-    std::string json((std::istreambuf_iterator&lt;char&gt;(in)),
-                      std::istreambuf_iterator&lt;char&gt;());
-    out = SaveData::FromJson(json);
-    return true;
+        System::IO::StreamWriter writer(stream.get());
+        writer.Write(data.ToJson());
+        writer.Close();          // flushes, then closes the underlying stream
+        return true;
+    } catch (const std::exception&amp;) {
+        return false;            // not connected, name rejected, disk full...
+    }
+}
+
+bool LoadGame(StorageDevice&amp; device, int slot, SaveData&amp; out) {
+    try {
+        auto container = OpenSlot(device, slot);
+        if (!container-&gt;FileExists("save.json")) return false;
+
+        auto stream = container-&gt;OpenFile("save.json", System::IO::FileMode::Open);
+        System::IO::StreamReader reader(stream.get());
+        out = SaveData::FromJson(reader.ReadToEnd());
+        return true;
+    } catch (const std::exception&amp;) {
+        return false;            // includes a corrupt file: stoi/stof throw
+    }
+}
+
+bool SlotExists(StorageDevice&amp; device, int slot) {
+    try {
+        return OpenSlot(device, slot)-&gt;FileExists("save.json");
+    } catch (const std::exception&amp;) {
+        return false;
+    }
 }
 </code></pre>
+      <p><code>StreamWriter</code> and <code>StreamReader</code> wrap the <code>Stream*</code> returned by the container (the <code>unique_ptr</code> keeps ownership); <code>Close()</code> on a writer flushes it and closes the stream.</p>
 
       <h2>Save slots</h2>
       <p>Multiple save slots are supported by using different container names:</p>
 
       <pre><code class="language-cpp">// Save to slot 1
-SaveGame(device_, 1, currentSave_);
+SaveGame(*device_, 1, currentSave_);
 
 // Load from slot 2
 SaveData slot2;
-if (LoadGame(device_, 2, slot2)) {
+if (LoadGame(*device_, 2, slot2)) {
     // Use slot2 data
 }
 
-// Check if a slot exists
-bool SlotExists(StorageDevice* device, intcs slot) {
-    auto container = device-&gt;OpenContainer("SaveSlot" + std::to_string(slot));
-    if (!container) return false;
-    std::string path = container-&gt;getPathProperty() + "/save.json";
-    return std::filesystem::exists(path);
-}
+// Check if a slot has a save (SlotExists is defined in SaveGame.hpp above)
+if (SlotExists(*device_, 3)) { /* show "Continue" */ }
+
+// Delete a slot: removes the whole container folder tree
+device_->DeleteContainer("SaveSlot3");
 </code></pre>
+      <p>Note that <code>SlotExists</code> opens the container, which creates the (empty) folder on first use. That is harmless, but it means the folder&rsquo;s existence tells you nothing; test for the file, as the helper does.</p>
 
       <h2>Complete game integration</h2>
+      <p>The device and the save-game helpers are created before anything needs them. The base <code>Game::Initialize()</code> is what calls <code>LoadContent()</code> (<a href="04-game-lifecycle.html">Tutorial 04</a>), so the device is obtained in the constructor, ahead of the auto-load in <code>LoadContent()</code>:</p>
 
-      <pre><code class="language-cpp">#include &lt;memory&gt;
+      <pre><code class="language-cpp">#include &lt;iostream&gt;
+#include &lt;memory&gt;
 #include "Microsoft/Xna/Framework/Game.hpp"
-#include "Microsoft/Xna/Framework/Storage/StorageDevice.hpp"
+#include "Microsoft/Xna/Framework/Color.hpp"
+#include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
+#include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
 #include "Microsoft/Xna/Framework/Input/Keyboard.hpp"
 #include "Microsoft/Xna/Framework/Input/Keys.hpp"
-#include "SaveData.hpp"
+#include "SaveGame.hpp"
 
 using namespace Microsoft::Xna::Framework;
-using namespace Microsoft::Xna::Framework::Storage;
+using namespace Microsoft::Xna::Framework::Graphics;
 using namespace Microsoft::Xna::Framework::Input;
+using namespace Microsoft::Xna::Framework::Storage;
 
 class SaveDemo final : public Game {
 public:
-    SaveDemo() : graphics_(this) {}
+    SaveDemo() : graphics_(this) {
+        // CNA extension: name the folder under the per-user data root.
+        // Without it the folder is literally called "game".
+        StorageDevice::SetAppNameEXT("SaveDemo");
 
-protected:
-    void Initialize() override {
-        Game::Initialize();
-        // Obtain the default StorageDevice (synchronous on desktop)
-        device_ = StorageDevice::GetDefault();
+        // Obtain the storage device. Nothing is shown and nothing is asynchronous:
+        // the "selector" completes before BeginShowSelector returns.
+        auto selector = StorageDevice::BeginShowSelector(nullptr, nullptr);
+        device_ = StorageDevice::EndShowSelector(selector.get());
+        std::cout &lt;&lt; "Saves live in: " &lt;&lt; StorageDevice::GetStorageRootEXT() &lt;&lt; "\n";
     }
 
+protected:
     void LoadContent() override {
         spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(getGraphicsDeviceProperty());
         // Try to auto-load save slot 1 on startup
-        if (device_) {
-            SaveData loaded;
-            if (LoadGame(device_.get(), 1, loaded)) {
-                save_ = loaded;
-            }
+        SaveData loaded;
+        if (LoadGame(*device_, 1, loaded)) {
+            save_ = loaded;
         }
     }
 
     void Update(GameTime&amp; gt) override {
         auto kb = Keyboard::GetState();
-
-        // F5 = save slot 1
         if (kb.IsKeyDown(Keys::F5) &amp;&amp; !prevKb_.IsKeyDown(Keys::F5)) {
-            if (device_) {
-                save_.score += 100;  // increment for demo
-                SaveGame(device_.get(), 1, save_);
-            }
+            save_.score += 100;  // increment for demo
+            std::cout &lt;&lt; (SaveGame(*device_, 1, save_) ? "Saved" : "Save FAILED") &lt;&lt; "\n";
         }
-
-        // F9 = load slot 1
         if (kb.IsKeyDown(Keys::F9) &amp;&amp; !prevKb_.IsKeyDown(Keys::F9)) {
-            if (device_) {
-                LoadGame(device_.get(), 1, save_);
-            }
+            std::cout &lt;&lt; (LoadGame(*device_, 1, save_) ? "Loaded" : "Nothing to load")
+                      &lt;&lt; ", score = " &lt;&lt; save_.score &lt;&lt; "\n";
         }
-
+        if (kb.IsKeyDown(Keys::Escape)) Exit();
         prevKb_ = kb;
     }
 
     void Draw(const GameTime&amp;) override {
-        auto&amp; gd = getGraphicsDeviceProperty();
-        gd.Clear(Color::DarkGreen);
+        getGraphicsDeviceProperty().Clear(Color::DarkGreen);
         spriteBatch_-&gt;Begin();
-        // Draw save_.score, etc.
         spriteBatch_-&gt;End();
-        gd.Present();
     }
 
 private:
-    GraphicsDeviceManager         graphics_;
-    std::unique_ptr&lt;SpriteBatch&gt;  spriteBatch_;
-    std::shared_ptr&lt;StorageDevice&gt; device_;
-    SaveData                      save_;
-    KeyboardState                 prevKb_;
+    GraphicsDeviceManager          graphics_;
+    std::unique_ptr&lt;SpriteBatch&gt;   spriteBatch_;
+    std::unique_ptr&lt;StorageDevice&gt; device_;
+    SaveData                       save_;
+    KeyboardState                  prevKb_;
 };
 
 int main() { SaveDemo game; game.Run(); }
 </code></pre>
+      <p>Press F5 to add 100 to the score and save, F9 to load, Escape to quit. Run it twice: the second run auto-loads the score saved by the first. The console prints the folder the saves went to.</p>
+      <p>For a standalone, buildable project that does the same with a CMake file, a versioned save format, and a tour of everything that can fail, see <a href="141-save-data-portably.html">Tutorial 141: Save Data Portably with StorageDevice</a>.</p>
 
       <h2>Web platform notes</h2>
-      <p>Emscripten builds get a working <code>StorageDevice</code> and <code>StorageContainer</code> &mdash; files are created, written and read back correctly <em>within a single page session</em>. What they do not get is durability. <code>SDL_GetPrefPath</code> lands in MEMFS, CNA mounts no IDBFS, and nothing ever calls <code>FS.syncfs</code>, so the whole tree evaporates on reload.</p>
+      <p>Emscripten builds get a working <code>StorageDevice</code> and <code>StorageContainer</code> &mdash; files are created, written and read back correctly <em>within a single page session</em>. What they do not get is durability. CNA mounts no persistent file system (no IDBFS, and nothing ever calls <code>FS.syncfs</code>), so the whole tree lives in the default in-memory file system and evaporates on reload.</p>
       <p>If you need saves in the browser, do the persistence yourself. The usual approach is to keep the serialisation code above unchanged, then push the resulting JSON string into <code>localStorage</code> (or IndexedDB, for larger payloads) from an <code>EM_ASM</code> block, and read it back at startup instead of opening a container. Treat the CNA storage path as a scratch area on that platform, not a save location.</p>
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Test your own save code.</strong> The storage module is one of the more thinly tested parts of CNA &mdash; <code>StorageContainer</code> in particular has no tests of its own. The API works, but do not assume edge cases such as unusual container names, concurrent opens or partial writes have been exercised for you.</p>
+        <p><strong>Test your own save code.</strong> The storage module is one of the smaller and more thinly tested parts of CNA. Its tests cover device and container path handling (name and path containment, <code>DeleteContainer</code>, the not-connected exception&rsquo;s serialisation), but they do not round-trip data through a container, so do not assume edge cases such as concurrent opens or partial writes have been exercised for you. See also the <a href="../storage.html">Storage reference</a>.</p>
       </div>
 
       <nav class="docs-pagination" aria-label="Page navigation">
@@ -357,7 +430,7 @@ int main() { SaveDemo game; game.Run(); }
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

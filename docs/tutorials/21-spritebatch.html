@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 21: SpriteBatch Deep Dive - CNA Tutorials</title>
-  <meta name="description" content="Master SpriteBatch in CNA: all Begin() overloads, SpriteSortMode, every Draw() variant, DrawString, and batching performance.">
+  <meta name="description" content="Master SpriteBatch in CNA: the Begin() overloads, SpriteSortMode, every Draw() variant, DrawString, and batching performance.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/21-spritebatch.html">
   <meta property="og:title"       content="Tutorial 21: SpriteBatch Deep Dive - CNA Tutorials">
-  <meta property="og:description" content="Master SpriteBatch in CNA: all Begin() overloads, SpriteSortMode, every Draw() variant, DrawString, and batching performance.">
+  <meta property="og:description" content="Master SpriteBatch in CNA: the Begin() overloads, SpriteSortMode, every Draw() variant, DrawString, and batching performance.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/21-spritebatch.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 21: SpriteBatch Deep Dive",
   "url": "https://libcna.com/docs/tutorials/21-spritebatch.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -90,7 +90,7 @@
         <p><strong>What you&rsquo;ll learn</strong></p>
         <ul>
           <li>Every parameter of <code>SpriteBatch::Begin()</code> and what it actually changes.</li>
-          <li>All nine <code>Draw</code> overloads and the <code>DrawString</code> overloads.</li>
+          <li>All ten <code>Draw</code> overloads (seven from XNA, three CNA extensions) and the <code>DrawString</code> overloads.</li>
           <li>When the batch flushes, and how that drives draw-call count.</li>
           <li>Passing a custom effect into <code>Begin()</code>.</li>
         </ul>
@@ -101,24 +101,41 @@
 
       <h2>SpriteBatch::Begin() — all parameters</h2>
 
+      <p><code>Begin()</code> is a set of eight overloads, not one function with default arguments. The most complete form takes every parameter:</p>
+
       <pre><code class="language-cpp">void SpriteBatch::Begin(
-    SpriteSortMode          sortMode        = SpriteSortMode::Deferred,
-    BlendState*             blendState      = nullptr,       // nullptr = AlphaBlend
-    SamplerState*           samplerState    = nullptr,       // nullptr = LinearClamp
-    DepthStencilState*      depthStencil    = nullptr,       // nullptr = None
-    RasterizerState*        rasterizerState = nullptr,       // nullptr = CullCounterClockwise
-    Effect*                 effect          = nullptr,       // nullptr = built-in sprite shader
-    std::optional&lt;Matrix&gt;  transformMatrix = std::nullopt   // identity if omitted
+    SpriteSortMode           sortMode,
+    BlendState               blendState,       // by value (a const BlendState* twin exists)
+    const SamplerState*      samplerState,     // nullptr = LinearClamp
+    const DepthStencilState* depthStencil,     // nullptr = None
+    const RasterizerState*   rasterizerState,  // nullptr = CullCounterClockwise
+    Effect*                  effect,           // nullptr = built-in sprite shader
+    Matrix                   transformMatrix   // by value; Matrix::Identity when a shorter form is used
 );
 </code></pre>
 
+      <p>The shorter overloads are:</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Call</th><th scope="col">Defaults it fills in</th></tr></thead>
+        <tbody>
+          <tr><td><code>Begin()</code></td><td><code>Deferred</code>, <code>AlphaBlend</code>, <code>LinearClamp</code>, no depth, culling counter-clockwise, no effect, identity matrix</td></tr>
+          <tr><td><code>Begin(sortMode, blendState)</code></td><td>the rest as above</td></tr>
+          <tr><td><code>Begin(sortMode, blendState, sampler, depthStencil, rasterizer)</code></td><td>no effect, identity matrix</td></tr>
+          <tr><td><code>Begin(&hellip;, rasterizer, effect)</code></td><td>identity matrix</td></tr>
+          <tr><td><code>Begin(&hellip;, effect, transformMatrix)</code></td><td>nothing: the full form</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p>The forms with five or more parameters each have a twin taking <code>const BlendState*</code> instead of a <code>BlendState</code> (pass <code>nullptr</code> for the default <code>AlphaBlend</code>, or the address of your own state). There is no <code>Begin(SpriteSortMode)</code> on its own: if you name a sort mode you also name a blend state. Note the state objects are all <code>const</code> pointers; the preset states, such as <code>SamplerState::PointClamp</code>, are pre-bound and cannot be modified.</p>
+
       <h3>sortMode</h3>
-      <p>Controls when sprites are submitted to the GPU and in what order. See Tutorial 25 for details. For most games <code>Deferred</code> (default) gives the best performance.</p>
+      <p>Controls when sprites are submitted to the GPU and in what order. See <a href="25-sprite-sort-mode.html">Tutorial 25</a> for details. For most games <code>Deferred</code> (default) gives the best performance.</p>
 
       <h3>blendState</h3>
       <p>Controls how sprite pixels are composited over the existing render target. Common values:</p>
 
-      <pre><code class="language-cpp">// AlphaBlend (default) — pre-multiplied alpha compositing
+      <pre><code class="language-cpp">// AlphaBlend (default) — PREMULTIPLIED alpha compositing (expects colour already multiplied by alpha)
 spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::AlphaBlend);
 
 // Additive — for particles, glows
@@ -127,9 +144,10 @@ spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::Additive);
 // Opaque — no alpha, overwrites background
 spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::Opaque);
 
-// NonPremultiplied — straight (non-premultiplied) alpha
+// NonPremultiplied — straight (non-premultiplied) alpha, e.g. a PNG loaded straight from disk
 spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::NonPremultiplied);
 </code></pre>
+      <p>These are values, so pass <code>BlendState::AlphaBlend</code> directly. <a href="22-blend-modes.html">Tutorial 22</a> explains premultiplied versus straight alpha and building custom blend states.</p>
 
       <h3>samplerState</h3>
       <p>Controls how textures are sampled:</p>
@@ -138,11 +156,12 @@ spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::NonPremultiplied);
 // PointClamp            — nearest-neighbour (pixel art)
 // LinearWrap            — bilinear + repeat for tiling textures
 spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::AlphaBlend,
-                    &amp;SamplerState::PointClamp);
+                    &amp;SamplerState::PointClamp, nullptr, nullptr);
 </code></pre>
 
       <h3>effect</h3>
-      <p>Substitute a custom <code>Effect</code> for the built-in sprite shader. A <a href="52-custom-shaders.html"><code>ShaderEffect</code></a> is CNA's renderer-native CNAEXT path; its vertex shader must declare a <code>mat4 projection</code> uniform (SpriteBatch sets it on whichever program is bound) and its fragment shader must write a <code>vec4</code>. Alpha.1 can also execute XNA/FNA D3D9 Effect Framework binaries through SpriteBatch on FNA3D or an explicitly enabled EasyGL, SDL_GPU or Vulkan build. That separate path accepts compiled <code>.fxb</code>/XNB payloads, not HLSL <code>.fx</code> source, DXBC or MGFX; see <a href="128-compiled-xna-effects.html">Tutorial 128</a>.</p>
+      <p>Substitute a custom <code>Effect</code> for the built-in sprite shader. A <a href="52-custom-shaders.html"><code>ShaderEffect</code></a> is CNA's renderer-native CNAEXT path: you supply shader source in the dialect of the active renderer (GLSL for the OpenGL-family renderers, for example, where the vertex shader must declare a <code>mat4 projection</code> uniform that SpriteBatch sets on whichever program is bound, and the fragment shader must write a <code>vec4</code>). Only renderers that execute shader source can run it, so query <code>GraphicsCapability::CustomEffects</code> first; <a href="52-custom-shaders.html">Tutorial 52</a> has the per-renderer picture.</p>
+      <p>This snapshot can also run XNA/FNA Effect Framework binaries through SpriteBatch wherever <code>GraphicsCapability::CompiledEffects</code> is true. That is always the case on <code>FNA3D</code>, and on 13 more renderer identities in 9 families once you enable that family's CMake option (each option defaults to OFF, so a default configure reports it on FNA3D only). That separate path accepts compiled <code>.fxb</code>/XNB payloads, not HLSL <code>.fx</code> source, DXBC or MGFX at run time; <code>.fx</code> source can be compiled to an <code>.xnb</code> at build time with the <code>cna-content</code> tool and an external legacy <code>fxc</code>. See <a href="128-compiled-xna-effects.html">Tutorial 128</a>.</p>
 
       <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::Deferred,
                     BlendState::AlphaBlend, nullptr, nullptr, nullptr,
@@ -151,8 +170,9 @@ spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::AlphaBlend,
 
       <h2>SpriteSortMode enum</h2>
 
+      <div class="table-wrap">
       <table>
-        <thead><tr><th>Value</th><th>When sprites flush</th><th>Sort order</th></tr></thead>
+        <thead><tr><th scope="col">Value</th><th scope="col">When sprites flush</th><th scope="col">Sort order</th></tr></thead>
         <tbody>
           <tr><td><code>Deferred</code></td><td>At <code>End()</code></td><td>Draw call order</td></tr>
           <tr><td><code>Immediate</code></td><td>Each <code>Draw()</code> call</td><td>Draw call order</td></tr>
@@ -161,8 +181,10 @@ spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::AlphaBlend,
           <tr><td><code>FrontToBack</code></td><td>At <code>End()</code></td><td>Ascending by <code>layerDepth</code> (front first)</td></tr>
         </tbody>
       </table>
+      </div>
 
-      <h2>Draw() — all nine overloads</h2>
+      <h2>Draw() — all ten overloads</h2>
+      <p>There are seven XNA overloads (1&ndash;7) and three CNA extensions (8&ndash;10). Every overload takes the texture as a <code>const Texture2D&amp;</code>, so if you hold it through a pointer or a <code>std::optional</code>, dereference it (<code>*tex</code>). The source rectangle is a <code>std::optional&lt;Rectangle&gt;</code>: pass a <code>Rectangle</code> for a sub-region or <code>std::nullopt</code> for the whole texture.</p>
 
       <pre><code class="language-cpp">// 1. Position only
 sb.Draw(tex, Vector2(x, y), Color::White);
@@ -181,11 +203,11 @@ sb.Draw(tex,
         position,        // Vector2
         sourceRect,      // std::optional&lt;Rectangle&gt;
         color,           // Color
-        rotation,        // Single — radians
+        rotation,        // float — radians
         origin,          // Vector2 — pivot point relative to source rect
-        scale,           // Single — uniform scale
+        scale,           // float — uniform scale
         SpriteEffects::None,
-        layerDepth);     // Single — 0.0 (front) to 1.0 (back) in BackToFront mode
+        layerDepth);     // float — 0.0 (front) to 1.0 (back) in BackToFront mode
 
 // 6. As above but scale is a Vector2 (non-uniform)
 sb.Draw(tex, position, sourceRect, color, rotation, origin,
@@ -195,12 +217,19 @@ sb.Draw(tex, position, sourceRect, color, rotation, origin,
 sb.Draw(tex, destRect, sourceRect, color, rotation, origin,
         SpriteEffects::None, layerDepth);
 
-// 8. Texture* overload (raw pointer)
-sb.Draw(*tex, Vector2(x, y), Color::White);
+// --- CNA extensions (not in XNA 4.0) ---
 
-// 9. SharedPointer overload
-sb.Draw(texShared, Vector2(x, y), Color::White);
+// 8. Position as two floats
+sb.Draw(tex, x, y);
+
+// 9. Destination + a plain (non-optional) source rectangle
+sb.Draw(tex, destRect, sourceRect, color);
+
+// 10. Destination + plain source rectangle + rotation, origin, effects, depth
+sb.Draw(tex, destRect, sourceRect, color, rotation, origin,
+        SpriteEffects::None, layerDepth);
 </code></pre>
+      <p>Overloads 8&ndash;10 are marked <code>CNAEXT</code> in the headers; if you want code that also compiles against real XNA, stay with 1&ndash;7. There is no overload that takes a smart pointer: <code>*texShared</code> for a <code>std::shared_ptr&lt;Texture2D&gt;</code>.</p>
 
       <h3>SpriteEffects</h3>
       <pre><code class="language-cpp">// Flip horizontally (mirror left-right)
@@ -219,24 +248,24 @@ sb.Draw(tex, pos, std::nullopt, Color::White, 0.0f, Vector2::Zero,
 </code></pre>
 
       <h3>Position, rotation and flip, as the real XNA runtime drew them</h3>
-      <p>These four frames come from CNA's XNA oracle corpus (<code>tools/xna-oracle/</code>): output of the genuine Microsoft XNA 4.0 runtime, which CNA's DIRECTX9 renderer is diffed against at <code>--tolerance 0</code>. They exercise the <code>Draw()</code> arguments described above.</p>
+      <p>These four frames come from CNA's XNA oracle corpus (<code>tools/xna-oracle/</code>, 39 scenes): output of the genuine Microsoft XNA 4.0 runtime, captured under Wine + DXVK on Linux. CNA's DIRECTX9 renderer is recorded as matching them at <code>--tolerance 0</code> (every channel of every pixel), a check that is run by hand on the project&rsquo;s reference machine, not in CI. They exercise the <code>Draw()</code> arguments described above.</p>
 
       <div class="cards">
         <figure class="card">
           <img src="../../img/oracle/sprite_basic_quad.png" alt="A small solid red rectangle drawn in the upper-left area of a cornflower-blue frame." width="256" height="256" loading="lazy">
-          <p>The simplest overload &mdash; texture plus position, no rotation, no effects. Real XNA 4.0 output; CNA's DIRECTX9 renderer matches it pixel-for-pixel.</p>
+          <p>The simplest overload &mdash; texture plus position, no rotation, no effects. Real XNA 4.0 output; recorded as pixel-identical to CNA's DIRECTX9 renderer.</p>
         </figure>
         <figure class="card">
           <img src="../../img/oracle/sprite_rotated_quad.png" alt="A four-colour sprite — blue and red across the top, yellow and green across the bottom — drawn at an angle so its edges are no longer axis-aligned." width="256" height="256" loading="lazy">
-          <p>A non-zero <code>rotation</code> about the given <code>origin</code>. Real XNA 4.0 output; CNA's DIRECTX9 renderer matches it pixel-for-pixel.</p>
+          <p>A non-zero <code>rotation</code> about the given <code>origin</code>. Real XNA 4.0 output; recorded as pixel-identical to CNA's DIRECTX9 renderer.</p>
         </figure>
         <figure class="card">
           <img src="../../img/oracle/sprite_flipped_quad.png" alt="The same four-colour sprite with its colours mirrored left-to-right — green and red now on the left, yellow and blue on the right — drawn further right in the frame." width="256" height="256" loading="lazy">
-          <p><code>SpriteEffects::FlipHorizontally</code> &mdash; the source is sampled mirrored, so the colour layout reverses. Real XNA 4.0 output; CNA's DIRECTX9 renderer matches it pixel-for-pixel.</p>
+          <p><code>SpriteEffects::FlipHorizontally</code> &mdash; the source is sampled mirrored, so the colour layout reverses. Real XNA 4.0 output; recorded as pixel-identical to CNA's DIRECTX9 renderer.</p>
         </figure>
         <figure class="card">
           <img src="../../img/oracle/sprite_multitexture_quad.png" alt="Three small squares in a row on black: red, then blue, then red, drawn from more than one texture inside a single batch." width="256" height="256" loading="lazy">
-          <p>Sprites from more than one texture inside a single <code>Begin()</code>/<code>End()</code> pair &mdash; the batcher splits the draw at each texture change. Real XNA 4.0 output; CNA's DIRECTX9 renderer matches it pixel-for-pixel.</p>
+          <p>Sprites from more than one texture inside a single <code>Begin()</code>/<code>End()</code> pair &mdash; the batcher splits the draw at each texture change. Real XNA 4.0 output; recorded as pixel-identical to CNA's DIRECTX9 renderer.</p>
         </figure>
       </div>
 
@@ -254,9 +283,19 @@ sb.DrawString(*font, "Score: " + std::to_string(score),
               SpriteEffects::None,
               0.0f);         // layer depth
 
-// 3. std::wstring overload (for Unicode)
-sb.DrawString(*font, L"ゲーム", position, Color::Yellow);
+// 3. Non-uniform scale (Vector2), the same as Draw() overload 6
+sb.DrawString(*font, "Wide", position, color, 0.0f, Vector2::Zero,
+              Vector2(2.0f, 1.0f), SpriteEffects::None, 0.0f);
+
+// 4. System::Text::StringBuilder text (each of the three forms above has one)
+sb.DrawString(*font, stringBuilder, position, color);
+
+// Text is UTF-8 in a plain std::string; there is no std::wstring overload.
+// A character that the font does not contain (and that its default
+// character cannot replace) throws System::ArgumentException.
+sb.DrawString(*font, "ゲーム", position, Color::Yellow);   // needs those glyphs in the font
 </code></pre>
+      <p>That is six <code>DrawString</code> overloads in all: three for <code>std::string</code> (plain, uniform <code>float</code> scale, <code>Vector2</code> scale) and the same three for <code>StringBuilder</code>. The font parameter is a <code>const SpriteFont&amp;</code>.</p>
 
       <h2>Flush and batching behaviour</h2>
       <p>In <code>Deferred</code> mode (the default) <code>SpriteBatch</code> accumulates all <code>Draw()</code> calls into a CPU-side vertex array. When <code>End()</code> is called it:</p>
@@ -267,11 +306,11 @@ sb.DrawString(*font, L"ゲーム", position, Color::Yellow);
         <li>Issues one draw call per texture group.</li>
       </ol>
 
-      <p>If you draw 1000 sprites from 3 different textures, you get 3 GPU draw calls regardless of the order you called <code>Draw()</code>. This is why <code>SpriteSortMode::Texture</code> can be faster than <code>Deferred</code> when you have many different textures — it clusters them before upload.</p>
+      <p>Sprites are grouped only when they are <em>consecutive</em> with the same texture, so the number of draw calls depends on the order you called <code>Draw()</code>. Draw 1000 sprites from 3 textures grouped by texture and you get 3 GPU draw calls; alternate the textures on every call and you get up to 1000. That is why <code>SpriteSortMode::Texture</code> can be faster than <code>Deferred</code> when you have many different textures interleaved — it sorts them into groups before upload (at the price of losing draw-call order).</p>
 
       <h2>Layered drawing with BackToFront</h2>
 
-      <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::BackToFront);
+      <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::BackToFront, BlendState::AlphaBlend);
 
 // layerDepth 1.0 = back, 0.0 = front
 spriteBatch_-&gt;Draw(*skyTex,    skyPos,    std::nullopt, Color::White,
@@ -291,7 +330,7 @@ spriteBatch_-&gt;End();
 
       <h2>Custom effect in Begin()</h2>
 
-      <p>This example deliberately uses <code>ShaderEffect</code> with renderer-native source. <code>getContentProperty().Load&lt;std::shared_ptr&lt;Effect&gt;&gt;("Shaders/wavy")</code> is also possible for an XNB containing XNA/FNA D3D9 Effect Framework bytecode when the active alpha.1 renderer supports compiled effects, but that is a renderer-qualified compatibility path rather than an HLSL <code>.fx</code> source compiler. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+      <p>This example deliberately uses <code>ShaderEffect</code> with renderer-native source. <code>getContentProperty().Load&lt;std::shared_ptr&lt;Effect&gt;&gt;("Shaders/wavy")</code> is also possible for an XNB containing XNA/FNA D3D9 Effect Framework bytecode when the active renderer supports compiled effects, but that is a renderer-qualified compatibility path rather than an HLSL <code>.fx</code> source compiler. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
 
       <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
 
@@ -308,7 +347,7 @@ spriteBatch_-&gt;Begin(SpriteSortMode::Deferred,
                     nullptr,    // SamplerState
                     nullptr,    // DepthStencilState
                     nullptr,    // RasterizerState
-                    customFx.get());
+                    customFx.get());   // Effect*
 
 // All draws in this batch use the custom shader
 spriteBatch_-&gt;Draw(*backgroundTex, Vector2::Zero, Color::White);
@@ -348,7 +387,7 @@ spriteBatch_-&gt;End();
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

@@ -21,7 +21,7 @@
   "headline": "Tutorial 25: SpriteSortMode and Layering",
   "url": "https://libcna.com/docs/tutorials/25-sprite-sort-mode.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -96,37 +96,40 @@
         <p><strong>Before you start</strong> &mdash; <a href="21-spritebatch.html">Tutorial 21: SpriteBatch Deep Dive</a> &mdash; sort mode is a <code>Begin()</code> parameter.</p>
       </div>
 
-      <p><code>SpriteSortMode</code> is the first parameter to <code>SpriteBatch::Begin()</code>. It controls two things: <em>when</em> accumulated sprites are submitted to the GPU and <em>in what order</em> they appear on screen. Choosing the right mode has visual and performance consequences. This tutorial covers all five values and shows practical multi-batch layering patterns.</p>
+      <p><code>SpriteSortMode</code> is the first parameter to <code>SpriteBatch::Begin()</code>. It controls two things: <em>when</em> accumulated sprites are submitted to the GPU and <em>in what order</em> they appear on screen. Choosing the right mode has visual and performance consequences. This tutorial covers all five values and shows practical multi-batch layering patterns. (There is no <code>Begin(SpriteSortMode)</code> overload on its own: whenever you name a sort mode you also pass a blend state, as every example below does. <code>Begin()</code> with no arguments means <code>Deferred</code> with <code>AlphaBlend</code>.)</p>
 
       <h2>SpriteSortMode enum — all five values</h2>
 
       <h3>Deferred (default)</h3>
       <p>Sprites are queued in CPU memory until <code>End()</code> is called. At <code>End()</code> they are submitted to the GPU in draw-call order with consecutive sprites using the same texture grouped into a single draw call. This is the most efficient mode for most games.</p>
 
-      <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::Deferred);
-// Draw 500 sprites from 5 textures → 5 draw calls at End()
+      <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::AlphaBlend);
+// Draw 500 sprites from 5 textures, grouped by texture → 5 draw calls at End()
+// (alternate the textures on every call and each change of texture starts a new draw call)
 spriteBatch_-&gt;End();
 </code></pre>
 
       <p><strong>Use when:</strong> You are drawing a fixed set of sprites and want the fewest draw calls. The layerDepth parameter is ignored.</p>
 
       <h3>Immediate</h3>
-      <p>Each <code>Draw()</code> call immediately flushes one draw call to the GPU. No batching occurs. This mode sets GPU state before each sprite, making it the only mode where you can safely call <code>GraphicsDevice.SetSamplerState()</code> or other state functions between individual <code>Draw()</code> calls.</p>
+      <p>Each <code>Draw()</code> call immediately flushes one draw call to the GPU. No batching occurs. The render state (blend, sampler, depth-stencil and rasterizer) is applied once, at <code>Begin()</code>, and every sprite is then drawn at once, so this is the mode where you can interleave your own <code>GraphicsDevice</code> work between individual <code>Draw()</code> calls.</p>
 
-      <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::Immediate);
-// Change GPU state here freely between Draw() calls
-spriteBatch_-&gt;Draw(*texA, posA, Color::White);
-getGraphicsDeviceProperty().setSamplerState(0, SamplerState::PointClamp);
-spriteBatch_-&gt;Draw(*texB, posB, Color::White);
+      <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::Immediate, BlendState::AlphaBlend,
+                    &amp;SamplerState::PointClamp, nullptr, nullptr);
+spriteBatch_-&gt;Draw(*texA, posA, Color::White);   // drawn right now
+// ... your own GraphicsDevice calls can go here ...
+spriteBatch_-&gt;Draw(*texB, posB, Color::White);   // drawn right now
 spriteBatch_-&gt;End();
 </code></pre>
+
+      <p>Two rules to know. First, choose the sampler through <code>Begin()</code>, not through the device: <code>SpriteBatch</code> writes its own sampler (<code>LinearClamp</code> unless you pass another) into sampler slot 0 whenever it applies its state, so end the batch and begin a new one to switch sampling mid-frame. Second, an <code>Immediate</code> batch cannot be active at the same time as any other <code>SpriteBatch</code> on the same device (and vice versa): <code>Begin()</code> throws <code>InvalidOperationException</code>.</p>
 
       <p><strong>Use when:</strong> You need per-sprite GPU state changes. Very slow for large sprite counts — use only when necessary.</p>
 
       <h3>Texture</h3>
-      <p>Same as Deferred but at <code>End()</code> sprites are additionally sorted by texture pointer before submission. This groups all sprites from the same texture together regardless of draw-call order, further reducing draw calls when sprites from different textures are interleaved in game logic.</p>
+      <p>Same as Deferred but at <code>End()</code> sprites are additionally sorted by texture identity before submission. This groups all sprites from the same texture together regardless of draw-call order, further reducing draw calls when sprites from different textures are interleaved in game logic.</p>
 
-      <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::Texture);
+      <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::Texture, BlendState::AlphaBlend);
 // Draw player (atlas A), enemy (atlas B), tree (atlas A), coin (atlas B)
 // Sorted at End() → atlas A batch, atlas B batch = 2 draw calls
 spriteBatch_-&gt;End();
@@ -137,7 +140,7 @@ spriteBatch_-&gt;End();
       <h3>BackToFront</h3>
       <p>At <code>End()</code>, sprites are sorted by descending <code>layerDepth</code> (1.0 = back, 0.0 = front) then submitted. Sprites at depth 1.0 are drawn first; sprites at 0.0 are drawn last and appear on top. This produces correct alpha-blended layering without manual draw-call ordering:</p>
 
-      <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::BackToFront);
+      <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::BackToFront, BlendState::AlphaBlend);
 
 // Call Draw() in any order — layer depth controls final paint order
 spriteBatch_-&gt;Draw(*playerTex_,  playerPos_,  std::nullopt, Color::White, 0,
@@ -153,56 +156,63 @@ spriteBatch_-&gt;End();
 
       <p><strong>Use when:</strong> You need pixel-correct depth ordering with alpha blending (e.g. a top-down RPG with trees that overlap characters).</p>
 
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>Equal depths have no guaranteed order.</strong> Like XNA, the sorting modes use an <em>unstable</em> sort (CNA reproduces XNA&rsquo;s own quicksort on purpose), so sprites that share the same <code>layerDepth</code> may come out in a different relative order than you submitted them, and that order can change when other sprites are added. Give overlapping sprites distinct depths, or draw them in separate <code>Begin()</code>/<code>End()</code> pairs. The same goes for <code>Texture</code> mode: it discards draw-call order.</p>
+      </div>
+
       <h3>FrontToBack</h3>
       <p>Same as BackToFront but sorted in ascending order (0.0 = front drawn first). This is useful with depth testing: front sprites write their depth values early, causing later back sprites to fail the depth test and be discarded — saving pixel shader time on fillrate-bound scenes. Less useful for 2D alpha blending.</p>
 
-      <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::FrontToBack);
+      <pre><code class="language-cpp">spriteBatch_-&gt;Begin(SpriteSortMode::FrontToBack, BlendState::Opaque);
 // Layer 0.0 = front, 1.0 = back
 // Primarily useful with opaque sprites and depth testing enabled
+// (the default depthStencil argument of Begin() is DepthStencilState::None: depth testing is off)
 spriteBatch_-&gt;End();
 </code></pre>
 
       <p><strong>Use when:</strong> You have many opaque sprites and want early-depth-rejection. Rarely needed in 2D games; more relevant in 2.5D or isometric scenes with a depth buffer.</p>
 
       <h3>What the sort actually changes</h3>
-      <p>These three frames come from CNA's XNA oracle corpus (<code>tools/xna-oracle/</code>): they are the real Microsoft XNA 4.0 runtime's own output, and CNA's DIRECTX9 renderer is diffed against them at <code>--tolerance 0</code>. The same overlapping sprites are submitted in the same order under three different sort modes. Note that <code>Deferred</code> and <code>FrontToBack</code> are byte-identical here &mdash; only <code>BackToFront</code> reverses which sprite ends up on top.</p>
+      <p>These three frames come from CNA's XNA oracle corpus (<code>tools/xna-oracle/</code>, 39 scenes): they are the real Microsoft XNA 4.0 runtime's own output, captured under Wine + DXVK on Linux, and CNA's DIRECTX9 renderer is recorded as matching them at <code>--tolerance 0</code> (a check run by hand on the project&rsquo;s reference machine, not in CI). The same overlapping sprites are submitted in the same order under three different sort modes. Note that <code>Deferred</code> and <code>FrontToBack</code> are byte-identical here &mdash; only <code>BackToFront</code> reverses which sprite ends up on top.</p>
 
       <div class="cards">
         <figure class="card">
           <img src="../../img/oracle/sprite_sortmode_deferred_quad.png" alt="An olive-green square on a black background: with Deferred sorting the last sprite submitted is painted last and covers the others." width="256" height="256" loading="lazy">
-          <p><code>Deferred</code> &mdash; submission order wins; <code>layerDepth</code> is ignored. Real XNA 4.0 output, matched pixel-for-pixel by CNA's DIRECTX9 renderer.</p>
+          <p><code>Deferred</code> &mdash; submission order wins; <code>layerDepth</code> is ignored. Real XNA 4.0 output, recorded as pixel-identical to CNA's DIRECTX9 renderer.</p>
         </figure>
         <figure class="card">
           <img src="../../img/oracle/sprite_sortmode_backtofront_quad.png" alt="A brown square on a black background: with BackToFront sorting a different sprite is drawn last, so the visible colour changes." width="256" height="256" loading="lazy">
-          <p><code>BackToFront</code> &mdash; the deepest sprite is drawn first, so a different sprite finishes on top. Real XNA 4.0 output, matched pixel-for-pixel by CNA's DIRECTX9 renderer.</p>
+          <p><code>BackToFront</code> &mdash; the deepest sprite is drawn first, so a different sprite finishes on top. Real XNA 4.0 output, recorded as pixel-identical to CNA's DIRECTX9 renderer.</p>
         </figure>
         <figure class="card">
           <img src="../../img/oracle/sprite_sortmode_fronttoback_quad.png" alt="An olive-green square on a black background, identical to the Deferred frame: FrontToBack sorting leaves the same sprite on top in this scene." width="256" height="256" loading="lazy">
-          <p><code>FrontToBack</code> &mdash; here the sort is a no-op and the frame is byte-identical to <code>Deferred</code>. Real XNA 4.0 output, matched pixel-for-pixel by CNA's DIRECTX9 renderer.</p>
+          <p><code>FrontToBack</code> &mdash; here the sort is a no-op and the frame is byte-identical to <code>Deferred</code>. Real XNA 4.0 output, recorded as pixel-identical to CNA's DIRECTX9 renderer.</p>
         </figure>
       </div>
 
       <h2>Layer depth parameter in Draw()</h2>
-      <p>The <code>layerDepth</code> parameter is the last argument to the full <code>Draw()</code> overload. It is a <code>Single</code> (float) in the range [0.0, 1.0]. It is only meaningful when the sort mode is <code>BackToFront</code> or <code>FrontToBack</code>; otherwise it is ignored:</p>
+      <p>The <code>layerDepth</code> parameter is the last argument to the full <code>Draw()</code> overload. It is a <code>float</code> in the range [0.0, 1.0]. It is only meaningful when the sort mode is <code>BackToFront</code> or <code>FrontToBack</code>; otherwise it is ignored:</p>
 
       <pre><code class="language-cpp">// Full Draw() signature showing layerDepth
 spriteBatch_-&gt;Draw(
-    texture,          // Texture2D&amp;
+    texture,          // const Texture2D&amp;
     position,         // Vector2
     sourceRect,       // std::optional&lt;Rectangle&gt;
     color,            // Color
-    rotation,         // Single (radians)
+    rotation,         // float (radians)
     origin,           // Vector2
-    scale,            // Single or Vector2
+    scale,            // float or Vector2
     effects,          // SpriteEffects
-    layerDepth        // Single — 0.0f to 1.0f
+    layerDepth        // float — 0.0f to 1.0f
 );
 </code></pre>
 
       <h2>Performance implications</h2>
 
+      <div class="table-wrap">
       <table>
-        <thead><tr><th>Mode</th><th>CPU sort cost</th><th>GPU draw calls</th><th>Notes</th></tr></thead>
+        <thead><tr><th scope="col">Mode</th><th scope="col">CPU sort cost</th><th scope="col">GPU draw calls</th><th scope="col">Notes</th></tr></thead>
         <tbody>
           <tr><td>Deferred</td><td>None</td><td>1 per texture group</td><td>Best general performance</td></tr>
           <tr><td>Immediate</td><td>None</td><td>1 per Draw() call</td><td>Worst GPU performance</td></tr>
@@ -211,6 +221,7 @@ spriteBatch_-&gt;Draw(
           <tr><td>FrontToBack</td><td>O(n log n) by depth</td><td>1 per texture group (post-sort)</td><td>Good for opaque + depth rejection</td></tr>
         </tbody>
       </table>
+      </div>
 
       <h2>Combining sort modes with multiple SpriteBatch calls</h2>
       <p>A professional game typically uses multiple <code>Begin()/End()</code> pairs per frame, each with a different sort mode, to achieve correct layering cheaply:</p>
@@ -241,19 +252,19 @@ spriteBatch_-&gt;Draw(
     spriteBatch_-&gt;End();
 
     // Layer 4 — HUD (screen space, no camera transform)
-    spriteBatch_-&gt;Begin(SpriteSortMode::Deferred);
+    spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::AlphaBlend);
     DrawHUD();
     spriteBatch_-&gt;End();
 
-    gd.Present();
+    // No gd.Present(): Game::EndDraw() presents the frame after Draw() returns.
 }
 </code></pre>
 
       <h3>Isometric Y-sorting</h3>
-      <p>A common pattern for isometric games: entities further up the screen (higher Y) appear behind those lower on screen. Use <code>BackToFront</code> and derive <code>layerDepth</code> from the entity's Y position:</p>
+      <p>A common pattern for isometric games: entities further up the screen (smaller Y, since Y grows downward) appear behind those lower on screen (larger Y). Use <code>BackToFront</code> and derive <code>layerDepth</code> from the entity's Y position:</p>
 
       <pre><code class="language-cpp">// Normalise Y to [0,1] range
-Single layerDepth = 1.0f - (entity.position.Y / (Single)worldHeight);
+float layerDepth = 1.0f - (entity.position.Y / static_cast&lt;float&gt;(worldHeight));
 spriteBatch_-&gt;Draw(*entity.tex, entity.position, std::nullopt, Color::White,
                    0.0f, entity.origin, 1.0f, SpriteEffects::None, layerDepth);
 </code></pre>
@@ -281,7 +292,7 @@ spriteBatch_-&gt;Draw(*entity.tex, entity.position, std::nullopt, Color::White,
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

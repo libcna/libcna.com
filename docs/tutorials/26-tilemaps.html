@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 26: Tilemaps and Tile-Based Worlds - CNA Tutorials</title>
-  <meta name="description" content="Build a tile-based world in CNA: TileMap class, atlas rendering with source rectangles, tile collision maps, and Tiled JSON export.">
+  <meta name="description" content="Build a tile-based world in CNA: TileMap class, atlas rendering with source rectangles, tile collision maps, and loading a Tiled JSON export.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/26-tilemaps.html">
   <meta property="og:title"       content="Tutorial 26: Tilemaps and Tile-Based Worlds - CNA Tutorials">
-  <meta property="og:description" content="Build a tile-based world in CNA: TileMap class, atlas rendering with source rectangles, tile collision maps, and Tiled JSON export.">
+  <meta property="og:description" content="Build a tile-based world in CNA: TileMap class, atlas rendering with source rectangles, tile collision maps, and loading a Tiled JSON export.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/26-tilemaps.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 26: Tilemaps and Tile-Based Worlds",
   "url": "https://libcna.com/docs/tutorials/26-tilemaps.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -92,7 +92,7 @@
           <li>Representing a level as a tile grid backed by one atlas texture.</li>
           <li>Culling to the visible tile range instead of drawing the whole map.</li>
           <li>A parallel collision layer.</li>
-          <li>Consuming a Tiled <code>.tmx</code> JSON export.</li>
+          <li>Consuming a Tiled map exported as JSON.</li>
         </ul>
         <p><strong>Before you start</strong> &mdash; <a href="13-sprite-sheets.html">Tutorial 13: Sprite Sheets and Frame Animation</a> (the atlas and source rectangles), <a href="17-camera-2d.html">Tutorial 17: 2D Camera and Viewport</a> (the <code>Camera2D</code> class this scrolls with) and <a href="16-collision-detection.html">Tutorial 16: Basic Collision Detection</a> (the tile collision layer).</p>
       </div>
@@ -113,8 +113,11 @@
 
       <pre><code class="language-cpp">// TileMap.hpp
 #pragma once
+#include &lt;algorithm&gt;
+#include &lt;cmath&gt;
 #include &lt;vector&gt;
 #include &lt;memory&gt;
+#include "Microsoft/Xna/Framework/Color.hpp"
 #include "Microsoft/Xna/Framework/Rectangle.hpp"
 #include "Microsoft/Xna/Framework/Vector2.hpp"
 #include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
@@ -124,13 +127,13 @@ using namespace Microsoft::Xna::Framework;
 using namespace Microsoft::Xna::Framework::Graphics;
 
 // Special tile IDs
-static constexpr intcs TILE_EMPTY = -1;   // transparent / no tile
+static constexpr int TILE_EMPTY = -1;   // transparent / no tile
 
 class TileMap {
 public:
-    TileMap(intcs mapWidth, intcs mapHeight,
-            intcs tileWidth, intcs tileHeight,
-            intcs atlasColumns)
+    TileMap(int mapWidth, int mapHeight,
+            int tileWidth, int tileHeight,
+            int atlasColumns)
         : mapW_(mapWidth), mapH_(mapHeight),
           tileW_(tileWidth), tileH_(tileHeight),
           atlasCols_(atlasColumns),
@@ -139,64 +142,77 @@ public:
     {}
 
     // --- Tile access ---
-    void  SetTile(intcs x, intcs y, intcs tileId, bool isSolid = false) {
+    void SetTile(int x, int y, int tileId, bool isSolid = false) {
         if (!InBounds(x, y)) return;
         tiles_[y * mapW_ + x] = tileId;
         solid_[y * mapW_ + x] = isSolid;
     }
-    intcs GetTile(intcs x, intcs y)  const { return InBounds(x,y) ? tiles_[y*mapW_+x] : TILE_EMPTY; }
-    bool  IsSolid(intcs x, intcs y)  const { return InBounds(x,y) &amp;&amp; solid_[y*mapW_+x]; }
+    int  GetTile(int x, int y) const { return InBounds(x, y) ? tiles_[y * mapW_ + x] : TILE_EMPTY; }
+    bool IsSolid(int x, int y) const { return InBounds(x, y) &amp;&amp; solid_[y * mapW_ + x]; }
 
-    // Convert world pixel position to tile coordinate
-    intcs WorldToTileX(Single worldX) const { return (intcs)(worldX / tileW_); }
-    intcs WorldToTileY(Single worldY) const { return (intcs)(worldY / tileH_); }
+    // Convert world pixel position to tile coordinate.
+    // (floor, not a cast: a cast truncates toward zero, so -0.5f would land in tile 0)
+    int WorldToTileX(float worldX) const { return static_cast&lt;int&gt;(std::floor(worldX / tileW_)); }
+    int WorldToTileY(float worldY) const { return static_cast&lt;int&gt;(std::floor(worldY / tileH_)); }
 
     // Bounding rectangle of a tile in world space
-    Rectangle TileWorldRect(intcs tx, intcs ty) const {
+    Rectangle TileWorldRect(int tx, int ty) const {
         return Rectangle(tx * tileW_, ty * tileH_, tileW_, tileH_);
     }
 
-    intcs GetMapWidth()  const { return mapW_; }
-    intcs GetMapHeight() const { return mapH_; }
-    intcs GetTileWidth() const { return tileW_; }
-    intcs GetTileHeight()const { return tileH_; }
+    int GetMapWidth()   const { return mapW_; }
+    int GetMapHeight()  const { return mapH_; }
+    int GetTileWidth()  const { return tileW_; }
+    int GetTileHeight() const { return tileH_; }
 
     // Source rectangle of a tile within the atlas
-    Rectangle GetSourceRect(intcs tileId) const {
-        intcs col = tileId % atlasCols_;
-        intcs row = tileId / atlasCols_;
+    Rectangle GetSourceRect(int tileId) const {
+        int col = tileId % atlasCols_;
+        int row = tileId / atlasCols_;
         return Rectangle(col * tileW_, row * tileH_, tileW_, tileH_);
     }
 
     // --- Draw only visible tiles ---
-    void Draw(SpriteBatch&amp; sb, Texture2D&amp; atlas, Rectangle viewport) const {
+    void Draw(SpriteBatch&amp; sb, const Texture2D&amp; atlas, Rectangle visible) const {
         // Clamp tile range to map bounds
-        intcs startX = std::max(0,    viewport.getXProperty() / tileW_);
-        intcs startY = std::max(0,    viewport.getYProperty() / tileH_);
-        intcs endX   = std::min(mapW_, (viewport.getXProperty() + viewport.getWidthProperty())  / tileW_ + 1);
-        intcs endY   = std::min(mapH_, (viewport.getYProperty() + viewport.getHeightProperty()) / tileH_ + 1);
+        int startX = std::max(0,    visible.X / tileW_);
+        int startY = std::max(0,    visible.Y / tileH_);
+        int endX   = std::min(mapW_, (visible.X + visible.Width)  / tileW_ + 1);
+        int endY   = std::min(mapH_, (visible.Y + visible.Height) / tileH_ + 1);
 
-        for (intcs ty = startY; ty &lt; endY; ++ty) {
-            for (intcs tx = startX; tx &lt; endX; ++tx) {
-                intcs id = GetTile(tx, ty);
+        for (int ty = startY; ty &lt; endY; ++ty) {
+            for (int tx = startX; tx &lt; endX; ++tx) {
+                int id = GetTile(tx, ty);
                 if (id == TILE_EMPTY) continue;
 
-                Vector2 dest((Single)(tx * tileW_), (Single)(ty * tileH_));
-                Rectangle src = GetSourceRect(id);
-                sb.Draw(atlas, dest, src, Color::White);
+                Vector2 dest(static_cast&lt;float&gt;(tx * tileW_), static_cast&lt;float&gt;(ty * tileH_));
+                sb.Draw(atlas, dest, GetSourceRect(id), Color::White);
             }
         }
     }
 
 private:
-    intcs mapW_, mapH_, tileW_, tileH_, atlasCols_;
-    std::vector&lt;intcs&gt; tiles_;
-    std::vector&lt;bool&gt;  solid_;
+    int mapW_, mapH_, tileW_, tileH_, atlasCols_;
+    std::vector&lt;int&gt;  tiles_;
+    std::vector&lt;bool&gt; solid_;
 
-    bool InBounds(intcs x, intcs y) const {
+    bool InBounds(int x, int y) const {
         return x &gt;= 0 &amp;&amp; x &lt; mapW_ &amp;&amp; y &gt;= 0 &amp;&amp; y &lt; mapH_;
     }
 };
+
+// Collision query (explained in "Tile collision map" below)
+inline bool TileCollision(const TileMap&amp; map, Rectangle entityRect) {
+    int tx0 = map.WorldToTileX(static_cast&lt;float&gt;(entityRect.X));
+    int ty0 = map.WorldToTileY(static_cast&lt;float&gt;(entityRect.Y));
+    int tx1 = map.WorldToTileX(static_cast&lt;float&gt;(entityRect.X + entityRect.Width  - 1));
+    int ty1 = map.WorldToTileY(static_cast&lt;float&gt;(entityRect.Y + entityRect.Height - 1));
+
+    for (int ty = ty0; ty &lt;= ty1; ++ty)
+        for (int tx = tx0; tx &lt;= tx1; ++tx)
+            if (map.IsSolid(tx, ty)) return true;
+    return false;
+}
 </code></pre>
 
       <h2>Tile atlas (sprite sheet)</h2>
@@ -220,12 +236,12 @@ Rectangle src = map.GetSourceRect(18);
       <pre><code class="language-cpp">// Get visible world rectangle from camera
 Vector2 camPos = camera_-&gt;getPositionProperty();
 Viewport vp    = gd.getViewportProperty();
-Single zoom    = camera_-&gt;getZoom();
+float zoom     = camera_-&gt;getZoom();
 Rectangle visibleWorld(
-    (intcs)(camPos.X - (Single)vp.getWidthProperty()  / (2.0f * zoom)),
-    (intcs)(camPos.Y - (Single)vp.getHeightProperty() / (2.0f * zoom)),
-    (intcs)((Single)vp.getWidthProperty()  / zoom),
-    (intcs)((Single)vp.getHeightProperty() / zoom)
+    static_cast&lt;int&gt;(camPos.X - static_cast&lt;float&gt;(vp.getWidthProperty())  / (2.0f * zoom)),
+    static_cast&lt;int&gt;(camPos.Y - static_cast&lt;float&gt;(vp.getHeightProperty()) / (2.0f * zoom)),
+    static_cast&lt;int&gt;(static_cast&lt;float&gt;(vp.getWidthProperty())  / zoom),
+    static_cast&lt;int&gt;(static_cast&lt;float&gt;(vp.getHeightProperty()) / zoom)
 );
 
 // In Draw():
@@ -239,29 +255,30 @@ spriteBatch_-&gt;End();
       <p>Mark tiles as solid when populating the map, then query at runtime:</p>
 
       <pre><code class="language-cpp">// Populate map (0 = grass, 1 = dirt solid, 2 = water solid)
-for (intcs y = 0; y &lt; 50; ++y)
-    for (intcs x = 0; x &lt; 80; ++x)
+for (int y = 0; y &lt; 50; ++y)
+    for (int x = 0; x &lt; 80; ++x)
         tileMap_-&gt;SetTile(x, y, 0, false);     // grass floor
 
 // Add solid walls at the border
-for (intcs x = 0; x &lt; 80; ++x) {
+for (int x = 0; x &lt; 80; ++x) {
     tileMap_-&gt;SetTile(x, 0,  2, true);   // top wall
     tileMap_-&gt;SetTile(x, 49, 2, true);   // bottom wall
 }
 
-// --- Collision query ---
-bool TileCollision(const TileMap&amp; map, Rectangle entityRect) {
-    intcs tx0 = map.WorldToTileX((Single)entityRect.X);
-    intcs ty0 = map.WorldToTileY((Single)entityRect.Y);
-    intcs tx1 = map.WorldToTileX((Single)(entityRect.X + entityRect.Width  - 1));
-    intcs ty1 = map.WorldToTileY((Single)(entityRect.Y + entityRect.Height - 1));
+// --- Collision query (this is the TileCollision() function at the bottom of TileMap.hpp) ---
+inline bool TileCollision(const TileMap&amp; map, Rectangle entityRect) {
+    int tx0 = map.WorldToTileX(static_cast&lt;float&gt;(entityRect.X));
+    int ty0 = map.WorldToTileY(static_cast&lt;float&gt;(entityRect.Y));
+    int tx1 = map.WorldToTileX(static_cast&lt;float&gt;(entityRect.X + entityRect.Width  - 1));
+    int ty1 = map.WorldToTileY(static_cast&lt;float&gt;(entityRect.Y + entityRect.Height - 1));
 
-    for (intcs ty = ty0; ty &lt;= ty1; ++ty)
-        for (intcs tx = tx0; tx &lt;= tx1; ++tx)
+    for (int ty = ty0; ty &lt;= ty1; ++ty)
+        for (int tx = tx0; tx &lt;= tx1; ++tx)
             if (map.IsSolid(tx, ty)) return true;
     return false;
 }
 </code></pre>
+      <p>Tiles outside the map count as empty (<code>IsSolid</code> is false out of bounds), so an entity can walk off the edge of a map unless you surround it with solid border tiles, as above. <code>WorldToTileX/Y</code> use <code>std::floor</code> rather than a plain cast, so positions slightly left of or above the map map to tile &minus;1 instead of tile 0.</p>
 
       <h2>Tiled (.tmx) JSON export pattern</h2>
       <p><a href="https://www.mapeditor.org/" target="_blank" rel="noopener">Tiled</a> is the most popular free tile map editor. It can export maps as JSON. A minimal loader:</p>
@@ -277,33 +294,39 @@ bool TileCollision(const TileMap&amp; map, Rectangle entityRect) {
 //   "tilesets": [ { "columns": 16 } ]
 // }
 
-// Minimal JSON loader (use nlohmann/json or rapidjson in production)
-std::unique_ptr&lt;TileMap&gt; LoadTiledJson(const std::string&amp; path) {
+// A sketch of a loader. JsonGet / JsonGetArray stand in for the lookups of whichever
+// JSON library you use (nlohmann/json, rapidjson...); CNA does not provide them.
+template &lt;typename T&gt; T JsonGet(const std::string&amp;amp; json, const char* path);
+std::vector&amp;lt;int&amp;gt;       JsonGetArray(const std::string&amp;amp; json, const char* path);
+
+std::unique_ptr&amp;lt;TileMap&amp;gt; LoadTiledJson(const std::string&amp;amp; path) {
     // 1. Read file contents
     std::ifstream f(path);
-    std::string json((std::istreambuf_iterator&lt;char&gt;(f)), {});
+    std::string json((std::istreambuf_iterator&amp;lt;char&amp;gt;(f)), {});
 
-    // 2. Parse (pseudo-code — use a real JSON library)
-    intcs width    = JsonGet&lt;intcs&gt;(json, "width");
-    intcs height   = JsonGet&lt;intcs&gt;(json, "height");
-    intcs tileW    = JsonGet&lt;intcs&gt;(json, "tilewidth");
-    intcs tileH    = JsonGet&lt;intcs&gt;(json, "tileheight");
-    intcs cols     = JsonGet&lt;intcs&gt;(json, "tilesets[0].columns");
+    // 2. Parse
+    int width  = JsonGet&amp;lt;int&amp;gt;(json, "width");
+    int height = JsonGet&amp;lt;int&amp;gt;(json, "height");
+    int tileW  = JsonGet&amp;lt;int&amp;gt;(json, "tilewidth");
+    int tileH  = JsonGet&amp;lt;int&amp;gt;(json, "tileheight");
+    int cols   = JsonGet&amp;lt;int&amp;gt;(json, "tilesets[0].columns");
 
-    auto map = std::make_unique&lt;TileMap&gt;(width, height, tileW, tileH, cols);
+    auto map = std::make_unique&amp;lt;TileMap&amp;gt;(width, height, tileW, tileH, cols);
 
-    // 3. Fill from "Ground" layer (tile IDs in Tiled are 1-based; subtract 1)
-    auto groundData = JsonGetArray(json, "layers[0].data");
-    for (intcs i = 0; i &lt; (intcs)groundData.size(); ++i) {
-        intcs id = groundData[i] - 1;   // Tiled uses 1-based IDs; 0 = empty
-        intcs tx = i % width;
-        intcs ty = i / width;
-        if (id &gt;= 0)
-            map-&gt;SetTile(tx, ty, id, /* look up solid from collision layer */);
+    // 3. Fill from the "Ground" layer; a non-zero entry in the "Solid" layer marks the tile solid
+    std::vector&amp;lt;int&amp;gt; ground = JsonGetArray(json, "layers[0].data");
+    std::vector&amp;lt;int&amp;gt; solid  = JsonGetArray(json, "layers[1].data");
+    for (int i = 0; i &amp;lt; static_cast&amp;lt;int&amp;gt;(ground.size()); ++i) {
+        int id = ground[i] - 1;   // Tiled uses 1-based IDs; 0 = empty
+        int tx = i % width;
+        int ty = i / width;
+        if (id &amp;gt;= 0)
+            map-&amp;gt;SetTile(tx, ty, id, solid[i] != 0);
     }
     return map;
 }
 </code></pre>
+      <p>Two Tiled details this sketch skips: the high bits of a tile ID carry flip and rotation flags (mask them off, or handle them with <code>SpriteEffects</code>), and IDs are relative to each tileset&rsquo;s <code>firstgid</code>, which matters as soon as a map uses more than one tileset. Tiled also exports XML (<code>.tmx</code>); the JSON export (<code>.tmj</code>/<code>.json</code>) is the one shown here.</p>
 
       <h2>Complete working example</h2>
 
@@ -315,6 +338,7 @@ std::unique_ptr&lt;TileMap&gt; LoadTiledJson(const std::string&amp; path) {
 #include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
 #include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
 #include "Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
+#include "Microsoft/Xna/Framework/Graphics/Viewport.hpp"
 #include "TileMap.hpp"
 #include "Camera2D.hpp"   // from Tutorial 17
 
@@ -328,102 +352,75 @@ public:
         graphics_.setPreferredBackBufferWidthProperty(800);
         graphics_.setPreferredBackBufferHeightProperty(600);
     }
-
 protected:
     void LoadContent() override {
         auto&amp; gd = getGraphicsDeviceProperty();
         spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(gd);
+        // Load&lt;T&gt; returns by value; the members are plain Texture2D values.
+        // (Built .xnb/.cnb textures are premultiplied and suit AlphaBlend; a loose
+        // .png is straight alpha, so draw it with BlendState::NonPremultiplied.)
         atlas_       = getContentProperty().Load&lt;Texture2D&gt;("Tiles/world_atlas");
         playerTex_   = getContentProperty().Load&lt;Texture2D&gt;("Sprites/player");
-
         camera_ = std::make_unique&lt;Camera2D&gt;(800, 600);
-
-        // Build a 50x40 map with 32x32 tiles; atlas is 16 columns wide
         tileMap_ = std::make_unique&lt;TileMap&gt;(50, 40, 32, 32, 16);
-
-        // Fill with grass (tile 0)
-        for (intcs y = 0; y &lt; 40; ++y)
-            for (intcs x = 0; x &lt; 50; ++x)
+        for (int y = 0; y &lt; 40; ++y)
+            for (int x = 0; x &lt; 50; ++x)
                 tileMap_-&gt;SetTile(x, y, 0, false);
-
-        // Stone border (tile 2, solid)
-        for (intcs x = 0; x &lt; 50; ++x) {
-            tileMap_-&gt;SetTile(x,  0, 2, true);
-            tileMap_-&gt;SetTile(x, 39, 2, true);
-        }
-        for (intcs y = 0; y &lt; 40; ++y) {
-            tileMap_-&gt;SetTile( 0, y, 2, true);
-            tileMap_-&gt;SetTile(49, y, 2, true);
-        }
-
-        // A water pool (tile 16, solid)
-        for (intcs y = 10; y &lt; 15; ++y)
-            for (intcs x = 10; x &lt; 18; ++x)
+        for (int x = 0; x &lt; 50; ++x) { tileMap_-&gt;SetTile(x,  0, 2, true); tileMap_-&gt;SetTile(x, 39, 2, true); }
+        for (int y = 0; y &lt; 40; ++y) { tileMap_-&gt;SetTile( 0, y, 2, true); tileMap_-&gt;SetTile(49, y, 2, true); }
+        for (int y = 10; y &lt; 15; ++y)
+            for (int x = 10; x &lt; 18; ++x)
                 tileMap_-&gt;SetTile(x, y, 16, true);
-
         playerPos_ = Vector2(5.0f * 32.0f, 5.0f * 32.0f);
     }
-
     void Update(GameTime&amp; gt) override {
         auto kb = Keyboard::GetState();
-        Single dt = (Single)gt.getElapsedGameTimeProperty().getTotalSecondsProperty();
-
+        float dt = static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty());
         Vector2 move;
         if (kb.IsKeyDown(Keys::Left))  move.X -= 1.0f;
         if (kb.IsKeyDown(Keys::Right)) move.X += 1.0f;
         if (kb.IsKeyDown(Keys::Up))    move.Y -= 1.0f;
         if (kb.IsKeyDown(Keys::Down))  move.Y += 1.0f;
-
-        const Single speed = 160.0f;
+        const float speed = 160.0f;
         Vector2 newPos = playerPos_ + move * speed * dt;
-
-        Rectangle newRect((intcs)newPos.X, (intcs)newPos.Y, 28, 28);
+        Rectangle newRect(static_cast&lt;int&gt;(newPos.X), static_cast&lt;int&gt;(newPos.Y), 28, 28);
         if (!TileCollision(*tileMap_, newRect))
             playerPos_ = newPos;
-
-        // Camera follows player
         camera_-&gt;setPositionProperty(playerPos_ + Vector2(14.0f, 14.0f));
         camera_-&gt;ClampToWorld(50 * 32, 40 * 32);
     }
-
     void Draw(const GameTime&amp;) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color::Black);
-
-        // Compute visible world rect for culling
         Viewport vp = gd.getViewportProperty();
         Vector2 camPos = camera_-&gt;getPositionProperty();
         Rectangle vis(
-            (intcs)(camPos.X - vp.getWidthProperty()  / 2),
-            (intcs)(camPos.Y - vp.getHeightProperty() / 2),
+            static_cast&lt;int&gt;(camPos.X - vp.getWidthProperty()  / 2),
+            static_cast&lt;int&gt;(camPos.Y - vp.getHeightProperty() / 2),
             vp.getWidthProperty(), vp.getHeightProperty());
-
         spriteBatch_-&gt;Begin(SpriteSortMode::Deferred, BlendState::AlphaBlend, nullptr, nullptr,
                              nullptr, nullptr, camera_-&gt;getTransform());
-
-        tileMap_-&gt;Draw(*spriteBatch_, *atlas_, vis);
-        spriteBatch_-&gt;Draw(*playerTex_, playerPos_, Color::White);
-
+        tileMap_-&gt;Draw(*spriteBatch_, atlas_, vis);
+        spriteBatch_-&gt;Draw(playerTex_, playerPos_, Color::White);
         spriteBatch_-&gt;End();
-        gd.Present();
+        // Game::EndDraw() presents the frame after Draw() returns.
     }
 
 private:
     GraphicsDeviceManager        graphics_;
     std::unique_ptr&lt;SpriteBatch&gt; spriteBatch_;
-    std::unique_ptr&lt;Texture2D&gt;   atlas_, playerTex_;
+    Texture2D                    atlas_, playerTex_;
     std::unique_ptr&lt;TileMap&gt;     tileMap_;
     std::unique_ptr&lt;Camera2D&gt;    camera_;
     Vector2                      playerPos_;
 };
-
 int main() { TileDemo game; game.Run(); }
 </code></pre>
 
       <h2>Optimisation notes</h2>
       <ul>
         <li><strong>Visible-range culling</strong> is the single most important optimisation — a 200×150 tile map has 30 000 tiles; culling reduces this to the ~400 tiles visible at 800×600 with 32px tiles.</li>
-        <li><strong>Multiple layers</strong> — add a <code>std::vector&lt;std::vector&lt;intcs&gt;&gt;</code> inside <code>TileMap</code> for background, foreground, and decoration layers. Draw each in a separate loop or combine into one draw loop.</li>
+        <li><strong>Multiple layers</strong> — add a <code>std::vector&lt;std::vector&lt;int&gt;&gt;</code> inside <code>TileMap</code> for background, foreground, and decoration layers. Draw each in a separate loop or combine into one draw loop.</li>
         <li><strong>Chunk streaming</strong> — for very large maps (4000×4000+ tiles) split the map into 64×64 chunks and only keep chunks near the camera in memory.</li>
         <li><strong>Static render-to-texture</strong> — pre-render the visible tile region into a <code>RenderTarget2D</code> and only re-render when the camera moves more than one tile width. Eliminates tile draw calls on stationary frames.</li>
       </ul>
@@ -451,7 +448,7 @@ int main() { TileDemo game; game.Run(); }
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
