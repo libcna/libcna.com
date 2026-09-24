@@ -45,7 +45,7 @@
   function initTutorialsHub() {
     if (!document.querySelector('.tut-item')) return;
     const progress = getProgress();
-    const total = 99;
+    const total = document.querySelectorAll('.tut-item').length;
     const done = Object.keys(progress).length;
 
     // Insert dynamic progress bar at top of page (after .page-header or first section)
