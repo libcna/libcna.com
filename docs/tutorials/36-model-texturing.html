@@ -21,7 +21,7 @@
   "headline": "Tutorial 36: Texturing 3D Models",
   "url": "https://libcna.com/docs/tutorials/36-model-texturing.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -94,20 +94,21 @@
           <li>What UV coordinates control, and choosing a <code>SamplerState</code>.</li>
           <li>When mipmaps help.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="35-model-loading.html">Tutorial 35: Loading 3D Models</a> (a loaded model to texture) and <a href="08-textures.html">Tutorial 08: Loading and Drawing Textures</a> (loading the texture itself). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="35-model-loading.html">Tutorial 35: Loading 3D Models</a> (a loaded model to texture) and <a href="08-textures.html">Tutorial 08: Loading and Drawing Textures</a> (loading the texture itself). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SVG_DOM</code>, <code>FREEDIRECT</code> and <code>GDI</code>) throw on 3D calls by default.</p>
       </div>
 
-      <p>In the previous tutorial we loaded a 3D model from a <code>.cnj</code> descriptor. Here we go further and apply textures to model meshes, control filtering with <code>SamplerState</code>, and swap textures at runtime.</p>
+      <p>In the previous tutorial we loaded a 3D model from a <code>.cnj</code> descriptor, a compiled <code>.cnb</code> or a glTF file. Here we go further and apply textures to model meshes, control filtering with <code>SamplerState</code>, and swap textures at runtime.</p>
 
       <h2>Texture2D on Model Meshes</h2>
-      <p>A <code>.cnj</code> <code>Model</code> descriptor can name a <code>texture</code> for each mesh entry &mdash; and <code>gltf_to_cnj</code> writes those entries out when it converts a glTF file. When <code>ContentManager::Load&lt;Model&gt;</code> processes the descriptor it automatically loads the referenced <code>Texture2D</code> assets and stores them on each <code>ModelMeshPart</code>'s effect.</p>
-      <p>If the model was exported without embedded texture references — or you want to override the texture at runtime — you access the effect directly:</p>
-      <pre><code class="language-cpp">for (auto&amp; mesh : model-&gt;Meshes) {
-    for (auto&amp; part : mesh.MeshParts) {
-        auto* be = dynamic_cast&lt;BasicEffect*&gt;(part.Effect.get());
-        if (be) {
+      <p>A <code>.cnj</code> <code>Model</code> descriptor can name a <code>texture</code> for each mesh entry &mdash; and <code>gltf_to_cnj</code> writes those entries out when it converts a glTF file. When <code>ContentManager::Load&lt;Model&gt;</code> processes the descriptor it automatically loads the referenced <code>Texture2D</code> assets and stores them on each <code>ModelMeshPart</code>'s effect. A model loaded directly from glTF, or compiled to <code>.cnb</code> by <code>cna-content</code>, arrives with its textures wired up the same way (in a <code>.cnb</code> a model&rsquo;s textures are external references: the texture assets must exist in the content root under the names the model records, which <code>cna_tool_cnb_info file.cnb --refs</code> lists, and <code>cna-content</code>&rsquo;s <code>generateChildAssets</code> parameter publishes a glTF&rsquo;s extracted textures as sibling assets).</p>
+      <p>If the model was exported without embedded texture references — or you want to override the texture at runtime — you access the effect directly. <code>Load&lt;Texture2D&gt;</code> returns a value, and <code>setTextureProperty()</code> stores a non-owning <code>Texture2D*</code>, so keep the texture in a member that outlives the model&rsquo;s use:</p>
+      <pre><code class="language-cpp">// crateTexture_ is a Texture2D member: Texture2D crateTexture_ = ...Load&lt;Texture2D&gt;("textures/crate");
+for (ModelMesh* mesh : model.getMeshesProperty()) {
+    for (ModelMeshPart* part : mesh-&gt;getMeshPartsProperty()) {
+        auto* be = dynamic_cast&lt;BasicEffect*&gt;(part-&gt;getEffectProperty());
+        if (be != nullptr) {
             be-&gt;setTextureEnabledProperty(true);
-            be-&gt;setTextureProperty(crateTexture);
+            be-&gt;setTextureProperty(&amp;crateTexture_);
         }
     }
 }</code></pre>
@@ -122,15 +123,16 @@
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Important:</strong> <code>VertexColorEnabled</code> and <code>TextureEnabled</code> are mutually exclusive on <code>BasicEffect</code>. Always call <code>VertexColorEnabled = false</code> before enabling texturing, otherwise the effect may produce unexpected results.</p>
+        <p><strong>Important:</strong> <code>VertexColorEnabled</code> multiplies the per-vertex colour into the result (in the stock shaders the texture sample is multiplied by the vertex colour and the diffuse colour), so it must match your vertex data. <code>VertexPositionNormalTexture</code> carries no colour element, so set <code>VertexColorEnabled = false</code> (it is false by default) when you texture geometry built from it. Turning both on is legitimate only for a vertex type that has a colour element, where the vertex colours then tint the texture.</p>
       </div>
 
       <h2>Multiple Textures per Mesh</h2>
       <p>Each <code>ModelMeshPart</code> has its own <code>Effect</code> pointer, so different parts of the same mesh can use different textures. This is how a single car model can have separate materials for the body paint, glass, and tyres:</p>
-      <pre><code class="language-cpp">model-&gt;Meshes[0].MeshParts[0].Effect = bodyEffect;   // painted metal
-model-&gt;Meshes[0].MeshParts[1].Effect = glassEffect;  // transparent glass
-model-&gt;Meshes[0].MeshParts[2].Effect = tyreEffect;   // rubber tread</code></pre>
-      <p>Each effect holds its own <code>Texture2D</code> reference and state, so they render independently on each draw call.</p>
+      <pre><code class="language-cpp">ModelMesh* car = model.getMeshesProperty()[0];
+car-&gt;getMeshPartsProperty()[0]-&gt;setEffectProperty(bodyEffect);   // painted metal
+car-&gt;getMeshPartsProperty()[1]-&gt;setEffectProperty(glassEffect);  // transparent glass
+car-&gt;getMeshPartsProperty()[2]-&gt;setEffectProperty(tyreEffect);   // rubber tread</code></pre>
+      <p>Each effect holds its own <code>Texture2D</code> reference and state, so they render independently on each draw call. <code>setEffectProperty()</code> takes a raw <code>Effect*</code>, so <code>bodyEffect</code> and friends must stay alive for as long as the model draws with them.</p>
 
       <h2>UV Coordinates</h2>
       <p>UV (sometimes called ST) coordinates are a 2D value stored per vertex that tells the GPU how to map the texture image onto the surface:</p>
@@ -158,10 +160,16 @@ gd.getSamplerStatesProperty()[0] = SamplerState::LinearWrap;</code></pre>
 
       <h2>Mipmaps</h2>
       <p>Mipmaps are a pre-computed chain of progressively halved copies of a texture (full size, half, quarter, …). The GPU selects the appropriate mip level based on how many pixels on screen the texture covers, eliminating the shimmering aliasing that appears when a large texture is viewed from far away.</p>
-      <p><code>ContentManager</code> loads mipmaps automatically when the source asset is a KTX or DDS file that already contains the mip chain. For PNG/JPEG assets without mipmaps you can generate them manually:</p>
-      <pre><code class="language-cpp">auto tex = content.Load&lt;Texture2D&gt;("textures/crate");
-tex-&gt;GenerateMipMaps(TextureFilter::Linear);</code></pre>
-      <p>Use <code>SamplerState::LinearMipLinear</code> (trilinear filtering) to blend smoothly between mip levels.</p>
+      <p>A loose PNG, JPEG or similar file is decoded to a <strong>single</strong> mip level, and there is no <code>GenerateMipMaps()</code> call on <code>Texture2D</code>. A mip chain comes from one of three places:</p>
+      <ul>
+        <li><strong>Content built ahead of time.</strong> Give <code>cna-content</code> the texture processor parameter <code>generateMipmaps</code> (<code>true</code>) in your <code>.cna-content.json</code> and the <code>.cnb</code> (or <code>.xnb</code>) it writes carries the full chain; <a href="145-content-pipeline-build.html">Tutorial 145</a> shows the file. When the output is <code>.xnb</code>, the XNA Reach profile additionally requires mipmapped sizes to be powers of two; a <code>.cnb</code> has no target profile and no such limit.</li>
+        <li><strong>A texture you create.</strong> <code>Texture2D(device, width, height, /*mipMap*/ true, SurfaceFormat::Color)</code> allocates the chain, and <code>SetData</code> takes a mip <code>level</code> argument.</li>
+        <li><strong>Cube maps</strong> load their levels from a <code>.dds</code> that already contains them.</li>
+      </ul>
+      <pre><code class="language-cpp">// Filtering is chosen by the sampler: the Linear presets use TextureFilter::Linear,
+// which is XNA's trilinear mode (linear within a level and between levels).
+gd.getSamplerStatesProperty()[0] = SamplerState::LinearWrap;</code></pre>
+      <p>There is no separate &ldquo;trilinear&rdquo; preset name: <code>SamplerState::LinearClamp</code> and <code>LinearWrap</code> already filter between mip levels, and <code>TextureFilter::LinearMipPoint</code> and its relatives give finer control when you build your own <code>SamplerState</code>.</p>
 
       <h2>Full Example: Textured Cube with Runtime Texture Swap</h2>
       <p>This example builds a UV-mapped cube from <code>VertexPositionNormalTexture</code> vertices, loads two crate textures, and lets you press <kbd>T</kbd> to toggle between them at runtime. An orbit camera circles the cube automatically.</p>
@@ -299,7 +307,7 @@ int main() { TexturedCubeGame g; g.Run(); }</code></pre>
         <li>Call <code>VertexColorEnabled = false</code> and <code>setTextureEnabledProperty(true)</code> together.</li>
         <li>Set <code>SamplerStates[0]</code> before drawing to choose filtering mode.</li>
         <li>Each <code>ModelMeshPart</code> owns its effect independently — iterate all parts to apply a uniform texture override.</li>
-        <li>Call <code>GenerateMipMaps()</code> for PNG/JPEG textures that will be viewed at varying distances.</li>
+        <li>Loose PNG/JPEG textures have one mip level; build a mip chain with <code>cna-content</code>'s <code>generateMipmaps</code> parameter for textures viewed at varying distances.</li>
       </ul>
 
       <nav class="docs-pagination" aria-label="Page navigation">
@@ -325,7 +333,7 @@ int main() { TexturedCubeGame g; g.Run(); }</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
