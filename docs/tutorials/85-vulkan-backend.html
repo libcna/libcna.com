@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 85: The Vulkan Renderer: Setup and Quirks - CNA</title>
-  <meta name="description" content="Using CNA's VULKAN renderer: Vulkan SDK prerequisites, validation layers, SPIR-V custom shaders, how it differs from the EasyGL profiles, and its real limits on macOS and Android.">
+  <meta name="description" content="Using CNA's VULKAN renderer in this snapshot: Vulkan SDK prerequisites, validation layers, SPIR-V custom shaders, the modern-feature surface (compute, indirect draw, float targets, GPU timers), how it differs from the EasyGL profiles, and its real limits on macOS and Android.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/85-vulkan-backend.html">
   <meta property="og:title"       content="Tutorial 85: The Vulkan Renderer: Setup and Quirks - CNA">
-  <meta property="og:description" content="Using CNA's VULKAN renderer: Vulkan SDK prerequisites, validation layers, SPIR-V custom shaders, how it differs from the EasyGL profiles, and its real limits on macOS and Android.">
+  <meta property="og:description" content="Using CNA's VULKAN renderer in this snapshot: Vulkan SDK prerequisites, validation layers, SPIR-V custom shaders, the modern-feature surface (compute, indirect draw, float targets, GPU timers), how it differs from the EasyGL profiles, and its real limits on macOS and Android.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/85-vulkan-backend.html">
@@ -19,10 +19,10 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "Tutorial 85: The Vulkan Renderer: Setup and Quirks",
-  "description": "Using CNA's VULKAN renderer: Vulkan SDK prerequisites, validation layers, SPIR-V custom shaders, and how it differs from the EasyGL GL profiles.",
+  "description": "Using CNA's VULKAN renderer in this snapshot: Vulkan SDK prerequisites, validation layers, SPIR-V custom shaders, the modern-feature surface, and how it differs from the EasyGL GL profiles.",
   "url": "https://libcna.com/docs/tutorials/85-vulkan-backend.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -94,14 +94,15 @@
             <li>Enabling the <code>VULKAN</code> renderer in CMake and what the Vulkan SDK is needed for.</li>
             <li>Turning on validation layers while developing.</li>
             <li>Where Vulkan differs from the EasyGL GL profiles: SPIR-V shaders and explicit synchronisation.</li>
+            <li>The modern-feature surface of this snapshot (compute, indirect draw, GPU timers, float render targets, shadow sampling) and how to query it.</li>
             <li>Its real limits, and its state on macOS and Android.</li>
           </ul>
           <p><strong>Before you start</strong> &mdash; <a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a> &mdash; read the group comparison before committing to one renderer. <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> explains the shader source this renderer consumes differently from the GL family.</p>
         </div>
 
         <h2>Why Vulkan?</h2>
-        <p><code>VULKAN</code> is one of CNA's 50 renderer identities and one of the 4 modern-GPU-API renderers. It gives you explicit GPU control, lower driver overhead and more multi-threading headroom than the GL family, and it is one of the renderers on which a custom <code>ShaderEffect</code> genuinely executes.</p>
-        <p>CNA publishes no maturity ranking across its renderers, and there is no machine-readable registry to derive one from &mdash; so choose Vulkan because you want its execution model, not because of a league position. The one place a renderer choice is objectively settled is XNA-authentic output, and there the answer is <code>DIRECTX9</code>, not Vulkan.</p>
+        <p><code>VULKAN</code> is one of CNA's 25 renderer identities and one of the 4 modern-GPU-API renderers (with <code>SDL_GPU</code>, <code>WEBGPU</code> and <code>METAL</code>). It gives you explicit GPU control, lower driver overhead and more multi-threading headroom than the GL family, it is one of the renderers on which a custom <code>ShaderEffect</code> genuinely executes, and in this snapshot it has the most complete modern surface of any renderer: compute shaders, indirect draw, base-instance drawing, GPU timers, float and half-float render targets, shadow sampling and image-based lighting (each conditional on the device).</p>
+        <p>CNA does record a maturity per renderer in code (the <code>GraphicsBackendMaturity</code> classification, also exposed through the C API): <code>VULKAN</code> is declared <em>Production</em>, alongside <code>SDL_RENDERER</code>, the three EasyGL desktop/ES profiles and <code>DIRECTX9/11/12</code>. That is CNA's own declaration, not a measurement, so choose Vulkan because you want its execution model, not because of a label. The one place a renderer choice is objectively settled is XNA-authentic output, and there the answer is <code>DIRECTX9</code>, not Vulkan &mdash; it is the only renderer recorded as matching the 39-scene oracle corpus at tolerance 0.</p>
 
         <h2>Required: Vulkan SDK</h2>
         <pre><code class="language-bash"># Ubuntu/Debian
@@ -112,7 +113,8 @@ sudo pacman -S vulkan-headers vulkan-validation-layers shaderc
 
 # Windows: Download LunarG Vulkan SDK from https://vulkan.lunarg.com
 # and set VULKAN_SDK environment variable</code></pre>
-        <p>A Linux CNA build also needs the <code>../sharp-runtime</code> sibling checkout and the FFmpeg development packages (<code>libavcodec-dev</code>, <code>libavformat-dev</code>, <code>libavutil-dev</code>, <code>libswresample-dev</code>) &mdash; FFmpeg is a hard requirement on Linux and macOS, and configure fails without it, whichever renderer you pick.</p>
+        <p>Configure uses <code>find_package(Vulkan REQUIRED)</code>, so the loader and headers must be discoverable. A Linux CNA build also needs the <code>../sharp-runtime</code> sibling checkout &mdash; on its <code>next</code> branch for this snapshot &mdash; whichever renderer you pick. FFmpeg is now optional (<code>CNA_ENABLE_VIDEO=AUTO</code> enables video only when the FFmpeg development packages are found), so it is no longer a hard requirement.</p>
+        <p>The renderer needs a window system that can create a Vulkan surface: the <code>SDL3</code>, <code>X11</code>, <code>Wayland</code> and <code>Win32</code> platform implementations do (subject to the runtime Vulkan library being present); the <code>SDL2</code>, <code>TERMINAL</code> and <code>HEADLESS</code> platforms do not.</p>
 
         <h2>Enabling the Vulkan renderer in CMake</h2>
         <pre><code class="language-bash">cmake -S . -B build-vulkan \
@@ -125,34 +127,41 @@ cmake --build build-vulkan
         <p>Do not pass <code>--target CNA</code>: <code>CNA</code> is an interface library with no sources and is not a buildable target. Build <code>CnaTests</code>, a demo target, or just the whole build directory.</p>
 
         <h2>Validation layers for debugging</h2>
-        <p>Always enable validation layers during development. They catch API misuse, resource leaks, and synchronization errors.</p>
+        <p>Always enable validation layers during development. They catch API misuse, resource leaks, and synchronization errors. In a build without <code>NDEBUG</code> (a Debug configuration) CNA's Vulkan renderer requests <code>VK_LAYER_KHRONOS_validation</code> itself and, if the layer is not installed, prints a note and carries on without it; in a Release build validation is off. You can also ask the Vulkan loader for the layer from outside the process:</p>
         <pre><code class="language-bash"># Enable validation layers at runtime via environment variable:
 export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
 ./build-vulkan/MyGame</code></pre>
 
         <h2>Differences from the EasyGL profiles (SPIR-V shaders, explicit sync)</h2>
         <p>The five GL profile identities (<code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL1</code>, <code>WEBGL2</code>) share the EasyGL implementation and consume GLSL source directly. Vulkan consumes <strong>SPIR-V</strong>. Pipeline state &mdash; blend, rasterizer, depth &mdash; is baked into pipeline objects rather than set dynamically, which makes state changes comparatively more expensive and draw submission comparatively cheaper. CNA's <code>Effect</code> API hides the difference for the stock effects: the same <code>Apply()</code> call works on every renderer that implements them.</p>
-        <p>Where it does <em>not</em> hide the difference is <code>ShaderEffect</code>, CNA's hand-written-shader extension. The source you hand it must be in the language the selected renderer expects, so a Vulkan build wants SPIR-V where an <code>OPENGLES3</code> build wants GLSL. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+        <p>Where it does <em>not</em> hide the difference is <code>ShaderEffect</code>, CNA's hand-written-shader extension. The source you hand it must be in the language the selected renderer expects, so a Vulkan build wants SPIR-V where an <code>OPENGLES3</code> build wants GLSL. The renderer has exactly one custom-effect intake and reports its dialect as SPIR-V; a payload that does not start with the SPIR-V magic word is refused with a compile error rather than handed to the driver. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+
+        <h2 id="modern-surface">The modern-feature surface in this snapshot</h2>
+        <p>Alpha.1's Vulkan renderer stopped at the classic XNA surface. In this snapshot a &ldquo;modern graphics&rdquo; campaign landed for <code>VULKAN</code> (and for <code>SDL_GPU</code>, <code>WEBGPU</code> and <code>OPENGL4</code>). The <code>VULKAN</code> renderer reports the new <code>GraphicsCapability</code> members &mdash; <code>FloatRenderTargets</code>, <code>HalfFloatRenderTargets</code>, <code>HalfFloatTextureLinearFiltering</code>, <code>ComputeShaders</code> and <code>IndirectDraw</code> &mdash; from the device's real features and limits rather than a fixed answer, and backs shadow sampling, image-based lighting, GPU timers and base-instance drawing. Multisampling, multiple render targets, anisotropic filtering, wireframe (<code>fillModeNonSolid</code>), stencil, compute (a compute queue) and indirect draw (<code>drawIndirectFirstInstance</code>) are all device-conditional, so a query is the only honest way to know.</p>
+        <p>Ask the device: <code>GraphicsDevice::SupportsCapability(GraphicsCapability::ComputeShaders)</code> for the coarse answer, or the detailed profile &mdash; <code>GetRendererCapabilityProfileEXT()</code>, <code>GetRendererFeatureSupportEXT()</code>, <code>GetRendererLimitEXT()</code> and the readable <code>GetRendererCapabilityReportEXT()</code> &mdash; for 32 named features and 22 limits. <a href="101-renderer-capabilities.html">Tutorial 101</a> and <a href="133-renderer-capability-profile.html">Tutorial 133</a> walk through both.</p>
 
         <h2>Limits worth knowing</h2>
         <ul>
-          <li><strong>Compute shaders are not exposed through the XNA API surface.</strong> XNA 4.0 has no compute concept, and CNA does not add one here.</li>
-          <li><strong>Compiled effects are opt-in</strong> &mdash; <code>-DCNA_VULKAN_COMPILED_EFFECTS=ON</code> enables XNA/FNA D3D9 Effect Framework bytecode through <code>Effect</code> and <code>EffectReader</code>; the option defaults to <code>OFF</code>. HLSL <code>.fx</code> source, DXBC and MGFX are not accepted. Renderer-native <code>ShaderEffect</code> remains available separately.</li>
-          <li><strong>macOS is served by <code>METAL</code>, not by Vulkan.</strong> <code>METAL</code> is the macOS-gated renderer and the only one with an automatically triggered macOS CI job. CNA does not verify a MoltenVK path.</li>
-          <li><strong>No dedicated Vulkan renderer lane.</strong> Alpha.1 has Vulkan-focused source and test coverage, but no workflow that gates its complete renderer pixel suite on every push.</li>
+          <li><strong>Compute shaders are not part of the XNA API surface.</strong> XNA 4.0 has no compute concept. In this snapshot they are exposed through the CNAEXT engine layer (<code>CNA::Graphics::ComputeShader</code>, storage buffers and storage textures) on the renderers whose <code>ComputeShaders</code> capability is true &mdash; <code>VULKAN</code> among them, when the device offers a compute queue.</li>
+          <li><strong>Compiled effects are opt-in</strong> &mdash; <code>-DCNA_VULKAN_COMPILED_EFFECTS=ON</code> enables XNA/FNA D3D9 Effect Framework bytecode through <code>Effect</code> and <code>EffectReader</code>; the option defaults to <code>OFF</code>, so a default configure reports <code>CompiledEffects</code> false. HLSL <code>.fx</code> source, DXBC and MGFX are not accepted. Renderer-native <code>ShaderEffect</code> remains available separately.</li>
+          <li><strong>Cube faces inside a multi-target set</strong> are supported by this renderer's code (a single render-target set can name faces of a cube), unlike the Direct3D renderers and <code>SDL_GPU</code>; check the renderer you ship on before you depend on it.</li>
+          <li><strong>macOS is served by <code>METAL</code>, not by Vulkan.</strong> <code>METAL</code> is the macOS-gated renderer and has its own macOS CI lane. CNA does not verify a MoltenVK path.</li>
+          <li><strong>Automatic CI touches Vulkan, but does not gate its pixel suite.</strong> <code>VULKAN</code> is built and run in the platform matrix (SDL3 and native X11) and in the glTF conformance matrix, but no workflow gates its complete renderer pixel suite on every push, and the recorded Vulkan glTF pixel set (rendered on the <code>lavapipe</code> software driver) is a record of that renderer's own past output, not a comparison against a reference renderer.</li>
         </ul>
 
         <h2>Vulkan on Android</h2>
-        <p>Android supports Vulkan from API level 24 (Android 7.0). Add <code>uses-feature android:name="android.hardware.vulkan.level" android:version="0"</code> to <code>AndroidManifest.xml</code>. CNA's Android support is code paths and NDK backends with <strong>no automatic CI at all</strong>, and the Vulkan renderer is not validated there &mdash; <code>OPENGLES3</code> is the better-trodden Android path today. See <a href="82-android.html">Tutorial 82</a>.</p>
+        <p>Android supports Vulkan from API level 24 (Android 7.0). Add <code>uses-feature android:name="android.hardware.vulkan.level" android:version="0"</code> to <code>AndroidManifest.xml</code>. CNA's Android support is code paths and NDK backends with <strong>no workflow and no preset</strong> &mdash; the only Android build project is the Devices demo &mdash; and the Vulkan renderer is not validated there. A plain Android configure defaults to <code>SDL_RENDERER</code> (the default for every host except Linux and Emscripten). See <a href="82-android.html">Tutorial 82</a>.</p>
 
         <h2>Consuming CNA from your own CMake project</h2>
-        <p>The C++ framework has no general install/export package, so C++ consumers add the source tree as a subdirectory. The experimental C layer's declared <code>CNACApi</code> package is separate and is not consumable at alpha.1 because its final implementation is compile-blocked.</p>
+        <p>The C++ framework has no general install/export package, so C++ consumers add the source tree as a subdirectory and normally switch off CNA's own tests and examples. Only the optional, experimental C layer installs a <code>CNA</code> CMake package, and no CI job builds it, so whether it builds at this snapshot has not been verified.</p>
         <pre><code class="language-cmake"># CMakeLists.txt: build your game against the Vulkan renderer
 cmake_minimum_required(VERSION 3.20)
 project(MyGame CXX)
 set(CMAKE_CXX_STANDARD 23)
 
 set(CNA_GRAPHICS_RENDERER "VULKAN" CACHE STRING "CNA renderer")
+set(CNA_BUILD_TESTS OFF CACHE BOOL "")
+set(CNA_BUILD_EXAMPLES OFF CACHE BOOL "")
 add_subdirectory(../cna ${CMAKE_BINARY_DIR}/cna)
 
 add_executable(MyGame main.cpp)
@@ -165,7 +174,7 @@ target_link_libraries(MyGame PRIVATE CNA)
         <pre><code class="language-bash">glslc shaders/basic.vert -o shaders/basic.vert.spv
 glslc shaders/basic.frag -o shaders/basic.frag.spv</code></pre>
 
-        <p>Looking for a native Windows GPU API instead of cross-platform Vulkan? CNA ships native <code>DIRECTX9</code>, <code>DIRECTX11</code> and <code>DIRECTX12</code> renderers. The tag includes manual Wine/DXVK and vkd3d-proton paths, while its native-Windows workflows are manual-dispatch; see <a href="72-backend-selection.html">Tutorial 72</a>. For GPU-free CI runs alongside Vulkan development, that same tutorial covers <code>HEADLESS</code> (logic only) and <code>SOFTWARE</code> (a real CPU rasteriser you read back rather than present).</p>
+        <p>Looking for a native Windows GPU API instead of cross-platform Vulkan? CNA ships native <code>DIRECTX9</code>, <code>DIRECTX11</code> and <code>DIRECTX12</code> renderers. This snapshot includes manual Wine/DXVK and vkd3d-proton paths, while its native-Windows workflows are manual-dispatch; see <a href="72-backend-selection.html">Tutorial 72</a> and <a href="103-direct3d-windows.html">Tutorial 103</a>. The other modern-API renderers have tutorials of their own: <a href="131-sdl-gpu.html">SDL_GPU (Tutorial 131)</a> and <a href="132-webgpu.html">WebGPU (Tutorial 132)</a>. For GPU-free CI runs alongside Vulkan development, that same tutorial covers <code>HEADLESS</code> (logic only) and <code>SOFTWARE</code> (a real CPU rasteriser you read back rather than present).</p>
 
         <nav class="docs-pagination" aria-label="Page navigation">
           <div class="docs-pagination-prev">
@@ -175,9 +184,9 @@ glslc shaders/basic.frag -o shaders/basic.frag.spv</code></pre>
             </a>
           </div>
           <div class="docs-pagination-next">
-            <a href="86-bgfx-backend.html" class="pagination-link pagination-next">
+            <a href="87-custom-backend.html" class="pagination-link pagination-next">
               <span class="pagination-direction">Next &rarr;</span>
-              <span class="pagination-title">Tutorial 86: The bgfx Renderer: Features and Limitations</span>
+              <span class="pagination-title">Tutorial 87: Writing a Custom Renderer</span>
             </a>
           </div>
         </nav>
@@ -191,7 +200,7 @@ glslc shaders/basic.frag -o shaders/basic.frag.spv</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

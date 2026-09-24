@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 107: CPU-Only Renderers: Software, PortableGL, Headless and Stub - CNA Tutorials</title>
-  <meta name="description" content="Verify CNA rendering in CI with no GPU and no display server. How SOFTWARE, PORTABLEGL, HEADLESS and STUB differ, why Present() is a no-op on all four, and where the pixels actually come from.">
+  <meta name="description" content="Verify CNA rendering in CI with no GPU and no display server. How SOFTWARE, PORTABLEGL, HEADLESS and STUB differ, why nothing is presented on a windowing platform, and where the pixels actually come from.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/107-cpu-renderers.html">
   <meta property="og:title"       content="Tutorial 107: CPU-Only Renderers: Software, PortableGL, Headless and Stub - CNA Tutorials">
-  <meta property="og:description" content="Verify CNA rendering in CI with no GPU and no display server. How SOFTWARE, PORTABLEGL, HEADLESS and STUB differ, why Present() is a no-op on all four, and where the pixels actually come from.">
+  <meta property="og:description" content="Verify CNA rendering in CI with no GPU and no display server. How SOFTWARE, PORTABLEGL, HEADLESS and STUB differ, why nothing is presented on a windowing platform, and where the pixels actually come from.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/107-cpu-renderers.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 107: CPU-Only Renderers: Software, PortableGL, Headless and Stub",
   "url": "https://libcna.com/docs/tutorials/107-cpu-renderers.html",
   "datePublished": "2026-08-11",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -91,14 +91,14 @@
         <p><strong>What you&rsquo;ll learn</strong></p>
         <ul>
           <li>How to verify rendering in CI with no GPU, no display server and no Xvfb.</li>
-          <li>Why <code>Present()</code> is a no-op on all four of these renderers, and where the pixels actually come from.</li>
+          <li>Why nothing is presented to a window on any of these renderers (with one deliberate exception, <code>SOFTWARE</code> on a terminal), and where the pixels actually come from.</li>
           <li>What each of <code>SOFTWARE</code>, <code>PORTABLEGL</code>, <code>HEADLESS</code> and <code>STUB</code> genuinely proves &mdash; and what none of them proves.</li>
           <li>A render-target trap these renderers exposed, and why it argues for honest capability reporting.</li>
         </ul>
         <p><strong>Before you start</strong> &mdash; <a href="99-unit-testing.html">Tutorial 99: Unit Testing CNA Game Logic</a> covers the GoogleTest side of CNA testing. This tutorial is about the other half: getting a real frame out of a machine that has no graphics stack.</p>
       </div>
 
-      <p>Four of CNA's renderers are built to run where there is no graphics stack at all: <code>SOFTWARE</code>, <code>PORTABLEGL</code>, <code>HEADLESS</code> and <code>STUB</code>. None of them creates an <code>SDL_Window</code>, none of them initialises SDL's video subsystem, and none of them links a GPU library. A build selecting any of them needs nothing beyond what every CNA build already needs.</p>
+      <p>Four of CNA's 25 renderers are built to run where there is no graphics stack at all: <code>SOFTWARE</code>, <code>PORTABLEGL</code>, <code>HEADLESS</code> and <code>STUB</code>. None of them needs a window (their descriptors ask for none), none of them needs the platform's video subsystem, and none of them links a GPU library. A build selecting any of them needs nothing beyond what every CNA build already needs (the sibling <code>sharp-runtime</code> checkout and the platform layer), and <code>PORTABLEGL</code> alone fetches one small header-only dependency.</p>
 
       <p>They are not four flavours of the same thing. Two of them rasterise real pixels you can assert on; one of them records what your code did without drawing anything; one of them does nothing whatsoever, on purpose. Picking the wrong one is the main way this group disappoints people, so this tutorial spends most of its length on the differences.</p>
 
@@ -134,7 +134,7 @@
 
       <h2 id="no-present">Nobody presents; you read the back buffer instead</h2>
 
-      <p><code>Present()</code> is a no-op on all four. There is no window to swap into, so a CNA game running on any of them draws frame after frame that nothing displays. The frame is not lost on the two rasterising renderers &mdash; it is sitting in a CPU buffer, and the way you get at it is XNA's own back-buffer readback:</p>
+      <p>On a windowing platform (<code>SDL3</code>, <code>SDL2</code>, <code>X11</code>, <code>Wayland</code> or <code>WIN32</code> as the <code>CNA_PLATFORM</code>) these renderers stay off-screen: there is no window to swap into, so a CNA game running on any of them draws frame after frame that nothing displays. The frame is not lost on the two rasterising renderers &mdash; it is sitting in a CPU buffer, and the way you get at it is XNA's own back-buffer readback. (The one deliberate exception is <code>SOFTWARE</code> on <code>CNA_PLATFORM=TERMINAL</code>; see <a href="#terminal">below</a>.)</p>
 
       <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Color.hpp"
 #include "Microsoft/Xna/Framework/Rectangle.hpp"
@@ -167,38 +167,45 @@ for (const Color&amp; p : pixels)
   -DCNA_GRAPHICS_RENDERER=SOFTWARE \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCNA_BUILD_TESTS=ON
-cmake --build build-software -j3</code></pre>
+cmake --build build-software --parallel</code></pre>
 
       <p>This is the one to reach for when you want to prove &ldquo;this triangle, with this effect state, this texture and this blend mode, produces <em>these exact pixels</em>&rdquo;. The rasteriser is independently written, so comparing its output against a GPU renderer's is a genuine cross-check rather than two views of the same code.</p>
 
-      <p>It is explicitly not a gameplay renderer: there is no SIMD, no multithreading, no tiling or binning. Correctness and determinism are the goals.</p>
+      <p>It is explicitly not a gameplay renderer: there is no SIMD, no multithreading, no tiling or binning. Correctness and determinism are the goals. CNA declares <code>SOFTWARE</code> <em>Experimental</em> (its own classification, not a measurement), and it has been substantially extended since alpha.1, so treat older descriptions of it as out of date.</p>
 
-      <p>The v1 scope is narrow, and it fails loudly at every edge rather than misrendering:</p>
+      <p>Its scope is bounded, and it fails loudly at the edges rather than misrendering:</p>
 
       <div class="table-wrap">
       <table>
         <thead><tr><th>Boundary</th><th>Behaviour</th></tr></thead>
         <tbody>
-          <tr><td><code>PrimitiveType</code></td><td><strong><code>TriangleList</code> only.</strong> Strip, line and point topologies throw &ldquo;only TriangleList is supported in v1&rdquo;.</td></tr>
-          <tr><td>Vertex strides</td><td>Only the five stock layouts (16, 20, 24, 32 and 52 bytes). Any other stride throws, naming the stride.</td></tr>
-          <tr><td>Lighting and fog</td><td><strong>Out of scope for v1.</strong> <code>EnableDefaultLighting()</code> and the fog properties have no effect on the image. The base colour is <code>vertexColor * diffuseColor * texture0</code> &mdash; no per-light <code>N&middot;L</code> sum, no ambient, no emissive.</td></tr>
-          <tr><td>Stock effects</td><td><code>BasicEffect</code>, <code>DualTextureEffect</code>, <code>EnvironmentMapEffect</code> and <code>SkinnedEffect</code> all render, minus the lighting caveat above. <code>SkinnedEffect</code> does real per-vertex bone blending.</td></tr>
-          <tr><td>Multiple render targets</td><td>One target at a time. A second simultaneous target throws, and so does a cube-face binding.</td></tr>
-          <tr><td>MSAA</td><td>Exactly one option: 4&times;, a 2&times;2 sub-pixel coverage grid. Any other requested count applies as none &mdash; and the <em>applied</em> count is what gets reported back, not the one you asked for.</td></tr>
-          <tr><td>Cube sampling</td><td>Addressed face-locally with <code>Clamp</code> whatever mode you set, and there is no filtering across cube seams.</td></tr>
-          <tr><td>Missing resources</td><td>No <code>Texture3D</code>, no render-target cube maps, no occlusion queries &mdash; the factories create nothing. Plain <code>TextureCube</code>s are real.</td></tr>
+          <tr><td><code>PrimitiveType</code></td><td>Triangle lists and strips (strips keep XNA's alternating winding, indexed or not), line lists and strips, and <code>PointListEXT</code> all rasterise on the CPU.</td></tr>
+          <tr><td>Vertex input</td><td>Multi-stream input is real: the vertex reader resolves each attribute to the stream that owns it, with that stream's own stride and binding offset. A buffer with no <code>VertexDeclaration</code> is read as one of the recognised stock layouts inferred from its stride; any other stride throws &ldquo;unsupported vertex stride&rdquo;.</td></tr>
+          <tr><td>Lighting and fog</td><td>Implemented for the classic stock effects: CNA's own status page records FNA's three-light model for <code>BasicEffect</code>, <code>EnvironmentMapEffect</code> and <code>SkinnedEffect</code> (default lighting, per-vertex and <code>PreferPerPixelLighting</code> paths) and view-space fog. Older notes that call lighting &ldquo;out of scope&rdquo; describe alpha.1.</td></tr>
+          <tr><td>Stock effects</td><td><code>BasicEffect</code>, <code>AlphaTestEffect</code>, <code>DualTextureEffect</code>, <code>EnvironmentMapEffect</code> and <code>SkinnedEffect</code>; <code>SkinnedEffect</code> does real per-vertex bone blending.</td></tr>
+          <tr><td>Multiple render targets</td><td>Up to four ordered colour attachments bind at once; the first owns depth/stencil, and the classic stock effects write <code>COLOR0</code> only.</td></tr>
+          <tr><td>MSAA</td><td>Exactly one option: 4&times; (a standard four-sample pattern). Any other requested count applies as none &mdash; and the <em>applied</em> count is what gets reported back, not the one you asked for.</td></tr>
+          <tr><td>Float and half-float targets</td><td>Real: the classic float and half render-target layouts keep their values through draw, blend, resolve and readback, and half-float texture linear filtering is reported true.</td></tr>
+          <tr><td>Volume textures and queries</td><td><code>Texture3D</code> has real RGBA8 CPU storage (the flag promises storage, not sampling by stock effects), and occlusion queries count the samples that survive coverage, alpha, depth and stencil.</td></tr>
+          <tr><td>Compute and indirect draw</td><td>Not implemented; both capabilities report <code>false</code>.</td></tr>
         </tbody>
       </table>
       </div>
 
       <p>What sits <em>inside</em> that boundary is more complete than the list above might suggest. Blend state is retained in full &mdash; every <code>Blend</code> factor and <code>BlendFunction</code> ordinal, with an out-of-contract value rejected by name at state-application time rather than halfway through a draw. All nine <code>TextureFilter</code> ordinals are honoured, split correctly into their minification, magnification and mip components; <code>Wrap</code>, <code>Clamp</code> and <code>Mirror</code> are all real; and mip level selection is real, with the footprint computed once per triangle. Backface culling follows <code>RasterizerState.CullMode</code> in both directions, a triangle crossing the near plane is genuinely clipped rather than discarded, and the viewport and scissor rectangle both apply.</p>
 
-      <p>Its capability answers are authored rather than inherited, which makes them worth trusting: <code>Texture3D</code> and <code>Instancing</code> are both a deliberate <code>false</code>, and <code>MultiStreamVertexInput</code> is a real <code>true</code> &mdash; the vertex reader resolves each attribute to the stream that owns it, with that stream's own stride and binding offset. <a href="101-renderer-capabilities.html">Tutorial 101</a> explains why the negatives carry more information than the positives.</p>
+      <p>Its capability answers are authored rather than inherited, which makes them worth trusting, and they have moved a long way since alpha.1: <code>Texture3D</code>, <code>Instancing</code>, <code>OcclusionQuery</code>, <code>MultiStreamVertexInput</code>, <code>MultipleRenderTargets</code> and the float/half render-target capabilities are now real <code>true</code> answers, while <code>CustomEffects</code> stays a deliberate <code>false</code> (see the next callout) and <code>ComputeShaders</code>/<code>IndirectDraw</code> are <code>false</code>. <a href="101-renderer-capabilities.html">Tutorial 101</a> explains why the negatives carry more information than the positives.</p>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
         <p><strong>Your GLSL does not run here.</strong> <code>SOFTWARE</code>'s effect renderer accepts a shader source string and reports success <em>without compiling it</em> &mdash; the CPU rasteriser's own fixed shading path is what produces the pixels. A <code>ShaderEffect</code> written for a GPU renderer will therefore render, but not as you wrote it. Only effects whose parameter output matches the fixed <code>BasicEffect</code>-subset path give a meaningful image. See <a href="52-custom-shaders.html">Tutorial 52</a> for where custom shaders genuinely execute.</p>
       </div>
+
+      <p>What <code>SOFTWARE</code> <em>can</em> execute, when you opt in, is XNA's own compiled Effect Framework bytecode. Configure with <code>-DCNA_SOFTWARE_COMPILED_EFFECTS=ON</code> (default <code>OFF</code>) and the renderer reports <code>GraphicsCapability::CompiledEffects</code> as true, running both shader-model 1&ndash;3 stages on the CPU through the MojoShader-based translation shared with the other compiled-effect renderers. That build pulls in the pinned FNA3D checkout for MojoShader, so it is no longer dependency-free, and the option is off in the <code>GDI</code> 2D-only build. See <a href="128-compiled-xna-effects.html">Tutorial 128</a>.</p>
+
+      <h3 id="software-fidelity">How close is it to real XNA?</h3>
+
+      <p>The 39-scene XNA oracle corpus (reference PNGs captured from the real XNA 4.0 runtime under Wine with DXVK) renders on <code>SOFTWARE</code> without display or GPU through <code>scripts/run-oracle-corpus-diff-software.sh</code>. CNA's dated measurement (2026-09-11) is that all 39 scenes render, <strong>18 are byte-exact and 30 match within one channel value</strong>; the remaining differences in the nine point-texture-boundary scenes are attributed to interpolation precision. The only gate registered as a CTest is <code>Software_XnaLineCoverage</code>, which requires two line scenes to match exactly. That is a measurement, not a claim of pixel-exactness: the only renderer recorded as matching all 39 at tolerance 0 is <code>DIRECTX9</code> (see <a href="103-direct3d-windows.html#d3d9">Tutorial 103</a>), and none of this runs in CI.</p>
 
       <h3 id="software-test">A complete Software pixel test</h3>
 
@@ -264,9 +271,11 @@ int main()
   -DCNA_GRAPHICS_RENDERER=PORTABLEGL \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCNA_BUILD_TESTS=ON
-cmake --build build-portablegl -j3</code></pre>
+cmake --build build-portablegl --parallel</code></pre>
 
-      <p>Where <code>SOFTWARE</code> is CNA's own rasteriser, <code>PORTABLEGL</code> delegates: every stage is a genuine PortableGL call. <code>glGenBuffers</code>, <code>glBufferData</code>, <code>glVertexAttribPointer</code>, <code>pglCreateProgram</code> with real C vertex and fragment shader callbacks, <code>glDrawArrays</code>/<code>glDrawElements</code>, <code>glClear</code>, <code>glViewport</code>, <code>glScissor</code>, <code>glTexImage2D</code>, <code>glBlendFuncSeparate</code>, <code>glStencilOpSeparate</code>, <code>glCullFace</code>, <code>glPolygonMode</code>. Upstream is pinned at tag 0.100.0 and fetched at configure time; it is MIT, header-only and nothing in it is patched. For an offline build, point <code>FETCHCONTENT_SOURCE_DIR_PORTABLEGL</code> at an existing checkout.</p>
+      <p>Where <code>SOFTWARE</code> is CNA's own rasteriser, <code>PORTABLEGL</code> delegates: every stage is a genuine PortableGL call. <code>glGenBuffers</code>, <code>glBufferData</code>, <code>glVertexAttribPointer</code>, <code>pglCreateProgram</code> with real C vertex and fragment shader callbacks, <code>glDrawArrays</code>/<code>glDrawElements</code>, <code>glClear</code>, <code>glViewport</code>, <code>glScissor</code>, <code>glTexImage2D</code>, <code>glBlendFuncSeparate</code>, <code>glStencilOpSeparate</code>, <code>glCullFace</code>, <code>glPolygonMode</code>. Upstream is pinned at tag 0.100.0 and fetched at configure time; it is MIT, header-only and nothing in it is patched (the pin is commit <code>63a55db</code>). For an offline build, point <code>FETCHCONTENT_SOURCE_DIR_PORTABLEGL</code> at an existing checkout. CNA declares <code>PORTABLEGL</code> <em>Experimental</em>.</p>
+
+      <p>Because PortableGL defines the global <code>gl*</code> entry points itself, <strong><code>PORTABLEGL</code> cannot be linked into the same binary as any renderer that calls real OpenGL</strong> &mdash; <code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL1</code>, <code>WEBGL2</code> or <code>OPENGL4</code>. CMake rejects that multi-renderer combination at configure time.</p>
 
       <div class="callout callout--info">
         <span class="callout-icon">&#8505;</span>
@@ -300,7 +309,7 @@ cmake --build build-portablegl -j3</code></pre>
   -DCNA_GRAPHICS_RENDERER=HEADLESS \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCNA_BUILD_TESTS=ON
-cmake --build build-headless -j3</code></pre>
+cmake --build build-headless --parallel</code></pre>
 
       <p><code>HEADLESS</code> implements the entire renderer interface without touching a GPU or a window, and every call does real bookkeeping instead of real drawing. What it proves is <em>&ldquo;this code path ran, with these arguments, this many times, and nothing leaked or misused an API&rdquo;</em>. What it proves about pixels is nothing at all.</p>
 
@@ -360,6 +369,42 @@ if (!diff.identical)
         <p><strong><code>HEADLESS</code> reports <code>ThreeD</code> as <code>true</code> and renders nothing.</strong> That is not a bug: the 3D call paths really do run, validate and count. But a capability is not a pixel. If a test needs to know what the frame <em>looks</em> like, this is the wrong renderer &mdash; use <code>SOFTWARE</code>.</p>
       </div>
 
+      <h3 id="null-device">Asking for HEADLESS or SOFTWARE from the XNA flags</h3>
+
+      <p>XNA's two device-type flags map onto these renderers. <code>GraphicsAdapter::setUseNullDeviceProperty(true)</code> requests the <code>HEADLESS</code> renderer and <code>GraphicsAdapter::setUseReferenceDeviceProperty(true)</code> requests <code>SOFTWARE</code>; the null flag wins when both are set. Both are process-wide and must be set before the first <code>GraphicsDevice</code> is constructed:</p>
+
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Game.hpp"
+#include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
+#include "Microsoft/Xna/Framework/Graphics/GraphicsAdapter.hpp"
+
+using namespace Microsoft::Xna::Framework;
+using namespace Microsoft::Xna::Framework::Graphics;
+
+int main()
+{
+    // Before the first device: ask for "draw nothing" (HEADLESS)...
+    GraphicsAdapter::setUseNullDeviceProperty(true);
+    // ...or, alternatively, for a CPU reference device (SOFTWARE).
+    // GraphicsAdapter::setUseReferenceDeviceProperty(true);
+
+    MyLogicTest game;   // an ordinary Game subclass
+    game.Run();
+}</code></pre>
+
+      <p>Neither flag substitutes another renderer. If the required renderer is not compiled into the build, or the selection has already latched to a different renderer, device creation fails with <code>NoSuitableGraphicsDeviceException</code>, and a fallback chain is not allowed to satisfy the flag with something else. So these flags belong in a multi-renderer build such as <code>-DCNA_GRAPHICS_RENDERERS="HEADLESS;SOFTWARE;STUB"</code> (see <a href="126-multi-renderer-build.html">Tutorial 126</a>). A related environment list, <code>CNA_FORCE_HEADLESS_DEVICE_EXT</code>, names renderers whose device should be created as if <code>PresentationParameters.HeadlessEXT</code> were set (no window, no video subsystem, an off-screen back buffer); the renderer-neutral example corpus uses it to run window-bound renderers without a display.</p>
+
+      <h2 id="terminal">Showing SOFTWARE frames in a terminal</h2>
+
+      <p>The rule that these renderers stay off-screen has one deliberate exception. On the POSIX-only <code>TERMINAL</code> platform attached to a real TTY, <code>SOFTWARE</code> hands each finished RGBA8 frame to the platform's surface presenter, so a CNA game is drawn into the terminal:</p>
+
+      <pre><code class="language-bash">cmake -S . -B build-terminal \
+  -DCNA_PLATFORM=TERMINAL \
+  -DCNA_GRAPHICS_RENDERER=SOFTWARE \
+  -DCNA_AUDIO_PLATFORM=NULL
+cmake --build build-terminal --parallel</code></pre>
+
+      <p><code>TERMINAL</code> accepts only the four CPU renderers of this tutorial &mdash; <code>SOFTWARE</code>, <code>PORTABLEGL</code>, <code>HEADLESS</code> and <code>STUB</code> &mdash; and any GPU renderer is a configure-time <code>FATAL_ERROR</code> (&ldquo;Choose a CPU renderer&rdquo;). Of the four, only <code>SOFTWARE</code> actually displays anything; <code>PORTABLEGL</code> is allowed but does not display there. CI exercises the pairing with a pseudo-TTY test of the 2D demo.</p>
+
       <h2 id="stub">STUB: the deliberate nothing</h2>
 
       <p><code>STUB</code> is the smallest complete renderer implementation in the project. Every method either does nothing or returns a fixed value, with <strong>no bookkeeping of any kind</strong> &mdash; no counters, no validation, no trace log, no resource registry. Three uses justify it:</p>
@@ -376,7 +421,7 @@ if (!diff.identical)
 
       <h2 id="ci">Putting it in CI</h2>
 
-      <p>This is where the group earns its keep. A container with no GPU, no <code>DISPLAY</code> and no Xvfb can build and run any of these renderers directly. The simplest test matrix still uses separate single-renderer build directories. Alpha.1 also supports an opt-in multi-renderer build, but its selection occurs before device creation and its compiled dependencies remain part of that one binary:</p>
+      <p>This is where the group earns its keep. A container with no GPU, no <code>DISPLAY</code> and no Xvfb can build and run any of these renderers directly. The simplest test matrix still uses separate single-renderer build directories. This snapshot also supports an opt-in multi-renderer build, but its selection occurs before device creation and its compiled dependencies remain part of that one binary:</p>
 
       <pre><code class="language-yaml">jobs:
   cpu-renderers:
@@ -397,7 +442,7 @@ if (!diff.identical)
           -DCMAKE_BUILD_TYPE=Debug
 
       - name: Build
-        run: cmake --build build-${{ matrix.renderer }} --parallel 3
+        run: cmake --build build-${{ matrix.renderer }} --parallel
 
       - name: Test
         # No Xvfb, no DISPLAY, no GPU driver.
@@ -424,13 +469,13 @@ if (!diff.identical)
 
       <ul>
         <li><strong>Guard with the capability query, not with a try/catch you never wrote.</strong> These four renderers make it obvious how much of an API surface is optional. <a href="101-renderer-capabilities.html">Tutorial 101</a> covers the query and its failure mode.</li>
-        <li><strong>A renderer that reports its gaps honestly is what makes the shared layer able to refuse.</strong> <code>STUB</code>'s blanket <code>false</code>, <code>SOFTWARE</code>'s authored negatives for <code>Texture3D</code> and <code>Instancing</code>, and <code>PORTABLEGL</code>'s five-true list are the mechanism, not documentation about it.</li>
+        <li><strong>A renderer that reports its gaps honestly is what makes the shared layer able to refuse.</strong> <code>STUB</code>'s blanket <code>false</code>, <code>SOFTWARE</code>'s authored <code>CustomEffects</code> negative, and <code>PORTABLEGL</code>'s five-true list are the mechanism, not documentation about it.</li>
       </ul>
 
       <h2 id="choosing">Choosing between the four</h2>
 
       <ul>
-        <li><strong>You need to assert on an image.</strong> <code>SOFTWARE</code> &mdash; as long as your scene fits its <code>TriangleList</code>, unlit, stock-effect scope.</li>
+        <li><strong>You need to assert on an image.</strong> <code>SOFTWARE</code> &mdash; as long as your scene stays inside its stock-effect scope (or you opt into compiled effects); custom <code>ShaderEffect</code> source is not executed.</li>
         <li><strong>You need a real GL pipeline's semantics on the CPU</strong> &mdash; blend equations, two-sided stencil, cull and fill modes exercised through actual GL calls. <code>PORTABLEGL</code>, for unlit vertex-coloured geometry and sprites.</li>
         <li><strong>You need to know your game logic drives the renderer correctly</strong> &mdash; call counts, no leaks, no API misuse, no drift between commits. <code>HEADLESS</code>.</li>
         <li><strong>You need the loop to run and nothing else</strong>, or a reference to copy when writing your own renderer. <code>STUB</code>.</li>
@@ -443,7 +488,8 @@ if (!diff.identical)
         <li><a href="101-renderer-capabilities.html">Tutorial 101: Querying Renderer Capabilities</a></li>
         <li><a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a></li>
         <li><a href="99-unit-testing.html">Tutorial 99: Unit Testing CNA Game Logic</a></li>
-        <li><a href="106-vector-renderers.html">Tutorial 106: 2D Vector Renderers</a></li>
+        <li><a href="126-multi-renderer-build.html">Tutorial 126: Build and Select Several Renderers</a></li>
+        <li><a href="128-compiled-xna-effects.html">Tutorial 128: Compiled XNA Effects</a></li>
         <li><a href="../rendering-backends.html">Renderers reference</a> and <a href="../verification.html">Verification</a></li>
       </ul>
 
@@ -457,7 +503,7 @@ if (!diff.identical)
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
