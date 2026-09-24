@@ -136,6 +136,7 @@ def main() -> int:
         import html5lib
         strict_count = 0
         for path in html_files:
+            rel = path.relative_to(ROOT).as_posix()
             html5_parser = html5lib.HTMLParser(strict=False, namespaceHTMLElements=False)
             html5_parser.parse(path.read_text(encoding="utf-8"))
             strict_count += 1
