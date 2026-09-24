@@ -47,21 +47,80 @@ Structural observations that shape the work (details in the per-area fact sheets
 - Native X11/Wayland/Windows platform work (`X11`, `WAYLAND`, `WINNATIVE`, `WINCLOSE`, `WINPORT`).
 - XNA API-representation closure campaigns (`XNA-ENUM`, `XNA-MEMBER`, `XNA-MISSING`).
 
-## 3. Workstream → affected existing pages → new documentation
+## 3. Workstreams → affected existing pages → new documentation
 
-*(filled in per campaign as each checkpoint completes; see §5)*
+The CNA delta was audited hierarchically: `git log --first-parent` and the Task-ID campaign histogram located the change campaigns; the TARGET source
+(read-only worktree) decided every fact; CNA's own Markdown was treated as untrusted. Eight read-only research agents produced cited fact sheets
+(`audit/data/facts/01…08`, committed scrubbed of retired-renderer names) and a shared editorial guide with the cross-checked canonical numbers (`00-editorial-guide.md`).
+The orchestrator independently recomputed the test inventory (904 files / 871 with macros / 12,610 definitions, same method reproduces BASE's 568 / 8,263 exactly)
+and spot-verified removed-card premises and the homepage code example (syntax-only compile against the pinned headers).
+
+| Workstream (campaigns) | What changed in CNA | Existing pages updated | New documentation |
+|---|---|---|---|
+| Renderer curation + modern graphics (RRC, RendererCleanup, VULKAN/VKPAR, SDLGPU, WEBGPU/WGF, GL4/STREETGL, DX12, SOFTWARE, WMG/SMG/VMG) | 50 → 25 public identities, 46 → 21 families; capability model 14 → 19 members + `RendererCapabilityProfile`; compiled effects on 14 identities; modern Vulkan/SDL_GPU/WebGPU/OpenGL4 surfaces | rendering-backends, runtime-renderer-selection, 3d-rendering, graphics-state, render-targets, tutorials 72, 85, 87, 101–103, 105, 107–109, 126 | tutorials 130–133; 3 tutorials removed (retired subject) |
+| Platforms + audio + build (WINNATIVE/WINCLOSE/WINPORT, X11, WAYLAND, MOD, AUD-*) | native X11/Wayland/Win32 platforms, ALSA + CNA mixer, `CNA_ENABLE_SDL`, optional FFmpeg, `CNA_SHARED_LIBRARY`, 17+1 presets, 22 focused test targets, sharp-runtime `next` requirement | platforms, building, getting-started, audio, tutorials 01–03, 14, 15, 20, 80–82, 100, 118–120, 124, 127 | `docs/native-platforms.html`; tutorials 135–139 |
+| Content (CNBF, XNAPP/XNAP, XNB, GLTF) | build-time Content Pipeline writing XNB and CNB, 61 XNB readers, `.xnb → .cnb → loose` ladder, `ResourceContentManager`, glTF limits re-verified | content-manager, content-pipeline-xnb (retitled XNB Loading & Interoperability), model-loading, tutorials 35, 36, 45, 46, 110–113 | `docs/content-pipeline.html`, `docs/cnb-format.html`; tutorials 145–148 |
+| XNA representation (XNA-ENUM/MEMBER/MISSING, Framework.Design, Phone) | 3,627/3,627 members and 331/331 types represented; Framework.Design converters; storage/GamerServices/net behaviors | xna-compatibility, input, storage, sensors, video-playback, math-types, packed-vector, game-loop, spritebatch, migration-from-monogame, vs-alternatives, faq, tutorials 04–13, 16–19, 21, 22, 25–30, 41–44, 47–50, 71, 73, 76–79, 83, 84, 89–92, 94–98, 121–123 | `docs/design-converters.html`; tutorials 140, 141 |
+| Effects, shaders, CNAEXT engine layer (FX, GSC, REMED-GFX) | compiled XNA effects on 14 identities, build-time `.fx` via external fxc, Reach profile enforced, engine layer 12 → 98 headers | effects, shader-effects, tutorials 23, 24, 31–34, 37–40, 51–70, 74, 75, 93, 114–117, 88, 128 | `docs/cnaext-engine.html`; tutorials 150–154 |
+| C API, Diagnostics, Inspector, tools (CBIND, CABI, BINDFIX, DIAG, INSP) | C ABI 0.7.0 → 0.29.0 (61 headers, 4,055 routes); Diagnostics and Inspector modules; CLI tools | c-api, releases, docs/roadmap, tutorial 129 | `docs/diagnostics.html`, `docs/inspector.html`, `docs/tools.html`; tutorials 155–157 |
+| Verification (XNASWEEP, SAMPLE, GTI, PSG) | 904 test files / 12,610 definitions, 20 workflows, oracle corpus facts, parity fixtures, content-pipeline oracle, bounded runner | verification, contribute, tutorials 99, 125 | tutorials 160, 161 |
+| Ecosystem / front pages | cna-samples 87/153 (pinned), 14 web demos, new public projects, bindings pinned to ABI 0.21.x, dead links | index, demos, showcase, videos, features, about, documentation, tutorials hub, architecture, roadmap, network, contact | architecture diagram redrawn; 10 homepage stats; 6 new project cards |
+
+Public-facing decisions recorded in the editorial guide: TARGET is described as a **development snapshot** (not a release; `CNA_VERSION_STRING` is still `0.1.0-alpha.1`); clone instructions use `next`
+(GitHub's default branch is still the alpha.1 commit); consumer-project numbers are pinned to a repository revision; Speedy Blupi's live web build is described as an external, earlier CNA build.
 
 ## 4. Presentation baseline
 
-- `audit/phase1-presentation-baseline.md` (human-readable) and `audit/data/phase1-baseline-inventory.json` (machine-readable) are generated from git revision `be35902…` **before any site edit** by `scripts/inventory_presentation.py` + `scripts/inventory_report.py`.
+- `audit/phase1-presentation-baseline.md` and `audit/data/phase1-baseline-inventory.json` were generated from git revision `be35902…` **before any site edit** by `scripts/inventory_presentation.py` + `scripts/inventory_report.py`.
 - 174 HTML pages · 2,113 headings · 79 CTAs (22 primary) · 2,542 significant links · 681 cards/callouts · 52 images · 13 video entries · 8 homepage Quick Stats · 297 tables · 52 major blocks.
-- Owner-designated protected content (must survive): homepage Quick Stats (8 stats); Showcase "Verification against the real XNA runtime"; Demos → Speedy Blupi section incl. primary `Play in Browser` → `https://speedyblupi.com/SpeedyBlupi2013/`.
-- Baseline validator result (before edits): `scripts/validate_site.py` → 174 HTML files, 172 search entries, 172 sitemap URLs, 0 problems (strict html5lib pass skipped: `html5lib` not installed).
+- Owner-designated protected content: homepage Quick Stats; Showcase "Verification against the real XNA runtime"; Demos → Speedy Blupi incl. the primary `Play in Browser` → `https://speedyblupi.com/SpeedyBlupi2013/`.
+- Final result: `audit/phase1-presentation-comparison.md` — **0 unexplained losses**, 98 dispositioned differences recorded in `audit/data/phase1-dispositions.json`.
 
-## 5. Checkpoints
+## 5. Checkpoints (commits on `docs/unified-v2`, nothing pushed)
 
 | # | Checkpoint | Status |
 |---|---|---|
-| 1 | Pin TARGET, record baseline, ledger skeleton | done |
-| 2 | Per-area fact sheets (`audit/data/facts/01…08`) | in progress |
+| 1 | Pin TARGET (`cnahead`), record baseline, ledger | done |
+| 2 | Preservation tooling, snippet checker, docs sidebar/new-page generator, facts file | done |
+| 3 | Homepage, demos, showcase, videos | done |
+| 4 | Renderer surface (reference, selection, tutorials, 130–133) | done |
+| 5 | Content pipeline / CNB / XNB / glTF (+145–148) | done |
+| 6 | C API, releases, roadmap, Diagnostics, Inspector, tools (+155–157) | done |
+| 7 | Verification evidence (+160, 161) | done |
+| 8 | About, roadmap, documentation hub, contact, network | done |
+| 9 | Platform, audio, build (+135–139) | done |
+| 10 | CNAEXT engine layer (+153, 154) | done |
+| 11 | Features, architecture (+ redrawn diagram) | done |
+| 12 | 3D rendering and 3D tutorials (+152) | done |
+| 13 | XNA reference pages (+140, 141), foundation tutorials 04–30 | done |
+| 14 | Effects (+150, 151), advanced 3D tutorials, intermediate tutorials 41–98 | done |
+| 15 | Tutorial hub, three tutorials removed, site-wide consistency, indexes, responsive CSS, final audit | done |
 
+## 6. Validation evidence (final run)
+
+| Check | Result |
+|---|---|
+| `scripts/validate_site.py` | 204 HTML files parsed; strict HTML5 (html5lib) 204/204 authored pages with no errors; 14,081 references and 924 local fragments inspected, 0 broken; 0 duplicate IDs; 188 JSON-LD blocks parse; 202 search entries and 202 sitemap URLs, unique and complete; metadata/canonical complete |
+| `scripts/compare_presentation.py` | 0 unexplained losses (98 dispositioned) |
+| `scripts/validate_presentation.py` | 6/6 (cnahead, Quick Stats, real-XNA verification, Speedy Blupi section, Speedy Blupi primary CTA, all 22 baseline primary CTAs) |
+| `scripts/check_retired_renderers.py` | 0 references to any of the 26 retired identities in public content (set derived from the CNA registries at run time; nothing stored in the repository) |
+| `scripts/check_facts.py` | 0 problems (canonical numbers in `data/current-facts.json` present on the pages that must carry them; no stale alpha.1 count presented as current) |
+| External links | 133 distinct external URLs checked; all answer 2xx (two VS Code Marketplace URLs answer 404 to scripts but 200 to a browser user agent) |
+| Code snippets | every C++ example written or repaired in Phase 1 was syntax-checked with `g++ -std=c++23 -fsyntax-only` against the pinned TARGET headers (`scripts/check_snippet.sh`); nothing was built or run, and the pages that depend on unbuilt configurations say so |
+| `git diff --check` | clean |
+| Mobile/tablet layout | headless-Chrome scan of all 203 public pages at 390 px and 768 px: 0 pages with horizontal page overflow (baseline: **103 of 173** pages overflowed at 390 px, e.g. docs/vs-alternatives at 1,067 px, because docs grids used `1fr` columns; fixed with `minmax(0,1fr)` grid columns and long-identifier wrapping) |
+| Visual QA | headless Chrome 1360 px, light and dark: index, demos, showcase, videos, features, documentation, tutorials, renderers, platforms, content pipeline, verification inspected; 390 px screenshots of index (light/dark), demos, showcase, renderers, platforms. No browser extension was connected, so screenshots were taken from the command line |
+
+## 7. Post-TARGET contamination check
+
+CNA HEAD at completion: `9bb6dc0a7e03ddcca60f5d496f23b302d332dcf8` (branch `street-perf`, the owner's working branch). `git log 009d40f5..HEAD` = **7 commits**
+(STREETGL4-0001/0002 and STREETPERF-0001…0004: renderer performance work, plus two plans and docs); `git diff --name-status 009d40f5..HEAD` touches renderer sources/tests and the
+engine-layer version header only. **None of it is documented** (site grep for those task ids and features: no hit). The TARGET SHA in `cnahead` and on every page is unchanged.
+
+## 8. Known limits (stated on the pages where they matter)
+
+- Nothing was built or run: C++ claims come from source, CMake logic and CI YAML; the C API library, Wayland, Windows-native, Android, Metal-on-macOS and browser results are not verified by us.
+- CI status: workflow files are configuration, not results; static reading suggests several Apple/Emscripten/Windows workflows pin an older sharp-runtime revision than the snapshot needs.
+- Consumer-project numbers (cna-samples 87/153, cna-examples 249, cna-extended lines, demos) are pinned to a named external revision and are not TARGET results.
+- Speedy Blupi: the hosted web build is an external build with an embedded May-2026 CNA revision (static inspection of the committed wasm; not run in a browser); no Android APK exists.
+- The oracle corpus references were captured under Wine + DXVK on Linux; DIRECTX9's 39/39 has no committed 39-scene run log (the last dated report covers 31); none of it is in CI.
