@@ -21,7 +21,7 @@
   "headline": "Tutorial 55: DualTextureEffect for Lightmaps",
   "url": "https://libcna.com/docs/tutorials/55-dual-texture.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -93,27 +93,29 @@
           <li>Why neither XNA nor CNA ships a dual-texture vertex type, and how to declare the second UV set yourself.</li>
           <li>The baked-lightmap workflow, and where the effect runs out of road.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="36-model-texturing.html">Tutorial 36: Texturing 3D Models</a> (textured meshes) and <a href="51-custom-vertex.html">Tutorial 51: Custom Vertex Types</a> (a second UV channel is a vertex layout question). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the thirteen 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="36-model-texturing.html">Tutorial 36: Texturing 3D Models</a> (textured meshes) and <a href="51-custom-vertex.html">Tutorial 51: Custom Vertex Types</a> (a second UV channel is a vertex layout question). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls. <code>PORTABLEGL</code> refuses <code>DualTextureEffect</code> by name.</p>
       </div>
 
       <p>Lightmapping is one of the oldest and most effective techniques for delivering high-quality static lighting at minimal runtime cost. The idea is to precompute all indirect illumination, soft shadows, and ambient occlusion offline, bake the result into a second texture (the lightmap), and then multiply it into the diffuse albedo during rendering. CNA's built-in <code>DualTextureEffect</code> implements exactly this pipeline in a single shader pass, supporting two independent UV channels, optional per-vertex colour modulation, and fog.</p>
 
       <h2>DualTextureEffect Overview</h2>
       <p><code>DualTextureEffect</code> combines two <code>Texture2D</code> objects in a single fragment shader pass. The first texture is the surface's diffuse albedo — the colour of the material under white light. The second texture is the precomputed lightmap. The fragment shader multiplies them together:</p>
-      <pre><code class="language-glsl">// Core of DualTextureEffect fragment shader (simplified)
+      <pre><code class="language-glsl">// Core of DualTextureEffect fragment shader (simplified, as in XNA/FNA)
 vec4 albedo   = texture(u_texture,  v_texcoord1);
+albedo.rgb   *= 2.0;                       // the first texture is doubled
 vec4 lightmap = texture(u_texture2, v_texcoord2);
 fragColor     = albedo * lightmap * u_diffuseColor;</code></pre>
-      <p>This multiplication is physically motivated: a surface that reflects a fraction of incoming light, when lit by a certain intensity, outputs the product of the two. Because the lightmap stores pre-integrated radiance (often encoded in a gamma-compressed format), the multiplication should happen in linear colour space for physical correctness — CNA applies gamma decoding automatically when the textures are created with <code>SurfaceFormat::Color</code> and the effect's linear-space flag is enabled.</p>
+      <p>This multiplication is physically motivated: a surface that reflects a fraction of incoming light, when lit by a certain intensity, outputs the product of the two. Two details come from XNA itself: the stock shader <strong>doubles the first texture's RGB</strong> before multiplying (<code>base.rgb *= 2.0</code>, exactly as XNA and FNA do), so a mid-grey (0.5) lightmap leaves the albedo unchanged and white brightens it; and there is <strong>no gamma decoding and no linear-space flag</strong> &mdash; the effect's whole public surface is the matrices, diffuse colour, alpha, fog, the two textures and vertex-colour enable. If your lightmap is stored in a gamma-compressed encoding, decode it when you bake or use a custom effect. An unbound texture samples opaque black, not white.</p>
       <p>The key performance advantage of <code>DualTextureEffect</code> over a per-pixel lighting effect is that there are <em>no light direction calculations at runtime</em>. The GPU simply samples two textures and multiplies — this is an extremely fast path even on low-end mobile GPUs.</p>
 
       <h2>Texture and Texture2 Properties</h2>
       <p>The two textures are set via separate setter methods:</p>
       <ul>
-        <li><strong><code>setTextureProperty(Texture2D*)</code></strong> — the primary (albedo) texture. Sampled using the first UV channel (<code>v_texcoord1</code> from <code>TextureCoordinate</code> in the vertex struct). This should be a tiling, detail-rich albedo map.</li>
-        <li><strong><code>setTexture2Property(Texture2D*)</code></strong> — the secondary (lightmap) texture. Sampled using the second UV channel (<code>v_texcoord2</code> from <code>TextureCoordinate2</code>). This is a unique (non-tiling) atlas per mesh or per room, produced by an offline lightmapper.</li>
+        <li><strong><code>setTextureProperty(Texture2D*)</code></strong> — the primary (albedo) texture. Sampled using the first UV channel (<code>TEXCOORD0</code>: a <code>TextureCoordinate</code> element with usage index 0). This should be a tiling, detail-rich albedo map.</li>
+        <li><strong><code>setTexture2Property(Texture2D*)</code></strong> — the secondary (lightmap) texture. Sampled using the second UV channel (<code>TEXCOORD1</code>: a <code>TextureCoordinate</code> element with usage index <strong>1</strong>; there is no element named <code>TextureCoordinate2</code>). This is a unique (non-tiling) atlas per mesh or per room, produced by an offline lightmapper.</li>
       </ul>
       <p>Both textures use their own independent UV sets stored in the vertex buffer. The albedo UV typically tiles across the surface (a brick texture repeated many times), while the lightmap UV covers the [0, 1] range exactly once across the entire mesh, ensuring each texel in the lightmap corresponds to a unique surface point.</p>
+      <div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Tiling needs a power-of-two albedo under Reach.</strong> UVs that run past 1 rely on wrap addressing, which is the device's default sampler state (<code>LinearWrap</code>). Under the default <code>Reach</code> profile a <em>non-power-of-two</em> texture drawn with a wrapping sampler throws <code>NotSupportedException</code> (&ldquo;Reach requires Clamp addressing for non-power-of-two Texture2D resources&rdquo;) from the draw call. Make the albedo (and, to be safe, the lightmap) a power-of-two size, or request <code>GraphicsProfile::HiDef</code> (<a href="152-graphics-profiles.html">Tutorial 152</a>).</p></div>
       <pre><code class="language-cpp">dualEffect_-&gt;setTextureProperty(&amp;diffuseTex_);    // albedo (tiling)
 dualEffect_-&gt;setTexture2Property(&amp;lightmapTex_);  // lightmap (unique UV)</code></pre>
 
@@ -122,8 +124,7 @@ dualEffect_-&gt;setTexture2Property(&amp;lightmapTex_);  // lightmap (unique UV)
         <span class="callout-icon">&#9888;</span>
         <p>There is <strong>no built-in dual-texture vertex type</strong> &mdash; not in CNA, and not in Microsoft XNA 4.0 either. CNA ships <code>VertexPositionColor</code>, <code>VertexPositionTexture</code>, <code>VertexPositionColorTexture</code>, <code>VertexPositionNormalTexture</code>, <code>VertexPositionNormalTangentTexture</code> and the two <code>&hellip;Skinned</code> variants. A second UV channel is something you declare yourself, exactly as CNA's own XNA oracle tool does for its dual-texture reference scenes.</p>
       </div>
-      <p>The simplest route is the one CNA's own <code>vulkan_dual_texture_test</code> and <code>bgfx_dual_texture_test</code> take: use the stock <code>VertexPositionTexture</code> and let both stages sample the <em>same</em> UV set. That is enough whenever the lightmap shares the albedo's parameterisation, and it needs no custom declaration at all.</p>
-      <p>When the lightmap genuinely needs its own unique-per-surface UVs, declare a custom vertex type &mdash; see <a href="51-custom-vertex.html">Tutorial 51: Custom Vertex Types</a> for the full mechanics. The layout below matches the one the oracle tool uses, so it is known to round-trip against real XNA output:</p>
+      <p>Unlike a shader you write yourself, the stock effect reads <em>two separate UV inputs</em> (<code>TEXCOORD0</code> and <code>TEXCOORD1</code>; CNA fixed this to be independent, with a regression test). With a single-UV vertex type such as the stock <code>VertexPositionTexture</code> the second input is not filled, and the shader reads a constant <code>(0, 0, 0, 1)</code> for it &mdash; so the lightmap would be sampled at one fixed texel rather than sharing the albedo's UVs. Declare a two-UV vertex type whenever you use a real lightmap; see <a href="51-custom-vertex.html">Tutorial 51: Custom Vertex Types</a> for the full mechanics. The layout below matches the one the oracle tool uses, so it is known to round-trip against real XNA output (CNA's own <code>vulkan_dual_texture_test</code> and <code>easygl_dual_texture_test</code> exercise the effect):</p>
       <pre><code class="language-cpp">// Your own struct -- neither XNA nor CNA provides this.
 // Stride 28: Position(0) + UV0(12) + UV1(20).
 struct VertexPositionDualTexture {
@@ -131,18 +132,22 @@ struct VertexPositionDualTexture {
     Vector2 TextureCoordinate0;   // albedo, may tile
     Vector2 TextureCoordinate1;   // lightmap, unique across the mesh
 
-    static VertexDeclaration Declaration()
+    static const VertexDeclaration&amp; Declaration()
     {
-        return VertexDeclaration({
-            VertexElement(0,  VertexElementFormat::Vector3,
-                          VertexElementUsage::Position, 0),
-            VertexElement(12, VertexElementFormat::Vector2,
-                          VertexElementUsage::TextureCoordinate, 0),
-            VertexElement(20, VertexElementFormat::Vector2,
-                          VertexElementUsage::TextureCoordinate, 1),
-        });
+        static const VertexDeclaration declaration(
+            static_cast&lt;int&gt;(sizeof(VertexPositionDualTexture)),   // stride 28
+            {
+                VertexElement(0,  VertexElementFormat::Vector3,
+                              VertexElementUsage::Position, 0),
+                VertexElement(12, VertexElementFormat::Vector2,
+                              VertexElementUsage::TextureCoordinate, 0),
+                VertexElement(20, VertexElementFormat::Vector2,
+                              VertexElementUsage::TextureCoordinate, 1),
+            });
+        return declaration;
     }
-};</code></pre>
+};
+static_assert(sizeof(VertexPositionDualTexture) == 28, "tightly packed");</code></pre>
       <p>The two <code>TextureCoordinate</code> elements differ only in their <em>usage index</em> (0 and 1) &mdash; that index is what routes each one to its shader input. Filling and uploading a buffer then looks like any other custom vertex type:</p>
       <pre><code class="language-cpp">const VertexPositionDualTexture verts[] = {
     // { Position,           UV0 (albedo),   UV1 (lightmap) }
@@ -159,9 +164,9 @@ auto vb = std::make_unique&lt;VertexBuffer&gt;(
     4,
     BufferUsage::WriteOnly
 );
-// SetData is overloaded only for the stock vertex types; a custom struct
-// goes through SetDataRaw, which takes an explicit stride.
-vb-&gt;SetDataRaw(verts, 4, sizeof(VertexPositionDualTexture));</code></pre>
+// SetData&lt;T&gt; takes any trivially copyable vertex struct (sizeof(T) must equal
+// the declaration's stride); SetDataRaw(ptr, count, stride) is the untyped form.
+vb-&gt;SetData(verts, 4);</code></pre>
       <p>Adding per-vertex colour for <code>VertexColorEnabled</code> is the same exercise: insert a <code>Color</code> field after <code>Position</code>, declare it with <code>VertexElementFormat::Color</code> and <code>VertexElementUsage::Color</code>, and shift the two UV offsets by four bytes.</p>
 
       <h2>Baked Lightmap Workflow</h2>
@@ -169,8 +174,8 @@ vb-&gt;SetDataRaw(verts, 4, sizeof(VertexPositionDualTexture));</code></pre>
       <ol>
         <li><strong>Model your scene</strong> in Blender (or any DCC tool). Ensure all static geometry has a second UV channel (<em>UV2</em>) that is "unwrapped for lightmapping" — no overlapping faces, each polygon occupies a unique region of [0,1] texture space.</li>
         <li><strong>Bake the lightmap</strong> using Blender's Cycles bake system (or a dedicated lightmapper such as The Lightmapper, Bakery, or xatlas + custom ray tracer). Bake to an RGBA image at 1024×1024 or 2048×2048 depending on scene scale. Save as PNG.</li>
-        <li><strong>Export assets</strong> — export the mesh with both UV channels to OBJ or FBX. Export the baked lightmap PNG.</li>
-        <li><strong>Import into CNA</strong> — CNA&rsquo;s content loader ingests the mesh and preserves the second UV channel as <code>TextureCoordinate2</code> in the vertex data. Load the lightmap texture normally via <code>getContentProperty().Load&lt;Texture2D&gt;</code>.</li>
+        <li><strong>Export assets</strong> — export the mesh with both UV channels (glTF names the second set <code>TEXCOORD_1</code>). Export the baked lightmap PNG.</li>
+        <li><strong>Import into CNA</strong> — CNA&rsquo;s runtime <code>ContentManager</code> resolves <code>.xnb</code>, <code>.cnj</code>, <code>.gltf</code> and <code>.glb</code> (there is no OBJ reader at run time; FBX and <code>.x</code> are build-time content-pipeline importers). glTF import builds <code>PbrEffect</code> materials, and whether a second UV set reaches a <code>DualTextureEffect</code> through it was not verified, so the dependable route is to read both UV sets from your export (or from the pipeline's mesh content) and fill a <code>VertexPositionDualTexture</code> buffer as shown above. Load the lightmap texture normally via <code>getContentProperty().Load&lt;Texture2D&gt;</code>.</li>
       </ol>
       <p>A common mistake is to use overlapping UVs in the lightmap channel (the same UV layout as the albedo, which tiles). This causes every surface that shares the same albedo UV region to also share the same lightmap texel, producing incorrect lighting where every face appears to have identical shadow patterns. Always create a dedicated non-overlapping UV unwrap for the lightmap channel.</p>
 
@@ -178,6 +183,7 @@ vb-&gt;SetDataRaw(verts, 4, sizeof(VertexPositionDualTexture));</code></pre>
       <p>The fragment-level combination used by <code>DualTextureEffect</code> is a simple multiply. In mathematical terms:</p>
       <pre><code class="language-glsl">// Inside DualTextureEffect — both textures sampled and multiplied
 vec4 c1 = texture(u_texture,  v_texcoord1);
+c1.rgb *= 2.0;                                  // XNA doubles the first texture
 vec4 c2 = texture(u_texture2, v_texcoord2);
 vec4 result = c1 * c2 * u_diffuseColor;
 
@@ -187,10 +193,10 @@ result *= v_vertexColor;
 #endif
 
 fragColor = result;</code></pre>
-      <p>The lightmap values are typically in the range [0, 1], where 0 represents full shadow and 1 represents maximum direct illumination. Clamp the lightmap to [0, 1] during export from the baking tool.</p>
+      <p>The lightmap values are typically in the range [0, 1]. Because of the doubling above, remember that <strong>0.5 is the neutral value</strong>: bake your lightmap so that &ldquo;unchanged albedo&rdquo; maps to mid-grey, or halve your albedo texture, otherwise everything renders twice as bright as intended. Clamp the lightmap to [0, 1] during export from the baking tool.</p>
       <div class="callout callout--note">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>RGBA8 is the portable lightmap route.</strong> Most renderer families defer to the framework's <code>SurfaceFormat::Color</code>-only gate. Skia has a promoted <code>HdrBlendable</code> texture path, but that does not make the stock effect and every renderer a portable HDR combination. For cross-renderer assets, encode values above 1.0 into RGBA8 and decode them in a compatible shader path.</p>
+        <p><strong>RGBA8 is the portable lightmap route.</strong> Texture formats are admitted in two steps: the default <code>Reach</code> profile refuses <code>HdrBlendable</code> and the other float formats outright, and then eight renderer families (<code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>VULKAN</code>, <code>OPENGL4</code>, <code>SDL_GPU</code>, <code>WEBGPU</code>, <code>SOFTWARE</code> and the EasyGL identities) classify formats themselves, while the rest fall back to the framework's <code>SurfaceFormat::Color</code>-only rule. Even where an HDR texture exists, that does not make the stock effect and every renderer a portable HDR combination. For cross-renderer assets, encode values above 1.0 into RGBA8 and decode them in a compatible shader path.</p>
       </div>
       <p>A common refinement is to store ambient occlusion in the lightmap's alpha channel and multiply it separately, giving you AO as a distinct scalar at no additional texture cost.</p>
 
@@ -220,7 +226,7 @@ fragColor = result;</code></pre>
     std::unique_ptr&lt;IndexBuffer&gt;       roomIB_;
     int                                vertexCount_ = 0;
     int                                indexCount_ = 0;
-    Camera                             camera_;
+    Matrix                             view_, projection_;   // your own camera matrices (Tutorial 34)
 
     void LoadContent() override {
         auto&amp; gd = getGraphicsDeviceProperty();
@@ -252,14 +258,14 @@ fragColor = result;</code></pre>
         auto addQuad = [&amp;](Vector3 a, Vector3 b, Vector3 c, Vector3 d,
                             float uvScale, Vector2 lm0, Vector2 lm1,
                             Vector2 lm2, Vector2 lm3) {
-            uint16_t base = (uint16_t)verts.size();
+            uint16_t base = static_cast&lt;uint16_t&gt;(verts.size());
             verts.push_back({ a, Vector2(0,      uvScale), lm0 });
             verts.push_back({ b, Vector2(uvScale,uvScale), lm1 });
             verts.push_back({ c, Vector2(uvScale,0      ), lm2 });
             verts.push_back({ d, Vector2(0,      0      ), lm3 });
             indices.insert(indices.end(),
-                { base, (uint16_t)(base+1), (uint16_t)(base+2),
-                  base, (uint16_t)(base+2), (uint16_t)(base+3) });
+                { base, static_cast&lt;uint16_t&gt;(base+1), static_cast&lt;uint16_t&gt;(base+2),
+                  base, static_cast&lt;uint16_t&gt;(base+2), static_cast&lt;uint16_t&gt;(base+3) });
         };
 
         // Floor (y=0), lightmap occupies top-left quarter of the atlas
@@ -269,18 +275,18 @@ fragColor = result;</code></pre>
         );
         // ... add remaining faces similarly ...
 
-        vertexCount_ = (int)verts.size();
-        indexCount_  = (int)indices.size();
+        vertexCount_ = static_cast&lt;int&gt;(verts.size());
+        indexCount_  = static_cast&lt;int&gt;(indices.size());
 
         roomVB_ = std::make_unique&lt;VertexBuffer&gt;(
             gd, VertexPositionDualTexture::Declaration(),
             vertexCount_, BufferUsage::WriteOnly);
-        roomVB_-&gt;SetDataRaw(verts.data(), vertexCount_, sizeof(VertexPositionDualTexture));
+        roomVB_-&gt;SetData(verts.data(), vertexCount_);
 
         roomIB_ = std::make_unique&lt;IndexBuffer&gt;(
             gd, IndexElementSize::SixteenBits,
-            (int)indices.size(), BufferUsage::WriteOnly);
-        roomIB_-&gt;SetData(indices.data(), (int)indices.size());
+            static_cast&lt;int&gt;(indices.size()), BufferUsage::WriteOnly);
+        roomIB_-&gt;SetData(indices.data(), static_cast&lt;int&gt;(indices.size()));
     }
 
     void Draw(const GameTime&amp;) override {
@@ -288,18 +294,18 @@ fragColor = result;</code></pre>
         gd.Clear(Color::Black);
 
         dualEffect_-&gt;setWorldProperty(Matrix::getIdentityProperty());
-        dualEffect_-&gt;setViewProperty(camera_.View());
-        dualEffect_-&gt;setProjectionProperty(camera_.Projection());
+        dualEffect_-&gt;setViewProperty(view_);
+        dualEffect_-&gt;setProjectionProperty(projection_);
 
         gd.SetVertexBuffer(roomVB_.get());
-        gd.SetIndexBuffer(roomIB_.get());
+        gd.setIndicesProperty(roomIB_.get());
         for (auto&amp; pass : dualEffect_-&gt;getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
             pass.Apply();
             gd.DrawIndexedPrimitives(
                 PrimitiveType::TriangleList,
                 0, 0, vertexCount_, 0, indexCount_ / 3);
         }
-        gd.Present();
+        // No gd.Present(): Game presents in EndDraw().
     }
 };</code></pre>
 
@@ -326,7 +332,7 @@ fragColor = result;</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

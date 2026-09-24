@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 58: Normal Mapping - CNA Tutorials</title>
-  <meta name="description" content="Implement per-pixel normal mapping in CNA using a custom GLSL shader with TBN matrix construction, tangent-space normal decoding, and ShaderEffect uniform and texture binding.">
+  <meta name="description" content="Implement per-pixel normal mapping in CNA two ways: PbrEffect with a tangent-space normal map, or a custom GLSL ShaderEffect with TBN matrix construction and the shipped tangent vertex layout.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/58-normal-mapping.html">
   <meta property="og:title"       content="Tutorial 58: Normal Mapping - CNA Tutorials">
-  <meta property="og:description" content="Implement per-pixel normal mapping in CNA using a custom GLSL shader with TBN matrix construction, tangent-space normal decoding, and ShaderEffect uniform and texture binding.">
+  <meta property="og:description" content="Implement per-pixel normal mapping in CNA two ways: PbrEffect with a tangent-space normal map, or a custom GLSL ShaderEffect with TBN matrix construction and the shipped tangent vertex layout.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/58-normal-mapping.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 58: Normal Mapping",
   "url": "https://libcna.com/docs/tutorials/58-normal-mapping.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -92,13 +92,14 @@
           <li>What a normal map stores and why it is mostly blue.</li>
           <li>Tangent space versus world space, and building the TBN matrix.</li>
           <li>Applying the perturbed normal in the fragment shader.</li>
+          <li>Two ways to get it in CNA: <code>PbrEffect</code>'s built-in normal map, or your own <code>ShaderEffect</code>.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (this is written as a custom shader) and <a href="51-custom-vertex.html">Tutorial 51: Custom Vertex Types</a> (the tangent has to come from your vertex layout). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the thirteen 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> (the custom-shader route is written as a <code>ShaderEffect</code>) and <a href="51-custom-vertex.html">Tutorial 51: Custom Vertex Types</a> (the tangent has to come from your vertex layout). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls.</p>
       </div>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p>CNA does not have a built-in <code>NormalMapEffect</code>. Normal mapping requires a <strong>custom GLSL shader</strong> compiled through <code>ShaderEffect</code>, whose constructor takes the vertex and fragment <strong>source text</strong>, with uniforms set by name via <code>SetUniformXxx()</code>. This tutorial needs a renderer that can execute a custom <code>ShaderEffect</code> &mdash; <code>OPENGLES3</code> and <code>VULKAN</code> both can. Note that <code>BGFX</code> accepts one and silently ignores it, and <code>FNA3D</code> cannot compile one at all.</p>
+        <p><strong>Three ways to normal-map in CNA.</strong> None of the six XNA stock effects has a normal map, and CNA has no <code>NormalMapEffect</code>. You have three options: (1) <strong><code>PbrEffect</code></strong> / <code>SkinnedPbrEffect</code> (CNAEXT, always compiled) sample a tangent-space normal map through <code>setNormalMapProperty()</code> and <code>setNormalScaleEXTProperty()</code> &mdash; no shader to write, on <code>DIRECTX9/11/12</code>, the five EasyGL identities, <code>METAL</code>, <code>OPENGL4</code>, <code>SDL_GPU</code>, <code>VULKAN</code> and <code>WEBGPU</code> (<code>FNA3D</code> and <code>PORTABLEGL</code> refuse PBR draws); (2) a <strong>custom <code>ShaderEffect</code></strong> whose constructor takes the vertex and fragment <strong>source text</strong>, with uniforms set by name via <code>SetUniformXxx()</code>, which is what most of this tutorial teaches; (3) a <strong>compiled XNA/FNA effect</strong> (<code>Effect(device, bytes)</code>) that already normal-maps, on the 14 renderer identities that support compiled effects. The custom-shader route needs a renderer that can execute a source <code>ShaderEffect</code>: the GLSL below runs on <code>OPENGLES3</code>/<code>WEBGL2</code> as written; <code>VULKAN</code> and <code>SDL_GPU</code> need it pre-compiled to SPIR-V (a <code>ShaderEffect</code> there takes SPIR-V words, not GLSL text), <code>WEBGPU</code> needs WGSL and the Direct3D renderers HLSL. <code>SOFTWARE</code> and <code>HEADLESS</code> accept a <code>ShaderEffect</code> and silently ignore it, and <code>FNA3D</code> cannot run one at all. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
       </div>
 
       <p>Normal mapping is a per-pixel shading technique that replaces the interpolated geometric normal at each fragment with a normal sampled from a texture. Because the normal governs how the surface responds to lighting, a flat quad can appear to have bumps, grooves, and rivets without any additional geometry. The key to its visual richness is that it works at the full resolution of the screen — every pixel computes its own lighting response — while the geometry cost stays constant.</p>
@@ -115,8 +116,8 @@
         <li>B channel = Z component of the normal (surface-outward direction)</li>
       </ul>
       <p>Since RGB values are in [0, 1] and normal components span [-1, 1], the values are remapped: <code>normal = rgb * 2.0 - 1.0</code>. A perfectly flat surface (normal pointing straight outward) encodes as R=0.5, G=0.5, B=1.0, which appears as the characteristic "flat normal" blue-violet colour of normal maps in image editors. Deviations from this encode tilted normals.</p>
-      <p>Normal maps are typically authored in a tool like Substance Painter, Marmoset Toolbag, or generated from a high-poly mesh bake in Blender. Export them as PNG or DDS (BC5 / ATI2 compressed format, which stores only the RG channels and reconstructs B at runtime as <code>B = sqrt(1 - R*R - G*G)</code>, halving texture memory). The DDS/BC5 approach is recommended for shipping but requires a shader modification to reconstruct B:</p>
-      <pre><code class="language-glsl">// BC5/ATI2 normal map (RG only, reconstruct B)
+      <p>Normal maps are typically authored in a tool like Substance Painter, Marmoset Toolbag, or generated from a high-poly mesh bake in Blender. Export them as plain RGBA8 PNG, which every renderer can load. CNA has <strong>no BC5/ATI2 <code>SurfaceFormat</code></strong> (the DDS reader keeps <code>Color</code>, <code>Dxt1</code>, <code>Dxt3</code> and <code>Dxt5</code>, and <code>SurfaceFormat</code> adds <code>Bc7EXT</code>), so the two-channel BC5 trick is not loadable content. If you compress a normal map with DXT5 to save memory, remember that only renderers that classify DXT formats (<code>DIRECTX11/12</code>, <code>VULKAN</code>, <code>OPENGL4</code>, <code>SDL_GPU</code>, <code>WEBGPU</code> with BC support, <code>SOFTWARE</code>, EasyGL) accept it; <code>FNA3D</code>, <code>DIRECTX9</code> and <code>METAL</code> take <code>Color</code> only. A two-channel encoding (RG only, with the third component reconstructed) works with any format as long as your shader reconstructs it:</p>
+      <pre><code class="language-glsl">// Two-channel normal map (RG only, reconstruct B) -- only if you author it that way
 vec2 rg   = texture(u_normalMap, v_texcoord).rg * 2.0 - 1.0;
 vec3 tsNormal = vec3(rg, sqrt(max(0.0, 1.0 - dot(rg, rg))));</code></pre>
 
@@ -132,15 +133,15 @@ vec3 tsNormal = vec3(rg, sqrt(max(0.0, 1.0 - dot(rg, rg))));</code></pre>
       <p>The TBN (Tangent, Bitangent, Normal) matrix is a 3×3 orthonormal basis that maps from tangent space to world space. Each column is a world-space axis:</p>
       <ul>
         <li><strong>T (tangent)</strong> — points in the direction of increasing U in texture space, lying in the surface plane.</li>
-        <li><strong>B (bitangent)</strong> — points in the direction of increasing V, also in the surface plane. Computed as <code>B = cross(N, T) * tangentHandedness</code> where <code>tangentHandedness</code> is ±1 stored in the vertex data to preserve UV mirroring.</li>
+        <li><strong>B (bitangent)</strong> — points in the direction of increasing V, also in the surface plane. Computed as <code>B = cross(N, T) * tangentHandedness</code> where <code>tangentHandedness</code> is ±1 stored in the <code>w</code> component of the tangent to preserve UV mirroring.</li>
         <li><strong>N (normal)</strong> — the geometric surface normal.</li>
       </ul>
       <p>All three vectors must be in the same coordinate space (world space is recommended for multi-light setups). T and N are read from vertex attributes and transformed by the normal matrix (the transpose inverse of the world matrix) to get world-space versions. B is reconstructed from T and N in the vertex shader:</p>
       <pre><code class="language-glsl">vec3 N = normalize(u_normalMatrix * a_normal);
-vec3 T = normalize(u_normalMatrix * a_tangent);
+vec3 T = normalize(u_normalMatrix * a_tangent.xyz);
 // Re-orthogonalise T against N (Gram-Schmidt)
 T = normalize(T - dot(T, N) * N);
-vec3 B = cross(N, T) * a_tangentW;  // a_tangentW is handedness (+1 or -1)
+vec3 B = cross(N, T) * a_tangent.w;  // a_tangent.w is handedness (+1 or -1)
 mat3 TBN = mat3(T, B, N);</code></pre>
       <p>The Gram-Schmidt step (<code>T = normalize(T - dot(T,N)*N)</code>) corrects for any non-orthogonality introduced by the normal matrix transformation, ensuring T is perpendicular to N.</p>
 
@@ -166,8 +167,33 @@ vec3 color  = albedo.rgb * u_lightColor * diff
             + u_specularColor * spec;
 fragColor   = vec4(color, albedo.a);</code></pre>
 
+      <h2>Option A: PbrEffect with a normal map (no shader to write)</h2>
+      <p>If you do not need a bespoke look, <code>PbrEffect</code> does the whole job: assign the albedo with <code>setTextureProperty()</code> and the tangent-space normal map with <code>setNormalMapProperty()</code>, scale the effect of the map with <code>setNormalScaleEXTProperty()</code>, and give it a mesh in CNA's tangent layout. That layout is the shipped CNAEXT vertex type <code>VertexPositionNormalTangentTexture</code>: <code>Position</code> at offset 0, <code>Normal</code> at 12, a <code>Vector4</code> <code>Tangent</code> at 24 (xyz plus the handedness in w) and <code>TextureCoordinate</code> at 40, stride 48 &mdash; exactly the layout the glTF importer produces.</p>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/PbrEffect.hpp"
+#include "Microsoft/Xna/Framework/Graphics/VertexPositionNormalTangentTexture.hpp"
+
+auto&amp; gd = getGraphicsDeviceProperty();
+// albedoTex_ and normalTex_ are members: the effect keeps pointers to them.
+albedoTex_ = getContentProperty().Load&lt;Texture2D&gt;("textures/stone_albedo");
+normalTex_ = getContentProperty().Load&lt;Texture2D&gt;("textures/stone_normal");
+
+pbr_ = std::make_unique&lt;PbrEffect&gt;(gd);
+pbr_-&gt;setTextureProperty(&amp;albedoTex_);         // base colour map
+pbr_-&gt;setNormalMapProperty(&amp;normalTex_);       // tangent-space normal map
+pbr_-&gt;setNormalScaleEXTProperty(1.0f);         // 1 = as authored
+pbr_-&gt;setMetallicFactorProperty(0.0f);
+pbr_-&gt;setRoughnessFactorProperty(0.8f);
+pbr_-&gt;EnableDefaultLighting();
+
+std::vector&lt;VertexPositionNormalTangentTexture&gt; verts;   // Position, Normal, Tangent (Vector4), UV
+// ... fill verts ...
+VertexBuffer vb(gd, VertexPositionNormalTangentTexture::getVertexDeclarationStatic(),
+                static_cast&lt;int&gt;(verts.size()), BufferUsage::WriteOnly);
+vb.SetData(verts.data(), static_cast&lt;int&gt;(verts.size()));</code></pre>
+      <p>Then draw as with any effect: set <code>World</code>/<code>View</code>/<code>Projection</code>, <code>Apply()</code> a pass, and issue the draw. <code>PbrEffect</code> is CNAEXT (not XNA), and on Vulkan its vertex stride must be 48 or 60 bytes, which the shipped tangent type satisfies. The rest of this tutorial shows how the same shading works when you write it yourself.</p>
+
       <h2>Custom Shader Approach in CNA</h2>
-      <p>Since CNA does not include a built-in <code>NormalMapEffect</code>, you author the two GLSL shaders yourself and hand their source to <code>ShaderEffect</code>. There is no shader descriptor listing techniques, passes, or typed parameters &mdash; the constructor takes three arguments and the two strings are the shader source code itself, not file paths:</p>
+      <p>If you want full control &mdash; a different lighting model, a custom material &mdash; you author the two GLSL shaders yourself and hand their source to <code>ShaderEffect</code>. There is no shader descriptor listing techniques, passes, or typed parameters &mdash; the constructor takes three arguments and the two strings are the shader source code itself, not file paths:</p>
       <pre><code class="language-cpp">// Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp
 CNAEXT ShaderEffect(GraphicsDevice&amp; device,
                    const std::string&amp; vertSrc,
@@ -188,11 +214,13 @@ CNAEXT ShaderEffect(GraphicsDevice&amp; device,
       <pre><code class="language-glsl">#version 300 es
 precision highp float;
 
+// Locations follow the element order of VertexPositionNormalTangentTexture
+// (Position, Normal, Tangent, TextureCoordinate): a ShaderEffect on EasyGL and
+// OPENGL4 sees each element at location = its index in the declaration.
 layout(location = 0) in vec3  a_position;
 layout(location = 1) in vec3  a_normal;
-layout(location = 2) in vec2  a_texcoord;
-layout(location = 3) in vec3  a_tangent;
-layout(location = 4) in float a_tangentW;   // handedness: +1 or -1
+layout(location = 2) in vec4  a_tangent;    // xyz = tangent, w = handedness (+1 or -1)
+layout(location = 3) in vec2  a_texcoord;
 
 uniform mat4 u_world;
 uniform mat4 u_view;
@@ -214,10 +242,10 @@ void main() {
 
     // Build TBN in world space
     vec3 N = normalize(normalMat * a_normal);
-    vec3 T = normalize(normalMat * a_tangent);
+    vec3 T = normalize(normalMat * a_tangent.xyz);
     // Gram-Schmidt re-orthogonalisation
     T      = normalize(T - dot(T, N) * N);
-    vec3 B = cross(N, T) * a_tangentW;
+    vec3 B = cross(N, T) * a_tangent.w;
 
     v_TBN = mat3(T, B, N);
 
@@ -266,9 +294,10 @@ void main() {
       <h2>C++ Setup: Building and Binding the Normal Map Shader</h2>
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>This tutorial deliberately uses <code>ShaderEffect</code>.</strong> Alpha.1 can load XNA/FNA D3D9 Effect Framework bytecode on FNA3D and explicitly enabled EasyGL-family, SDL_GPU or Vulkan builds, but that renderer-qualified format is not the GLSL source shown here. <code>ShaderEffect</code> takes vertex and fragment shader source and sets uniforms with <code>SetUniformXxx()</code>. See <a href="52-custom-shaders.html">Tutorial 52</a> and <a href="128-compiled-xna-effects.html">Tutorial 128</a>.</p>
+        <p><strong>This section deliberately uses <code>ShaderEffect</code>.</strong> CNA can also load XNA/FNA D3D9 Effect Framework bytecode on FNA3D and on 13 more identities behind default-off build options, but that renderer-qualified format is not the GLSL source shown here. <code>ShaderEffect</code> takes vertex and fragment shader source and sets uniforms with <code>SetUniformXxx()</code>. See <a href="52-custom-shaders.html">Tutorial 52</a> and <a href="128-compiled-xna-effects.html">Tutorial 128</a>.</p>
       </div>
-      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
+      <pre><code class="language-cpp">#include &lt;cstdio&gt;
+#include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
 #include "System/IO/File.hpp"
 
 class NormalMapGame final : public Game {
@@ -279,7 +308,8 @@ class NormalMapGame final : public Game {
     std::unique_ptr&lt;IndexBuffer&gt;  meshIB_;
     int   indexCount_  = 0;
     int   vertexCount_ = 0;
-    Camera camera_;
+    Matrix  view_, projection_;   // your own camera matrices (Tutorial 34)
+    Vector3 eye_;                 // and the camera position
     Vector3 lightDir_ = Vector3::Normalize(Vector3(1.0f, -2.0f, -1.0f));
 
     void LoadContent() override {
@@ -296,7 +326,8 @@ class NormalMapGame final : public Game {
 
         // The constructor does not throw on a compile failure.
         if (!nmEffect_-&gt;IsEffectValid()) {
-            // The GLSL did not compile. Do not draw with it.
+            // The GLSL did not compile (or this renderer does not run source shaders).
+            std::fprintf(stderr, "normal_map shader: %s\n", nmEffect_-&gt;GetCompileErrorEXT().c_str());
         }
 
         // Apply() binds the program; the uniform setters below write into it.
@@ -319,12 +350,12 @@ class NormalMapGame final : public Game {
 
         float worldCM[16], viewCM[16], projCM[16], normalCM[16];
         world.ToColumnMajor(worldCM);
-        camera_.View().ToColumnMajor(viewCM);
-        camera_.Projection().ToColumnMajor(projCM);
+        view_.ToColumnMajor(viewCM);
+        projection_.ToColumnMajor(projCM);
         normalMatrix.ToColumnMajor(normalCM);
 
         const Vector3 toLight = -lightDir_;      // negate: points to light
-        const Vector3 eye     = camera_.Position();
+        const Vector3 eye     = eye_;
 
         // Bind the program first, then push this effect's uniforms and textures.
         nmEffect_-&gt;Apply();
@@ -346,14 +377,14 @@ class NormalMapGame final : public Game {
             vertexCount_,    // numVertices
             0,               // startIndex
             indexCount_ / 3);
-        gd.Present();
+        // No gd.Present(): Game presents in EndDraw().
     }
 };</code></pre>
       <p>Note that <code>u_world</code>/<code>u_view</code>/<code>u_projection</code> are pushed by hand here because of their names. Name them <code>World</code>, <code>View</code> and <code>Projection</code> instead and you can set them through <code>ShaderEffect</code>'s <code>IEffectMatrices</code> properties — <code>setWorldProperty()</code> and friends — which CNA forwards to the renderer automatically.</p>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Tangent data in vertex buffers:</strong> The vertex buffer must contain per-vertex tangent vectors (<code>a_tangent</code> and <code>a_tangentW</code>) in addition to position, normal, and UV. CNA&rsquo;s model loading generates tangents during import when the mesh has UV coordinates. If you build geometry procedurally, use a tangent-generation algorithm (Mikkelsen's MikkTSpace is the industry standard, implemented by Blender and Substance Painter) before uploading vertex data.</p>
+        <p><strong>Tangent data in vertex buffers:</strong> The vertex buffer must contain a per-vertex tangent (<code>a_tangent</code>, with the handedness in w) in addition to position, normal, and UV &mdash; i.e. the <code>VertexPositionNormalTangentTexture</code> layout above, or your own declaration (Tutorial 51). glTF import computes a tangent when the file has none (a Lengyel-style per-vertex tangent for <code>PbrEffect</code>'s normal mapping, not an exact MikkTSpace bake), reads legacy tangent/binormal attributes, and drops the tangent with a diagnostic if the chosen layout has no tangent slot. If you build geometry procedurally, use a tangent-generation algorithm (Mikkelsen's MikkTSpace is the industry standard, implemented by Blender and Substance Painter) before uploading vertex data.</p>
       </div>
 
       <nav class="docs-pagination" aria-label="Page navigation">
@@ -379,7 +410,7 @@ class NormalMapGame final : public Game {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

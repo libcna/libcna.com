@@ -21,7 +21,7 @@
   "headline": "Tutorial 23: Render Targets for Off-Screen Rendering",
   "url": "https://libcna.com/docs/tutorials/23-render-targets.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -94,7 +94,7 @@
           <li>A minimap as a worked example.</li>
           <li>Surviving device loss and window resize.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="21-spritebatch.html">Tutorial 21: SpriteBatch Deep Dive</a> &mdash; you render into a target with the same <code>SpriteBatch</code> calls. Requires a renderer with render-target support &mdash; <code>WEBGPU</code> has none at all.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="21-spritebatch.html">Tutorial 21: SpriteBatch Deep Dive</a> &mdash; you render into a target with the same <code>SpriteBatch</code> calls. Requires a renderer with render-target support: every 3D renderer except <code>PORTABLEGL</code> and <code>STUB</code>, plus the 2D-only renderers for plain colour targets (no depth buffer). The default <code>Reach</code> profile caps a target at 2048 texels per side.</p>
       </div>
 
       <p>A render target is a texture that the GPU can draw into instead of the back buffer. Once you have rendered a scene into a render target you can use that texture as the source for subsequent draw calls — scaling it, applying effects to it, or compositing it onto the screen. This tutorial covers creation, usage, and common patterns.</p>
@@ -125,9 +125,15 @@ renderTarget_ = std::make_unique&lt;RenderTarget2D&gt;(
     600,                         // height (pixels)
     false,                       // mipMap — usually false for render targets
     SurfaceFormat::Color,        // pixel format
-    DepthFormat::Depth24          // depth buffer format (None if not needed)
+    DepthFormat::None            // no depth buffer: fine for 2D. Use Depth24 or
+                                 // Depth24Stencil8 when you draw 3D into the target
 );
+
+// The short form is equivalent: SurfaceFormat::Color, DepthFormat::None, no mip chain.
+// RenderTarget2D shortForm(gd, 800, 600);
 </code></pre>
+
+      <p>A render target is not copyable (it can be moved), so keep it in a <code>std::unique_ptr</code> or as a member. Two limits are worth knowing up front: under the default <code>Reach</code> profile a target may be at most 2048 texels on a side (4096 under <code>HiDef</code>), and a surface format other than the colour formats silently becomes <code>SurfaceFormat::Color</code> unless you ask for <code>HiDef</code> &mdash; see the <a href="../render-targets.html#profile-limits">Render Targets reference</a> and <a href="152-graphics-profiles.html">Tutorial 152: Reach vs HiDef</a>.</p>
 
       <p>For a post-process target that matches the window size dynamically:</p>
 
@@ -184,9 +190,11 @@ gd.SetRenderTarget(nullptr);    // nullptr = back buffer
                         Color::White);
     spriteBatch_-&gt;End();
 
-    gd.Present();
+    // No gd.Present() here: Game presents in EndDraw() after Draw() returns.
 }
 </code></pre>
+
+      <div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Do not call <code>Present()</code> yourself.</strong> <code>Game</code> presents the back buffer in <code>EndDraw()</code> after your <code>Draw()</code> returns, so a manual <code>gd.Present()</code> at the end of <code>Draw()</code> presents twice. What you <em>must</em> do is restore the back buffer with <code>SetRenderTarget(nullptr)</code> before <code>Draw()</code> returns.</p></div>
 
       <p>At this point the output is identical to rendering directly to the back buffer. The power comes when you add a shader or transformation in the second pass (see Tutorial 24).</p>
 
@@ -209,8 +217,8 @@ void Draw(const GameTime&amp;) override {
         Matrix minimapTransform =
             Matrix::CreateTranslation(-worldBounds_.X, -worldBounds_.Y, 0.0f) *
             Matrix::CreateScale(
-                200.0f / (Single)worldBounds_.Width,
-                150.0f / (Single)worldBounds_.Height,
+                200.0f / static_cast&lt;float&gt;(worldBounds_.Width),
+                150.0f / static_cast&lt;float&gt;(worldBounds_.Height),
                 1.0f);
 
         spriteBatch_-&gt;Begin(SpriteSortMode::Deferred,
@@ -239,18 +247,17 @@ void Draw(const GameTime&amp;) override {
     // Draw minimap border
     // (use a 1x1 white pixel texture scaled to border shape)
     spriteBatch_-&gt;End();
-
-    gd.Present();
+    // (Game presents in EndDraw(); no Present() call here.)
 }
 </code></pre>
 
       <h2>Handling lost device / resize</h2>
-      <p>On Windows a device can be lost (e.g. on resolution change or Alt-Tab on some drivers). Render targets must be recreated after device loss. CNA fires the <code>GraphicsDevice::DeviceReset</code> event — hook it to recreate your render targets:</p>
+      <p>Render targets are default-pool resources: their contents can be lost when the device is reset or, on renderers that detect it, lost and recreated (a GL context recreation, a Direct3D device loss). CNA gives you two hooks. <code>GraphicsDevice::DeviceReset</code> is raised after every <code>GraphicsDevice::Reset()</code> &mdash; including the one <code>GraphicsDeviceManager::ApplyChanges()</code> performs when you change the resolution or full-screen mode &mdash; and a <code>Reset()</code> unbinds every render target and does not restore the binding. Each render target also has its own <code>ContentLost</code> event and <code>getIsContentLostProperty()</code>, raised only when a renderer really lost and recreated its resources (the device-lost notification itself, <code>DeviceLost</code>, is XNA compatibility and is not raised on ordinary desktop renderers). The handler signature is the usual XNA one, <code>(System::Object*, const System::EventArgs&amp;)</code>:</p>
 
       <pre><code class="language-cpp">void Initialize() override {
     Game::Initialize();
     getGraphicsDeviceProperty().DeviceReset +=
-        [this]() { RecreateRenderTargets(); };
+        [this](System::Object*, const System::EventArgs&amp;) { RecreateRenderTargets(); };
 }
 
 void RecreateRenderTargets() {
@@ -258,6 +265,14 @@ void RecreateRenderTargets() {
     Viewport vp = gd.getViewportProperty();
     renderTarget_ = std::make_unique&lt;RenderTarget2D&gt;(
         gd, vp.getWidthProperty(), vp.getHeightProperty(), false, SurfaceFormat::Color, DepthFormat::None);
+}
+
+// Optional, in LoadContent(): redraw a cached target (e.g. a UI canvas) if its contents were lost.
+void LoadContent() override {
+    // ... create renderTarget_ as above, then:
+    renderTarget_-&gt;ContentLost += [this](System::Object*, const System::EventArgs&amp;) {
+        uiCanvasDirty_ = true;
+    };
 }
 </code></pre>
 
@@ -284,7 +299,7 @@ void RecreateRenderTargets() {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

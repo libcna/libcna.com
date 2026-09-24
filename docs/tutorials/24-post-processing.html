@@ -21,7 +21,7 @@
   "headline": "Tutorial 24: Post-Processing with Render Targets",
   "url": "https://libcna.com/docs/tutorials/24-post-processing.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -93,7 +93,7 @@
           <li>Writing a grayscale filter as a <code>ShaderEffect</code> and applying it as a full-screen pass.</li>
           <li>Vignette and bloom, and the cost of chaining several passes.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="23-render-targets.html">Tutorial 23: Render Targets for Off-Screen Rendering</a> (the off-screen target this depends on) and <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> &mdash; that later tutorial is where <code>ShaderEffect</code> is actually taught, so skim it first if the shader code here is unfamiliar. Requires a renderer with render-target support &mdash; <code>WEBGPU</code> has none at all.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="23-render-targets.html">Tutorial 23: Render Targets for Off-Screen Rendering</a> (the off-screen target this depends on) and <a href="52-custom-shaders.html">Tutorial 52: Writing Custom Shaders (ShaderEffect)</a> &mdash; that later tutorial is where <code>ShaderEffect</code> is actually taught, so skim it first if the shader code here is unfamiliar. Requires a renderer with render-target support <em>and</em> one that executes a source <code>ShaderEffect</code> (see the box below): the GLSL in this tutorial runs on <code>OPENGLES3</code> and <code>WEBGL2</code> as written, on <code>OPENGL33</code> and <code>OPENGL4</code> with a desktop <code>#version</code> line, and needs a different shader dialect elsewhere.</p>
       </div>
 
       <p>Post-processing applies a screen-space effect to the entire rendered frame. The technique is always the same: render the scene to a <code>RenderTarget2D</code>, then draw that texture onto the back buffer through a custom <code>Effect</code> shader. This tutorial builds a grayscale shader from scratch, outlines bloom and vignette, and shows how to chain multiple passes.</p>
@@ -108,13 +108,13 @@
       <pre><code class="language-cpp">// Pseudocode — expanded into real code in sections below
 SetRenderTarget(sceneRT);   Clear; DrawWorld;
 SetRenderTarget(nullptr);   DrawFullScreen(sceneRT, postFxShader);
-Present();
+// (no Present() call of your own: Game presents in EndDraw())
 </code></pre>
 
       <h2>Grayscale shader as a ShaderEffect</h2>
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>This tutorial uses <code>ShaderEffect</code>.</strong> Alpha.1 can also load XNA/FNA D3D9 Effect Framework bytecode through <code>Effect</code> and XNB <code>EffectReader</code> on FNA3D or an explicitly enabled SDL_GPU, EasyGL-family or Vulkan build. That path does not compile HLSL <code>.fx</code> source. The example stays with renderer-native source so every assumption is visible. See <a href="52-custom-shaders.html">Tutorial 52</a>.</p>
+        <p><strong>This tutorial uses <code>ShaderEffect</code>.</strong> CNA can also load XNA/FNA D3D9 Effect Framework bytecode through <code>Effect</code> and XNB <code>EffectReader</code> on 14 of the 25 renderer identities (FNA3D always, the rest behind default-off <code>CNA_*_COMPILED_EFFECTS</code> options), and <code>cna-content</code> can compile <code>.fx</code> source to such an XNB at build time through an external <code>fxc</code> &mdash; but there is no runtime HLSL compiler. The example stays with renderer-native source so every assumption is visible. The GLSL below is <strong>GLSL ES 3.00</strong> (<code>#version 300 es</code>), valid on <code>OPENGLES3</code> and <code>WEBGL2</code> only: <code>OPENGL33</code> and <code>OPENGL4</code> want desktop GLSL (<code>#version 330 core</code>), <code>OPENGLES2</code> and <code>WEBGL1</code> want GLSL ES 1.00, <code>VULKAN</code> and <code>SDL_GPU</code> want SPIR-V, <code>WEBGPU</code> wants WGSL and <code>DIRECTX9/11/12</code> want HLSL; <code>FNA3D</code>, <code>METAL</code>, <code>PORTABLEGL</code> and <code>SOFTWARE</code> cannot run a source <code>ShaderEffect</code> at all. See <a href="52-custom-shaders.html">Tutorial 52</a> and <a href="../shader-effects.html#renderer-availability">Shader Effects</a>.</p>
       </div>
       <p>Write the two shader stages as ordinary GLSL files under <code>Content/Shaders/</code>. A <code>.cnj</code> descriptor lets <code>ContentManager</code> read them for you &mdash; it has exactly two shader fields, and missing either one raises a <code>ContentLoadException</code>:</p>
 
@@ -173,10 +173,13 @@ void main() {
 
       <h2>Loading and applying the shader as a post-process pass</h2>
 
-      <pre><code class="language-cpp">#include &lt;memory&gt;
+      <pre><code class="language-cpp">#include &lt;algorithm&gt;
+#include &lt;cstdio&gt;
+#include &lt;memory&gt;
 #include "Microsoft/Xna/Framework/Game.hpp"
 #include "Microsoft/Xna/Framework/Color.hpp"
 #include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
+#include "Microsoft/Xna/Framework/Input/Keyboard.hpp"
 #include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
 #include "Microsoft/Xna/Framework/Graphics/RenderTarget2D.hpp"
 #include "Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp"
@@ -209,9 +212,12 @@ protected:
             System::IO::File::ReadAllText("Content/Shaders/grayscale.vert.glsl"),
             System::IO::File::ReadAllText("Content/Shaders/grayscale.frag.glsl"));
 
-        // The constructor does not throw on a compile failure -- this is the only signal.
+        // The constructor does not throw on a compile failure: check IsEffectValid()
+        // and read the reason from GetCompileErrorEXT().
         if (!grayFx_-&gt;IsEffectValid()) {
-            // The GLSL did not compile. Do not draw with it.
+            // The shader did not compile (or this renderer does not run source shaders).
+            // Do not draw with it.
+            std::fprintf(stderr, "grayscale shader: %s\n", grayFx_-&gt;GetCompileErrorEXT().c_str());
         }
     }
 
@@ -220,9 +226,9 @@ protected:
         auto kb = Keyboard::GetState();
 
         // Hold G to toggle grayscale intensity
-        Single target = kb.IsKeyDown(Keys::G) ? 1.0f : 0.0f;
+        float target = kb.IsKeyDown(Keys::G) ? 1.0f : 0.0f;
         intensity_ += (target - intensity_) * 5.0f *
-                      (Single)gt.getElapsedGameTimeProperty().getTotalSecondsProperty();
+                      static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty());
         intensity_ = std::clamp(intensity_, 0.0f, 1.0f);
     }
 
@@ -257,7 +263,8 @@ protected:
                             Color::White);
         spriteBatch_-&gt;End();
 
-        gd.Present();
+        // No gd.Present() here: Game presents in EndDraw() after Draw() returns
+        // (a manual Present() would present the frame twice).
     }
 
 private:
@@ -266,7 +273,7 @@ private:
     Texture2D        worldTex_;
     std::unique_ptr&lt;RenderTarget2D&gt; sceneRT_;
     std::unique_ptr&lt;ShaderEffect&gt;   grayFx_;
-    Single                           intensity_ = 0.0f;
+    float                            intensity_ = 0.0f;
 };
 
 int main() { PostFxDemo game; game.Run(); }
@@ -326,24 +333,29 @@ void main() {
       <h2>Combining effects</h2>
       <p>Chain effects by ping-ponging between two render targets:</p>
 
-      <pre><code class="language-cpp">// Render scene -&gt; sceneRT
-// Apply grayscale:  sceneRT -&gt; pingRT  (grayFx)
-// Apply vignette:   pingRT  -&gt; screen  (vignetteFx)
-
-gd.SetRenderTarget(pingRT_.get());
-ApplyEffect(sceneRT_.get(),  *grayFx_);
-
-gd.SetRenderTarget(nullptr);
-ApplyEffect(pingRT_.get(),   *vignetteFx_);
-
-// Helper function -- each ShaderEffect owns its own compiled program, so keep
+      <pre><code class="language-cpp">// Helper -- each ShaderEffect owns its own compiled program, so keep
 // both alive for the lifetime of the game rather than rebuilding them per frame.
-void ApplyEffect(Texture2D* src, ShaderEffect&amp; fx) {
+void ApplyEffect(Texture2D&amp; src, ShaderEffect&amp; fx) {
     spriteBatch_-&gt;Begin(SpriteSortMode::Deferred,
                          BlendState::Opaque,
                          nullptr, nullptr, nullptr, &amp;fx);
-    spriteBatch_-&gt;Draw(*src, Rectangle(0,0,800,600), Color::White);
+    spriteBatch_-&gt;Draw(src, Rectangle(0,0,800,600), Color::White);
     spriteBatch_-&gt;End();
+}
+
+void Draw(const GameTime&amp;) override {
+    auto&amp; gd = getGraphicsDeviceProperty();
+
+    // Render scene -&gt; sceneRT_ (as in the scene pass above)
+    // Apply grayscale:  sceneRT_ -&gt; pingRT_  (grayFx_)
+    // Apply vignette:   pingRT_  -&gt; screen   (vignetteFx_)
+
+    gd.SetRenderTarget(pingRT_.get());
+    ApplyEffect(*sceneRT_, *grayFx_);
+
+    gd.SetRenderTarget(nullptr);
+    ApplyEffect(*pingRT_, *vignetteFx_);
+    // Game presents in EndDraw().
 }
 </code></pre>
 
@@ -378,7 +390,7 @@ void ApplyEffect(Texture2D* src, ShaderEffect&amp; fx) {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 51: Custom Vertex Types - CNA</title>
-  <meta name="description" content="Define custom vertex types in CNA with IVertexType, VertexDeclaration, and VertexElement for position, normal, texcoord, and tangent data.">
+  <meta name="description" content="Define custom vertex layouts in CNA with a plain struct, VertexDeclaration and VertexElement, upload them with VertexBuffer::SetData, and see why IVertexType is the wrong base for your own vertex struct.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/51-custom-vertex.html">
   <meta property="og:title"       content="Tutorial 51: Custom Vertex Types - CNA">
-  <meta property="og:description" content="Define custom vertex types in CNA with IVertexType, VertexDeclaration, and VertexElement for position, normal, texcoord, and tangent data.">
+  <meta property="og:description" content="Define custom vertex layouts in CNA with a plain struct, VertexDeclaration and VertexElement, upload them with VertexBuffer::SetData, and see why IVertexType is the wrong base for your own vertex struct.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/51-custom-vertex.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 51: Custom Vertex Types",
   "url": "https://libcna.com/docs/tutorials/51-custom-vertex.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -90,40 +90,41 @@
           <span class="callout-icon">&#8505;</span>
           <p><strong>What you&rsquo;ll learn</strong></p>
           <ul>
-            <li>Implementing <code>IVertexType</code> for a vertex layout CNA does not ship.</li>
-            <li>Describing it with <code>VertexElement</code>, <code>VertexElementFormat</code> and <code>VertexElementUsage</code>.</li>
-            <li>Why offsets and <code>sizeof</code> alignment must agree with the declaration.</li>
-            <li>Checking the layout at compile time rather than debugging it on the GPU.</li>
+            <li>Describing a vertex layout CNA does not ship with a plain struct and a <code>VertexDeclaration</code>.</li>
+            <li>The <code>VertexElement</code>, <code>VertexElementFormat</code> and <code>VertexElementUsage</code> building blocks (12 formats, 13 usages).</li>
+            <li>Why offsets and <code>sizeof</code> alignment must agree with the declaration &mdash; and why a struct that implements <code>IVertexType</code> is <em>not</em> a good custom vertex.</li>
+            <li>Checking the layout at compile time rather than debugging it on the GPU, and uploading it with <code>VertexBuffer::SetData&lt;T&gt;</code>.</li>
           </ul>
-          <p><strong>Before you start</strong> &mdash; <a href="38-vertex-buffers.html">Tutorial 38: Vertex Buffers and Index Buffers</a> (what a <code>VertexDeclaration</code> is for) and <a href="40-primitive-types.html">Tutorial 40: Primitive Types</a> (how vertices are consumed). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the thirteen 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls.</p>
+          <p><strong>Before you start</strong> &mdash; <a href="38-vertex-buffers.html">Tutorial 38: Vertex Buffers and Index Buffers</a> (what a <code>VertexDeclaration</code> is for) and <a href="40-primitive-types.html">Tutorial 40: Primitive Types</a> (how vertices are consumed). Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls.</p>
         </div>
 
-        <p>CNA ships with built-in vertex types (<code>VertexPositionColor</code>, <code>VertexPositionTexture</code>, <code>VertexPositionNormalTexture</code>). For normal mapping, tangent-space lighting, or any custom shader attribute you need to define your own vertex layout using <code>IVertexType</code>, <code>VertexDeclaration</code>, and <code>VertexElement</code>.</p>
+        <p>CNA ships seven built-in vertex types: <code>VertexPositionColor</code>, <code>VertexPositionTexture</code>, <code>VertexPositionColorTexture</code>, <code>VertexPositionNormalTexture</code>, and the CNAEXT <code>VertexPositionNormalTangentTexture</code>, <code>VertexPositionNormalTextureSkinned</code> and <code>VertexPositionNormalTangentTextureSkinned</code>. For anything else &mdash; extra texture-coordinate sets, per-vertex data your own shader consumes, packed colours &mdash; you describe your own vertex layout with a <code>VertexDeclaration</code> built from <code>VertexElement</code>s and upload plain structs into a <code>VertexBuffer</code>.</p>
 
         <h2>IVertexType interface</h2>
+        <p><code>IVertexType</code> is the small interface CNA's built-in vertex structs implement so that <code>VertexBuffer</code> can ask a vertex type for its declaration:</p>
         <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/IVertexType.hpp"
-#include "Microsoft/Xna/Framework/Graphics/VertexDeclaration.hpp"
-#include "Microsoft/Xna/Framework/Graphics/VertexElement.hpp"
-#include "Microsoft/Xna/Framework/Graphics/VertexElementUsage.hpp"
-#include "Microsoft/Xna/Framework/Graphics/VertexElementFormat.hpp"
 
 namespace Microsoft::Xna::Framework::Graphics {
 
-    // Implement this interface on your vertex struct
-    struct IVertexType {
-        // Returns a static VertexDeclaration describing the layout
+    class IVertexType {
+    public:
+        virtual ~IVertexType() = default;
+        // Returns the VertexDeclaration describing the layout
         virtual const VertexDeclaration&amp; getVertexDeclarationProperty() const = 0;
     };
 
 } // namespace</code></pre>
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>Do not implement <code>IVertexType</code> on your own vertex struct.</strong> The interface has a virtual destructor and a pure virtual function, so every implementing struct carries a hidden vtable pointer: <code>sizeof</code> is larger than the sum of its fields, member offsets shift, <code>offsetof</code> is only conditionally supported, and a raw byte upload of <code>sizeof(T)</code> would copy the pointer to the GPU. CNA's own tests say the same thing, and its custom vertex structs are plain PODs paired with a separately built <code>VertexDeclaration</code>. The built-in types get away with <code>IVertexType</code> because <code>VertexBuffer</code> has dedicated <code>SetData</code> overloads that copy them field by field.</p>
+        </div>
 
-        <h2>VertexElement struct</h2>
-        <pre><code class="language-cpp">struct VertexElement {
-    int                offset;   // byte offset from the start of the vertex
-    VertexElementFormat format;  // data type / component count
-    VertexElementUsage  usage;   // semantic (what this attribute means)
-    int                usageIndex; // for multiple texcoords (0, 1, ...)
-};</code></pre>
+        <h2>VertexElement</h2>
+        <p>A <code>VertexElement</code> describes one attribute. Its four values are set through the four-argument constructor (the members themselves are private; read them back with <code>getOffsetProperty()</code>, <code>getVertexElementFormatProperty()</code>, <code>getVertexElementUsageProperty()</code> and <code>getUsageIndexProperty()</code>):</p>
+        <pre><code class="language-cpp">VertexElement(int offset,                     // byte offset from the start of the vertex
+              VertexElementFormat format,     // data type / component count
+              VertexElementUsage usage,       // semantic (what this attribute means)
+              int usageIndex);                // for multiple texcoords or colours (0..15)</code></pre>
 
         <h2>VertexElementFormat enum</h2>
         <div class="table-wrap">
@@ -138,36 +139,44 @@ namespace Microsoft::Xna::Framework::Graphics {
             <tr><td><code>Byte4</code></td><td><code>uint8_t[4]</code></td><td>4 bytes</td></tr>
             <tr><td><code>Short2</code></td><td><code>int16_t[2]</code></td><td>4 bytes</td></tr>
             <tr><td><code>Short4</code></td><td><code>int16_t[4]</code></td><td>8 bytes</td></tr>
+            <tr><td><code>NormalizedShort2</code></td><td><code>int16_t[2]</code>, normalised to &minus;1..1</td><td>4 bytes</td></tr>
+            <tr><td><code>NormalizedShort4</code></td><td><code>int16_t[4]</code>, normalised to &minus;1..1</td><td>8 bytes</td></tr>
+            <tr><td><code>HalfVector2</code></td><td>two 16-bit floats (HiDef only)</td><td>4 bytes</td></tr>
+            <tr><td><code>HalfVector4</code></td><td>four 16-bit floats (HiDef only)</td><td>8 bytes</td></tr>
           </tbody>
         </table>
         </div>
+        <p>The default <code>Reach</code> profile accepts formats up to <code>NormalizedShort4</code>; the two half-float formats need <code>GraphicsProfile::HiDef</code> and otherwise throw <code>NotSupportedException</code>. A declaration is also rejected above 255 bytes of stride, above 16 elements, or with a usage index outside 0&ndash;15.</p>
 
         <h2>VertexElementUsage enum</h2>
         <div class="table-wrap">
         <table>
-          <thead><tr><th>Usage</th><th>GLSL attribute</th><th>Typical data</th></tr></thead>
+          <thead><tr><th>Usage</th><th>Typical data</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr><td><code>Position</code></td><td><code>aPosition</code></td><td>Vertex position (XYZ or XY)</td></tr>
-            <tr><td><code>Normal</code></td><td><code>aNormal</code></td><td>Surface normal (XYZ)</td></tr>
-            <tr><td><code>TextureCoordinate</code></td><td><code>aTexCoord0</code></td><td>UV coordinates</td></tr>
-            <tr><td><code>Tangent</code></td><td><code>aTangent</code></td><td>Tangent for normal mapping</td></tr>
-            <tr><td><code>Binormal</code></td><td><code>aBinormal</code></td><td>Binormal / bitangent</td></tr>
-            <tr><td><code>Color</code></td><td><code>aColor</code></td><td>Per-vertex colour</td></tr>
-            <tr><td><code>BlendIndices</code></td><td><code>aBlendIndices</code></td><td>Bone indices for skinning</td></tr>
-            <tr><td><code>BlendWeight</code></td><td><code>aBlendWeights</code></td><td>Bone weights for skinning</td></tr>
+            <tr><td><code>Position</code></td><td>Vertex position (XYZ)</td><td>The stock effects require it</td></tr>
+            <tr><td><code>Normal</code></td><td>Surface normal (XYZ)</td><td>Lit stock effects</td></tr>
+            <tr><td><code>TextureCoordinate</code></td><td>UV coordinates</td><td>Usage index 0 = first UV set, 1 = second (DualTextureEffect)</td></tr>
+            <tr><td><code>Tangent</code></td><td>Tangent for normal mapping</td><td>The shipped tangent type packs it as a <code>Vector4</code> (w = handedness)</td></tr>
+            <tr><td><code>Binormal</code></td><td>Binormal / bitangent</td><td>&nbsp;</td></tr>
+            <tr><td><code>Color</code></td><td>Per-vertex colour</td><td>&nbsp;</td></tr>
+            <tr><td><code>BlendIndices</code></td><td>Bone indices for skinning</td><td>&nbsp;</td></tr>
+            <tr><td><code>BlendWeight</code></td><td>Bone weights for skinning</td><td>&nbsp;</td></tr>
+            <tr><td><code>Depth</code>, <code>Fog</code>, <code>PointSize</code>, <code>Sample</code>, <code>TessellateFactor</code></td><td>Rarely used XNA usages</td><td>Exist for completeness (13 usages in all)</td></tr>
           </tbody>
         </table>
         </div>
+        <p>The old idea that each usage maps to a fixed GLSL attribute <em>name</em> (<code>aPosition</code>, <code>aTexCoord0</code>, &hellip;) is not a CNA contract. The stock programs resolve their inputs from the (usage, usage index) pair and use internal attribute names of their own. For a <em>custom</em> <code>ShaderEffect</code> on the EasyGL identities and <code>OPENGL4</code>, the attribute <strong>location</strong> is simply the element's index in the declaration, per-vertex elements first and per-instance elements after them &mdash; write <code>layout(location = 0..N) in ...</code> in the order you listed the elements.</p>
 
         <h2>sizeof alignment</h2>
-        <p>Declare your vertex struct with <code>#pragma pack(push, 1)</code> (or <code>__attribute__((packed))</code>) to prevent the compiler from inserting padding between fields. The GPU expects the byte layout to match the <code>VertexDeclaration</code> exactly.</p>
+        <p>Make your vertex struct a plain aggregate: no base class, no virtual functions, fields laid out in the order of the declaration. Built from <code>float</code>s and CNA's <code>Vector2</code>/<code>Vector3</code>/<code>Vector4</code> value types it is trivially copyable and standard-layout, and the compiler inserts no padding between 4-byte-aligned fields. If you use narrower fields (a <code>uint8_t[4]</code> colour, <code>int16_t</code> pairs) or need a stride the compiler would not produce, add <code>#pragma pack(push, 1)</code> (or <code>__attribute__((packed))</code>) &mdash; the GPU expects the byte layout to match the <code>VertexDeclaration</code> exactly, and <code>SetData&lt;T&gt;</code> requires <code>std::is_trivially_copyable_v&lt;T&gt;</code>.</p>
 
-        <h2>VertexPositionNormalTextureTangent struct + declaration</h2>
+        <h2>A tangent-space vertex: struct + declaration</h2>
         <pre><code class="language-cpp">// CustomVertexTypes.hpp
 #pragma once
+#include &lt;cstddef&gt;
+#include &lt;type_traits&gt;
 #include "Microsoft/Xna/Framework/Vector2.hpp"
 #include "Microsoft/Xna/Framework/Vector3.hpp"
-#include "Microsoft/Xna/Framework/Graphics/IVertexType.hpp"
 #include "Microsoft/Xna/Framework/Graphics/VertexDeclaration.hpp"
 #include "Microsoft/Xna/Framework/Graphics/VertexElement.hpp"
 #include "Microsoft/Xna/Framework/Graphics/VertexElementUsage.hpp"
@@ -176,86 +185,75 @@ namespace Microsoft::Xna::Framework::Graphics {
 using namespace Microsoft::Xna::Framework;
 using namespace Microsoft::Xna::Framework::Graphics;
 
-#pragma pack(push, 1)
-struct VertexPositionNormalTextureTangent : public IVertexType {
+// A plain struct: no virtual functions, no base class.
+struct NormalMappedVertex {
     Vector3 Position;      //  0 bytes, 12 bytes
     Vector3 Normal;        // 12 bytes, 12 bytes
     Vector2 TexCoord;      // 24 bytes,  8 bytes
     Vector3 Tangent;       // 32 bytes, 12 bytes
     Vector3 Binormal;      // 44 bytes, 12 bytes
     //                        56 bytes total per vertex
-
-    VertexPositionNormalTextureTangent() = default;
-
-    VertexPositionNormalTextureTangent(
-        const Vector3&amp; pos,
-        const Vector3&amp; normal,
-        const Vector2&amp; tex,
-        const Vector3&amp; tangent,
-        const Vector3&amp; binormal)
-        : Position(pos), Normal(normal), TexCoord(tex),
-          Tangent(tangent), Binormal(binormal) {}
-
-    // Static declaration — shared across all instances
-    static const VertexDeclaration VertexDeclaration;
-
-    const Graphics::VertexDeclaration&amp; getVertexDeclarationProperty() const override {
-        return VertexDeclaration;
-    }
 };
-#pragma pack(pop)
 
-// CustomVertexTypes.cpp
-const Graphics::VertexDeclaration
-VertexPositionNormalTextureTangent::VertexDeclaration(
-    56, // stride: total bytes per vertex
-    {
-        VertexElement( 0, VertexElementFormat::Vector3,
-                       VertexElementUsage::Position,         0),
-        VertexElement(12, VertexElementFormat::Vector3,
-                       VertexElementUsage::Normal,           0),
-        VertexElement(24, VertexElementFormat::Vector2,
-                       VertexElementUsage::TextureCoordinate,0),
-        VertexElement(32, VertexElementFormat::Vector3,
-                       VertexElementUsage::Tangent,          0),
-        VertexElement(44, VertexElementFormat::Vector3,
-                       VertexElementUsage::Binormal,         0),
-    }
-);</code></pre>
+// The declaration lives in a function-local static, so it is built once on first use.
+inline const VertexDeclaration&amp; NormalMappedVertexDeclaration()
+{
+    static const VertexDeclaration declaration(
+        static_cast&lt;int&gt;(sizeof(NormalMappedVertex)),   // stride: total bytes per vertex
+        {
+            VertexElement( 0, VertexElementFormat::Vector3,
+                           VertexElementUsage::Position,          0),
+            VertexElement(12, VertexElementFormat::Vector3,
+                           VertexElementUsage::Normal,            0),
+            VertexElement(24, VertexElementFormat::Vector2,
+                           VertexElementUsage::TextureCoordinate, 0),
+            VertexElement(32, VertexElementFormat::Vector3,
+                           VertexElementUsage::Tangent,           0),
+            VertexElement(44, VertexElementFormat::Vector3,
+                           VertexElementUsage::Binormal,          0),
+        });
+    return declaration;
+}</code></pre>
+        <p>Do not name a member of the vertex type <code>VertexDeclaration</code>: inside the class the name would change the meaning of the <code>VertexDeclaration</code> type. CNA's own convention for its shipped types is a static function, <code>getVertexDeclarationStatic()</code>.</p>
+        <p><strong>You may not need to write this at all for normal mapping.</strong> CNA ships the CNAEXT type <code>VertexPositionNormalTangentTexture</code> (Position at 0, Normal at 12, a <code>Vector4</code> Tangent at 24 whose w component is the handedness, and TextureCoordinate at 40; stride 48). glTF import produces it, <code>PbrEffect</code> consumes it, and <code>VertexBuffer::SetData</code> has an overload for it. Reach for a custom layout when you need something the seven shipped types do not cover.</p>
 
         <h2>Using the custom vertex with a shader</h2>
         <pre><code class="language-cpp">// Build your mesh
-std::vector&lt;VertexPositionNormalTextureTangent&gt; verts;
+std::vector&lt;NormalMappedVertex&gt; verts;
 // ... fill verts with geometry ...
 
-// Create vertex buffer using the custom declaration
+// Create a vertex buffer using the custom declaration
 auto vb = std::make_unique&lt;VertexBuffer&gt;(
     getGraphicsDeviceProperty(),
-    VertexPositionNormalTextureTangent::VertexDeclaration,
+    NormalMappedVertexDeclaration(),
     static_cast&lt;int&gt;(verts.size()),
     BufferUsage::None);
-// SetData has overloads only for the seven stock vertex types. A custom
-// struct -- even one implementing IVertexType -- goes through SetDataRaw,
-// which takes the stride explicitly.
-vb-&gt;SetDataRaw(verts.data(), static_cast&lt;int&gt;(verts.size()),
-               sizeof(VertexPositionNormalTextureTangent));
 
-// Bind and draw
+// SetData&lt;T&gt; accepts any trivially copyable vertex struct and copies
+// count * sizeof(T) bytes; sizeof(T) must equal the declaration's stride.
+vb-&gt;SetData(verts.data(), static_cast&lt;int&gt;(verts.size()));
+
+// Bind and draw. normalMapEffect_ is a ShaderEffect (Tutorial 52) whose
+// vertex shader declares layout(location = 0..4) for the five elements above.
+auto&amp; gd = getGraphicsDeviceProperty();
 gd.SetVertexBuffer(vb.get());
 for (auto&amp; pass : normalMapEffect_-&gt;getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
     pass.Apply();
     gd.DrawPrimitives(PrimitiveType::TriangleList, 0,
                       static_cast&lt;int&gt;(verts.size()) / 3);
 }</code></pre>
+        <p>A vertex buffer can also be created from a <code>System::Type</code> (<code>VertexBuffer(device, type, count, usage)</code>): the layout is then looked up in CNA's vertex-type registry, where a game's own struct registers itself once. The explicit-declaration form above needs no registration. <code>SetDataRaw(data, count, stride)</code> (CNAEXT) remains available for untyped byte uploads and checks the stride against the declaration. Stock effects (as opposed to your own <code>ShaderEffect</code>) resolve their inputs from the declaration's (usage, usage index) pairs on the renderers that adopt CNA's shared stock-vertex semantics (<code>SDL_GPU</code>, <code>WEBGPU</code>, <code>OPENGL4</code>; the EasyGL identities run an equivalent declaration check) rather than from byte stride alone, so keep the usages honest even for a layout you mostly use with a custom shader.</p>
 
         <h2>Verifying the layout at compile time</h2>
         <pre><code class="language-cpp">// These assertions catch mismatches between the struct and the declaration
-static_assert(sizeof(VertexPositionNormalTextureTangent) == 56,
+static_assert(std::is_trivially_copyable_v&lt;NormalMappedVertex&gt;,
+    "SetData&lt;T&gt; needs a trivially copyable vertex type");
+static_assert(sizeof(NormalMappedVertex) == 56,
     "Vertex struct size mismatch — check packing");
-static_assert(offsetof(VertexPositionNormalTextureTangent, Normal)   == 12, "Normal offset");
-static_assert(offsetof(VertexPositionNormalTextureTangent, TexCoord) == 24, "TexCoord offset");
-static_assert(offsetof(VertexPositionNormalTextureTangent, Tangent)  == 32, "Tangent offset");
-static_assert(offsetof(VertexPositionNormalTextureTangent, Binormal) == 44, "Binormal offset");</code></pre>
+static_assert(offsetof(NormalMappedVertex, Normal)   == 12, "Normal offset");
+static_assert(offsetof(NormalMappedVertex, TexCoord) == 24, "TexCoord offset");
+static_assert(offsetof(NormalMappedVertex, Tangent)  == 32, "Tangent offset");
+static_assert(offsetof(NormalMappedVertex, Binormal) == 44, "Binormal offset");</code></pre>
 
         <nav class="docs-pagination" aria-label="Page navigation">
           <div class="docs-pagination-prev">
@@ -281,7 +279,7 @@ static_assert(offsetof(VertexPositionNormalTextureTangent, Binormal) == 44, "Bin
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

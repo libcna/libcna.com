@@ -21,7 +21,7 @@
   "headline": "Tutorial 56: EnvironmentMapEffect for Reflections",
   "url": "https://libcna.com/docs/tutorials/56-environment-map.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -93,14 +93,14 @@
           <li>Tuning <code>FresnelFactor</code>, <code>EnvironmentMapAmount</code> and <code>EnvironmentMapSpecular</code>.</li>
           <li>Layering a reflection over a diffuse texture.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="36-model-texturing.html">Tutorial 36: Texturing 3D Models</a> &mdash; and note the cubemap itself is covered in depth later, in <a href="64-cubemaps.html">Tutorial 64: Cubemaps and Skyboxes</a>. Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the thirteen 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SKIA</code>, <code>BLEND2D</code>, <code>FREEDIRECT</code>, <code>DIRECTX1</code>, <code>GDI</code>, <code>SVG_DOM</code>, <code>OPENVG</code>, <code>NANOVG</code>, <code>PIXIJS</code>) throw on 3D calls.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="36-model-texturing.html">Tutorial 36: Texturing 3D Models</a> &mdash; and note the cubemap itself is covered in depth later, in <a href="64-cubemaps.html">Tutorial 64: Cubemaps and Skyboxes</a>. Requires a 3D-capable renderer such as <code>OPENGLES3</code> or <code>VULKAN</code>; the seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>FREEDIRECT</code>, <code>GDI</code>, <code>SVG_DOM</code>) throw on 3D calls, and <code>PORTABLEGL</code> refuses <code>EnvironmentMapEffect</code> by name. Cube textures larger than 512 texels (or not a power of two) need <code>GraphicsProfile::HiDef</code>.</p>
       </div>
 
       <p>Cubemap-based reflection is a classic technique for making metallic, glass, or polished surfaces appear to reflect their surroundings. CNA's <code>EnvironmentMapEffect</code> is a built-in effect that layers a cubemap reflection on top of a diffuse texture, using the surface normal to compute a reflection vector in world space and sample the cubemap. The technique is fast, requires no ray tracing, and works on any renderer that can run the stock <code>EnvironmentMapEffect</code>.</p>
 
       <h2>EnvironmentMapEffect Overview</h2>
-      <p><code>EnvironmentMapEffect</code> implements a per-vertex Phong lighting model combined with a cubemap reflection layer. In the vertex shader, the reflection direction is computed as the mirror of the view direction around the surface normal. This direction is passed to the fragment shader as a varying and used to index into the cubemap sampler. The result is then blended with the diffuse texture colour using the <code>EnvironmentMapAmount</code> scalar.</p>
-      <p>The effect supports one directional light (inherited from the built-in <code>BasicEffect</code> lighting model), ambient light, and an optional specular highlight that is added on top of the reflection. Fog is also supported for distance-based atmospheric fading.</p>
+      <p><code>EnvironmentMapEffect</code> combines a simple lit diffuse texture with a cubemap reflection layer. The reflection direction is the mirror of the view direction around the surface normal; the stock program uses it to index the cubemap sampler and blends the result over the lit diffuse colour with a Fresnel-modulated weight derived from <code>EnvironmentMapAmount</code>.</p>
+      <p>The effect implements the full <code>IEffectLights</code> interface: an ambient colour and up to <strong>three directional lights</strong> (<code>EnableDefaultLighting()</code> sets up XNA's rig), summed as Lambert terms per fragment &mdash; there is no Phong lobe. A specular contribution exists, but it is driven by the cubemap's alpha channel (see below), not by the light direction. Fog is also supported for distance-based atmospheric fading.</p>
       <p>A key limitation is that the cubemap is static — it does not dynamically reflect the current scene contents unless you re-render the cubemap each frame (see Tutorial 64 for dynamic cubemaps). For typical use cases such as car chrome, armour, or shiny floor surfaces, a static sky or pre-baked environment cubemap is entirely convincing.</p>
 
       <h2>TextureCube (Cubemap)</h2>
@@ -126,27 +126,30 @@ envMap_ = getContentProperty().Load&lt;TextureCube&gt;("skybox/env_cube");</code
       <h2>EnvironmentMap Property</h2>
       <p>Assign the <code>TextureCube</code> to the effect with <code>setEnvironmentMapProperty()</code>:</p>
       <pre><code class="language-cpp">envEffect_-&gt;setEnvironmentMapProperty(&amp;*envMap_);</code></pre>
-      <p>The cubemap is bound to a <code>samplerCube</code> uniform inside the effect's GLSL shader. The sampler uses trilinear filtering with mipmaps by default. Ensure your cubemap carries mipmaps — CNA does not generate them for you here, since <code>TextureCube</code> is read straight out of the DDS. Generate the mip chain in the packing tool (<code>texconv -m 0</code> builds a full chain) so the levels are already in the file. Without mipmaps, the reflection will appear aliased and noisy on surfaces that are at a sharp grazing angle.</p>
+      <p>The cubemap is bound to a <code>samplerCube</code> inside the effect's shader. Ensure your cubemap carries mipmaps — CNA does not generate them for you here, since <code>TextureCube</code> is read straight out of the DDS. Generate the mip chain in the packing tool (<code>texconv -m 0</code> builds a full chain) so the levels are already in the file. Without mipmaps, the reflection can look aliased and noisy on surfaces seen at a sharp grazing angle. (CNA's own documentation does not state a default cube-sampler filter for every renderer, so judge the result visually on the renderer you ship.)</p>
 
       <h2>FresnelFactor</h2>
-      <p>The Fresnel effect describes a physical phenomenon: the reflectivity of a surface increases at grazing angles. A mirror-flat pond reflects almost perfectly when viewed at a low angle (horizon), but you can see through it clearly when looking straight down. <code>setFresnelFactorProperty(float)</code> controls how strongly this angle-dependent variation is applied:</p>
+      <p>The Fresnel effect describes a physical phenomenon: the reflectivity of a surface increases at grazing angles. A mirror-flat pond reflects almost perfectly when viewed at a low angle (horizon), but you can see through it clearly when looking straight down. <code>setFresnelFactorProperty(float)</code> controls how strongly this angle-dependent variation is applied. It is an <em>exponent</em>, not a 0&ndash;1 blend:</p>
       <ul>
         <li><strong>0.0</strong> — Fresnel disabled; the reflection is applied uniformly at all view angles with a strength equal to <code>EnvironmentMapAmount</code>.</li>
-        <li><strong>1.0</strong> — Full Fresnel: surfaces facing the camera are more diffuse, surfaces seen at grazing angles become more reflective.</li>
-        <li>Values between 0 and 1 blend between the two extremes.</li>
+        <li><strong>1.0</strong> (the default) — surfaces facing the camera reflect little and surfaces seen at grazing angles become more reflective, linearly in <code>1 - |N&middot;V|</code>.</li>
+        <li>Values above 1 concentrate the reflection towards the silhouette; the value is not bounded above.</li>
       </ul>
-      <p>The internal formula (approximating the Schlick Fresnel) is:</p>
-      <pre><code class="language-glsl">float fresnelWeight = pow(1.0 - abs(dot(N, V)), u_fresnelFactor * 5.0);
-float reflectWeight = u_envMapAmount + fresnelWeight * (1.0 - u_envMapAmount);</code></pre>
-      <p>For a metal surface, set <code>FresnelFactor</code> near 0 (metals reflect at all angles). For glass or water, set it near 1 (Fresnel-controlled reflectivity).</p>
+      <p>The stock shader computes the weight per <em>vertex</em> (as XNA's does) and interpolates it:</p>
+      <pre><code class="language-glsl">// per vertex, then interpolated. The clamp reproduces Direct3D 9's saturation of COLOR outputs.
+float viewAngle = dot(eyeVector, worldNormal);
+float fresnel = clamp(fresnelEnabled
+    ? pow(max(1.0 - abs(viewAngle), 0.0), fresnelFactor) * envMapAmount
+    : envMapAmount, 0.0, 1.0);</code></pre>
+      <p>For a metal surface, set <code>FresnelFactor</code> near 0 (metals reflect at all angles). For glass or water, leave it at 1 or above (Fresnel-controlled reflectivity).</p>
 
       <h2>EnvironmentMapAmount</h2>
-      <p><code>setEnvironmentMapAmountProperty(float)</code> — a scalar in [0, 1] that sets the base blending weight between the diffuse texture and the cubemap reflection. At 0.0 the effect is purely diffuse. At 1.0 the object appears fully mirror-like (the diffuse texture is replaced by the reflection). Most materials look best in the 0.3–0.7 range:</p>
+      <p><code>setEnvironmentMapAmountProperty(float)</code> — the base blending weight between the diffuse texture and the cubemap reflection; the default is 1.0. At 0.0 the effect is purely diffuse. At 1.0 the object appears fully mirror-like (the diffuse texture is replaced by the reflection). Values above 1 are legal (XNA's own samples use amounts of 5) &mdash; it is the resulting per-vertex weight that is clamped to [0, 1], so a large amount with a high Fresnel exponent gives a bright rim. Most materials look best in the 0.3–0.7 range:</p>
       <pre><code class="language-cpp">envEffect_-&gt;setEnvironmentMapAmountProperty(0.5f);  // 50/50 diffuse/reflection blend</code></pre>
-      <p>The Fresnel factor modulates this amount per-fragment, so <code>EnvironmentMapAmount</code> acts as the base (face-on) reflection strength while Fresnel pushes grazing pixels higher.</p>
+      <p>The Fresnel factor modulates this amount per vertex, so with Fresnel enabled the reflection is strongest where the surface turns away from the viewer; with Fresnel disabled (<code>FresnelFactor = 0</code>) <code>EnvironmentMapAmount</code> is applied uniformly.</p>
 
       <h2>EnvironmentMapSpecular</h2>
-      <p><code>setEnvironmentMapSpecularProperty(Vector3)</code> adds a specular highlight colour on top of the reflection. Unlike the cubemap reflection (which represents the mirror image of the environment), the specular highlight is a stylised Blinn-Phong lobe aimed at making the surface appear shiny under the directional light. Set it to <code>Vector3::Zero</code> to disable it, or to a low-intensity neutral colour for a polished-metal look:</p>
+      <p><code>setEnvironmentMapSpecularProperty(Vector3)</code> adds a specular colour on top of the reflection. It is <strong>not</strong> a light-driven highlight: the term is <code>EnvironmentMapSpecular * cubemap.alpha</code>, so it lights up wherever the cubemap's <em>alpha channel</em> is bright, which lets you paint hot spots (a sun, a window) into the environment map. The default is <code>Vector3::Zero</code>, which disables it; use a low-intensity neutral colour for a polished-metal look:</p>
       <pre><code class="language-cpp">// Subtle white specular for polished metal
 envEffect_-&gt;setEnvironmentMapSpecularProperty(Vector3(0.25f, 0.25f, 0.25f));
 
@@ -159,28 +162,31 @@ envEffect_-&gt;setEnvironmentMapSpecularProperty(Vector3(0.4f, 0.35f, 0.1f));</c
       <div class="cards">
         <figure class="card">
           <img src="../../img/oracle/envmap_quad.png" alt="A flat tan-brown square on a cornflower-blue background, evenly lit with no variation across its surface." width="256" height="256" loading="lazy">
-          <p>Baseline reflection &mdash; the cubemap blended in uniformly, no Fresnel, no specular. Real XNA 4.0 output; CNA matches it pixel-for-pixel.</p>
+          <p>Baseline reflection &mdash; the cubemap blended in uniformly, no Fresnel, no specular. Real XNA 4.0 output; CNA&rsquo;s <code>DIRECTX9</code> renderer matches it pixel-for-pixel.</p>
         </figure>
         <figure class="card">
           <img src="../../img/oracle/envmap_fresnel_quad.png" alt="A brown square shading from bright orange-brown at the top to near-black at the bottom, on cornflower blue." width="256" height="256" loading="lazy">
-          <p><code>FresnelFactor</code> raised &mdash; reflectivity now varies with view angle across the face. Real XNA 4.0 output; CNA matches it pixel-for-pixel.</p>
+          <p><code>FresnelFactor</code> raised &mdash; reflectivity now varies with view angle across the face. Real XNA 4.0 output; CNA&rsquo;s <code>DIRECTX9</code> renderer matches it pixel-for-pixel.</p>
         </figure>
         <figure class="card">
           <img src="../../img/oracle/envmap_specular_quad.png" alt="A solid white square on cornflower blue; the specular term has saturated the whole surface." width="256" height="256" loading="lazy">
-          <p><code>EnvironmentMapSpecular</code> added &mdash; the highlight drives the surface to full white here. Real XNA 4.0 output; CNA matches it pixel-for-pixel.</p>
+          <p><code>EnvironmentMapSpecular</code> added &mdash; the highlight drives the surface to full white here. Real XNA 4.0 output; CNA&rsquo;s <code>DIRECTX9</code> renderer matches it pixel-for-pixel.</p>
         </figure>
       </div>
 
       <h2>Combining with Diffuse Texture</h2>
-      <p>The diffuse texture set via <code>setTextureProperty(Texture2D*)</code> provides the base surface colour. In the fragment shader the effect computes:</p>
-      <pre><code class="language-glsl">vec4 diffuse    = texture(u_diffuse, v_texcoord) * u_diffuseColor;
-vec3 envSample  = texture(u_envMap, v_reflectDir).rgb;
-float reflWeight = /* Fresnel-modulated envMapAmount */;
+      <p>The diffuse texture set via <code>setTextureProperty(Texture2D*)</code> provides the base surface colour. In the fragment shader the effect computes (simplified from the stock program):</p>
+      <pre><code class="language-glsl">// lightSum: up to three directional Lambert terms
+vec3 litRGB     = lightSum * diffuseColor.rgb + emissiveColor;
+vec4 texColor   = texture(diffuseTex, uv);
+vec4 envSample  = texture(envMap, reflect(-eyeDir, N));
+vec3 baseColor  = litRGB * texColor.rgb;
+float combinedAlpha = diffuseColor.a * texColor.a;
 
-vec3 color = mix(diffuse.rgb, envSample, reflWeight)
-           + u_envMapSpecular * specularIntensity;
-fragColor  = vec4(color, diffuse.a);</code></pre>
-      <p>The alpha channel of the diffuse texture is preserved, so you can use semi-transparent cubemap-reflected objects (e.g., glass orbs) by enabling alpha blending alongside the effect.</p>
+vec3 rgb = mix(baseColor, envSample.rgb * combinedAlpha, fresnel)   // fresnel: per-vertex weight above
+         + envMapSpecular * envSample.a * combinedAlpha;
+fragColor = vec4(rgb, combinedAlpha);</code></pre>
+      <p>So <code>DiffuseColor</code>, <code>EmissiveColor</code> and the <code>Alpha</code> property all take part, and the alpha of the diffuse texture is preserved: you can use semi-transparent cubemap-reflected objects (e.g., glass orbs) by enabling alpha blending alongside the effect.</p>
 
       <h2>Complete Example: Shiny Metallic Sphere</h2>
       <pre><code class="language-cpp">class ReflectGame final : public Game {
@@ -192,7 +198,7 @@ fragColor  = vec4(color, diffuse.a);</code></pre>
     int    vertexCount_ = 0;   // both set by BuildSphere()
     int    triCount_    = 0;
     float  rotation_ = 0.0f;
-    Camera camera_;
+    Matrix view_, projection_;   // your own camera matrices (Tutorial 34)
 
     void LoadContent() override {
         auto&amp; gd = getGraphicsDeviceProperty();
@@ -210,9 +216,11 @@ fragColor  = vec4(color, diffuse.a);</code></pre>
 
         // Lighting
         envEffect_-&gt;setAmbientLightColorProperty(Vector3(0.2f, 0.2f, 0.25f));
-        envEffect_-&gt;DirectionalLight0.setEnabledProperty(true);
-        envEffect_-&gt;DirectionalLight0.setDirectionProperty(Vector3(0.5f, -1.0f, -0.5f));
-        envEffect_-&gt;DirectionalLight0.setDiffuseColorProperty(Vector3(1.0f, 0.95f, 0.85f));
+        // Direction is the direction the light travels (XNA convention).
+        DirectionalLight&amp; key = envEffect_-&gt;getDirectionalLight0Property();
+        key.setEnabledProperty(true);
+        key.setDirectionProperty(Vector3(0.5f, -1.0f, -0.5f));
+        key.setDiffuseColorProperty(Vector3(1.0f, 0.95f, 0.85f));
 
         // Generate a subdivided UV sphere
         // BuildSphere fills sphereVB_/sphereIB_ and sets vertexCount_/triCount_;
@@ -221,7 +229,7 @@ fragColor  = vec4(color, diffuse.a);</code></pre>
     }
 
     void Update(GameTime&amp; gt) override {
-        rotation_ += (float)gt.getElapsedGameTimeProperty().getTotalSecondsProperty() * 0.4f;
+        rotation_ += static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty()) * 0.4f;
     }
 
     void Draw(const GameTime&amp;) override {
@@ -230,24 +238,24 @@ fragColor  = vec4(color, diffuse.a);</code></pre>
 
         Matrix world = Matrix::CreateRotationY(rotation_);
         envEffect_-&gt;setWorldProperty(world);
-        envEffect_-&gt;setViewProperty(camera_.View());
-        envEffect_-&gt;setProjectionProperty(camera_.Projection());
+        envEffect_-&gt;setViewProperty(view_);
+        envEffect_-&gt;setProjectionProperty(projection_);
 
         gd.SetVertexBuffer(sphereVB_.get());
-        gd.SetIndexBuffer(sphereIB_.get());
+        gd.setIndicesProperty(sphereIB_.get());
         for (auto&amp; pass : envEffect_-&gt;getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
             pass.Apply();
             gd.DrawIndexedPrimitives(
                 PrimitiveType::TriangleList,
                 0, 0, vertexCount_, 0, triCount_);
         }
-        gd.Present();
+        // No gd.Present(): Game presents in EndDraw().
     }
 };</code></pre>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Static cubemap:</strong> The environment cubemap used by <code>EnvironmentMapEffect</code> is pre-baked and does not update as the scene changes at runtime. Dynamic objects and moving lights will not appear in the reflection. For dynamic reflections, see Tutorial 64 (Cubemaps and Skyboxes) for the technique of rendering a live cubemap each frame.</p>
+        <p><strong>Static cubemap:</strong> The environment cubemap used by <code>EnvironmentMapEffect</code> is pre-baked and does not update as the scene changes at runtime. Dynamic objects and moving lights will not appear in the reflection. For dynamic reflections, see Tutorial 64 (Cubemaps and Skyboxes) for the technique of rendering a live cubemap each frame (a <code>RenderTargetCube</code> is a <code>TextureCube</code>, so it can be assigned directly with <code>setEnvironmentMapProperty()</code>).</p>
       </div>
 
       <nav class="docs-pagination" aria-label="Page navigation">
@@ -273,7 +281,7 @@ fragColor  = vec4(color, diffuse.a);</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
