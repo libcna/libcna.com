@@ -25,6 +25,8 @@ EXCLUDED = {
 MATERIALLY_UPDATED: set[str] = set()  # filled from the file system in main(); see all_public_pages()
 
 NEW_TAGS = {
+    "/docs/rendering-backends.html": ["rendering", "renderers", "sdl_renderer", "opengl", "easygl", "vulkan", "webgpu", "d3d11", "d3d12", "direct3d", "headless", "software"],
+    "/features.html": ["features", "renderers", "cross-platform", "opengl", "sdl3", "webgpu", "direct3d"],
     "/docs/content-pipeline.html": ["content", "pipeline", "cna-content", "xnb", "cnb", "importer", "processor"],
     "/docs/cnb-format.html": ["cnb", "format", "content", "binary", "zstd"],
     "/docs/diagnostics.html": ["diagnostics", "statistics", "profiling", "trace", "metrics"],

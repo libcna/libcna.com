@@ -76,6 +76,8 @@ def main() -> int:
     stale = [("50 renderer identities", "alpha.1 renderer count"), ("46 implementation families", "alpha.1 family count"),
              ("8,263 static", "alpha.1 test definitions"), ("21 workflow files", "alpha.1 workflow count")]
     for page in [p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.html")]:
+        if page == "docs/releases.html":
+            continue  # release history compares alpha.1 with the snapshot on purpose
         body = cache.get(page) or text(page)
         for needle, what in stale:
             for m in re.finditer(re.escape(needle), body):
