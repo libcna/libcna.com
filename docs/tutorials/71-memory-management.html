@@ -21,7 +21,7 @@
   "headline": "Tutorial 71: Memory Management in C++",
   "url": "https://libcna.com/docs/tutorials/71-memory-management.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -103,23 +103,22 @@
 
       <h2>RAII in CNA</h2>
       <p>RAII (Resource Acquisition Is Initialisation) ties resource lifetime to object lifetime. A <code>Texture2D</code> object's constructor acquires the GPU resource; its destructor releases it. As long as the <code>Texture2D</code> is held in a smart pointer (<code>std::unique_ptr</code> or <code>std::shared_ptr</code>), the resource is released when the smart pointer goes out of scope or is reset.</p>
-      <p>CNA's classes implement an <code>IDisposable</code>-style interface via a <code>Dispose()</code> virtual method, mirroring XNA's pattern. You can call <code>Dispose()</code> explicitly to release a resource early (e.g. when unloading a level), or let the destructor call it automatically.</p>
+      <p>CNA's classes implement an <code>IDisposable</code>-style interface via a <code>Dispose()</code> virtual method, mirroring XNA's pattern. You can call <code>Dispose()</code> explicitly to release a resource early (e.g. when unloading a level), or let the destructor call it automatically. Several graphics types are cheap <em>value wrappers</em> around a shared renderer resource: a <code>Texture2D</code> can be copied, every copy shares the same GPU texture, and calling <code>Dispose()</code> on one copy drops only that copy&rsquo;s share. The GPU texture is released when the last copy goes away. Other types, such as <code>VertexBuffer</code>, <code>IndexBuffer</code> and <code>RenderTarget2D</code>, own their resource exclusively and are move-only.</p>
 
       <h2>The Dispose(bool) override pattern</h2>
-      <p>CNA base classes call a protected <code>Dispose(bool disposing)</code> virtual method. Override it in your subclass to release your own resources:</p>
+      <p>CNA base classes call a protected <code>Dispose(bool disposing)</code> virtual method. The public <code>Dispose()</code> calls <code>Dispose(true)</code>. Override it in your subclass to release your own resources on that path:</p>
       <pre><code class="language-cpp">class MyGame : public Game {
 protected:
-    // Called when the game is shutting down, or when Dispose() is called.
-    // disposing == true  : called from Dispose() — safe to release managed objects.
-    // disposing == false : called from destructor — only release unmanaged resources.
+    // Called with disposing == true from the public Dispose().
     void Dispose(bool disposing) override {
         if (disposing) {
-            // Release CNA managed objects in reverse LoadContent order
+            // Release CNA objects in reverse LoadContent order,
+            // while the GraphicsDevice is still alive
             spriteBatch_.reset();
             texture_.reset();
             effect_.reset();
         }
-        // Call parent implementation
+        // Call parent implementation (this also raises the device-disposing hook that runs UnloadContent)
         Game::Dispose(disposing);
     }
 
@@ -128,6 +127,10 @@ private:
     std::unique_ptr&lt;Texture2D&gt;    texture_;
     std::unique_ptr&lt;BasicEffect&gt;  effect_;
 };</code></pre>
+      <div class="callout callout--warn">
+        <span class="callout-icon">&#9888;</span>
+        <p><strong>The destructor is not a shutdown hook for your override.</strong> <code>~Game()</code> calls <code>Dispose(false)</code>, but by then your derived class has already been destroyed, so C++ dispatches to <code>Game::Dispose(bool)</code>, not to your override, and that path does not run <code>UnloadContent()</code> either. Likewise <code>Run()</code> returning does not dispose the game. If you want <code>Dispose(bool)</code> and <code>UnloadContent()</code> to run at exit, call <code>game.Dispose()</code> after <code>Run()</code> returns; if you do not, rely on ordinary member destruction, which is exactly why the next sections hold every GPU resource in a smart pointer.</p>
+      </div>
 
       <h2>std::unique_ptr vs raw pointers</h2>
       <p>Always prefer <code>std::unique_ptr</code> for game objects and GPU resources. Never use <code>new</code>/<code>delete</code> directly in game code.</p>
@@ -177,12 +180,14 @@ public:
 
 protected:
     void LoadContent() override {
-        auto& gd = getGraphicsDeviceProperty();
+        auto&amp; gd = getGraphicsDeviceProperty();
 
         // All GPU resources created here and stored in unique_ptr members.
-        // They are released in reverse order when the unique_ptrs are destroyed.
+        // They are released in reverse declaration order when the unique_ptrs are destroyed.
         spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(gd);
-        texture_     = std::make_unique&lt;Texture2D&gt;("assets/hero.png", gd);
+        // Load&lt;T&gt; returns the texture BY VALUE (a shared handle); we keep our own copy on the heap.
+        // (CNAEXT alternative: std::make_unique&lt;Texture2D&gt;("assets/hero.png", gd) reads a file directly.)
+        texture_     = std::make_unique&lt;Texture2D&gt;(getContentProperty().Load&lt;Texture2D&gt;("hero"));
         effect_      = std::make_unique&lt;BasicEffect&gt;(gd);
 
         // Procedurally built vertex data owned by a local vector,
@@ -196,7 +201,7 @@ protected:
     }
 
     void UnloadContent() override {
-        // Called by the framework before the GraphicsDevice is destroyed.
+        // Runs when the game is disposed (Dispose()), before the GraphicsDevice goes away.
         // Reset smart pointers in the opposite order of creation.
         vb_.reset();
         effect_.reset();
@@ -212,10 +217,12 @@ protected:
         spriteBatch_-&gt;Begin();
         spriteBatch_-&gt;Draw(*texture_, Vector2(100.0f, 80.0f), Color::White);
         spriteBatch_-&gt;End();
-        gd.Present();
+        // No Present(): Game presents the frame after Draw() returns.
     }
 
 private:
+    // Members are destroyed in REVERSE declaration order, so graphics_ (declared first) is
+    // destroyed last and the resources declared after it are gone before it.
     GraphicsDeviceManager              graphics_;
     std::unique_ptr&lt;SpriteBatch&gt;      spriteBatch_;
     std::unique_ptr&lt;Texture2D&gt;        texture_;
@@ -223,20 +230,24 @@ private:
     std::unique_ptr&lt;VertexBuffer&gt;     vb_;
 };</code></pre>
 
-      <h2>Move semantics</h2>
-      <p>CNA objects support move construction and move assignment (they delete copy operations). Moves transfer ownership without copying the GPU resource:</p>
-      <pre><code class="language-cpp">// Wrong: Texture2D is not copyable
+      <h2>Move semantics and copies</h2>
+      <p>Whether a CNA graphics object can be copied depends on the type. <code>Texture2D</code> is a copyable value wrapper: a copy shares the same GPU texture (this is what <code>ContentManager::Load&lt;Texture2D&gt;</code> hands you). <code>VertexBuffer</code>, <code>IndexBuffer</code> and <code>RenderTarget2D</code> delete their copy operations and can only be moved, so ownership of the GPU resource is unambiguous:</p>
+      <pre><code class="language-cpp">// Texture2D: copying is allowed and shares the GPU texture
 Texture2D a("logo.png", gd);
-Texture2D b = a;  // compile error: copy constructor is deleted
+Texture2D b = a;               // OK: a and b refer to the same GPU texture
 
-// Correct: move transfers ownership; 'a' becomes empty
-Texture2D b = std::move(a);
-// 'a' is now in a valid-but-unspecified state; do not use it.
+// VertexBuffer: not copyable
+VertexBuffer vb1(gd, VertexPositionColor::getVertexDeclarationStatic(), 3, BufferUsage::None);
+// VertexBuffer vb2 = vb1;     // compile error: copy constructor is deleted
 
-// With unique_ptr (preferred):
+// Correct: move transfers ownership; vb1 becomes empty
+VertexBuffer vb3 = std::move(vb1);
+// vb1 is now in a valid-but-unspecified state; do not use it.
+
+// With unique_ptr (preferred for anything you store):
 auto tex1 = std::make_unique&lt;Texture2D&gt;("logo.png", gd);
 auto tex2 = std::move(tex1);
-// tex1 is now nullptr; tex2 owns the GPU texture.</code></pre>
+// tex1 is now nullptr; tex2 owns this Texture2D wrapper.</code></pre>
 
       <h2>Common pitfalls</h2>
       <h3>Double-free</h3>
@@ -258,7 +269,7 @@ spriteBatch_.reset();  // SpriteBatch is destroyed
 rawPtr-&gt;Begin();       // dangling pointer — undefined behaviour
 
 // Correct: only keep raw pointers for the duration of a function call
-void DrawSprites(SpriteBatch& sb) {
+void DrawSprites(SpriteBatch&amp; sb) {
     sb.Begin();
     // ... use sb
     sb.End();
@@ -269,23 +280,34 @@ void DrawSprites(SpriteBatch& sb) {
       <p>If you call <code>Dispose()</code> on a <code>Texture2D</code> and then try to bind it to a shader uniform, the underlying OpenGL or Vulkan handle is invalid. Always destroy resources after their last use, not before.</p>
 
       <h2>LoadContent / UnloadContent patterns</h2>
-      <p>The CNA framework calls <code>UnloadContent</code> before the <code>GraphicsDevice</code> is torn down. This guarantees that GPU resources are released while the device is still valid. Do not release GPU resources in your destructor if there is any chance the device has already been destroyed — use <code>UnloadContent</code> instead.</p>
-      <p>For level streaming, call <code>ContentManager::Unload()</code> to release all assets loaded through that manager, then load the new level's assets. Use separate <code>ContentManager</code> instances per level to make unloading clean:</p>
+      <p><code>Game</code> subscribes <code>UnloadContent()</code> to the graphics device&rsquo;s device-disposing event, which is raised when the game is disposed with <code>Dispose()</code>. It runs while the <code>GraphicsDevice</code> is still valid, so it is the right place to release GPU resources explicitly; the default implementation is empty. If your game object is simply destroyed after <code>Run()</code> returns, <code>UnloadContent()</code> is not called, and correct destruction order is what keeps the device valid: declare <code>graphics_</code> first and the resources after it, as in the example above, and never keep a GPU resource in a member that outlives the <code>Game</code>.</p>
+      <p>For level streaming, use a separate <code>ContentManager</code> per level. <code>ContentManager::Unload()</code> clears the manager&rsquo;s asset cache; it does not dispose the assets you were given (they are values you hold). The GPU memory is released when the last copy of each asset goes away, so reset your own members too:</p>
       <pre><code class="language-cpp">// In your Game subclass
 std::unique_ptr&lt;ContentManager&gt; levelContent_;
 
-void LoadLevel(const std::string& levelName) {
-    // Unload previous level assets
+void LoadLevel(const std::string&amp; levelName) {
+    // Drop the previous level's cache and our own copies of its assets
     if (levelContent_) levelContent_-&gt;Unload();
+    playerTexture_.reset();
+    backgroundTex_.reset();
 
     // Create a fresh ContentManager for this level
     levelContent_ = std::make_unique&lt;ContentManager&gt;(
-        Services, "Content/" + levelName);
+        &amp;getServicesProperty(), "Content/" + levelName);
 
-    // Load assets for the new level
+    // Load assets for the new level (Load&lt;T&gt; returns by value)
     playerTexture_  = levelContent_-&gt;Load&lt;Texture2D&gt;("player");
     backgroundTex_  = levelContent_-&gt;Load&lt;Texture2D&gt;("background");
-}</code></pre>
+}
+
+// members (declared after graphics_):
+//   std::optional&lt;Texture2D&gt; playerTexture_, backgroundTex_;</code></pre>
+      <p><code>SoundEffect</code> is the exception: it is move-only, so <code>Load&lt;SoundEffect&gt;</code> is not cached, every call returns a new independently owned instance, and <code>Unload()</code> has nothing to release for it.</p>
+
+      <div class="callout callout--info">
+        <span class="callout-icon">&#8505;</span>
+        <p><strong>Seeing what is alive.</strong> Textures, render targets and vertex and index buffers register resource metadata with CNA&rsquo;s diagnostics layer when you configure with <code>-DCNA_DIAGNOSTICS=STATS</code> (or <code>FULL</code>). That is a practical way to spot leaked resources during level changes; see <a href="73-profiling.html">Tutorial 73</a> and the <a href="../diagnostics.html">Diagnostics reference</a>.</p>
+      </div>
 
       <nav class="docs-pagination" aria-label="Page navigation">
         <div class="docs-pagination-prev">
@@ -310,7 +332,7 @@ void LoadLevel(const std::string& levelName) {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

@@ -21,7 +21,7 @@
   "headline": "Tutorial 122: MediaLibrary and Audio Visualization",
   "url": "https://libcna.com/docs/tutorials/122-media-library.html",
   "datePublished": "2026-08-11",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -98,7 +98,7 @@
         <p><strong>Before you start</strong> &mdash; <a href="15-background-music.html">Tutorial 15: Background Music</a> covers <code>Song</code> and the basics of <code>MediaPlayer</code>.</p>
       </div>
 
-      <div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Build requirement for playback and visualization:</strong> use <code>CNA_AUDIO_PLATFORM=SDL3</code>. Media catalogue scanning is separate, but alpha.1's <code>MediaPlayer</code>, decoders, post-mix capture and FFT input depend on the SDL3_mixer engine omitted by SDL2/Null selections.</p></div>
+      <div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Build requirement for playback and visualization:</strong> use an audio implementation that has a mixer &mdash; <code>CNA_AUDIO_PLATFORM=SDL3</code> (the default, SDL3_mixer) or <code>ALSA</code> (Linux, CNA&rsquo;s own mixer). Media catalogue scanning is separate, but <code>MediaPlayer</code>, the decoders, post-mix capture and the FFT input depend on a mixer, and the <code>SDL2</code> and <code>NULL</code> selections have none: they compile, and play nothing.</p></div>
 
       <div class="callout callout--note">
         <span class="callout-icon">&#10003;</span>
@@ -113,7 +113,7 @@ using namespace Microsoft::Xna::Framework::Media;
 
 MediaLibrary library;   // scans on construction</code></pre>
 
-      <p>Construction resolves the user&rsquo;s Music and Pictures folders through SDL&rsquo;s own user-folder API and walks them. The scan is one-shot: the library is a snapshot, not a live view, so recreate it if you expect the folders to have changed.</p>
+      <p>Construction resolves the user&rsquo;s Music and Pictures folders through the selected platform&rsquo;s file-system service (SDL&rsquo;s user-folder API with the default <code>SDL3</code> platform) and walks them. The scan is one-shot: the library is a snapshot, not a live view, so recreate it if you expect the folders to have changed.</p>
 
       <p>A second constructor takes a <code>MediaSource*</code>. Sources come only from <code>MediaSource::GetAvailableMediaSources()</code> &mdash; the constructor is private &mdash; and <code>MediaSourceType</code> has two values, <code>LocalDevice</code> and <code>WindowsMediaConnect</code>.</p>
 
@@ -164,11 +164,11 @@ const std::string artistName = artist ? artist-&gt;getNameProperty() : std::stri
 
       <p>When a file has no usable tags at all, there is a filename heuristic: title from the file name, album from the parent directory, artist from the one above that. It is a fallback, and it is exactly as reliable as the user&rsquo;s folder naming.</p>
 
-      <p>Durations are probed through FFmpeg&rsquo;s container and stream metadata &mdash; no full decode, so the scan stays fast. On a build without FFmpeg (Windows, Android, Emscripten) the probe returns zero rather than failing, so expect songs with a zero duration there.</p>
+      <p>Durations are probed through FFmpeg&rsquo;s container and stream metadata &mdash; no full decode, so the scan stays fast. FFmpeg is the optional video backend (<code>CNA_ENABLE_VIDEO</code>, see <a href="121-video-playback.html">Tutorial 121</a>); in a build without it (Windows, Android, Emscripten, iOS, or a Linux/macOS build where FFmpeg was not found) the probe returns zero rather than failing, so expect songs with a zero duration there.</p>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>The music scan indexes <code>.ogg</code>, <code>.oga</code>, <code>.mp3</code> and <code>.wav</code>.</strong> A library full of FLAC will come back looking empty even though CNA can decode FLAC perfectly well through the <code>Song</code> path. Do not read an empty <code>SongCollection</code> as &ldquo;the user has no music&rdquo;.</p>
+        <p><strong>The music scan indexes <code>.ogg</code>, <code>.oga</code>, <code>.mp3</code>, <code>.wav</code>, <code>.flac</code> and <code>.opus</code> &mdash; and not <code>.m4a</code>/<code>.aac</code>.</strong> A library full of iTunes-style AAC files will come back looking empty because CNA has no AAC decoder. Also note that the scan lists <code>.opus</code> files even though Opus decoding is switched off in the default SDL3_mixer build (see the formats table), so such an entry can be listed and still fail to play. Do not read an empty <code>SongCollection</code> as &ldquo;the user has no music&rdquo;.</p>
       </div>
 
       <h3 id="art">Album art</h3>
@@ -200,6 +200,8 @@ Picture* SavePicture(std::string name, System::IO::Stream* source);</code></pre>
 
       <p>Saved pictures come back through <code>getSavedPicturesProperty()</code>, and a picture&rsquo;s CNAEXT <code>getTokenEXT()</code> gives you a stable handle you can pass to <code>GetPictureFromToken()</code> later.</p>
 
+      <p>You can also play a song that is not in the library. <code>Song::FromUri(name, System::Uri)</code> is XNA&rsquo;s factory: it accepts a bare or relative path or a <code>file:</code> URI, and throws <code>System::InvalidOperationException</code> for any other scheme (only local files are supported).</p>
+
       <h2 id="playing">Playing a user&rsquo;s music</h2>
 
       <p><code>MediaPlayer</code> is entirely static &mdash; one song at a time, globally:</p>
@@ -227,7 +229,7 @@ MediaPlayer::Stop();</code></pre>
 
       <h2 id="formats">Which formats actually play</h2>
 
-      <p>CNA plays audio through a vendored SDL3_mixer, built with a specific set of decoders. This is what that means in practice:</p>
+      <p>With the default <code>SDL3</code> audio implementation, CNA plays audio through a vendored SDL3_mixer, built with a specific set of decoders. This is what that means in practice:</p>
 
       <div class="table-wrap">
       <table>
@@ -239,10 +241,12 @@ MediaPlayer::Stop();</code></pre>
           <tr><td>FLAC</td><td><span class="status-badge status-done">Plays</span></td><td>drflac</td></tr>
           <tr><td>Opus</td><td><span class="status-badge status-partial">Disabled in this build</span></td><td>&mdash;</td></tr>
           <tr><td>WavPack, tracker modules, MIDI via FluidSynth, GME formats</td><td><span class="status-badge status-partial">Disabled in this build</span></td><td>&mdash;</td></tr>
-          <tr><td><code>.m4a</code> / <code>.aac</code></td><td><span class="status-badge status-partial">Unplayable</span></td><td>No AAC decoder ships with SDL3_mixer</td></tr>
+          <tr><td><code>.m4a</code> / <code>.aac</code></td><td><span class="status-badge status-partial">Unplayable</span></td><td>No AAC decoder ships with SDL3_mixer (or with CNA&rsquo;s own mixer)</td></tr>
         </tbody>
       </table>
       </div>
+
+      <p>With the <code>ALSA</code> audio implementation on Linux, CNA&rsquo;s own mixer decodes WAV (PCM, float, MS-ADPCM and IMA-ADPCM), Ogg Vorbis (<code>stb_vorbis</code>), MP3 (<code>dr_mp3</code>) and FLAC (<code>dr_flac</code>), and has no Opus, WMA/xWMA or XMA decoder.</p>
 
       <p>The AAC gap matters for music libraries specifically, because <code>.m4a</code> is what an iTunes-shaped collection is full of. Offer the user a graceful failure rather than assuming everything in their Music folder will play.</p>
 
@@ -338,7 +342,7 @@ const std::array&lt;float, VisualizationData::Size&gt;&amp; waveform = vis.getSa
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

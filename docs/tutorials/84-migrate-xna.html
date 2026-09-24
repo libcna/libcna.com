@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 84: Migrating from XNA to CNA - CNA</title>
-  <meta name="description" content="Migrating legacy XNA 4.0 C# games to CNA C++. Identical API surface goal, C++ semantics, CNAEXT markers, real XACT audio, read-side XNB support, and CNA's validation suite.">
+  <meta name="description" content="Migrating legacy XNA 4.0 C# games to CNA C++. Identical API surface goal, C++ semantics, CNAEXT markers, real XACT audio, XNB loading plus the build-time content pipeline, and CNA's validation suite.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/84-migrate-xna.html">
   <meta property="og:title"       content="Tutorial 84: Migrating from XNA to CNA - CNA">
-  <meta property="og:description" content="Migrating legacy XNA 4.0 C# games to CNA C++. Identical API surface goal, C++ semantics, CNAEXT markers, real XACT audio, read-side XNB support, and CNA's validation suite.">
+  <meta property="og:description" content="Migrating legacy XNA 4.0 C# games to CNA C++. Identical API surface goal, C++ semantics, CNAEXT markers, real XACT audio, XNB loading plus the build-time content pipeline, and CNA's validation suite.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/84-migrate-xna.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 84: Migrating from XNA to CNA",
   "url": "https://libcna.com/docs/tutorials/84-migrate-xna.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -92,7 +92,7 @@
           <ul>
             <li>Where CNA's surface is identical to XNA 4.0 and where C++ forces a difference.</li>
             <li>What the <code>CNAEXT</code> marker tells you when porting.</li>
-            <li>The state of XACT and of read-side XNB support.</li>
+            <li>The state of XACT, of XNB loading and of the build-time content pipeline.</li>
             <li>Using CNA's own test suite to check a port.</li>
           </ul>
           <p><strong>Before you start</strong> &mdash; <a href="01-introduction.html">Tutorial 01: Introduction to CNA</a> &mdash; it introduces the <code>CNAEXT</code> marker and the C++ semantics this depends on. Prior XNA experience is assumed.</p>
@@ -108,28 +108,35 @@
 
         <h2>Identical API surface goal</h2>
         <p>
-          CNA covers the public <code>Microsoft.Xna.Framework</code> namespace surface except
-          <code>Framework.Design</code>, a Windows Forms designer namespace with no C++ equivalent. Rather than publish a blended coverage percentage &mdash; no
-          reproducible one exists &mdash; CNA pins its public API with compile-time signature-freeze tests and a
-          <code>CNA_STRICT_XNA_API</code> purity mode that turns any use of a CNA extension into a compile error.
+          CNA represents every public type and every documented member of the XNA 4.0 runtime assemblies: the repository&rsquo;s audit script
+          (<code>tools/audit_xna_runtime_surface.py</code>, checked against Microsoft&rsquo;s XML documentation and the assembly metadata) counts
+          <strong>331 of 331</strong> public types and <strong>3,627 of 3,627</strong> documented runtime members as present. That is a statement about
+          <em>representation</em> &mdash; the symbol exists with the XNA shape &mdash; not a claim that every member behaves like XNA; behaviour is what the
+          tests and the oracle corpus below are for. <code>Microsoft.Xna.Framework.Design</code> (the 13 <code>TypeConverter</code> classes) is included too, as the opt-in
+          <code>CNA::Design</code> module: link it explicitly, it is not part of the <code>CNA</code> umbrella target, and it is a tooling facility (there is no
+          Windows Forms property grid in C++). Rather than publish a blended coverage percentage of behaviour &mdash; no reproducible one exists &mdash;
+          CNA offers a <code>CNA_STRICT_XNA_API</code> purity mode that turns any use of a CNA extension into a compile error. It is a compile definition you set
+          on the target you want checked (a CMake <code>-D</code> option of that name does nothing), and only the <code>Input</code> namespace additionally has
+          signature-freeze tests.
           Every class in <code>Microsoft.Xna.Framework</code> has a
-          C++ counterpart in <code>Microsoft::Xna::Framework</code>. Method names use the same capitalization (XNA's
-          PascalCase is preserved). Enum values are identical. The goal is that the XNA 4.0 documentation at
+          C++ counterpart in <code>Microsoft::Xna::Framework</code>. Class and method names use the same capitalization (XNA's
+          PascalCase is preserved), with one systematic difference: C++ has no properties, so an XNA property <code>Foo</code> is exposed as
+          <code>getFooProperty()</code> / <code>setFooProperty(value)</code>. Enum values are identical. The goal is that the XNA 4.0 documentation at
           <a href="https://learn.microsoft.com" target="_blank" rel="noopener">learn.microsoft.com</a> applies
-          directly to CNA without translation.
+          directly to CNA once you apply that one rule.
         </p>
 
         <h2>What's the same</h2>
         <ul>
           <li><code>Game</code>, <code>GameComponent</code>, <code>DrawableGameComponent</code> lifecycle (Initialize, LoadContent, Update, Draw, UnloadContent)</li>
-          <li><code>GraphicsDevice</code>: Clear, Present, DrawPrimitives, DrawIndexedPrimitives, SetVertexBuffer, SetIndexBuffer</li>
+          <li><code>GraphicsDevice</code>: Clear, Present, DrawPrimitives, DrawIndexedPrimitives, SetVertexBuffer, and the index buffer through <code>setIndicesProperty()</code> (XNA&rsquo;s <code>Indices</code>; a <code>SetIndexBuffer()</code> convenience also exists but is a CNA extension)</li>
           <li><code>SpriteBatch</code>: Begin, End, Draw (all overloads), DrawString</li>
           <li><code>Texture2D</code>, <code>RenderTarget2D</code>, <code>Texture3D</code>, <code>TextureCube</code></li>
           <li>All <code>Effect</code> subclasses: BasicEffect, AlphaTestEffect, DualTextureEffect, EnvironmentMapEffect, SkinnedEffect</li>
           <li>Math types: Vector2, Vector3, Vector4, Matrix, Quaternion, Color, Rectangle, BoundingBox, BoundingSphere, Ray, Plane</li>
           <li>Input: Keyboard, Mouse, GamePad, TouchPanel</li>
           <li>Audio: SoundEffect, SoundEffectInstance</li>
-          <li>ContentManager (reads <code>.xnb</code> binaries as well as loose files)</li>
+          <li>ContentManager (reads <code>.xnb</code> binaries as well as CNA&rsquo;s <code>.cnb</code> and loose files)</li>
         </ul>
 
         <h2>What's different (C++ semantics, no GC, CNAEXT markers)</h2>
@@ -139,52 +146,73 @@
           have used <code>using</code> blocks in C#.
         </p>
         <p>
-          APIs that cannot be implemented due to platform or design constraints are marked
-          <code>// CNAEXT</code> in the CNA headers. Examples:
-          <code>GraphicsAdapter.IsProfileSupported</code> (always returns true),
-          <code>StorageDevice.BeginShowSelector</code> (UI-based storage selection).
+          APIs that are not part of XNA 4.0 &mdash; CNA additions &mdash; are marked <code>CNAEXT</code> in the CNA headers (in the XNA-shaped
+          namespaces; the larger <code>CNA::</code> engine layer is instead gated by <code>CNA_CNAEXT</code> and named with an <code>EXT</code> suffix).
+          Examples: <code>Texture2D(assetName, device)</code> (load an image file directly),
+          <code>StorageDevice::SetAppNameEXT</code>, and <code>TouchPanel::setMouseTouchEmulationEnabledEXT</code>. A few XNA APIs are honest, documented
+          approximations rather than extensions: <code>GraphicsAdapter::IsProfileSupported</code> answers <code>true</code> on renderers that have no
+          capability structure to consult, and the fourteen <code>Guide::Show*</code> overlays plus <code>DelayNotifications</code> are documented no-ops.
           <code>GamerServices</code> (<code>Gamer</code>, <code>SignedInGamer</code>, <code>GamerProfile</code>,
           leaderboards, <code>Guide</code>, achievements, and the Avatar subsystem) has a complete API port with
           local/synthetic semantics &mdash; the same approach FNA itself takes for this namespace, since it's not
-          binary-compatible with real Xbox Live.
+          binary-compatible with real Xbox Live. Networking follows the same rule: <code>NetworkSessionType::PlayerMatch</code> and <code>Ranked</code>, and
+          <code>JoinInvited</code>, throw <code>GamerServicesNotAvailableException</code> because there is no matchmaking service behind them
+          (<code>SystemLink</code> and <code>Local</code> sessions work).
+        </p>
+        <p>
+          Two changes since alpha.1 bring CNA closer to the real runtime and matter for a port. The game clock is now XNA&rsquo;s: the first
+          <code>Update</code> runs with <code>ElapsedGameTime == 0</code> and <code>TotalGameTime</code> advances after <code>Update</code> returns (see
+          <a href="48-timestep.html">Tutorial 48</a>). And <code>GraphicsDeviceManager</code> defaults to the <strong>Reach</strong> profile, enforced on every renderer, so
+          code that used HiDef-only features in XNA (multiple render targets, occlusion queries, 32-bit indices, float render targets) must request
+          <code>GraphicsProfile::HiDef</code> explicitly, for example with <code>graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef)</code>.
         </p>
 
         <h2>XACT (now real)</h2>
         <p>
           The <code>Microsoft::Xna::Framework::Audio::AudioEngine</code>/<code>WaveBank</code>/<code>SoundBank</code>/<code>Cue</code>
-          (XACT) classes implement a real <code>.xgs</code>/<code>.xsb</code>/<code>.xwb</code> parser with SDL3_mixer-backed
-          playback &mdash; category/lifecycle/3D positional audio/instance-limit enforcement with fade in/out and
+          (XACT) classes implement a real <code>.xgs</code>/<code>.xsb</code>/<code>.xwb</code> parser with mixer-backed
+          playback (SDL3_mixer by default, CNA&rsquo;s own mixer with the <code>ALSA</code> audio implementation) &mdash; category/lifecycle/3D positional audio/instance-limit enforcement with fade in/out and
           continuous RPC volume/pitch curves are all real. XNA games that use XACT can carry their existing
           <code>.xap</code>-authored audio projects over rather than rewriting to <code>SoundEffect</code>&rsquo;s own constructors.
           A couple of narrow, documented deviations remain (no HRTF/elevation, no AttackTime/ReleaseTime
           envelope tracking). One behaviour to check your banks against: a WaveBank containing XMA or WMA content
           does <strong>not</strong> throw &mdash; it logs to stderr and returns <code>nullptr</code>, so the sound is
-          simply missing. The XNB <code>SoundEffectReader</code> path does throw. Also note 3D audio supports exactly
-          one <code>AudioListener</code>; a second throws.
+          simply missing. The XNB <code>SoundEffectReader</code> path does throw. 3D audio accepts any number of
+          <code>AudioListener</code>s as in XNA (the nearest one decides attenuation, pan and Doppler); only a zero or negative count is an error.
+          Ordering matters, as it does in XNA: calling <code>Apply3D</code> after <code>Play()</code> on an instance that is in pan mode throws
+          <code>InvalidOperationException</code>, so set 3D positions before you play.
         </p>
 
-        <h2>Read-side XNB support</h2>
+        <h2>XNB support and the content pipeline</h2>
         <p>
           XNA's content pipeline produces <code>.xnb</code> binary files, and <strong>CNA reads them</strong>.
-          Read-side only: CNA has no <code>ContentCompiler</code>, <code>ContentImporter</code> or
-          <code>ContentProcessor</code>, and never will &mdash; that is explicitly out of scope.
-          A real XNB reader is wired into <code>ContentManager</code> with <strong>50 built-in type readers</strong>
-          (49 without FFmpeg, which drops <code>VideoReader</code>), a real
-          LZX decompressor and two-pass shared-resource resolution, so
-          <code>content.Load&lt;Texture2D&gt;("name")</code> can stay exactly as written. Call
-          <code>CNA::Internal::Xnb::RegisterAllBuiltInXnbReaders()</code> once at startup &mdash; the registry
-          is deliberately empty by default.
+          A real XNB reader is wired into <code>ContentManager</code> with <strong>61 built-in type readers</strong>
+          (60 where the platform has no native 128-bit integer), a real
+          LZX decompressor (and LZ4 for MonoGame-style files) and two-pass shared-resource resolution, so
+          <code>getContentProperty().Load&lt;Texture2D&gt;("name")</code> can stay exactly as written (note that <code>Load</code> returns the asset
+          <em>by value</em>). A <code>Game</code> registers the readers when it is constructed; only a stand-alone <code>ContentManager</code> still needs
+          <code>CNA::Internal::Xnb::RegisterAllBuiltInXnbReaders()</code> once at startup.
+        </p>
+        <p>
+          The other direction now exists as well. Since alpha.1 CNA has a <strong>build-time content pipeline</strong> that a shipped game never links:
+          the <code>cna-content</code> tool builds <code>.cnb</code> (CNA&rsquo;s own container, the default) or <code>.xnb</code> from source assets, behind an
+          XNA-shaped <code>Microsoft::Xna::Framework::Content::Pipeline</code> layer (all 128 public types and 705 members of XNA 4.0&rsquo;s pipeline API are
+          represented, with 10 importers and 12 processors). So the old advice &ldquo;keep authoring in XNA Game Studio&rdquo; is now optional: you can keep your
+          built <code>.xnb</code> files, or rebuild content from its sources with <code>cna-content build</code> (or <code>cna_add_content(...)</code> in CMake).
         </p>
         <p>
           Two boundaries shape what you can bring across. There is no reflection-based reader discovery, but
-          custom readers can be registered explicitly through <code>ContentTypeReader&lt;T&gt;</code> and
-          <code>AddTypeCreator</code>. The XNB <code>EffectReader</code> accepts XNA/FNA D3D9 Effect Framework bytecode
-          only on FNA3D or an opted-in SDL_GPU, EasyGL-family or Vulkan build; it does not accept HLSL
-          <code>.fx</code> source, DXBC or MGFX. Where you prefer to drop the pipeline, construct assets directly
+          custom readers can be registered explicitly through <code>ContentTypeReader&lt;T&gt;</code>,
+          <code>AddTypeCreator</code> or the CNAEXT <code>ReflectiveTypeReaderBuilder&lt;T&gt;</code>, which reads custom types from <code>.xnb</code> given a
+          declared field list. The XNB <code>EffectReader</code> accepts XNA/FNA D3D9 Effect Framework bytecode
+          only on <code>FNA3D</code> or on a renderer whose compiled-effects build option you enabled (nine default-<code>OFF</code> options: EasyGL,
+          Vulkan, WebGPU, Software, DirectX 9/11/12, SDL_GPU and OpenGL4); it does not accept MGFX or DXBC, and HLSL <code>.fx</code> source is never compiled at
+          run time. <code>cna-content</code> can build <code>.fx</code> source into an effect <code>.xnb</code>, but only through an external legacy <code>fxc</code>
+          compiler that you provide (CNA does not itself check that output against a genuine fxc). Where you prefer to drop the pipeline, construct assets directly
           from loose files instead &mdash; <code>Texture2D("assets/name.png", gd)</code> &mdash; or use the
           <code>cna_tool_gltf_to_cnj</code> converter. Better still for models: CNA loads <strong>glTF 2.0 at
           runtime</strong> &mdash; drop a <code>.gltf</code>/<code>.glb</code> in the content root and
-          <code>Content.Load&lt;Model&gt;("name")</code> works with no tooling step at all, including skeletal
+          <code>getContentProperty().Load&lt;Model&gt;("name")</code> works with no tooling step at all, including skeletal
           animation and morph targets. The offline converter is only needed for multi-mesh-group files (the runtime
           emits one asset per group) or non-metre unit scaling. See the
           <a href="../content-pipeline-xnb.html">XNB Content Pipeline</a> reference.
@@ -192,18 +220,21 @@
 
         <h2>Testing against CNA's own suite</h2>
         <p>
-          At alpha.1, CNA has <strong>568 C++ test source files and 8,263 statically discoverable GoogleTest-family
-          definitions</strong> covering math, geometry, game-loop semantics, content, renderers and more. The tests
+          At this snapshot, CNA has <strong>904 C++ test source files and 12,610 statically discoverable GoogleTest-family
+          definitions</strong> (counted from the <code>TEST</code>/<code>TEST_F</code>/<code>TEST_P</code>/<code>TYPED_TEST</code> macros; 871 of the files contain such a macro) covering math, geometry, game-loop semantics, content, renderers and more,
+          plus 879 standalone <code>examples/**/*_test.cpp</code> pixel programs that are not part of those figures. The tests
           actually compiled and registered with CTest vary with renderer, platform, audio implementation and options.
           Run <code>ctest --test-dir build</code> after migrating: a green run over the math and geometry tests is
           strong evidence that your numerical behaviour matches XNA.
         </p>
         <p>
-          The sharpest correctness gate CNA has is its <strong>XNA oracle corpus</strong>: 39 scenes captured from the
-          genuine Microsoft XNA 4.0 runtime. The <code>DIRECTX9</code> renderer matches all 39 at tolerance 0. Other
-          renderers match far fewer &mdash; the EasyGL family 10, <code>FNA3D</code> 10, <code>OPENGLES1</code> 11 &mdash;
-          so if your migration goal is bit-identical output, <code>DIRECTX9</code> is the renderer to target and no
-          other one substitutes for it.
+          The sharpest correctness gate CNA has is its <strong>XNA oracle corpus</strong>: 39 scenes (256&times;256, <code>HiDef</code>) with reference images captured
+          from the genuine Microsoft XNA 4.0 runtime, run under <strong>Wine + DXVK on Linux</strong> (so the reference is XNA through DXVK, not through a Windows GPU driver).
+          The <code>DIRECTX9</code> renderer was recorded as matching all 39 at tolerance 0 through that same Wine + DXVK path; the check is not part of CI, and the latest dated report covers 31 scenes. Other
+          renderers are gated on far less &mdash; EasyGL and <code>SOFTWARE</code> on two line scenes only, <code>FNA3D</code> only on its scenes rendering &mdash;
+          and <code>SOFTWARE</code> was measured byte-exact on 18 of the 39. If your migration goal is bit-identical output, <code>DIRECTX9</code> is the renderer to
+          target (it runs on Windows, or under Wine), and no other one substitutes for it. Separately, the same repository holds a set of 32 cross-renderer parity fixtures (run on
+          EasyGL, WebGPU, SDL_GPU and OpenGL4) whose expected values are the fixtures&rsquo; own assertions, not real-XNA output.
         </p>
 
         <h2>XNA C# class to CNA C++ migration example</h2>
@@ -223,7 +254,7 @@
 //
 //     protected override void LoadContent() {
 //         spriteBatch = new SpriteBatch(GraphicsDevice);
-//         texture = getContentProperty().Load&lt;Texture2D&gt;("logo");
+//         texture = Content.Load&lt;Texture2D&gt;("logo");
 //     }
 //
 //     protected override void Update(GameTime gameTime) {
@@ -242,6 +273,8 @@
 // }
 
 // ===== Equivalent CNA C++ =====
+#include &lt;memory&gt;
+#include &lt;optional&gt;
 #include "Microsoft/Xna/Framework/Game.hpp"
 #include "Microsoft/Xna/Framework/Color.hpp"
 #include "Microsoft/Xna/Framework/Input/Keyboard.hpp"
@@ -249,6 +282,7 @@
 #include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
 #include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
 #include "Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
+#include "Microsoft/Xna/Framework/Content/ContentManager.hpp"
 
 using namespace Microsoft::Xna::Framework;
 using namespace Microsoft::Xna::Framework::Graphics;
@@ -256,35 +290,37 @@ using namespace Microsoft::Xna::Framework::Input;
 
 class MyGame final : public Game {
 public:
-    MyGame() : graphics_(this) {}
+    MyGame() : graphics_(this) {
+        getContentProperty().setRootDirectoryProperty("Content");
+    }
 
 protected:
     void LoadContent() override {
         spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(getGraphicsDeviceProperty());
-        // Direct file load — bypasses ContentManager entirely.
-        // ContentManager can also read .xnb; see the read-side XNB docs.
-        texture_ = std::make_unique&lt;Texture2D&gt;("assets/logo.png",
-                                               getGraphicsDeviceProperty());
+        // The XNA route: Load&lt;T&gt; returns the Texture2D by value and finds
+        // Content/logo.xnb, logo.cnb or logo.png.
+        // (CNAEXT alternative: Texture2D("assets/logo.png", gd) reads a file directly.)
+        texture_ = getContentProperty().Load&lt;Texture2D&gt;("logo");
     }
 
-    void Update(GameTime& gameTime) override {
+    void Update(GameTime&amp; gameTime) override {
         if (Keyboard::GetState().IsKeyDown(Keys::Escape))
             Exit();
+        Game::Update(gameTime);    // base.Update: components and FrameworkDispatcher
     }
 
-    void Draw(const GameTime& gameTime) override {
-        auto& gd = getGraphicsDeviceProperty();
-        gd.Clear(Color::CornflowerBlue);
-        spriteBatch_->Begin();
-        spriteBatch_->Draw(*texture_, Vector2::Zero, Color::White);
-        spriteBatch_->End();
-        gd.Present();
+    void Draw(const GameTime&amp; gameTime) override {
+        getGraphicsDeviceProperty().Clear(Color::CornflowerBlue);
+        spriteBatch_-&gt;Begin();
+        spriteBatch_-&gt;Draw(*texture_, Vector2::Zero, Color::White);
+        spriteBatch_-&gt;End();
+        Game::Draw(gameTime);      // base.Draw; Game presents the frame afterwards, as in XNA
     }
 
 private:
-    GraphicsDeviceManager           graphics_;
+    GraphicsDeviceManager           graphics_;   // declared first: destroyed last
     std::unique_ptr&lt;SpriteBatch&gt;    spriteBatch_;
-    std::unique_ptr&lt;Texture2D&gt;      texture_;
+    std::optional&lt;Texture2D&gt;        texture_;
 };
 
 int main() { MyGame game; game.Run(); }</code></pre>
@@ -313,7 +349,7 @@ int main() { MyGame game; game.Run(); }</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

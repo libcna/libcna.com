@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 79: Debugging Rendering Issues - CNA</title>
-  <meta name="description" content="Techniques for debugging CNA rendering: wireframe mode, RenderDoc, OcclusionQuery, vertex buffer validation, and SDL3 debug output.">
+  <meta name="description" content="Techniques for debugging CNA rendering: wireframe mode, RenderDoc, OcclusionQuery, vertex buffer validation, CNA's logger, and SDL3 debug output.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/79-debugging.html">
   <meta property="og:title"       content="Tutorial 79: Debugging Rendering Issues - CNA">
-  <meta property="og:description" content="Techniques for debugging CNA rendering: wireframe mode, RenderDoc, OcclusionQuery, vertex buffer validation, and SDL3 debug output.">
+  <meta property="og:description" content="Techniques for debugging CNA rendering: wireframe mode, RenderDoc, OcclusionQuery, vertex buffer validation, CNA's logger, and SDL3 debug output.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/79-debugging.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 79: Debugging Rendering Issues",
   "url": "https://libcna.com/docs/tutorials/79-debugging.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -93,42 +93,68 @@
             <li>Reading the usual symptoms: black screen, missing geometry, inverted normals.</li>
             <li>Wireframe rendering via <code>RasterizerState</code> and <code>FillMode::WireFrame</code>.</li>
             <li>Validating what is actually in a vertex buffer.</li>
-            <li>Capturing a frame in RenderDoc and reading SDL3 debug output.</li>
+            <li>Capturing a frame in RenderDoc, and reading CNA&rsquo;s logger and SDL3 debug output.</li>
           </ul>
-          <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> (something to debug) and <a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a> (several techniques are renderer-specific). Wireframe rendering needs a renderer that reports <code>GraphicsCapability::WireFrame</code>; <code>OPENGLES3</code> and <code>VULKAN</code> both do.</p>
+          <p><strong>Before you start</strong> &mdash; <a href="31-first-3d-triangle.html">Tutorial 31: Your First 3D Triangle</a> (something to debug) and <a href="72-backend-selection.html">Tutorial 72: Choosing a Renderer</a> (several techniques are renderer-specific). Wireframe rendering needs a renderer that reports <code>GraphicsCapability::WireFrame</code>: <code>OPENGL33</code> and <code>VULKAN</code> normally do, while <code>OPENGLES3</code> reports it only when the driver offers a polygon-mode extension (see below).</p>
         </div>
 
         <h2>Common rendering bugs</h2>
         <p>
           Most CNA rendering bugs fall into a handful of categories. A <strong>black screen</strong> usually means
-          you forgot to call <code>Clear</code> before drawing or <code>Present</code> after. <strong>Z-fighting</strong>
-          (flickering overlapping surfaces) happens when two polygons share identical depth values — increase the depth
-          bias or separate the geometry slightly. <strong>Invisible geometry</strong> is often a wrong winding order
-          (front/back face flipped) or an unexpected culling state left over from a previous draw call.
+          you forgot to <code>Clear</code> or to draw anything, or that an exception in <code>Update</code>/<code>Draw</code>
+          ended the frame &mdash; read the message on stderr. (<code>Game</code> presents the frame for you after
+          <code>Draw</code> returns, so a missing <code>Present</code> is not the cause; a manual <code>Present</code> inside
+          <code>Draw</code> is redundant.) <strong>Z-fighting</strong>
+          (flickering overlapping surfaces) happens when two polygons share identical depth values — separate the geometry slightly,
+          tighten the near/far planes, or use a depth bias. Be aware that <code>RasterizerState::DepthBias</code> is not yet
+          scaled to every renderer&rsquo;s depth units (CNA&rsquo;s known-bugs list records it as fixed for the EasyGL identities only, with
+          <code>DIRECTX11</code>, <code>VULKAN</code> and <code>PORTABLEGL</code> still open), so a bias tuned on one renderer may do nothing on another.
+          <strong>Invisible geometry</strong> is often a wrong winding order
+          (front/back face flipped) or an unexpected culling state left over from a previous draw call: XNA treats
+          clockwise triangles as front-facing, so the default <code>CullCounterClockwise</code> state culls a mesh that was wound counter-clockwise.
           <strong>Texture coordinates out of range</strong> can produce unexpected color bands; check whether your
-          sampler state uses clamping or wrapping. Finally, a <strong>blending mode left active</strong> from an earlier
-          draw call is a classic source of ghosting artifacts — always reset blend state after transparent draw passes.
+          sampler state uses clamping or wrapping. A <strong>blending mode left active</strong> from an earlier
+          draw call is a classic source of ghosting artifacts — always reset blend state after transparent draw passes
+          (<code>SpriteBatch</code> never restores the blend, sampler, depth or rasterizer state it changed).
+          Finally, CNA defaults to the <strong>Reach graphics profile</strong>, which is enforced on every renderer: multiple render targets,
+          <code>OcclusionQuery</code>, 32-bit indices, float render targets, 3D textures and large textures or cube maps throw
+          unless you request <code>GraphicsProfile::HiDef</code> (<code>graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef)</code>).
+          If a feature that works elsewhere throws <code>NotSupportedException</code> at start-up, check the profile first.
         </p>
 
         <h2>OcclusionQuery for visibility</h2>
         <p>
           <code>OcclusionQuery</code> lets you ask the GPU how many pixels passed the depth test for a draw call.
           This is useful for culling distant objects: draw a cheap bounding-box proxy, read the pixel count on the
-          next frame, and skip the expensive full draw when the count is zero.
+          next frame, and skip the expensive full draw when the count is zero. It needs the <code>HiDef</code> profile and a renderer that
+          supports queries: <code>OPENGLES3</code>, <code>WEBGL2</code>, <code>OPENGL33</code>, <code>OPENGL4</code>, <code>VULKAN</code>,
+          <code>DIRECTX9/11/12</code>, <code>WEBGPU</code>, <code>SOFTWARE</code> and <code>FNA3D</code> do; <code>SDL_RENDERER</code>,
+          <code>OPENGLES2</code>, <code>WEBGL1</code>, <code>SDL_GPU</code>, <code>METAL</code>, <code>PORTABLEGL</code> and the 2D-only renderers refuse construction. On
+          OpenGL ES 3.0 and WebGL 2 the count is a boolean (0 or 1) unless the driver offers a precise counter, so call
+          <code>isPixelCountPreciseEXT()</code> before treating it as an area.
         </p>
 <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/OcclusionQuery.hpp"
 using namespace Microsoft::Xna::Framework::Graphics;
 
-OcclusionQuery query(getGraphicsDeviceProperty());
+// In the constructor: OcclusionQuery is refused on the default Reach profile
+graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef);
+
+// In LoadContent(): construction throws System::NotSupportedException when the
+// profile is Reach or the active renderer has no occlusion queries
+try {
+    query_ = std::make_unique&lt;OcclusionQuery&gt;(getGraphicsDeviceProperty());
+} catch (const System::NotSupportedException&amp;) {
+    query_.reset();   // no occlusion culling on this renderer: draw everything
+}
 
 // In Draw():
-query.Begin();
+query_-&gt;Begin();
 // draw bounding box proxy geometry here
-query.End();
+query_-&gt;End();
 
-// Next frame: read result (may stall if GPU hasn't finished yet)
-if (query.getIsCompleteProperty()) {
-    intcs pixelCount = query.getPixelCountProperty();
+// Next frame: read result (getPixelCountProperty() throws until the query is complete)
+if (query_-&gt;getIsCompleteProperty()) {
+    int pixelCount = query_-&gt;getPixelCountProperty();
     if (pixelCount == 0) {
         // object is fully occluded — skip expensive draw
     }
@@ -136,7 +162,7 @@ if (query.getIsCompleteProperty()) {
 
         <h2>RenderDoc setup</h2>
         <p>
-          RenderDoc is a free GPU frame debugger that works with OpenGL and Vulkan. To capture a CNA frame:
+          RenderDoc is a free GPU frame debugger that works with the graphics APIs it supports, including OpenGL, OpenGL ES and Vulkan. To capture a CNA frame:
         </p>
         <ol>
           <li>Download RenderDoc from <a href="https://renderdoc.org" target="_blank" rel="noopener">https://renderdoc.org</a>.</li>
@@ -145,33 +171,45 @@ if (query.getIsCompleteProperty()) {
           <li>Inspect draw calls, textures, and shader outputs in the RenderDoc UI.</li>
         </ol>
         <p>
-          RenderDoc works with both the OPENGLES3 (OpenGL ES 3.0) and VULKAN renderers.
+          For example, it works with the OPENGLES3 (OpenGL ES 3.0), OPENGL33 and VULKAN renderers. The renderers that draw on the CPU or through the browser&rsquo;s 2D and DOM APIs (<code>SOFTWARE</code>, <code>GDI</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SVG_DOM</code>) present no graphics-API frame for RenderDoc to capture.
         </p>
 
         <h2>Wireframe with RasterizerState.CullNone + FillMode::WireFrame</h2>
         <p>
           Wireframe mode reveals hidden geometry and overdraw. It needs a renderer that supports
-          <code>GraphicsCapability::WireFrame</code> &mdash; <code>OPENGLES3</code> and <code>VULKAN</code> both do, while
-          <code>SDL_RENDERER</code> ignores fill mode. Query the capability rather than testing the renderer name, but
-          note the query fails open on renderers that supply no override. Toggle it at runtime to compare solid and wireframe views of the same scene.
+          <code>GraphicsCapability::WireFrame</code>. Whether that is true depends on the renderer and sometimes on the
+          driver: <code>OPENGL33</code> uses the desktop polygon mode, <code>OPENGLES3</code> and <code>WEBGL2</code> only
+          when the context offers a polygon-mode extension (so on many OpenGL ES drivers it is false), <code>VULKAN</code> depends on the
+          device&rsquo;s non-solid fill support, and <code>WEBGPU</code>, <code>SDL_GPU</code>, <code>DIRECTX9/11/12</code> and
+          <code>SOFTWARE</code> report it as available, while <code>SDL_RENDERER</code> ignores fill mode. Ask the device rather than
+          testing the renderer name (<code>getGraphicsDeviceProperty().SupportsCapability(CNA::GraphicsCapability::WireFrame)</code>), but
+          note the query answers &ldquo;yes&rdquo; by default on renderers that supply no override. Toggle it at runtime to compare solid and wireframe views of the same scene.
         </p>
 <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/RasterizerState.hpp"
+#include "CNA/GraphicsCapability.hpp"
 
-// Toggle wireframe at runtime
-bool wireframe_ = false;
+// Members
+RasterizerState wireframeState_;
+bool wireframe_    = false;
+bool canWireframe_ = false;
 
-void Draw(const GameTime& gameTime) override {
-    auto& gd = getGraphicsDeviceProperty();
+void LoadContent() override {
+    // A state object may only be edited BEFORE it is first bound to the device, so configure it
+    // once here and reuse it. (The presets, such as RasterizerState::CullNone, are pre-bound and
+    // immutable; the setters below are XNA's property accessors.)
+    wireframeState_.setCullModeProperty(CullMode::None);
+    wireframeState_.setFillModeProperty(FillMode::WireFrame);   // needs GraphicsCapability::WireFrame
+
+    canWireframe_ = getGraphicsDeviceProperty().SupportsCapability(
+        CNA::GraphicsCapability::WireFrame);
+}
+
+void Draw(const GameTime&amp; gameTime) override {
+    auto&amp; gd = getGraphicsDeviceProperty();
     gd.Clear(Color::CornflowerBlue);
 
-    // Build a custom rasterizer state for wireframe
-    RasterizerState rs;
-    rs.CullMode  = CullMode::None;
-    rs.FillMode  = FillMode::WireFrame;   // needs GraphicsCapability::WireFrame
-    rs.DepthBias = 0.0f;
-
-    if (wireframe_) {
-        gd.setRasterizerStateProperty(rs);
+    if (wireframe_ &amp;&amp; canWireframe_) {
+        gd.setRasterizerStateProperty(wireframeState_);
     } else {
         gd.setRasterizerStateProperty(RasterizerState::CullCounterClockwise);
     }
@@ -183,22 +221,23 @@ void Draw(const GameTime& gameTime) override {
 
     // Draw a debug overlay in solid mode regardless
     DrawDebugOverlay(gd);
-    gd.Present();
+    // (no Present(): Game presents the frame after Draw() returns)
 }
 
-void Update(GameTime&amp;) override {
+void Update(GameTime&amp; gameTime) override {
+    Game::Update(gameTime);
     auto ks = Keyboard::GetState();
-    if (ks.IsKeyDown(Keys::F1) && !prevF1_) {
+    if (ks.IsKeyDown(Keys::F1) &amp;&amp; !prevF1_) {
         wireframe_ = !wireframe_;
     }
     prevF1_ = ks.IsKeyDown(Keys::F1);
 }
 
-void DrawDebugOverlay(GraphicsDevice& gd) {
+void DrawDebugOverlay(GraphicsDevice&amp; gd) {
     // Draw HUD text showing current mode
-    spriteBatch_->Begin();
+    spriteBatch_-&gt;Begin();
     // ... font draw ...
-    spriteBatch_->End();
+    spriteBatch_-&gt;End();
 }</code></pre>
 
         <h2>Validating vertex buffers</h2>
@@ -210,9 +249,9 @@ void DrawDebugOverlay(GraphicsDevice& gd) {
         </p>
 <pre><code class="language-cpp">// Safe vertex buffer upload helper
 template&lt;typename TVertex&gt;
-void UploadVertices(VertexBuffer& vb, const std::vector&lt;TVertex&gt;& verts) {
+void UploadVertices(VertexBuffer&amp; vb, const std::vector&lt;TVertex&gt;&amp; verts) {
     assert(!verts.empty());
-    assert(static_cast&lt;int&gt;(verts.size()) &lt;= vb.VertexCount);
+    assert(static_cast&lt;int&gt;(verts.size()) &lt;= vb.getVertexCountProperty());
     vb.SetData(verts.data(), static_cast&lt;int&gt;(verts.size()));
 }</code></pre>
 
@@ -222,12 +261,28 @@ void UploadVertices(VertexBuffer& vb, const std::vector&lt;TVertex&gt;& verts) {
           and <code>Effect</code> objects release their GPU resources when destroyed. Common pitfalls: storing raw
           pointers to destroyed objects, recreating resources every frame instead of caching them, and forgetting to
           release an old <code>RenderTarget2D</code> before creating a replacement. Use <code>std::unique_ptr</code>
-          for automatic cleanup and let the destructor handle deallocation at the right time.
+          for automatic cleanup and let the destructor handle deallocation at the right time. To see what is actually alive,
+          configure with <code>-DCNA_DIAGNOSTICS=STATS</code>: textures, render targets and vertex and index buffers then register
+          resource metadata you can list from a snapshot (see <a href="73-profiling.html">Tutorial 73</a> and the
+          <a href="../diagnostics.html">Diagnostics reference</a>).
         </p>
+
+        <h2>CNA&rsquo;s own logger</h2>
+        <p>
+          CNA reports renderer fallbacks, refused features and fatal errors through <code>CNA::Logger</code>, which writes
+          to standard error. The default minimum level is <code>TRACE</code> in a build without <code>NDEBUG</code> and <code>INFO</code> with it; raise or lower it with
+          <code>SetMinimumLevel</code>, redirect the output with <code>SetSink</code>, and log your own messages under
+          <code>LogCategory::RENDER</code> so they line up with the engine&rsquo;s:
+        </p>
+<pre><code class="language-cpp">#include "CNA/Logger.hpp"
+
+CNA::Logger::SetMinimumLevel(CNA::LogLevel::DEBUG);
+CNA::Logger::Debug("terrain mesh: 4096 vertices", CNA::LogCategory::RENDER);
+CNA::Logger::Warn("falling back to the unlit path", CNA::LogCategory::RENDER);</code></pre>
 
         <h2>SDL3 debug output</h2>
         <p>
-          Enable SDL3's internal logging to see low-level errors before your game even opens a window:
+          With the default <code>SDL3</code> platform (<code>CNA_PLATFORM=SDL3</code>) you can also enable SDL3's internal logging to see low-level errors before your game even opens a window:
         </p>
 <pre><code class="language-cpp">// Call before creating Game:
 SDL_SetLogPriority(SDL_LOG_CATEGORY_RENDER, SDL_LOG_PRIORITY_VERBOSE);
@@ -262,7 +317,7 @@ SDL_SetLogPriority(SDL_LOG_CATEGORY_ERROR,  SDL_LOG_PRIORITY_VERBOSE);</code></p
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 73: Performance Profiling and Optimization - CNA Tutorials</title>
-  <meta name="description" content="Profile and optimise CNA games: FPS counters, draw call counting, texture atlases, SpriteBatch batching rules, RenderDoc, and Vulkan validation layers.">
+  <meta name="description" content="Profile and optimise CNA games: frame timing, the built-in CNA_DIAGNOSTICS counters and zones, draw call counting, texture atlases, SpriteBatch batching rules, RenderDoc, and Vulkan validation layers.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/73-profiling.html">
   <meta property="og:title"       content="Tutorial 73: Performance Profiling and Optimization - CNA Tutorials">
-  <meta property="og:description" content="Profile and optimise CNA games: FPS counters, draw call counting, texture atlases, SpriteBatch batching rules, RenderDoc, and Vulkan validation layers.">
+  <meta property="og:description" content="Profile and optimise CNA games: frame timing, the built-in CNA_DIAGNOSTICS counters and zones, draw call counting, texture atlases, SpriteBatch batching rules, RenderDoc, and Vulkan validation layers.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/73-profiling.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 73: Performance Profiling and Optimization",
   "url": "https://libcna.com/docs/tutorials/73-profiling.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -89,7 +89,7 @@
         <span class="callout-icon">&#8505;</span>
         <p><strong>What you&rsquo;ll learn</strong></p>
         <ul>
-          <li>Measuring frame time from <code>GameTime</code>, and counting draw calls.</li>
+          <li>Measuring frame time from <code>GameTime</code>, and counting draw calls &mdash; by hand and with CNA&rsquo;s built-in <code>CNA_DIAGNOSTICS</code> counters and profiler zones.</li>
           <li>Cutting texture binds with an atlas, and the rules that keep <code>SpriteBatch</code> batching.</li>
           <li>Buffer orphaning for dynamic geometry.</li>
           <li>Telling a CPU bottleneck from a GPU one, with RenderDoc and Vulkan validation layers.</li>
@@ -98,27 +98,33 @@
       </div>
 
       <h2>GameTime for frame timing</h2>
-      <p>Every <code>Update</code> and <code>Draw</code> call receives a <code>GameTime</code> reference. Its fields are your primary source of frame-timing information:</p>
+      <p>Every <code>Update</code> and <code>Draw</code> call receives a <code>GameTime</code> reference. Read it through its property accessors:</p>
       <ul>
-        <li><code>gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty()</code> — seconds since the last frame (typically ~0.0167 at 60 Hz).</li>
-        <li><code>gameTime.getTotalGameTimeProperty().getTotalSecondsProperty()</code> — total time elapsed since <code>Game::Run()</code>.</li>
-        <li><code>gameTime.IsRunningSlowly</code> — set to <code>true</code> by the framework when the frame time exceeded the target and a fixed-timestep Update was skipped.</li>
+        <li><code>gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty()</code> &mdash; the time step of this call. With a variable step (<code>IsFixedTimeStep = false</code>) it is the measured time since the previous frame. With the default fixed step it is <em>not</em> a measurement: every <code>Update</code> sees exactly <code>TargetElapsedTime</code> (1/60 s by default; <code>0</code> on the game&rsquo;s very first <code>Update</code>), and <code>Draw</code> sees the target multiplied by the number of steps that ran in that tick.</li>
+        <li><code>gameTime.getTotalGameTimeProperty().getTotalSecondsProperty()</code> &mdash; accumulated <em>game</em> time: the sum of the completed updates&rsquo; elapsed times, not wall-clock time since <code>Game::Run()</code>.</li>
+        <li><code>gameTime.getIsRunningSlowlyProperty()</code> &mdash; set to <code>true</code> by the fixed-step loop once it has fallen several steps behind and is running catch-up <code>Update</code> calls; it clears when the lag is gone.</li>
       </ul>
-      <p>Use <code>IsRunningSlowly</code> as an early warning: if it is <code>true</code> on most frames your game is CPU-bound in Update.</p>
+      <p>Use <code>getIsRunningSlowlyProperty()</code> as an early warning: if it is <code>true</code> on most frames, an Update-plus-Draw tick no longer fits inside the step and the game cannot hold its target rate. See <a href="48-timestep.html">Tutorial 48</a> for the details of the clock.</p>
+      <p>Because the fixed step hands you the step rather than a stopwatch reading, a frame-rate counter built only from <code>ElapsedGameTime</code> reports the simulation rate. To measure real frame time, either set <code>IsFixedTimeStep = false</code> while benchmarking, or use the frame duration from the built-in diagnostics described below, which is timed with <code>std::chrono::steady_clock</code>.</p>
 
       <h2>FPS counter and draw call counter</h2>
       <p>A minimal performance overlay can be rendered with SpriteBatch over the game scene. Track frames per second using a rolling average and maintain a per-frame draw call counter that you reset at the start of each Draw:</p>
       <pre><code class="language-cpp">// PerformanceOverlay.hpp
 #pragma once
 #include "Microsoft/Xna/Framework/GameTime.hpp"
+#include "Microsoft/Xna/Framework/Color.hpp"
+#include "Microsoft/Xna/Framework/Vector2.hpp"
 #include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
 #include "Microsoft/Xna/Framework/Graphics/SpriteFont.hpp"
 #include &lt;string&gt;
 #include &lt;deque&gt;
 
+using namespace Microsoft::Xna::Framework;
+using namespace Microsoft::Xna::Framework::Graphics;
+
 class PerformanceOverlay {
 public:
-    explicit PerformanceOverlay(SpriteFont& font) : font_(font) {}
+    explicit PerformanceOverlay(SpriteFont&amp; font) : font_(font) {}
 
     void BeginFrame() {
         drawCallCount_ = 0;
@@ -129,7 +135,7 @@ public:
         totalPrimitives_ += primitives;
     }
 
-    void EndFrame(const GameTime& gt) {
+    void EndFrame(const GameTime&amp; gt) {
         float dt = static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty());
         frameTimes_.push_back(dt);
         if (frameTimes_.size() &gt; SAMPLE_COUNT) frameTimes_.pop_front();
@@ -140,7 +146,7 @@ public:
         fps_ = (avg &gt; 0.0f) ? 1.0f / avg : 0.0f;
     }
 
-    void Draw(SpriteBatch& sb, const Vector2& pos) {
+    void Draw(SpriteBatch&amp; sb, const Vector2&amp; pos) {
         std::string text =
             "FPS: "        + std::to_string(static_cast&lt;int&gt;(fps_)) +
             "  Draws: "    + std::to_string(drawCallCount_) +
@@ -151,21 +157,64 @@ public:
 
 private:
     static constexpr size_t SAMPLE_COUNT = 60;
-    SpriteFont&        font_;
+    SpriteFont&amp;        font_;
     std::deque&lt;float&gt; frameTimes_;
     float              fps_             = 0.0f;
     int                drawCallCount_   = 0;
     int                totalPrimitives_ = 0;
 };</code></pre>
 
-      <p>Wrap every <code>DrawPrimitives</code> / <code>DrawIndexedPrimitives</code> call with <code>overlay.CountDraw(primitiveCount)</code> to track the GPU workload across frames.</p>
+      <p>Wrap every <code>DrawPrimitives</code> / <code>DrawIndexedPrimitives</code> call with <code>overlay.CountDraw(primitiveCount)</code> to track the GPU workload across frames. (This overlay counts only the calls you wrap. SpriteBatch&rsquo;s own draw calls and the engine&rsquo;s effect and render-target changes are counted for you by the built-in diagnostics below.)</p>
+
+      <h2>Built-in diagnostics: <code>CNA_DIAGNOSTICS</code></h2>
+      <p>CNA ships a renderer-independent, in-process observation layer (<code>CNA::Diagnostics</code>) that already counts the things this tutorial tells you to measure. It is off by default and costs nothing when off; you choose the level when you configure the build:</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col"><code>-DCNA_DIAGNOSTICS=</code></th><th scope="col">What you get</th></tr></thead>
+        <tbody>
+          <tr><td><code>OFF</code> (default)</td><td>Every instrumentation macro compiles away. Its arguments are type-checked but never evaluated, so leaving instrumentation in shipping code is free.</td></tr>
+          <tr><td><code>STATS</code></td><td>Counters, gauges and per-frame counters, a bounded history of recent frames (duration and frames per second), and resource metadata for textures, render targets and vertex and index buffers.</td></tr>
+          <tr><td><code>FULL</code></td><td>Everything in <code>STATS</code> plus CPU profiler zones and markers, a bounded event history, and recording that can be written out as a Chrome/Perfetto trace.</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <pre><code class="language-bash">cmake -S . -B build -DCNA_DIAGNOSTICS=FULL     # or STATS; the level is shared with your game
+cmake --build build</code></pre>
+      <p>The level is exported to your game as the compile definition <code>CNA_DIAGNOSTICS_LEVEL</code> (0, 1 or 2), so engine and application always agree. With the level at <code>STATS</code> or higher, the engine itself publishes, among others (the complete list is in the <a href="../diagnostics.html#builtin">Diagnostics reference</a>): the frame scope and the <code>Game/Update</code> and <code>Game/Draw</code> zones (<code>FULL</code>), <code>Runtime/UpdateCount</code> and <code>Runtime/DrawCount</code>, <code>Graphics/DrawCalls</code> (with indexed, non-indexed and indirect variants), <code>Graphics/SubmittedPrimitives</code>, <code>Graphics/EffectChanges</code>, <code>Graphics/RenderTargetChanges</code>, <code>Graphics/TextureBindingChanges</code>, <code>Graphics/SpriteSubmissions</code>, and the audio counters <code>Audio/AllocatedVoices</code> and <code>Audio/VoiceCreations</code>. GPU timings, input metrics and process memory are not published.</p>
+      <p>Add your own measurements with the macros from <code>CNA/Diagnostics/Instrumentation.hpp</code>, and read the results from the process-wide provider:</p>
+      <pre><code class="language-cpp">#include &lt;fstream&gt;
+#include "CNA/Diagnostics/Diagnostics.hpp"
+#include "CNA/Diagnostics/Instrumentation.hpp"
+
+void Simulate() {
+    CNA_PROFILE_SCOPE_CATEGORY("Physics/Simulate", CNA::Diagnostics::Category::Update); // FULL only
+    CNA_DIAGNOSTICS_FRAME_COUNTER_ADD("Physics/Contacts", 12);                          // STATS and FULL
+    CNA_DIAGNOSTICS_GAUGE_SET("Physics/ActiveBodies", 340);
+}
+
+// Somewhere you can afford a copy, e.g. once per second:
+auto snap = CNA::Diagnostics::GetProvider().CaptureSnapshot();
+if (!snap.recentFrames.empty()) {
+    const auto&amp; frame = snap.recentFrames.back();
+    double frameMs = static_cast&lt;double&gt;(frame.durationNs) / 1.0e6;   // real, monotonic-clock time
+    for (const auto&amp; m : frame.metrics)                              // this frame's counters
+        if (m.name == "Graphics/DrawCalls") { /* m.value draw calls */ }
+}
+
+// FULL only: record a few thousand events and open the result in Chrome or Perfetto
+auto rec = CNA::Diagnostics::StartRecording(4096);
+/* ... run some frames ... */
+auto trace = CNA::Diagnostics::StopRecording(rec);
+std::ofstream out("trace.json");
+(void) trace.WriteChromeTrace(out);</code></pre>
+      <p>Two limits worth knowing: the event history is bounded (a full producer ring drops new events and counts them, the process ring overwrites the oldest), and CNA&rsquo;s own CI builds only the default <code>OFF</code> configuration, so the <code>STATS</code> and <code>FULL</code> levels are exercised by unit tests rather than by a CI lane of their own. The <a href="../diagnostics.html">Diagnostics reference</a> documents the modes, the complete macro and API list, and the trace format.</p>
 
       <h2>Texture atlas to reduce binds</h2>
-      <p>Every time SpriteBatch encounters a different <code>Texture2D</code> than the previous sprite it must flush the current batch and issue a draw call. For a scene with 500 sprites across 100 different textures, this produces up to 100 draw calls. Packing all sprites into a single texture atlas reduces this to one draw call regardless of sprite count.</p>
+      <p>Every time the next sprite (in submission order) uses a different <code>Texture2D</code> than the previous one, the run of sprites that could share a draw call ends. A scene with 500 sprites spread across 100 textures can therefore cost up to one draw call per texture change &mdash; roughly 100 when the sprites are grouped by texture, up to 500 when they alternate. Packing the sprites into a single texture atlas removes the texture changes, so the whole scene can be submitted as one run regardless of sprite count. Confirm it with the <code>Graphics/DrawCalls</code> and <code>Graphics/TextureBindingChanges</code> counters rather than assuming.</p>
       <p>Build a texture atlas offline with a tool such as TexturePacker or at startup with a custom packer. Store a <code>Rectangle</code> for each sprite's region within the atlas. Pass that rectangle as the <code>sourceRectangle</code> argument to <code>SpriteBatch::Draw</code>:</p>
       <pre><code class="language-cpp">// Atlas sprites drawn in a single batch (one draw call)
 spriteBatch_-&gt;Begin();
-for (auto& sprite : sprites_) {
+for (auto&amp; sprite : sprites_) {
     spriteBatch_-&gt;Draw(
         *atlas_,             // single shared texture
         sprite.position,
@@ -177,15 +226,14 @@ for (auto& sprite : sprites_) {
         SpriteEffects::None,
         sprite.depth);
 }
-spriteBatch_-&gt;End();  // one GPU draw call</code></pre>
+spriteBatch_-&gt;End();  // one texture, so one run of sprites (measure the actual draw-call count)</code></pre>
 
       <h2>SpriteBatch batching rules</h2>
-      <p>SpriteBatch accumulates sprites and flushes them to the GPU in as few draw calls as possible. A flush is triggered by any of the following:</p>
+      <p>Between <code>Begin()</code> and <code>End()</code> SpriteBatch queues your <code>Draw</code> calls (except in <code>Immediate</code> mode), orders them according to the sort mode, and hands them to the active renderer in that order at <code>End()</code>. What ends a run of sprites that can share one GPU draw call:</p>
       <ul>
-        <li>A different texture than the previous sprite (in <code>SpriteSortMode::Texture</code> mode, SpriteBatch sorts by texture first to minimise this).</li>
-        <li>A different sampler state, blend state, or rasterizer state.</li>
-        <li>Calling <code>SpriteBatch::End()</code>.</li>
-        <li>The internal vertex buffer reaching its capacity (default 2048 sprites per batch).</li>
+        <li>A different texture than the previous sprite in the submitted order (in <code>SpriteSortMode::Texture</code> mode SpriteBatch sorts by texture first to minimise this).</li>
+        <li><code>SpriteBatch::End()</code>. Blend, sampler, depth-stencil and rasterizer state and the custom effect are fixed per <code>Begin()</code>/<code>End()</code> pair, so every change of state means another pair, and each pair ends a batch. Group sprites by state, not only by texture.</li>
+        <li>Any internal capacity limit of the active renderer&rsquo;s sprite path. That limit differs between renderers and is not part of the API, so do not rely on a particular batch size; count draw calls with the diagnostics counters instead.</li>
       </ul>
       <p>Sort mode summary:</p>
       <div class="table-wrap">
@@ -196,21 +244,25 @@ spriteBatch_-&gt;End();  // one GPU draw call</code></pre>
           <tr><td>Texture</td><td>Sorts by texture — fewest draw calls</td><td>Texture-grouped</td></tr>
           <tr><td>BackToFront</td><td>Sorts by depth descending — correct for transparency</td><td>Back to front</td></tr>
           <tr><td>FrontToBack</td><td>Sorts by depth ascending — early-Z efficiency</td><td>Front to back</td></tr>
-          <tr><td>Immediate</td><td>No batching — one draw call per <code>Draw</code></td><td>Submission order</td></tr>
+          <tr><td>Immediate</td><td>No queue and no sorting — each <code>Draw</code> is submitted at once</td><td>Submission order</td></tr>
         </tbody>
       </table>
       </div>
 
       <h2>Buffer orphaning for dynamic geometry</h2>
-      <p>When uploading new vertex data to a <code>VertexBuffer</code> that was created with <code>BufferUsage::WriteOnly</code>, the GPU may still be reading from it for the previous frame. Naively overwriting it stalls the CPU until the GPU finishes. Buffer orphaning avoids the stall by allocating a new backing buffer and immediately returning, leaving the GPU to finish reading the old one in parallel:</p>
-      <pre><code class="language-cpp">// Orphan: SetData with Discard option
-// This allocates a new GPU buffer under the hood without waiting for the GPU.
+      <p>When you rewrite the vertices of a buffer the GPU may still be reading for the previous frame, naively overwriting it can stall the CPU until the GPU finishes. XNA&rsquo;s answer is <code>DynamicVertexBuffer</code> with <code>SetDataOptions::Discard</code> (&ldquo;orphaning&rdquo;: you promise not to need the old contents, so the driver can hand back fresh memory and let the GPU finish with the old region in parallel). CNA follows XNA&rsquo;s rule here: a plain <code>VertexBuffer</code> that is currently bound to the device cannot be rewritten (<code>SetData</code> throws <code>System::InvalidOperationException</code>) unless you use a <code>DynamicVertexBuffer</code> and pass <code>Discard</code> or <code>NoOverwrite</code>.</p>
+      <pre><code class="language-cpp">// Created once, sized for the worst case
+dynamicVB_ = std::make_unique&lt;DynamicVertexBuffer&gt;(
+    gd, VertexPositionColor::getVertexDeclarationStatic(),
+    kMaxVerts, BufferUsage::WriteOnly);
+
+// Every frame: Discard = "I no longer need the previous contents"
 dynamicVB_-&gt;SetData(
-    0,
     newVertices.data(),
+    0,                                       // startIndex into newVertices
     static_cast&lt;int&gt;(newVertices.size()),
-    SetDataOptions::Discard);  // key: avoids GPU stall</code></pre>
-      <p>Use <code>SetDataOptions::NoOverwrite</code> if you are appending to a region of the buffer that the GPU is not currently reading (e.g. double-buffered regions).</p>
+    SetDataOptions::Discard);                // key: avoids a GPU stall</code></pre>
+      <p>Use <code>SetDataOptions::NoOverwrite</code> if you are appending to a region of the buffer that the GPU is not currently reading (for example a particle ring buffer). Be aware that the windowed overload, <code>SetData(offsetInBytes, data, startIndex, elementCount, vertexStride, options)</code>, accepts the options for conformance but CNA composes such a write in a CPU-side copy and uploads the whole buffer, so the result is always correct but the cost is not XNA&rsquo;s. How much orphaning helps in practice depends on the renderer; profile before adopting it everywhere.</p>
 
       <h2>CPU vs GPU bottleneck identification</h2>
       <p>Before optimising, determine whether your frame time is CPU-bound or GPU-bound:</p>
@@ -221,7 +273,7 @@ dynamicVB_-&gt;SetData(
       </ul>
 
       <h2>RenderDoc integration</h2>
-      <p>RenderDoc is an open-source GPU frame debugger that works with CNA's <code>OPENGLES3</code> and <code>VULKAN</code> renderers on Linux and Windows. To capture a frame:</p>
+      <p>RenderDoc is an open-source GPU frame debugger that works with the graphics APIs it supports &mdash; for example CNA&rsquo;s <code>OPENGLES3</code> and <code>VULKAN</code> renderers on Linux and Windows. To capture a frame:</p>
       <ol>
         <li>Launch your CNA binary through RenderDoc (<em>File &gt; Launch Application</em>).</li>
         <li>Press F12 (or the configured hotkey) in-game to capture a frame.</li>
@@ -230,7 +282,7 @@ dynamicVB_-&gt;SetData(
       <p>RenderDoc shows the contents of each RenderTarget2D after each draw call, which is invaluable for debugging post-processing pipelines (bloom, deferred rendering). No source changes are needed — RenderDoc injects into the process via the driver.</p>
 
       <h2>Vulkan validation layers</h2>
-      <p>The alpha.1 Vulkan renderer requests <code>VK_LAYER_KHRONOS_validation</code> automatically in a debug build and disables validation when <code>NDEBUG</code> is present. At instance creation it checks whether the layer is installed; if not, it reports that fact and continues without it. There is no <code>CNA_ENABLE_VULKAN_VALIDATION</code> CMake option or public <code>CnaVulkanConfig</code> API in this tag.</p>
+      <p>The <code>VULKAN</code> renderer requests <code>VK_LAYER_KHRONOS_validation</code> automatically in a debug build and disables validation when <code>NDEBUG</code> is present. At instance creation it checks whether the layer is installed; if not, it reports that fact and continues without it. There is no <code>CNA_ENABLE_VULKAN_VALIDATION</code> CMake option or public <code>CnaVulkanConfig</code> API in this snapshot.</p>
       <pre><code class="language-bash"># Install your distribution's Khronos validation-layer package, then build Debug.
 cmake -S . -B build-vulkan-debug -G Ninja \
   -DCMAKE_BUILD_TYPE=Debug \
@@ -261,7 +313,7 @@ cmake --build build-vulkan-debug</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

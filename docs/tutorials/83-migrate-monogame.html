@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 83: Migrating from MonoGame/FNA - CNA</title>
-  <meta name="description" content="Step-by-step guide to migrating a MonoGame or FNA C# game to CNA C++. Covers namespace changes, C# to C++ type mapping, memory management, read-side XNB support, and audio.">
+  <meta name="description" content="Step-by-step guide to migrating a MonoGame or FNA C# game to CNA C++. Covers namespace changes, C# to C++ type mapping, memory management, XNB loading and the build-time content pipeline, and audio.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/83-migrate-monogame.html">
   <meta property="og:title"       content="Tutorial 83: Migrating from MonoGame/FNA - CNA">
-  <meta property="og:description" content="Step-by-step guide to migrating a MonoGame or FNA C# game to CNA C++. Covers namespace changes, C# to C++ type mapping, memory management, read-side XNB support, and audio.">
+  <meta property="og:description" content="Step-by-step guide to migrating a MonoGame or FNA C# game to CNA C++. Covers namespace changes, C# to C++ type mapping, memory management, XNB loading and the build-time content pipeline, and audio.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/83-migrate-monogame.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 83: Migrating from MonoGame/FNA to CNA",
   "url": "https://libcna.com/docs/tutorials/83-migrate-monogame.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-20",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -103,7 +103,8 @@
           CNA offers C++23 performance, no garbage collector pauses, and the same XNA 4.0 API surface you already
           know from MonoGame or FNA. Games ported from MonoGame/FNA keep their architecture intact &mdash; the
           <code>Game</code> loop, <code>SpriteBatch</code> calls, <code>Effect</code> hierarchy, and math types
-          are all preserved. Only the language changes from C# to C++.
+          are all preserved. The language changes from C# to C++, and one habit changes with it: C# properties become
+          accessor functions (below).
         </p>
 
         <h2>Namespace changes</h2>
@@ -130,15 +131,18 @@
             <tr><th>C# Type</th><th>C++ CNA Type</th><th>Notes</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>int</code></td><td><code>intcs</code> (= <code>int32_t</code>)</td><td>sharp-runtime alias</td></tr>
-            <tr><td><code>float</code></td><td><code>Single</code> (= <code>float</code>)</td><td>or just use <code>float</code></td></tr>
+            <tr><td><code>int</code></td><td><code>intcs</code> (= <code>int32_t</code>)</td><td>sharp-runtime alias, <code>SharpRuntime::intcs</code></td></tr>
+            <tr><td><code>float</code></td><td><code>SharpRuntime::Single</code> (= <code>float</code>)</td><td>or just use <code>float</code></td></tr>
             <tr><td><code>double</code></td><td><code>double</code></td><td>same</td></tr>
             <tr><td><code>bool</code></td><td><code>bool</code></td><td>same</td></tr>
-            <tr><td><code>byte</code></td><td><code>bytecs</code> (= <code>uint8_t</code>)</td><td>sharp-runtime alias</td></tr>
+            <tr><td><code>byte</code></td><td><code>bytecs</code> (= <code>uint8_t</code>)</td><td>sharp-runtime alias, <code>SharpRuntime::bytecs</code></td></tr>
             <tr><td><code>string</code></td><td><code>std::string</code></td><td>no implicit conversions</td></tr>
             <tr><td><code>List&lt;T&gt;</code></td><td><code>System::Collections::Generic::List&lt;T&gt;</code></td><td>from sharp-runtime, or <code>std::vector&lt;T&gt;</code>. Count is <code>getCountProperty()</code></td></tr>
             <tr><td><code>null</code></td><td><code>nullptr</code></td><td>pointer null</td></tr>
             <tr><td><code>?</code> nullable</td><td><code>std::optional&lt;T&gt;</code></td><td>or raw pointer</td></tr>
+            <tr><td>C# property <code>Foo</code> (<code>x.Foo</code>, <code>x.Foo = v</code>)</td><td><code>x.getFooProperty()</code>, <code>x.setFooProperty(v)</code></td><td>the C++ language has no properties; read-only ones have only the getter</td></tr>
+            <tr><td><code>Content</code> (a member of <code>Game</code>)</td><td><code>getContentProperty()</code></td><td><code>Load&lt;T&gt;("name")</code> returns the asset <em>by value</em> (a <code>Texture2D</code> is a cheap shared handle), not a reference or pointer</td></tr>
+            <tr><td><code>GraphicsDevice</code>, <code>Window</code>, <code>Components</code></td><td><code>getGraphicsDeviceProperty()</code>, <code>getWindowProperty()</code>, <code>getComponentsProperty()</code></td><td><code>getWindowProperty().setTitleProperty("My Game")</code></td></tr>
           </tbody>
         </table>
 
@@ -149,51 +153,60 @@
           <code>std::shared_ptr&lt;T&gt;</code> when shared ownership is genuinely needed, and pass by reference
           to avoid unnecessary copying. All CNA resource classes (<code>Texture2D</code>, <code>VertexBuffer</code>,
           etc.) implement RAII &mdash; they release GPU resources in their destructor so you never need to call a
-          separate <code>Dispose()</code>.
+          separate <code>Dispose()</code> (it exists, as in XNA, for early release). Declare the
+          <code>GraphicsDeviceManager</code> member first and your GPU resources after it, so they are destroyed
+          first; <a href="71-memory-management.html">Tutorial 71</a> explains destruction order and when
+          <code>UnloadContent()</code> runs.
         </p>
 
         <h2>Content loading differences</h2>
         <p>
-          MonoGame uses <code>.xnb</code> binary files produced by the XNA content pipeline. <strong>CNA reads
-          those too.</strong> It implements the XNB container format, LZX decompression, and <strong>50 built-in
-          content type readers</strong> (49 when FFmpeg is absent, which drops <code>VideoReader</code>), so an
-          existing <code>ContentManager::Load&lt;T&gt;()</code> call over pre-built <code>.xnb</code> assets carries
-          across.
+          MonoGame uses <code>.xnb</code> binary files produced by its content pipeline (MGCB), and XNA and FNA use the same container.
+          <strong>CNA reads those too.</strong> It implements the XNB container format, LZX and LZ4 decompression (MonoGame&rsquo;s LZ4-compressed
+          XNBs decode), and <strong>61 built-in content type readers</strong> (60 where the platform has no native 128-bit
+          integer, which drops the <code>decimal</code> reader). The <code>VideoReader</code> is always registered, even when the video
+          decoder is not built. An existing <code>getContentProperty().Load&lt;T&gt;("name")</code> call over pre-built <code>.xnb</code> assets carries
+          across: the default root directory of the game&rsquo;s content manager is <code>Content</code>, and the extension is resolved for you.
         </p>
         <p>
-          Note the direction: this is <strong>read-side XNB support</strong>, not a content pipeline. CNA has no
-          <code>ContentCompiler</code>, <code>ContentImporter</code> or <code>ContentProcessor</code> and never will
-          &mdash; authoring stays on the XNA/MonoGame/FNA side, or moves to CNA's own formats.
+          Since alpha.1 the picture is no longer &ldquo;read-side only&rdquo;. The <em>runtime</em> <code>ContentManager</code> is still a loader, and a shipped game links
+          no importer, processor or compiler. But CNA now has a <strong>build-time content pipeline</strong>: the <code>cna-content</code> tool turns source
+          files (or an MSBuild-free <code>.contentproj</code>) into <code>.cnb</code> (CNA&rsquo;s own compiled container, the default) or <code>.xnb</code>,
+          and an XNA-shaped importer/processor/compiler layer (<code>Microsoft::Xna::Framework::Content::Pipeline</code>) sits behind it. It reads images,
+          <code>.wav</code>/song/video sources, <code>.gltf</code>/<code>.glb</code>, <code>.fbx</code>/<code>.x</code> models, <code>.spritefont</code>,
+          typed <code>.cnj</code> descriptors and even existing <code>.xnb</code> files. So a migration can either keep the built <code>.xnb</code> assets
+          or rebuild them from the sources with <code>cna-content build</code>, wired into CMake with <code>cna_add_content(...)</code>.
         </p>
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
-          <p><strong>Readers are not auto-registered.</strong> Call <code>RegisterAllBuiltInXnbReaders()</code> once at
-          startup or every <code>.xnb</code> load fails. It currently lives in an <code>Internal</code> header, which is
-          a known ergonomics gap.</p>
-          <p>Compiled effects need a format and renderer check. Alpha.1's <code>EffectReader</code> accepts XNA/FNA
-          D3D9 Effect Framework binaries on FNA3D, or on SDL_GPU, EasyGL-family and Vulkan builds whose
-          renderer-specific compiled-effects option is enabled. It does not compile HLSL <code>.fx</code> source and
-          does not accept DXBC or MGFX. On other renderers, migrate the effect to <code>ShaderEffect</code> in that
-          renderer's native language. The stock effects remain a separate working path.</p>
+          <p><strong>Reader registration.</strong> A <code>Game</code> registers the built-in readers for you when it is constructed. Only a stand-alone
+          <code>ContentManager</code> that is not owned by a <code>Game</code> (a tool, a test) still has to call
+          <code>CNA::Internal::Xnb::RegisterAllBuiltInXnbReaders()</code> once, and that function lives in an <code>Internal</code> header.</p>
+          <p>Compiled effects need a format and renderer check. CNA&rsquo;s <code>EffectReader</code> accepts XNA/FNA D3D9 Effect Framework
+          binaries. In this snapshot that works on <code>FNA3D</code> (always) and on the renderers whose compiled-effects build option you
+          switched on (the nine default-<code>OFF</code> options, for EasyGL, Vulkan, WebGPU, Software, DirectX 9/11/12, SDL_GPU and OpenGL4);
+          a default configure reports compiled-effects support on <code>FNA3D</code> only. It does not accept MonoGame&rsquo;s MGFX effects or raw DXBC, and
+          the runtime never compiles HLSL. <code>cna-content</code> can build a <code>.fx</code> file into an effect <code>.xnb</code> at build time, but only by calling
+          an external legacy <code>fxc</code> compiler that you supply. On other renderers, migrate the effect to <code>ShaderEffect</code> in that
+          renderer&rsquo;s native language. The stock effects remain a separate working path.</p>
         </div>
         <p>
-        </p>
-        <p>
-          CNA additionally lets you skip <code>.xnb</code> entirely and load assets straight from source files,
+          CNA additionally lets you skip the compiled formats and load assets straight from source files,
           which is usually simpler for a new project. <code>Load&lt;T&gt;</code> tries <code>.xnb</code> first, then
-          CNA's own <code>.cnj</code> JSON format, then the older loose-file <code>.model.json</code>:
+          CNA's own <code>.cnb</code>, then the loose-file readers (<code>.cnj</code> JSON descriptors and each type&rsquo;s native formats):
         </p>
         <ul>
-          <li><strong>Textures:</strong> <code>Texture2D("assets/logo.png", gd)</code> &mdash; PNG/JPG loaded via SDL3_image</li>
-          <li><strong>Models:</strong> <code>Model::Load("assets/house.obj", gd)</code> via the model loader &mdash; and, newer and more useful for a migration, <strong>runtime glTF 2.0</strong>: drop a <code>.gltf</code> or <code>.glb</code> in the content root and <code>Content.Load&lt;Model&gt;("name")</code> loads it with no tooling step, including skeletal animation and morph targets</li>
-          <li><strong>Fonts:</strong> a JSON-based <code>SpriteFont</code> descriptor, as an alternative to <code>.spritefont</code> XML compiled to XNB</li>
+          <li><strong>Textures:</strong> <code>getContentProperty().Load&lt;Texture2D&gt;("logo")</code> finds <code>logo.png</code> (also <code>.jpg</code>, <code>.bmp</code>, <code>.gif</code>, <code>.tga</code>, <code>.tif</code>, <code>.qoi</code>), decoded by CNA&rsquo;s own image loader. The CNAEXT constructor <code>Texture2D("assets/logo.png", gd)</code> reads a file directly.</li>
+          <li><strong>Models:</strong> there is no runtime OBJ loader and no <code>Model::Load</code>. <strong>Runtime glTF 2.0</strong> is the newer and more useful route for a migration: drop a <code>.gltf</code> or <code>.glb</code> in the content root and <code>getContentProperty().Load&lt;Model&gt;("name")</code> loads it with no tooling step, including skeletal animation and morph targets. <code>.fbx</code> and <code>.x</code> models go through <code>cna-content</code>.</li>
+          <li><strong>Fonts:</strong> a JSON-based <code>SpriteFont</code> descriptor (<code>.cnj</code>), as an alternative to <code>.spritefont</code> XML built to XNB by the pipeline</li>
         </ul>
 
         <h2>Audio (SoundEffect same, XACT now real)</h2>
         <p>
           <code>SoundEffect</code> and <code>SoundEffectInstance</code> APIs are identical to MonoGame.
-          <code>SoundEffect("sound.wav")</code> (the CNAEXT assetName constructor) loads OGG/WAV via SDL3_mixer. <code>Song</code>/
-          <code>MediaPlayer</code> streaming is also fully implemented via SDL3_mixer. XACT
+          <code>SoundEffect("sound.wav")</code> (the CNAEXT assetName constructor) loads WAV and OGG (and MP3/FLAC) through the selected audio
+          implementation: SDL3_mixer with the default <code>CNA_AUDIO_PLATFORM=SDL3</code>, or CNA&rsquo;s own mixer with <code>ALSA</code> on Linux. The <code>SDL2</code> and
+          <code>NULL</code> audio platforms compile but play nothing. <code>Song</code>/<code>MediaPlayer</code> streaming is also implemented on those two mixers. XACT
           (<code>.xap</code>-authored <code>AudioEngine</code>/<code>SoundBank</code>/<code>WaveBank</code>/<code>Cue</code>) is now a real,
           largely functional runtime with a genuine <code>.xgs</code>/<code>.xsb</code>/<code>.xwb</code> parser &mdash; MonoGame
           games that use XACT do not need to be rewritten to use <code>SoundEffect</code> directly, though it
@@ -204,13 +217,13 @@
           <p>Two audio gaps to check your assets against. A WaveBank containing XMA or WMA content does <strong>not</strong>
           throw &mdash; it logs to stderr and returns <code>nullptr</code>, so the sound is simply missing. (The XNB
           <code>SoundEffectReader</code> path <em>does</em> throw.) And <code>.m4a</code>/<code>.aac</code> are unplayable:
-          SDL3_mixer has no AAC decoder.</p>
+          neither mixer has an AAC decoder.</p>
         </div>
 
         <h2>Missing APIs</h2>
-        <p>A few MonoGame extensions are not present in CNA:</p>
+        <p>A few MonoGame extensions are not present in CNA, or are present only in part:</p>
         <ul>
-          <li><code>VideoPlayer</code> &mdash; partial (see the Video Playback tutorial)</li>
+          <li><code>VideoPlayer</code> &mdash; the <code>Video</code> and <code>VideoPlayer</code> types exist in every build, but decoding needs the optional FFmpeg backend (<code>CNA_ENABLE_VIDEO</code>, available on Linux and macOS only). Without it, playing a file-backed video throws <code>System::NotSupportedException</code> (see <a href="121-video-playback.html">Tutorial 121</a>).</li>
         </ul>
 
         <h3>Two things that are <em>not</em> missing</h3>
@@ -221,12 +234,14 @@
           gives you <code>CreateFile()</code>, <code>OpenFile()</code>, <code>FileExists()</code>,
           <code>DeleteFile()</code>, <code>GetFileNames()</code>, and the matching directory operations, with
           file access returning a <code>std::unique_ptr&lt;System::IO::Stream&gt;</code>. Save-game code
-          written against XNA's storage API does not need rewriting to raw C++ file I/O.
+          written against XNA's storage API does not need rewriting to raw C++ file I/O, but note two differences from a desktop MonoGame game: container names and
+          paths that escape the container (absolute or <code>..</code>) are rejected, and on the web CNA mounts no persistent file system, so anything saved
+          is lost when the page reloads.
         </p>
         <p>
           <strong>Message boxes work.</strong> CNA provides <code>CNA::Devices::MessageBox</code>, which pops a
-          real native modal dialog through SDL. You do not need to call <code>SDL_ShowMessageBox</code>
-          yourself:
+          real native modal dialog through the selected platform implementation (SDL, or the native Win32 and X11 implementations). You do not need to call <code>SDL_ShowMessageBox</code>
+          yourself. It belongs to the optional <code>CNA::Devices</code> layer, so configure with <code>-DCNA_DEVICES=ON</code> (default <code>OFF</code>):
         </p>
 <pre><code class="language-cpp">#include "CNA/Devices/MessageBox.hpp"
 #include "CNA/Devices/MessageBoxType.hpp"
@@ -266,7 +281,7 @@ int choice = MessageBox::Show(MessageBoxType::Warning,
 //     }
 //
 //     public void Update(GameTime gt) {
-//         float dt = (float)gt.getElapsedGameTimeProperty().getTotalSecondsProperty();
+//         float dt = (float)gt.ElapsedGameTime.TotalSeconds;
 //         position.X += 100.0f * dt;
 //     }
 //
@@ -278,32 +293,38 @@ int choice = MessageBox::Show(MessageBoxType::Warning,
 // ===== C++ CNA equivalent =====
 #include "Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
 #include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
+#include "Microsoft/Xna/Framework/Content/ContentManager.hpp"
 #include "Microsoft/Xna/Framework/Vector2.hpp"
 #include "Microsoft/Xna/Framework/Color.hpp"
 
 using namespace Microsoft::Xna::Framework;
 using namespace Microsoft::Xna::Framework::Graphics;
+using namespace Microsoft::Xna::Framework::Content;
 
 class Player {
 public:
-    Player(GraphicsDevice& gd)
-        : sprite_("assets/player.png", gd)   // direct load, no ContentManager
+    // Same shape as the C# constructor: the ContentManager loads the texture.
+    // Load&lt;T&gt; returns the Texture2D by value; it shares the GPU texture with the manager's cache.
+    Player(ContentManager&amp; content)
+        : sprite_(content.Load&lt;Texture2D&gt;("player"))   // finds Content/player.xnb, .cnb, or player.png
         , position_(100.0f, 200.0f)
     {}
 
-    void Update(GameTime& gt) {
+    void Update(GameTime&amp; gt) {
         float dt = static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty());
         position_.X += 100.0f * dt;
     }
 
-    void Draw(SpriteBatch& sb) {
+    void Draw(SpriteBatch&amp; sb) {
         sb.Draw(sprite_, position_, Color::White);
     }
 
 private:
-    Texture2D sprite_;   // owns GPU resource, released in destructor
+    Texture2D sprite_;   // a handle to the GPU texture, released when the last copy is destroyed
     Vector2   position_;
-};</code></pre>
+};
+
+// In your Game subclass:  player_ = std::make_unique&lt;Player&gt;(getContentProperty());</code></pre>
 
         <nav class="docs-pagination" aria-label="Page navigation">
           <div class="docs-pagination-prev">
@@ -329,7 +350,7 @@ private:
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

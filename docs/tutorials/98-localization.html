@@ -21,7 +21,7 @@
   "headline": "Tutorial 98: Localization and Multiple Languages",
   "url": "https://libcna.com/docs/tutorials/98-localization.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -191,6 +191,32 @@ inline const std::string&amp; L(const std::string&amp; key) {
     return g_loc ? g_loc-&gt;Get(key) : key;
 }</code></pre>
 
+        <p>
+          The line-based parser above is deliberately tiny and only understands one <code>"key": "value"</code> pair per line: it does not handle
+          escaped quotes, nested objects or values that span lines. Since CNA already depends on sharp-runtime, a robust alternative is its
+          <code>System::Text::Json</code> port. It lives in the <code>Text.Json</code> component, which is <em>not</em> part of CNA&rsquo;s default set of
+          sharp-runtime components, so select it as shown in <a href="89-sharp-runtime.html">Tutorial 89</a>:
+        </p>
+<pre><code class="language-cpp">#include "System/Text/Json/JsonDocument.hpp"
+#include "System/Text/Json/JsonProperty.hpp"
+
+void LocalizationManager::Load(const std::string&amp; langCode) {
+    std::ifstream f("assets/lang/" + langCode + ".json");
+    if (!f.is_open())
+        throw std::runtime_error("Language file not found: " + langCode);
+    std::stringstream buffer;
+    buffer &lt;&lt; f.rdbuf();
+
+    // Parse first, swap in afterwards: a broken file must not leave the game with half a table
+    auto doc = System::Text::Json::JsonDocument::Parse(buffer.str());
+    std::unordered_map&lt;std::string, std::string&gt; fresh;
+    for (const auto&amp; prop : doc-&gt;getRootElementProperty().EnumerateObject())
+        fresh[prop.getNameProperty()] = prop.getValueProperty().GetString();
+
+    strings_     = std::move(fresh);
+    currentLang_ = langCode;
+}</code></pre>
+
         <h2>SpriteFont Unicode support</h2>
         <p>
           CNA's <code>SpriteFont</code> is a <strong>pre-rasterized atlas</strong>, not a runtime TrueType
@@ -200,7 +226,9 @@ inline const std::string&amp; L(const std::string&amp; key) {
           descriptor's <code>glyphs</code> array.
         </p>
         <p>
-          Coverage is therefore decided offline, when you build the atlas. For Latin scripts
+          Coverage is therefore decided offline, when you build the atlas (with the build-time content pipeline, <code>cna-content</code> builds a
+          <code>.spritefont</code> description into a SpriteFont asset using FreeType &mdash; the character regions you list there decide what is in the
+          atlas &mdash; provided CNA was configured with its font pipeline, <code>CNA_ENABLE_FONT_PIPELINE</code>). For Latin scripts
           U+0020&ndash;U+00FF is usually sufficient. Czech and Slovak also need U+0100&ndash;U+017F,
           Cyrillic needs U+0400&ndash;U+04FF, and CJK needs a very large range (U+4E00&ndash;U+9FFF)
           and a font that actually contains those glyphs. Whichever set you choose, the resulting
@@ -229,7 +257,9 @@ inline const std::string&amp; L(const std::string&amp; key) {
 
         <h2>Loading and drawing a localized font</h2>
 <pre><code class="language-cpp">// Load a localization-aware SpriteFont through ContentManager.
-// There is no SpriteFont constructor that takes a file path.
+// There is no SpriteFont constructor that takes a file path, and Load&lt;T&gt; returns the font BY VALUE.
+// SpriteFont has no default constructor, so hold it in a std::optional member:
+//   std::optional&lt;SpriteFont&gt; spriteFont_;
 spriteFont_ = getContentProperty().Load&lt;SpriteFont&gt;("fonts/ui_font");
 
 // Draw localized string:
@@ -247,6 +277,11 @@ spriteBatch_-&gt;DrawString(*spriteFont_,
         </p>
 
         <h2>Date/number formatting</h2>
+        <p>
+          For real locale-aware formatting, start from the culture CNA gives you (see the next section) and from sharp-runtime&rsquo;s
+          <code>System::Globalization</code> component, which is part of CNA&rsquo;s default set of components; the stub below only marks
+          where such a formatter goes.
+        </p>
 <pre><code class="language-cpp">// Simple locale-aware number formatter
 std::string FormatNumber(int n, const std::string&amp; lang) {
     // Czech uses space as thousands separator
@@ -257,10 +292,29 @@ std::string FormatNumber(int n, const std::string&amp; lang) {
 }</code></pre>
 
         <h2>Detecting system locale</h2>
+        <p>
+          You do not have to parse environment variables yourself. When a <code>Game</code> is constructed it initialises
+          <code>System::Globalization::CultureInfo</code>&rsquo;s default thread culture and UI culture from the platform&rsquo;s ordered list of preferred
+          locales, unless your program has already set them. So once your game object exists you can read the UI language straight from
+          sharp-runtime&rsquo;s <code>CultureInfo</code>:
+        </p>
+<pre><code class="language-cpp">#include "System/Globalization/CultureInfo.hpp"
+
+std::string DetectSystemLocale() {
+    const auto&amp; ui = System::Globalization::CultureInfo::getCurrentUICultureProperty();
+    std::string code = ui.getTwoLetterISOLanguageNameProperty();   // "cs", "en", ...
+    // "iv" is the invariant culture: the platform reported no usable locale
+    return (code.empty() || code == "iv") ? "en" : code;
+}</code></pre>
+        <p>
+          If you also compile the optional <code>CNA::Devices</code> layer (<code>-DCNA_DEVICES=ON</code>), <code>CNA::Devices::Locale::getPreferredLocalesProperty()</code>
+          returns the platform&rsquo;s whole ordered preference list, which is what you want for picking the best of the languages you ship.
+          The classic environment-variable approach still works where no <code>Game</code> exists yet, for example in a command-line tool:
+        </p>
 <pre><code class="language-cpp">#include &lt;cstdlib&gt;
 #include &lt;string&gt;
 
-std::string DetectSystemLocale() {
+std::string DetectSystemLocaleFromEnvironment() {
 #if defined(_WIN32)
     char buf[16];
     GetLocaleInfoA(LOCALE_USER_DEFAULT, LOCALE_SISO639LANGNAME, buf, 16);
@@ -279,16 +333,19 @@ std::string DetectSystemLocale() {
 }</code></pre>
 
         <h2>Hot-reload strings in debug</h2>
-<pre><code class="language-cpp">#ifdef _DEBUG
+<pre><code class="language-cpp">#include "CNA/Logger.hpp"
+
+#ifndef NDEBUG   // debug builds (_DEBUG is MSVC-only; NDEBUG is the standard release marker)
 // In Update(): watch for F5 to reload strings without restarting
 void Update(GameTime&amp; gt) override {
+    Game::Update(gt);
     auto ks = Keyboard::GetState();
     if (ks.IsKeyDown(Keys::F5) &amp;&amp; !prevF5_) {
         try {
             localization_.Load(localization_.CurrentLang());
-            SDL_Log("Strings reloaded");
+            CNA::Logger::Info("Strings reloaded");
         } catch (const std::exception&amp; e) {
-            SDL_Log("Reload failed: %s", e.what());
+            CNA::Logger::Warn(std::string("Reload failed: ") + e.what());
         }
     }
     prevF5_ = ks.IsKeyDown(Keys::F5);
@@ -319,7 +376,7 @@ void Update(GameTime&amp; gt) override {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

@@ -21,7 +21,7 @@
   "headline": "Tutorial 96: Physics Integration",
   "url": "https://libcna.com/docs/tutorials/96-physics.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -104,37 +104,47 @@
           Choose a physics library appropriate for your game: Box2D v3 for 2D games, Bullet Physics for 3D games.
           Both integrate cleanly through CNA's <code>Update()</code> method.
         </p>
+        <div class="callout callout--note">
+          <span class="callout-icon">&#9432;</span>
+          <p><strong>Third-party APIs move.</strong> The Box2D and Bullet calls on this page are third-party code that CNA neither ships nor tests. Box2D v3 in particular is a young C API whose function names and structures have changed between releases (later releases, for example, read a body&rsquo;s angle through its rotation rather than <code>b2Body_GetAngle</code>), so check the calls below against the headers of the revision you clone. Only the CNA side &mdash; the game loop, the transform sync and the drawing &mdash; is verified against CNA itself.</p>
+        </div>
 
         <h2>Box2D v3 integration (2D)</h2>
-<pre><code class="language-cpp"># Clone Box2D v3 (new C API)
+<pre><code class="language-bash"># Clone Box2D v3 (new C API)
 git clone https://github.com/erincatto/box2d.git ../box2d
 cmake -S ../box2d -B ../box2d/build
 cmake --build ../box2d/build
 
 # In your game's CMakeLists.txt:</code></pre>
-<pre><code class="language-cpp">add_subdirectory(../box2d ${CMAKE_BINARY_DIR}/box2d)
+<pre><code class="language-cmake">add_subdirectory(../box2d ${CMAKE_BINARY_DIR}/box2d)
 target_link_libraries(MyGame PRIVATE box2d)</code></pre>
 
         <h2>Bullet Physics integration (3D)</h2>
-<pre><code class="language-cpp">git clone https://github.com/bulletphysics/bullet3.git ../bullet3
+<pre><code class="language-bash">git clone https://github.com/bulletphysics/bullet3.git ../bullet3
 cmake -S ../bullet3 -B ../bullet3/build \
   -DBUILD_DEMOS=OFF -DBUILD_EXTRAS=OFF -DUSE_GRAPHICAL_BENCHMARK=OFF
 cmake --build ../bullet3/build</code></pre>
-<pre><code class="language-cpp">find_package(Bullet REQUIRED)
+<pre><code class="language-cmake">find_package(Bullet REQUIRED)
 target_link_libraries(MyGame PRIVATE ${BULLET_LIBRARIES})
 target_include_directories(MyGame PRIVATE ${BULLET_INCLUDE_DIRS})</code></pre>
 
         <h2>Physics step in Update()</h2>
         <p>
           Always step the physics world in <code>Update()</code>, not in <code>Draw()</code>.
-          Use a fixed timestep for deterministic simulation.
+          Use a fixed timestep for deterministic simulation. CNA&rsquo;s default game loop already is one: with
+          <code>IsFixedTimeStep</code> left at <code>true</code>, every <code>Update</code> receives exactly
+          <code>TargetElapsedTime</code> (1/60 s), except the game&rsquo;s very first <code>Update</code>, whose
+          <code>ElapsedGameTime</code> is <code>0</code>. So the simplest correct integration is to step the physics world once per
+          <code>Update</code> with a constant step (see <a href="48-timestep.html">Tutorial 48</a>). The accumulator below is for the
+          other cases: a variable-step game (<code>IsFixedTimeStep = false</code>), or a physics rate that differs from the update rate.
         </p>
 <pre><code class="language-cpp">// Box2D v3: world step
 void Update(GameTime&amp; gt) override {
+    Game::Update(gt);
     float dt = static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty());
 
-    // Accumulate time and step in fixed increments
-    accumulator_ += dt;
+    // Accumulate time and step in fixed increments (dt is 0 on the very first Update)
+    accumulator_ += std::min(dt, 0.25f);   // clamp so one long stall cannot cause a burst of steps
     const float FIXED_DT = 1.0f / 60.0f;
     while (accumulator_ &gt;= FIXED_DT) {
         b2World_Step(worldId_, FIXED_DT, 4);   // 4 substeps
@@ -147,10 +157,12 @@ void Update(GameTime&amp; gt) override {
 <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Game.hpp"
 #include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
 #include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
+#include "Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
 #include "Microsoft/Xna/Framework/Color.hpp"
 #include "Microsoft/Xna/Framework/Rectangle.hpp"
 #include "Microsoft/Xna/Framework/Vector2.hpp"
 #include "box2d/box2d.h"
+#include &lt;algorithm&gt;
 #include &lt;memory&gt;
 #include &lt;vector&gt;
 #include &lt;cmath&gt;
@@ -179,12 +191,19 @@ public:
         graphics_.setPreferredBackBufferHeightProperty(600);
     }
 
+    // The physics world is not a GPU resource, so free it in the destructor. (UnloadContent() runs
+    // only when the game is disposed with Dispose(), not when a stack-allocated game simply goes out of scope.)
+    ~PhysicsDemo() {
+        if (worldCreated_) b2DestroyWorld(worldId_);
+    }
+
 protected:
     void Initialize() override {
         // Create Box2D world (gravity pointing down in screen space)
         b2WorldDef worldDef = b2DefaultWorldDef();
         worldDef.gravity = { 0.0f, 200.0f };   // pixels/sec&#178; downward
         worldId_ = b2CreateWorld(&amp;worldDef);
+        worldCreated_ = true;
 
         // Ground body (static)
         b2BodyDef groundDef = b2DefaultBodyDef();
@@ -217,8 +236,9 @@ protected:
     }
 
     void Update(GameTime&amp; gt) override {
+        Game::Update(gt);
         float dt = static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty());
-        accumulator_ += dt;
+        accumulator_ += std::min(dt, 0.25f);
         const float FDT = 1.0f / 60.0f;
         while (accumulator_ &gt;= FDT) {
             b2World_Step(worldId_, FDT, 4);
@@ -227,7 +247,7 @@ protected:
         for (auto&amp; b : bodies_) b.SyncFromPhysics();
     }
 
-    void Draw(const GameTime&amp;) override {
+    void Draw(const GameTime&amp; gt) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color(30, 30, 60));
         sb_-&gt;Begin();
@@ -242,11 +262,7 @@ protected:
                       Color::Orange);
         }
         sb_-&gt;End();
-        gd.Present();
-    }
-
-    void UnloadContent() override {
-        b2DestroyWorld(worldId_);
+        Game::Draw(gt);   // Game presents the frame afterwards (no gd.Present())
     }
 
 private:
@@ -254,6 +270,7 @@ private:
     std::unique_ptr&lt;SpriteBatch&gt; sb_;
     std::unique_ptr&lt;Texture2D&gt;   pixel_;
     b2WorldId                    worldId_{};
+    bool                         worldCreated_ = false;
     std::vector&lt;PhysicsBody&gt;     bodies_;
     float                        accumulator_ = 0.0f;
 };
@@ -262,9 +279,45 @@ int main() { PhysicsDemo game; game.Run(); }</code></pre>
 
         <h2>Debug draw of physics shapes</h2>
         <p>
-          Box2D v3 provides a debug draw callback interface (<code>b2DebugDraw</code>). Wire it up to draw
-          <code>LineList</code> primitives through CNA's <code>GraphicsDevice</code> to visualize physics
-          colliders during development. Disable this in release builds with a preprocessor define.
+          Box2D v3 provides a debug draw callback interface (<code>b2DebugDraw</code>). Wire it up to collect line segments and draw them as
+          <code>PrimitiveType::LineList</code> through CNA's <code>GraphicsDevice</code> to visualize physics
+          colliders during development. Disable this in release builds with a preprocessor define. The CNA half looks like this:
+        </p>
+<pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Graphics/BasicEffect.hpp"
+#include "Microsoft/Xna/Framework/Graphics/PrimitiveType.hpp"
+#include "Microsoft/Xna/Framework/Graphics/VertexPositionColor.hpp"
+#include "CNA/GraphicsCapability.hpp"
+
+// Two vertices per segment, in pixel coordinates; your b2DebugDraw callbacks call this.
+void AddDebugLine(std::vector&lt;VertexPositionColor&gt;&amp; v, Vector2 a, Vector2 b, Color c) {
+    v.push_back(VertexPositionColor(Vector3(a.X, a.Y, 0), c));
+    v.push_back(VertexPositionColor(Vector3(b.X, b.Y, 0), c));
+}
+
+void DrawDebugLines(GraphicsDevice&amp; gd, BasicEffect&amp; fx,
+                    const std::vector&lt;VertexPositionColor&gt;&amp; lineVerts) {
+    // User primitives need a 3D-capable renderer (see the note below)
+    if (lineVerts.empty() || !gd.SupportsCapability(CNA::GraphicsCapability::ThreeD)) return;
+
+    const int w = gd.getViewportProperty().getWidthProperty();
+    const int h = gd.getViewportProperty().getHeightProperty();
+    fx.VertexColorEnabled = true;
+    fx.setWorldProperty(Matrix::getIdentityProperty());
+    fx.setViewProperty(Matrix::getIdentityProperty());
+    fx.setProjectionProperty(Matrix::CreateOrthographicOffCenter(   // pixel space, Y down
+        0.0f, (float)w, (float)h, 0.0f, 0.0f, 1.0f));
+
+    for (auto&amp; pass : fx.getCurrentTechniqueProperty()-&gt;getPassesProperty()) {
+        pass.Apply();
+        gd.DrawUserPrimitives(PrimitiveType::LineList, lineVerts, 0,
+                              static_cast&lt;int&gt;(lineVerts.size() / 2));
+    }
+}</code></pre>
+        <p>
+          The seven 2D-only renderers (<code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SVG_DOM</code>,
+          <code>FREEDIRECT</code> and <code>GDI</code>) cannot draw user primitives; on those, draw each segment as a thin rotated rectangle with
+          <code>SpriteBatch</code> instead. The helper above therefore checks <code>GraphicsCapability::ThreeD</code> first, and the effect needs
+          a <code>BasicEffect</code> created in <code>LoadContent()</code>.
         </p>
 
         <nav class="docs-pagination" aria-label="Page navigation">
@@ -291,7 +344,7 @@ int main() { PhysicsDemo game; game.Run(); }</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

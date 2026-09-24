@@ -21,7 +21,7 @@
   "headline": "Tutorial 91: Building a 2D Platformer",
   "url": "https://libcna.com/docs/tutorials/91-platformer.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -102,9 +102,13 @@
 
         <h2>AABB collision</h2>
         <p>Axis-Aligned Bounding Box (AABB) collision tests whether two rectangles overlap. Resolve by finding the minimum penetration axis and pushing the player out along that axis.</p>
-<pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Rectangle.hpp"
+<pre><code class="language-cpp">#include &lt;algorithm&gt;
+#include &lt;cmath&gt;
+#include "Microsoft/Xna/Framework/Rectangle.hpp"
+#include "Microsoft/Xna/Framework/Vector2.hpp"
 
-// Returns true and sets penetration vector if rects overlap
+// Returns true and sets `penetration` if the rects overlap. `penetration` is the vector to ADD to
+// a's position to separate it from b (negative Y = push a up, i.e. a is standing on b).
 bool AABBCollide(const Rectangle&amp; a, const Rectangle&amp; b, Vector2&amp; penetration) {
     int dx = (a.X + a.Width/2) - (b.X + b.Width/2);
     int dy = (a.Y + a.Height/2) - (b.Y + b.Height/2);
@@ -112,7 +116,7 @@ bool AABBCollide(const Rectangle&amp; a, const Rectangle&amp; b, Vector2&amp; pe
     int overlapY = (a.Height/2 + b.Height/2) - std::abs(dy);
     if (overlapX &lt;= 0 || overlapY &lt;= 0) return false;
     if (overlapX &lt; overlapY) {
-        penetration = Vector2(dx &lt; 0 ? -overlapX : overlapX, 0.0f);
+        penetration = Vector2(dx &lt; 0 ? -overlapX : overlapX, 0.0f);   // a is left of b: push left
     } else {
         penetration = Vector2(0.0f, dy &lt; 0 ? -overlapY : overlapY);
     }
@@ -125,6 +129,7 @@ const float JUMP_FORCE   = -420.0f;  // pixels/sec (upward = negative Y)
 const float MAX_FALL     = 800.0f;   // terminal velocity
 
 void Player::Update(GameTime&amp; gt, const std::vector&lt;Platform&gt;&amp; platforms) {
+    // Note: the very first Update of a game sees dt == 0 (XNA's game clock); nothing here divides by dt.
     float dt = static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty());
 
     // Gravity
@@ -136,8 +141,10 @@ void Player::Update(GameTime&amp; gt, const std::vector&lt;Platform&gt;&amp; pla
     if (ks.IsKeyDown(Keys::Left)  || ks.IsKeyDown(Keys::A)) velocity_.X = -200.0f;
     if (ks.IsKeyDown(Keys::Right) || ks.IsKeyDown(Keys::D)) velocity_.X =  200.0f;
 
-    // Jump (with coyote time and jump buffer)
-    bool jumpPressed = ks.IsKeyDown(Keys::Space) || ks.IsKeyDown(Keys::Up);
+    // Jump (with coyote time and jump buffer): buffer the press EDGE, not the held key
+    bool jumpDown    = ks.IsKeyDown(Keys::Space) || ks.IsKeyDown(Keys::Up);
+    bool jumpPressed = jumpDown &amp;&amp; !prevJumpDown_;
+    prevJumpDown_    = jumpDown;
     if (jumpPressed) jumpBufferTimer_ = 0.12f;
     else             jumpBufferTimer_ = std::max(0.0f, jumpBufferTimer_ - dt);
 
@@ -148,7 +155,8 @@ void Player::Update(GameTime&amp; gt, const std::vector&lt;Platform&gt;&amp; pla
     }
 
     // Move and collide
-    position_ += velocity_ * dt;
+    prevBottom_ = static_cast&lt;float&gt;(Bounds().Y + Bounds().Height);   // for one-way platforms
+    position_ = position_ + velocity_ * dt;   // (position_ += ... also works, but is a CNA extension, not XNA)
     grounded_ = false;
     for (auto&amp; p : platforms) ResolveCollision(p);
 
@@ -158,21 +166,20 @@ void Player::Update(GameTime&amp; gt, const std::vector&lt;Platform&gt;&amp; pla
 }</code></pre>
 
         <h2>One-way platforms</h2>
-        <p>One-way platforms only collide when the player is above and falling downward. Check <code>velocity_.Y &gt; 0</code> and that the player's bottom was above the platform top last frame.</p>
+        <p>One-way platforms only collide when the player is above and falling downward. Check <code>velocity_.Y &gt; 0</code> and that the player's bottom was above the platform top last frame (<code>prevBottom_</code>, recorded before the move). Because <code>penetration</code> is the vector that pushes the player <em>out</em>, landing on top of a platform gives a negative Y push.</p>
 <pre><code class="language-cpp">void Player::ResolveCollision(const Platform&amp; p) {
-    Vector2 pen;
+    Vector2 pen;   // the push that separates the player from the platform
     if (!AABBCollide(Bounds(), p.Bounds(), pen)) return;
     if (p.OneWay) {
-        // Only resolve if falling and player bottom was above platform top
+        // Only resolve if falling and the player's bottom was above the platform top last frame
         if (velocity_.Y &lt;= 0.0f) return;
         if (prevBottom_ &gt; p.Bounds().Y) return;
-        pen = Vector2(0.0f, pen.Y &gt; 0 ? pen.Y : 0.0f);
+        pen = Vector2(0.0f, pen.Y &lt; 0.0f ? pen.Y : 0.0f);   // one-way platforms only ever push UP
     }
-    position_.X -= pen.X;
-    position_.Y -= pen.Y;
-    if (pen.Y &gt; 0.0f) { velocity_.Y = 0.0f; grounded_ = true; }
-    if (pen.Y &lt; 0.0f)   velocity_.Y = 0.0f;  // hit ceiling
-    if (pen.X != 0.0f)  velocity_.X = 0.0f;
+    position_ = position_ + pen;
+    if (pen.Y &lt; 0.0f) { velocity_.Y = 0.0f; grounded_ = true; }   // pushed up: standing on it
+    if (pen.Y &gt; 0.0f)   velocity_.Y = 0.0f;                       // pushed down: hit a ceiling
+    if (pen.X != 0.0f)  velocity_.X = 0.0f;                       // hit a wall
 }</code></pre>
 
         <h2>Animation state machine</h2>
@@ -211,6 +218,8 @@ void Player::UpdateAnimation(const GameTime&amp; gt) {
 <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Game.hpp"
 #include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
 #include "Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp"
+#include "Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
+#include "Microsoft/Xna/Framework/Vector2.hpp"
 #include "Microsoft/Xna/Framework/Input/Keyboard.hpp"
 #include "Microsoft/Xna/Framework/Input/Keys.hpp"
 #include "Microsoft/Xna/Framework/Color.hpp"
@@ -252,6 +261,7 @@ protected:
     }
 
     void Update(GameTime&amp; gt) override {
+        Game::Update(gt);   // components and FrameworkDispatcher
         float dt = static_cast&lt;float&gt;(gt.getElapsedGameTimeProperty().getTotalSecondsProperty());
         auto ks  = Keyboard::GetState();
 
@@ -282,7 +292,7 @@ protected:
         }
     }
 
-    void Draw(const GameTime&amp;) override {
+    void Draw(const GameTime&amp; gt) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color(50, 50, 80));
         sb_-&gt;Begin();
@@ -296,7 +306,7 @@ protected:
                   Rectangle((int)playerPos_.X, (int)playerPos_.Y, 32, 40),
                   Color::Yellow);
         sb_-&gt;End();
-        gd.Present();
+        Game::Draw(gt);   // draws any components; Game presents the frame afterwards (no gd.Present())
     }
 
 private:
@@ -335,7 +345,7 @@ int main() { PlatformerGame game; game.Run(); }</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

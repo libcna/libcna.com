@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 121: Video Playback with VideoPlayer - CNA Tutorials</title>
-  <meta name="description" content="Decoding and drawing video in CNA through FFmpeg: PTS-driven pacing, the video's own audio track, multi-track selection, and the two platform facts that decide whether video is in your build at all.">
+  <meta name="description" content="Decoding and drawing video in CNA through FFmpeg: PTS-driven pacing, the video's own audio track, multi-track selection, and how the optional FFmpeg backend decides whether video decodes in your build at all.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/121-video-playback.html">
   <meta property="og:title"       content="Tutorial 121: Video Playback with VideoPlayer - CNA Tutorials">
-  <meta property="og:description" content="Decoding and drawing video in CNA through FFmpeg: PTS-driven pacing, the video's own audio track, multi-track selection, and the two platform facts that decide whether video is in your build at all.">
+  <meta property="og:description" content="Decoding and drawing video in CNA through FFmpeg: PTS-driven pacing, the video's own audio track, multi-track selection, and how the optional FFmpeg backend decides whether video decodes in your build at all.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/121-video-playback.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 121: Video Playback with VideoPlayer",
   "url": "https://libcna.com/docs/tutorials/121-video-playback.html",
   "datePublished": "2026-08-11",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -92,51 +92,74 @@
         <ul>
           <li>Loading and playing a video, and drawing its frames with <code>SpriteBatch</code>.</li>
           <li>That the video&rsquo;s own audio track plays, and how to choose between tracks.</li>
-          <li><strong>The two platform facts that decide whether video exists in your build at all.</strong></li>
+          <li><strong>How the optional FFmpeg backend decides whether video decodes in your build, and what happens when it is absent.</strong></li>
           <li>How to recognise an unsupported pixel format on sight.</li>
         </ul>
         <p><strong>Before you start</strong> &mdash; <a href="21-spritebatch.html">Tutorial 21: SpriteBatch in Depth</a> covers the drawing call you will use for every frame.</p>
       </div>
 
-      <p>CNA&rsquo;s <code>VideoPlayer</code> is a real decoder, not a placeholder. It opens the file through FFmpeg, decodes video frames and audio, paces playback against presentation timestamps rather than a fixed frame counter, plays the file&rsquo;s <em>own</em> audio track, and lets you switch between tracks in a multi-track file. What it is not is universally available &mdash; and that is the first thing to settle, because it is a build-time question, not a runtime one.</p>
+      <p>CNA&rsquo;s <code>VideoPlayer</code> is a real decoder, not a placeholder. It opens the file through FFmpeg, decodes video frames and audio, paces playback against presentation timestamps rather than a fixed frame counter, plays the file&rsquo;s <em>own</em> audio track, and lets you switch between tracks in a multi-track file. What it is not is universally available &mdash; and that is the first thing to settle, because the decoder is an optional, build-time choice that shows up at run time as an exception.</p>
 
       <h2 id="platforms">Start here: is video in your build?</h2>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Two hard platform facts.</strong></p>
+        <p><strong>Two facts decide it.</strong></p>
         <ol>
-          <li><strong>On Linux and macOS, FFmpeg is a required dependency.</strong> There is no CMake option to turn it off. A configure without the development packages for <code>libavcodec</code>, <code>libavformat</code>, <code>libavutil</code> and <code>libswresample</code> fails outright.</li>
-          <li><strong>On Windows, Emscripten and Android, video is excluded from the build.</strong> The three video translation units are filtered out of the source list. The headers are still there, so code calling <code>Video</code> or <code>VideoPlayer</code> <em>compiles</em> &mdash; and then fails to <strong>link</strong>, with undefined symbols.</li>
+          <li><strong>FFmpeg is an optional backend, chosen with <code>-DCNA_ENABLE_VIDEO=AUTO|ON|OFF</code> (default <code>AUTO</code>).</strong> On Linux and macOS, <code>AUTO</code> uses FFmpeg when the development packages for <code>libavcodec</code>, <code>libavformat</code>, <code>libavutil</code> and <code>libswresample</code> are all found through pkg-config, and quietly builds without it when they are not. <code>ON</code> makes a missing package a configure error, and <code>OFF</code> never uses FFmpeg.</li>
+          <li><strong>On Windows (MSVC and MinGW), Emscripten, Android and iOS, FFmpeg is never used.</strong> <code>ON</code> there is a configure error and <code>AUTO</code> falls back to the no-decoder build.</li>
         </ol>
       </div>
 
-      <p>The second point is the one that catches people. There is no runtime &ldquo;is video available&rdquo; query to branch on, because the symbols simply are not in the binary. Guard at build time with your own macro:</p>
+      <p>Without the backend, <code>Video</code> and <code>VideoPlayer</code> still exist and still <em>link</em> on every target, so your code compiles and links everywhere. What changes is behaviour: constructing a file-backed <code>Video</code> for a file that exists, and calling <code>VideoPlayer::Play()</code>, throw <code>System::NotSupportedException</code> (&ldquo;built without the optional FFmpeg video backend&rdquo;). Metadata-only <code>Video</code> objects and the XNB <code>VideoReader</code> keep working, so a video asset can be <em>loaded</em> anywhere and simply cannot be <em>played</em> without a decoder.</p>
 
-      <pre><code class="language-cpp">#if !defined(_WIN32) &amp;&amp; !defined(__EMSCRIPTEN__) &amp;&amp; !defined(__ANDROID__)
-    #define GAME_HAS_VIDEO 1
-#endif</code></pre>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Target</th><th scope="col"><code>CNA_ENABLE_VIDEO=AUTO</code></th><th scope="col"><code>ON</code></th><th scope="col">Run-time video behaviour</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">Linux native</th><td>FFmpeg backend if the four packages are found, else no decoder</td><td>requires them (configure error otherwise)</td><td>decodes, or <code>NotSupportedException</code> in a no-decoder build</td></tr>
+          <tr><th scope="row">macOS native</th><td>same (for example Homebrew packages)</td><td>same</td><td>same; the optional split itself has not been exercised on macOS by CNA&rsquo;s author</td></tr>
+          <tr><th scope="row">Windows (MSVC, MinGW)</th><td>no decoder</td><td>configure error</td><td><code>NotSupportedException</code> for file-backed video; metadata-only <code>Video</code> works</td></tr>
+          <tr><th scope="row">Android, Emscripten, iOS</th><td>no decoder</td><td>configure error</td><td>same</td></tr>
+        </tbody>
+      </table>
+      </div>
 
-      <p>On Debian and Ubuntu the prerequisites are:</p>
+      <p>So there is both a build-time and a run-time way to guard. At build time, CNA defines <code>CNA_VIDEO_AVAILABLE</code> (and the older <code>CNA_FFMPEG_AVAILABLE</code>) on the targets that link the CNA framework when the backend is present. At run time, catch the exception and fall back to a still image or a skip:</p>
 
-      <pre><code class="language-bash">sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswresample-dev</code></pre>
+      <pre><code class="language-cpp">#ifdef CNA_VIDEO_AVAILABLE
+    // this build can decode video
+#else
+    // this build has no decoder: show a still image instead
+#endif
 
-      <p>See <a href="124-web-gotchas.html">Tutorial 124: WebAssembly gotchas</a> for the web side of this, alongside the two other things that behave differently in the browser.</p>
+try {
+    player_.Play(&amp;*intro_);
+} catch (const System::NotSupportedException&amp;) {
+    GoToMainMenu();   // no decoder in this build
+}</code></pre>
+
+      <p>On Debian and Ubuntu the prerequisites for a Linux build with video are:</p>
+
+      <pre><code class="language-bash">sudo apt install libavcodec-dev libavformat-dev libavutil-dev libswresample-dev
+cmake -S . -B build -DCNA_ENABLE_VIDEO=ON     # ON: a missing package is an error, not a silent fallback</code></pre>
+
+      <p>See <a href="124-web-gotchas.html">Tutorial 124: WebAssembly gotchas</a> for the web side of this, alongside the other things that behave differently in the browser.</p>
 
       <h2 id="loading">Loading a video</h2>
 
-      <p>There are two routes. Through the content manager, if the file lives in your content root:</p>
+      <p>There are two routes. Through the content manager, if the file lives in your content root (from a <code>Game</code> the manager is <code>getContentProperty()</code>, and <code>Load</code> returns the <code>Video</code> by value):</p>
 
       <pre><code class="language-cpp">// Content/videos/intro.mp4
-Media::Video intro = Content.Load&lt;Media::Video&gt;("videos/intro");</code></pre>
+Media::Video intro = getContentProperty().Load&lt;Media::Video&gt;("videos/intro");</code></pre>
 
-      <p>The loose-file reader recognises <code>.mp4</code>, <code>.ogv</code>, <code>.webm</code>, <code>.mkv</code>, <code>.avi</code> and <code>.mov</code>, tried in that order when you omit the extension. Note that the reader is registered only on the platforms where video is compiled in.</p>
+      <p>The loose-file reader recognises <code>.mp4</code>, <code>.ogv</code>, <code>.webm</code>, <code>.mkv</code>, <code>.avi</code> and <code>.mov</code>, tried in that order when you omit the extension. The reader is registered in every build, so <code>Load</code> works everywhere; in a no-decoder build it throws <code>System::NotSupportedException</code> for an existing file, exactly like the direct constructor below. Video can also be built ahead of time: the <code>cna-content</code> tool turns those media files into a <code>Video</code> asset (metadata plus a reference to the media file, which is deployed beside it), and the XNB <code>VideoReader</code> reads such an asset without needing a decoder.</p>
 
       <p>Or construct one directly from a path, which is often more convenient for a video that is not a shipped asset:</p>
 
       <pre><code class="language-cpp">CNAEXT Video(std::string fileName, Graphics::GraphicsDevice* device);</code></pre>
 
-      <p>This constructor probes the file immediately and throws <code>System::IO::FileNotFoundException</code> if there is nothing there. A second, seven-argument constructor exists for the XNB path, where duration, dimensions, frame rate and soundtrack type come from the asset metadata rather than the file.</p>
+      <p>This constructor probes the file immediately. It throws <code>System::IO::FileNotFoundException</code> if there is nothing there and, in a build without the FFmpeg backend, <code>System::NotSupportedException</code> if there is. A second, seven-argument constructor exists for the XNB path, where duration, dimensions, frame rate and soundtrack type come from the asset metadata rather than the file. Note that <code>Video</code> has <strong>no default constructor</strong>, so a class that holds one as a member needs <code>std::optional&lt;Video&gt;</code> (or a pointer) and creates it when the file is known.</p>
 
       <h2 id="playing">Playing and drawing</h2>
 
@@ -150,18 +173,33 @@ using namespace Microsoft::Xna::Framework::Media;
 
 class IntroScreen
 {
-    Video       intro_;
-    VideoPlayer player_;
+    std::optional&lt;Video&gt; intro_;        // Video has no default constructor
+    VideoPlayer          player_;
+    bool                 hasVideo_ = false;
 
-    void Start()
+    void Start(Content::ContentManager&amp; content)
     {
-        player_.setIsLoopedProperty(false);
-        player_.setVolumeProperty(1.0f);
-        player_.Play(&amp;intro_);
+        try
+        {
+            intro_ = content.Load&lt;Video&gt;("videos/intro");
+            player_.setIsLoopedProperty(false);
+            player_.setVolumeProperty(1.0f);
+            player_.Play(&amp;*intro_);       // throws NotSupportedException without a decoder
+            hasVideo_ = true;
+        }
+        catch (const System::NotSupportedException&amp;)
+        {
+            hasVideo_ = false;            // no decoder in this build: skip the intro
+        }
     }
 
     void Draw(Graphics::GraphicsDevice&amp; device, Graphics::SpriteBatch&amp; spriteBatch)
     {
+        if (!hasVideo_)
+        {
+            return;
+        }
+
         Graphics::Texture2D* frame = player_.GetTexture();
         if (frame == nullptr)
         {
@@ -239,7 +277,7 @@ player_.Play(&amp;intro_);</code></pre>
       <table>
         <thead><tr><th>Member</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>Play(Video*)</code></td><td>Also throws <code>System::InvalidOperationException</code> if the <code>Video</code>&rsquo;s declared width, height or frame rate disagrees with what the file actually reports.</td></tr>
+          <tr><td><code>Play(Video*)</code></td><td>Throws <code>System::NotSupportedException</code> in a build without the FFmpeg backend, and <code>System::InvalidOperationException</code> if the <code>Video</code>&rsquo;s declared width, height or frame rate disagrees with what the file actually reports.</td></tr>
           <tr><td><code>Stop()</code>, <code>Pause()</code>, <code>Resume()</code></td><td>All throw <code>System::ObjectDisposedException</code> after <code>Dispose()</code>.</td></tr>
           <tr><td><code>getPlayPositionProperty()</code></td><td>Read-only &mdash; there is <strong>no seek</strong>. You cannot set the play position.</td></tr>
           <tr><td><code>get/setIsLoopedProperty</code></td><td>Loops by seeking back to the start at EOF.</td></tr>
@@ -260,10 +298,10 @@ player_.Play(&amp;intro_);</code></pre>
 
       <h2 id="checklist">Before you ship a video</h2>
       <ul>
-        <li>Is every <code>VideoPlayer</code> reference behind a build-time guard, so Windows and web builds still link?</li>
+        <li>Does every path that can start a video handle <code>System::NotSupportedException</code> (or sit behind <code>CNA_VIDEO_AVAILABLE</code>), so Windows, web, mobile and no-FFmpeg desktop builds still start the game?</li>
         <li>Does the video actually play, rather than showing magenta?</li>
         <li>Can the player skip it, and does the skip stop the player rather than just hiding it?</li>
-        <li>Does your build machine have the four FFmpeg dev packages, and does your CI?</li>
+        <li>If you need video on Linux or macOS, do your build machine and your CI have the four FFmpeg dev packages, and do you configure with <code>-DCNA_ENABLE_VIDEO=ON</code> so a missing package fails the build instead of silently dropping video?</li>
         <li>Have you tested what happens on a machine with no audio device?</li>
       </ul>
 
@@ -286,7 +324,7 @@ player_.Play(&amp;intro_);</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

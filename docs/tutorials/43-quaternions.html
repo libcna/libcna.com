@@ -21,7 +21,7 @@
   "headline": "Tutorial 43: Quaternions for Smooth Rotation",
   "url": "https://libcna.com/docs/tutorials/43-quaternions.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -123,7 +123,8 @@ Quaternion q = Quaternion::CreateFromAxisAngle(Vector3::Up,
 Quaternion identity = Quaternion::Identity; // (0, 0, 0, 1)</code></pre>
 
         <h2>CreateFromYawPitchRoll</h2>
-        <pre><code class="language-cpp">// Convert Euler angles to a quaternion (applied as Yaw * Pitch * Roll)
+        <pre><code class="language-cpp">// Convert Euler angles to a quaternion. The result is qYaw * qPitch * qRoll, so (by the
+// composition rule in the next section) the roll is applied first, then pitch, then yaw.
 float yaw   = MathHelper::ToRadians(90.0f);  // rotate around Y
 float pitch = MathHelper::ToRadians(30.0f);  // rotate around X
 float roll  = MathHelper::ToRadians(0.0f);   // rotate around Z
@@ -131,14 +132,15 @@ float roll  = MathHelper::ToRadians(0.0f);   // rotate around Z
 Quaternion q2 = Quaternion::CreateFromYawPitchRoll(yaw, pitch, roll);</code></pre>
 
         <h2>Multiply &mdash; compose rotations</h2>
-        <p>Multiplying quaternions combines their rotations. Order matters: <code>q1 * q2</code> applies q1 first, then q2 (same as matrix multiplication with row vectors).</p>
+        <p>Multiplying quaternions combines their rotations, and order matters. <code>operator*</code> (and <code>Quaternion::Multiply</code>) is the ordinary Hamilton product, so rotating a vector by <code>q1 * q2</code> applies <strong>q2 first, then q1</strong>. Equivalently, <code>Matrix::CreateFromQuaternion(q1 * q2)</code> equals <code>CreateFromQuaternion(q2) * CreateFromQuaternion(q1)</code> with CNA&rsquo;s row-vector matrices. If you would rather read the arguments in the order the rotations happen, use <code>Quaternion::Concatenate(first, second)</code>, which is documented as &ldquo;value1 followed by value2&rdquo; and equals <code>second * first</code>.</p>
         <pre><code class="language-cpp">Quaternion spinY   = Quaternion::CreateFromAxisAngle(Vector3::Up,    0.01f);
 Quaternion tiltX   = Quaternion::CreateFromAxisAngle(Vector3::Right, 0.005f);
 
-// Apply tilt first, then spin (think: local then world)
-Quaternion combined = tiltX * spinY;
+// Apply tilt first, then spin
+Quaternion combined = Quaternion::Concatenate(tiltX, spinY);  // same as spinY * tiltX
 
-// Accumulate orientation each frame
+// Accumulate orientation each frame: `combined` is applied first (in the object's own
+// frame), then the orientation built up so far
 orientation_ = Quaternion::Normalize(orientation_ * combined);</code></pre>
 
         <h2>Slerp &mdash; smooth interpolation</h2>
@@ -151,7 +153,7 @@ float t = 0.5f; // halfway through the rotation
 Quaternion mid = Quaternion::Slerp(startRot, endRot, t);
 // mid ≈ 90-degree rotation around Y</code></pre>
 
-        <h2>ToMatrix &mdash; convert for rendering</h2>
+        <h2>CreateFromQuaternion &mdash; convert for rendering</h2>
         <pre><code class="language-cpp">Quaternion q3 = Quaternion::CreateFromAxisAngle(Vector3::Forward, 1.2f);
 Matrix rotMat = Matrix::CreateFromQuaternion(q3);
 
@@ -169,8 +171,8 @@ Quaternion conj = Quaternion::Conjugate(q4);
 // Inverse: for unit quaternions, Inverse == Conjugate
 Quaternion inv  = Quaternion::Inverse(q4);
 
-// Applying q then inv gets you back to identity
-Quaternion result = q4 * inv; // ≈ Quaternion::Identity</code></pre>
+// A rotation followed by its inverse gets you back to identity
+Quaternion result = q4 * inv; // ≈ Quaternion::Identity (close, not bit-exact: compare with a tolerance)</code></pre>
 
         <h2>Normalize</h2>
         <p>Quaternion multiplication can accumulate floating-point error over many frames. Normalise periodically (every frame is fine) to keep the rotation pure:</p>
@@ -189,6 +191,7 @@ protected:
         Game::Initialize();
         orientation_ = Quaternion::Identity;
         targetOrient_ = Quaternion::Identity;
+        startOrient_ = Quaternion::Identity;
         slerpT_ = 1.0f; // no pending interpolation
     }
 
@@ -202,14 +205,17 @@ protected:
         float dt = static_cast&lt;float&gt;(gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty());
         auto kb = Keyboard::GetState();
 
-        // Queue a new target orientation on keypress
+        // Queue a new target orientation on keypress. Remember where the tween starts:
+        // Slerp must always run from this fixed start orientation to the target.
         if (kb.IsKeyDown(Keys::Left) &amp;&amp; slerpT_ &gt;= 1.0f) {
+            startOrient_  = orientation_;
             targetOrient_ = orientation_ *
                 Quaternion::CreateFromAxisAngle(Vector3::Up,
                     MathHelper::ToRadians(-90.0f));
             slerpT_ = 0.0f;
         }
         if (kb.IsKeyDown(Keys::Up) &amp;&amp; slerpT_ &gt;= 1.0f) {
+            startOrient_  = orientation_;
             targetOrient_ = orientation_ *
                 Quaternion::CreateFromAxisAngle(Vector3::Right,
                     MathHelper::ToRadians(-45.0f));
@@ -219,7 +225,9 @@ protected:
         // Advance slerp
         if (slerpT_ &lt; 1.0f) {
             slerpT_ = std::min(1.0f, slerpT_ + dt * 2.0f); // 0.5s transition
-            orientation_ = Quaternion::Slerp(orientation_, targetOrient_, slerpT_);
+            // (Slerping from the already-advanced orientation_ with a growing t would
+            // ease out instead of turning at constant angular velocity.)
+            orientation_ = Quaternion::Slerp(startOrient_, targetOrient_, slerpT_);
             orientation_ = Quaternion::Normalize(orientation_);
         }
     }
@@ -243,7 +251,7 @@ protected:
             pass.Apply();
             gd.DrawPrimitives(PrimitiveType::TriangleList, 0, primitiveCount_);
         }
-        gd.Present();
+        // (Game presents the frame after Draw() returns; no gd.Present() needed.)
     }
 
 private:
@@ -252,6 +260,7 @@ private:
     std::unique_ptr&lt;VertexBuffer&gt; vb_;
     int                           primitiveCount_ = 0;
     Quaternion                    orientation_{0.0f, 0.0f, 0.0f, 1.0f};
+    Quaternion                    startOrient_{0.0f, 0.0f, 0.0f, 1.0f};
     Quaternion                    targetOrient_{0.0f, 0.0f, 0.0f, 1.0f};
     float                         slerpT_ = 1.0f;
 };</code></pre>
@@ -293,7 +302,7 @@ Matrix view = Matrix::CreateLookAt(
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

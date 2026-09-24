@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 97: Networking and Multiplayer Basics - CNA</title>
-  <meta name="description" content="CNA ships Microsoft::Xna::Framework::Net: NetworkSession, LocalNetworkGamer and PacketReader/PacketWriter over real ENet peer-to-peer UDP. Hosting, LAN discovery, working SimulatedLatency/SimulatedPacketLoss, and the honest limits.">
+  <meta name="description" content="CNA ships Microsoft::Xna::Framework::Net: NetworkSession, LocalNetworkGamer and PacketReader/PacketWriter over real ENet peer-to-peer UDP. Hosting, LAN discovery, best-effort host migration, working SimulatedLatency/SimulatedPacketLoss, and the honest limits.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/97-networking.html">
   <meta property="og:title"       content="Tutorial 97: Networking and Multiplayer Basics - CNA">
-  <meta property="og:description" content="CNA ships Microsoft::Xna::Framework::Net: NetworkSession, LocalNetworkGamer and PacketReader/PacketWriter over real ENet peer-to-peer UDP. Hosting, LAN discovery, working SimulatedLatency/SimulatedPacketLoss, and the honest limits.">
+  <meta property="og:description" content="CNA ships Microsoft::Xna::Framework::Net: NetworkSession, LocalNetworkGamer and PacketReader/PacketWriter over real ENet peer-to-peer UDP. Hosting, LAN discovery, best-effort host migration, working SimulatedLatency/SimulatedPacketLoss, and the honest limits.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/97-networking.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 97: Networking and Multiplayer Basics",
   "url": "https://libcna.com/docs/tutorials/97-networking.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -192,7 +192,10 @@ session-&gt;Dispose();</code></pre>
           There are richer <code>Create()</code> overloads taking <code>privateGamerSlots</code> and a
           <code>NetworkSessionProperties</code> to advertise, plus an overload taking an explicit
           <code>std::vector&lt;SignedInGamer*&gt;</code>. Each has a matching
-          <code>BeginCreate()</code>/<code>EndCreate()</code> asynchronous pair.
+          <code>BeginCreate()</code>/<code>EndCreate()</code> asynchronous pair. The XNA limits are available as
+          <code>NetworkSession::MaxSupportedGamers</code> (31) and <code>NetworkSession::MaxPreviousGamers</code> (100), and the
+          gamer limit you request is preserved. Only <code>SystemLink</code> and <code>Local</code> sessions can be created:
+          asking for <code>PlayerMatch</code> or <code>Ranked</code> throws (see below).
         </p>
 
         <h2>Finding and joining a session</h2>
@@ -204,10 +207,11 @@ session-&gt;Dispose();</code></pre>
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
           <p><strong>Discovery is gated to <code>SystemLink</code>, and does nothing on the web.</strong>
-          <code>Find()</code> returns an empty collection for every other session type &mdash; that is the gate
-          working, not a network failure &mdash; and it does nothing at all under Emscripten, where a browser page
-          cannot open a UDP socket. Do not build a session browser that treats "no results" as "still searching"
-          on those paths.</p>
+          <code>Find()</code> with <code>NetworkSessionType::Local</code> throws <code>ArgumentException</code> (a local session is
+          never discovered), and with <code>PlayerMatch</code> or <code>Ranked</code> it throws
+          <code>GamerServices::GamerServicesNotAvailableException</code> (see the status table). Under Emscripten it does nothing at all,
+          because a browser page cannot open a UDP socket. Do not build a session browser that treats "no results" as "still searching"
+          on the web path.</p>
         </div>
         <div class="callout callout--note">
           <span class="callout-icon">&#9432;</span>
@@ -399,8 +403,8 @@ session-&gt;ResetReady();           // clears every gamer's IsReady flag</code><
               <td>Fully functional as a single-process session: gamers, events, state transitions, and the local packet queue all work. No sockets involved.</td>
             </tr>
             <tr>
-              <td><code>PlayerMatch</code>, <code>Ranked</code></td>
-              <td>Create and behave as sessions, but no networking is started. Correctly so &mdash; matchmaking and ranked play required Xbox Live, which has no open replacement.</td>
+              <td><code>PlayerMatch</code>, <code>Ranked</code>, <code>JoinInvited</code></td>
+              <td><strong>Refused.</strong> <code>Create</code>/<code>BeginCreate</code> and <code>Find</code>/<code>BeginFind</code> for these session types throw <code>GamerServices::GamerServicesNotAvailableException</code> naming the missing matchmaking service; <code>JoinInvited</code>/<code>BeginJoinInvited</code> always throw, and <code>EndJoinInvited</code> refuses every result (through the C API these become <code>CNA_RESULT_NOT_SUPPORTED</code>). Matchmaking, ranked play and invitations required Xbox Live, which has no open replacement, and the static <code>InviteAccepted</code> event is declared but never raised. At alpha.1 these types were accepted and silently did nothing; code that selected them now needs <code>SystemLink</code> or <code>Local</code>.</td>
             </tr>
             <tr>
               <td>Voice chat</td>
@@ -416,7 +420,7 @@ session-&gt;ResetReady();           // clears every gamer's IsReady flag</code><
             </tr>
             <tr>
               <td><code>AllowHostMigration</code></td>
-              <td>Stored and readable, but migration is not implemented. If the host leaves, the session ends.</td>
+              <td><strong>Implemented, best effort, off by default.</strong> With the default <code>false</code> the session ends when its host disconnects (XNA/FNA&rsquo;s reference behaviour). Set to <code>true</code> and every surviving peer independently computes the same new host &mdash; the lowest remaining wire id &mdash; and either promotes itself or reconnects to the promoted peer, and <code>HostChanged</code> is raised. It is a full reconnect, not a seamless hand-over: the remote-gamer roster is rebuilt (fresh <code>NetworkGamer*</code> objects, real <code>GamerLeft</code> and <code>GamerJoined</code> events), and the session still ends if no reachable host remains.</td>
             </tr>
             <tr>
               <td><code>SimulatedLatency</code>, <code>SimulatedPacketLoss</code></td>
@@ -432,8 +436,12 @@ session-&gt;ResetReady();           // clears every gamer's IsReady flag</code><
         <p>
           In short: build LAN multiplayer on <code>SystemLink</code>, prototype single-process logic on
           <code>Local</code>, test your netcode against the real <code>SimulatedLatency</code>/<code>SimulatedPacketLoss</code>
-          dials, and do not plan around voice, host migration or matchmaking.
+          dials, treat host migration as best-effort (it needs <code>AllowHostMigration</code> and a rebuilt roster), and do not plan around voice or matchmaking.
         </p>
+        <div class="callout callout--note">
+          <span class="callout-icon">&#9432;</span>
+          <p><strong>Changed since alpha.1.</strong> The join handshake now completes before <code>Join()</code> returns; the requested gamer limit is preserved; changes to a session&rsquo;s mutable <code>NetworkSessionProperties</code> replicate to peers; sends that reuse one <code>PacketWriter</code> are trimmed to the bytes written; and <code>PacketReader::ReadColor()</code> now reads the four bytes that <code>PacketWriter::Write(Color)</code> writes (alpha.1 read sixteen). That last one is a wire-format fix: a peer built from alpha.1 and a peer built from this snapshot cannot exchange <code>Color</code> packets, so run both ends of a test from the same revision.</p>
+        </div>
 
         <h2>Lockstep vs client-server</h2>
         <p>
@@ -501,8 +509,8 @@ Vector2 InterpolateRemote(const Vector2&amp; prev, const Vector2&amp; next,
 
         <h2>Working code to read next</h2>
         <p>
-          Everything on this page is drawn from CNA's own networking demos. They compile and run against the
-          current source, so they are the authoritative reference when this page and the code disagree:
+          Everything on this page is drawn from CNA's own networking demos. They live in CNA's own tree and are built with it
+          (when <code>CNA_ENABLE_NET</code> is on and the target is not Emscripten), so they are the authoritative reference when this page and the code disagree:
         </p>
         <div class="table-wrap">
         <table>
@@ -543,7 +551,7 @@ Vector2 InterpolateRemote(const Vector2&amp; prev, const Vector2&amp; next,
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

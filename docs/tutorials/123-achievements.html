@@ -21,7 +21,7 @@
   "headline": "Tutorial 123: Achievements and Leaderboards with Local Persistence",
   "url": "https://libcna.com/docs/tutorials/123-achievements.html",
   "datePublished": "2026-08-11",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -98,7 +98,7 @@
         <p><strong>Before you start</strong> &mdash; <a href="19-save-load.html">Tutorial 19: Saving and Loading Data</a> covers <code>StorageDevice</code>, which decides where this data is written.</p>
       </div>
 
-      <p>XNA&rsquo;s <code>GamerServices</code> namespace was a front end for Xbox Live. CNA has no online service and is never going to grow one, so a fair question is what is left. The answer is more than you would expect: <strong>achievements and leaderboards are backed by a real local implementation that genuinely persists</strong>, written as JSON under the platform&rsquo;s preferences directory and reloaded by the next run of your game.</p>
+      <p>XNA&rsquo;s <code>GamerServices</code> namespace was a front end for Xbox Live. CNA has no online service and is never going to grow one, so a fair question is what is left. The answer is more than you would expect: <strong>achievements and leaderboards are backed by a real local implementation that genuinely persists</strong>, written as JSON under the per-application storage root that <code>StorageDevice</code> resolves and reloaded by the next run of your game (on desktop and mobile targets; on the web nothing is persisted &mdash; see below).</p>
 
       <p>That is a meaningful difference from the no-op shim other reimplementations ship. It is enough to build and test a real achievement system against, and enough to ship a single-player game with a working local leaderboard. The parts that are inert are inert honestly, and they are listed at the bottom of this page.</p>
 
@@ -117,7 +117,9 @@ MyGame::MyGame()
     // Decides the on-disk directory everything below is written to. Set it once, early.
     Storage::StorageDevice::SetAppNameEXT("MyGame");
 
-    gamerServices_ = new GamerServicesComponent(*this);
+    // gamerServices_ is a std::shared_ptr&lt;GamerServicesComponent&gt; member: the CNAEXT shared_ptr overload of
+    // Add() makes the components collection keep it alive.
+    gamerServices_ = std::make_shared&lt;GamerServicesComponent&gt;(*this);
     getComponentsProperty().Add(gamerServices_);
 }
 
@@ -127,7 +129,7 @@ void MyGame::Initialize()
     localGamer_ = (*Gamer::getSignedInGamersProperty())[0];
 }</code></pre>
 
-      <p>Note the shape: <code>Gamer::getSignedInGamersProperty()</code> returns a <em>pointer</em> to a <code>SignedInGamerCollection</code>, so you dereference it before indexing. Indexing by <code>int</code> gives you a <code>SignedInGamer*</code>; there is also an overload taking a <code>PlayerIndex</code>, which returns <code>nullptr</code> for an empty slot. Count with <code>getCountProperty()</code>, or use range-for.</p>
+      <p>The component is driven by the base <code>Game::Update</code>, so your own <code>Update</code> override must call <code>Game::Update(gameTime)</code> (see <a href="47-game-component.html">Tutorial 47</a>). Note the shape: <code>Gamer::getSignedInGamersProperty()</code> returns a <em>pointer</em> to a <code>SignedInGamerCollection</code>, so you dereference it before indexing. Indexing by <code>int</code> gives you a <code>SignedInGamer*</code>; there is also an overload taking a <code>PlayerIndex</code>, which returns <code>nullptr</code> for an empty slot. Count with <code>getCountProperty()</code>, or use range-for.</p>
 
       <p>There is no sign-in step to perform. The dispatcher creates a set of local gamers when it initialises, so index 0 is available from <code>Initialize()</code> onwards and achievements work immediately. If you want your own gamer identities &mdash; local profiles, say &mdash; publish them with <code>Gamer::setSignedInGamersProperty()</code>.</p>
 
@@ -267,7 +269,7 @@ delete result;   // the IAsyncResult is yours to free</code></pre>
 
       <h2 id="storage">Where the data lives</h2>
 
-      <p>Everything is written under the platform preferences directory that <code>StorageDevice</code> resolves through <code>SDL_GetPrefPath</code>, in a <code>GamerServices</code> subdirectory:</p>
+      <p>Everything is written under the storage root that <code>StorageDevice::GetStorageRootEXT()</code> reports, in a <code>GamerServices</code> subdirectory. That root is <em>not</em> <code>SDL_GetPrefPath</code>: it comes from <code>$XDG_DATA_HOME</code> (or <code>~/.local/share</code>) on Linux, <code>%LOCALAPPDATA%</code> on Windows, <code>~/Library/Application Support</code> on macOS, and the app-private files directory on Android, each followed by an application folder <code>&lt;app&gt;</code>; when none of those is available it falls back to <code>./&lt;app&gt;</code>. <code>&lt;app&gt;</code> is the literal name <code>game</code> unless you called <code>StorageDevice::SetAppNameEXT("MyGame")</code>, as shown above:</p>
 
       <div class="table-wrap">
       <table>
@@ -287,7 +289,7 @@ delete result;   // the IAsyncResult is yours to free</code></pre>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>None of this persists on the web.</strong> Under Emscripten <code>SDL_GetPrefPath</code> resolves into an in-memory filesystem that is discarded on page reload, and CNA mounts nothing durable behind it. Achievements will appear to work for the length of a session and then vanish. See <a href="124-web-gotchas.html">Tutorial 124</a>.</p>
+        <p><strong>None of this persists on the web.</strong> CNA mounts no persistent file system in a WebAssembly build, so anything <code>StorageDevice</code> or GamerServices writes lives in the default in-memory file system and is lost when the page reloads. Achievements will appear to work for the length of a session and then vanish; if you need them to last, persist them yourself through the browser&rsquo;s own storage. See <a href="124-web-gotchas.html">Tutorial 124</a>.</p>
       </div>
 
       <h2 id="inert">What does nothing</h2>
@@ -357,7 +359,7 @@ delete result;   // the IAsyncResult is yours to free</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

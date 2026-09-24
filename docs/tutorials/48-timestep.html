@@ -21,7 +21,7 @@
   "headline": "Tutorial 48: Fixed vs Variable Timestep",
   "url": "https://libcna.com/docs/tutorials/48-timestep.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -93,7 +93,7 @@
             <li>What <code>IsFixedTimeStep</code> and <code>TargetElapsedTime</code> actually do.</li>
             <li>How a fixed step catches up after a slow frame.</li>
             <li>Reading <code>ElapsedGameTime</code> for a variable step, and which model suits which game.</li>
-            <li>Running physics on a fixed step while interpolating the render.</li>
+            <li>Running physics on a fixed step, and how to interpolate the render when you need smoother motion than the update rate.</li>
           </ul>
           <p><strong>Before you start</strong> &mdash; <a href="05-game-loop.html">Tutorial 05: The Game Loop</a> &mdash; this is the detailed treatment of the timing model introduced there.</p>
         </div>
@@ -104,11 +104,11 @@
         <pre><code class="language-cpp">class MyGame final : public Game {
 public:
     MyGame() : graphics_(this) {
-        // Fixed timestep: Update is called exactly 60 times per second
+        // Fixed timestep (the default): Update runs once per 1/60 s step
         setIsFixedTimeStepProperty(true);
         setTargetElapsedTimeProperty(TimeSpan::FromSeconds(1.0 / 60.0));
 
-        // Variable timestep: Update is called as fast as possible
+        // Variable timestep: Update runs once per frame, with the measured elapsed time
         // setIsFixedTimeStepProperty(false);
     }
 
@@ -127,14 +127,23 @@ setTargetElapsedTimeProperty(TimeSpan::FromSeconds(1.0 / 30.0));
 setTargetElapsedTimeProperty(TimeSpan::FromSeconds(1.0 / 120.0));</code></pre>
 
         <h2>How fixed timestep works</h2>
-        <p>With <code>IsFixedTimeStep = true</code>, the game loop accumulates real elapsed time and calls <code>Update</code> repeatedly with the fixed delta until the accumulator is drained. <code>Draw</code> is called once after. If the game cannot keep up, <code>IsRunningSlowly</code> is set on the <code>GameTime</code>.</p>
+        <p>With <code>IsFixedTimeStep = true</code> each pass of the game loop (a &ldquo;tick&rdquo;) waits until at least one <code>TargetElapsedTime</code> of real time has accumulated, then calls <code>Update</code> once per whole step in the accumulator, and finally calls <code>Draw</code> <strong>once</strong>. If a frame ran long, the next tick calls <code>Update</code> several times in a row to catch up (the accumulated time is capped at <code>Game::MaxElapsedTime</code>, 500 ms, so a long stall cannot trigger an endless catch-up). Because <code>Draw</code> runs once per tick, <code>Draw</code> can never run more often than <code>Update</code> in fixed mode: on a 144 Hz display the game still updates and draws 60 times per second unless you lower <code>TargetElapsedTime</code>.</p>
+        <p>When the game is falling behind &mdash; the accumulated update lag reaches five steps &mdash; <code>GameTime::getIsRunningSlowlyProperty()</code> becomes <code>true</code>, and it clears again once the lag is gone.</p>
         <pre><code class="language-cpp">void Update(GameTime&amp; gameTime) override {
-    if (gameTime.IsRunningSlowly) {
+    Game::Update(gameTime);   // updates registered components (see Tutorial 47)
+
+    if (gameTime.getIsRunningSlowlyProperty()) {
         // Skip expensive optional work (particle updates, LOD generation, etc.)
     }
-    // gameTime.getElapsedGameTimeProperty() is always exactly TargetElapsedTime here
-    float dt = static_cast&lt;float&gt;(gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty()); // always 1/60
+    // ElapsedGameTime is exactly TargetElapsedTime in every fixed-step Update, except the
+    // very first one of the game, which sees TimeSpan::Zero (XNA's game clock).
+    float dt = static_cast&lt;float&gt;(gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty()); // 1/60, or 0 on the first Update
 }</code></pre>
+        <p>Two details of that clock follow XNA 4.0 (they changed after alpha.1, when CNA still copied FNA&rsquo;s): the first <code>Update</code> runs with <code>ElapsedGameTime == 0</code>, and <code>TotalGameTime</code> is the game time <em>before</em> the current step, so it advances only after <code>Update</code> returns. Inside <code>Draw</code>, <code>ElapsedGameTime</code> is <code>TargetElapsedTime</code> multiplied by the number of steps that ran in this tick (1 on a normal frame, more after a catch-up).</p>
+        <div class="callout callout--warn">
+          <span class="callout-icon">&#9888;</span>
+          <p><strong>Web builds use their own frame body.</strong> Under Emscripten the browser drives the loop from <code>requestAnimationFrame</code>, and CNA&rsquo;s frame callback keeps a separate fixed-step accumulator (frame time clamped to 250 ms). It ignores <code>IsFixedTimeStep = false</code>, always passes exactly the target step, never sets <code>IsRunningSlowly</code>, advances <code>TotalGameTime</code> <em>before</em> calling <code>Update</code>, and gives the first update a full step instead of zero. Code that must behave identically on the web should not depend on the first-update zero or on a variable step arriving; the accumulator pattern later in this tutorial works with both.</p>
+        </div>
 
         <h2>Variable timestep with ElapsedGameTime</h2>
         <pre><code class="language-cpp">// With IsFixedTimeStep = false:
@@ -142,8 +151,9 @@ void Update(GameTime&amp; gameTime) override {
     float dt = static_cast&lt;float&gt;(gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty());
     // dt varies each frame (e.g. 0.014 to 0.020 seconds on a 60Hz display)
 
-    player_.position += player_.velocity * dt; // frame-rate independent
+    player_.position = player_.position + player_.velocity * dt; // frame-rate independent
 }</code></pre>
+        <p>In variable mode <code>Update</code> and <code>Draw</code> each run once per loop pass, as fast as the platform allows. <code>dt</code> is the measured time since the previous pass; after a long pause, such as loading, call <code>Game::ResetElapsedTime()</code> so the next <code>Update</code> does not see one enormous <code>dt</code>. (<code>pos += vel * dt</code> also compiles, but compound assignment on vectors is a CNA extension, not XNA.)</p>
 
         <h2>When to use each</h2>
         <div class="table-wrap">
@@ -156,18 +166,18 @@ void Update(GameTime&amp; gameTime) override {
         </table>
         </div>
 
-        <h2>Physics simulation with fixed step, rendering with interpolation</h2>
-        <p>The gold standard is to run physics at a fixed rate and render at the display rate with interpolation. This gives stable physics and tear-free rendering.</p>
+        <h2>Physics on the fixed step</h2>
+        <p>The built-in fixed step already gives you what a physics simulation needs: every <code>Update</code> integrates the same <code>dt</code>, so the result does not depend on the frame rate. For most games that is all you need, and it is the simplest thing to get right.</p>
         <pre><code class="language-cpp">struct PhysicsBody {
     Vector3 position;
-    Vector3 prevPosition; // position one physics step ago
+    Vector3 prevPosition; // used by the interpolation variant below
     Vector3 velocity;
 };
 
 class PhysicsDemo final : public Game {
 public:
     PhysicsDemo() : graphics_(this) {
-        // Fixed physics at 60 Hz; Draw is uncapped (variable)
+        // Fixed physics at 60 Hz (this is also the default)
         setIsFixedTimeStepProperty(true);
         setTargetElapsedTimeProperty(TimeSpan::FromSeconds(1.0 / 60.0));
     }
@@ -175,9 +185,8 @@ public:
 protected:
     void Initialize() override {
         Game::Initialize();
-        body_.position     = Vector3(0, 10, 0);
-        body_.prevPosition = body_.position;
-        body_.velocity     = Vector3(2, 0, 0);
+        body_.position = Vector3(0, 10, 0);
+        body_.velocity = Vector3(2, 0, 0);
     }
 
     void LoadContent() override {
@@ -186,12 +195,12 @@ protected:
         // ... build sphere mesh ...
     }
 
-    // Called at exactly 60 Hz regardless of render speed
+    // One call per 1/60 s step (after a slow frame, several calls in a row)
     void Update(GameTime&amp; gameTime) override {
+        Game::Update(gameTime);
+        // dt is 1/60 s, except on the game's very first Update, where it is 0
         const float dt = static_cast&lt;float&gt;(
-            gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty()); // always 1/60
-
-        body_.prevPosition = body_.position;
+            gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty());
 
         // Gravity
         body_.velocity.Y -= 9.81f * dt;
@@ -204,23 +213,12 @@ protected:
         }
     }
 
-    // Called as fast as the GPU allows — may be faster than 60 Hz
+    // Called once per tick, after the Update call(s) of that tick
     void Draw(const GameTime&amp; gameTime) override {
         auto&amp; gd = getGraphicsDeviceProperty();
         gd.Clear(Color::CornflowerBlue);
 
-        // Interpolation factor: where we are between the last two physics steps
-        // With fixed timestep this is always near 1.0 on the next Draw call,
-        // but matters when Draw outpaces Update (e.g. 144 Hz display, 60 Hz physics)
-        float alpha = static_cast&lt;float&gt;(
-            gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty() /
-            getTargetElapsedTimeProperty().getTotalSecondsProperty());
-        alpha = MathHelper::Clamp(alpha, 0.0f, 1.0f);
-
-        Vector3 renderPos = Vector3::Lerp(
-            body_.prevPosition, body_.position, alpha);
-
-        Matrix world = Matrix::CreateTranslation(renderPos);
+        Matrix world = Matrix::CreateTranslation(body_.position);
         Matrix view  = Matrix::CreateLookAt(
             Vector3(0, 5, 15), Vector3(0, 3, 0), Vector3::Up);
         Matrix proj  = Matrix::CreatePerspectiveFieldOfView(
@@ -235,7 +233,7 @@ protected:
             pass.Apply();
             gd.DrawPrimitives(PrimitiveType::TriangleList, 0, primitiveCount_);
         }
-        gd.Present();
+        // No Present(): Game presents the frame after Draw() returns.
     }
 
 private:
@@ -246,12 +244,73 @@ private:
     PhysicsBody                   body_;
 };</code></pre>
 
+        <h2>Interpolating the render (your own accumulator)</h2>
+        <p>Interpolation smooths motion when you render more often than you simulate. The built-in fixed step cannot do this for you: inside <code>Draw</code>, <code>ElapsedGameTime</code> is a whole multiple of <code>TargetElapsedTime</code> (at least one step), so &ldquo;elapsed divided by target&rdquo; is always <code>&ge; 1</code> and clamps to <code>1</code>; an interpolation built on it would silently do nothing. To render between two physics states, switch to a variable step and run your own fixed-step accumulator, then use the leftover fraction as the interpolation factor:</p>
+        <pre><code class="language-cpp">class InterpolatedDemo final : public Game {
+public:
+    InterpolatedDemo() : graphics_(this) {
+        setIsFixedTimeStepProperty(false);   // CNA hands us the real elapsed time
+    }
+
+protected:
+    void Initialize() override {
+        Game::Initialize();
+        body_.position     = Vector3(0, 10, 0);
+        body_.prevPosition = body_.position;
+        body_.velocity     = Vector3(2, 0, 0);
+    }
+
+    void Update(GameTime&amp; gameTime) override {
+        Game::Update(gameTime);
+        // Clamp the frame time so one long stall (a window drag, a debugger stop)
+        // cannot make us run hundreds of catch-up steps
+        const double frameTime = std::min(
+            gameTime.getElapsedGameTimeProperty().getTotalSecondsProperty(), 0.25);
+
+        accumulator_ += frameTime;
+        while (accumulator_ &gt;= kStep) {
+            body_.prevPosition = body_.position;   // state one step ago
+            Step(static_cast&lt;float&gt;(kStep));
+            accumulator_ -= kStep;
+        }
+    }
+
+    void Draw(const GameTime&amp;) override {
+        auto&amp; gd = getGraphicsDeviceProperty();
+        gd.Clear(Color::CornflowerBlue);
+
+        // Where we are between the last two physics states, in [0, 1)
+        const float alpha = static_cast&lt;float&gt;(accumulator_ / kStep);
+        Vector3 renderPos = Vector3::Lerp(body_.prevPosition, body_.position, alpha);
+
+        Matrix world = Matrix::CreateTranslation(renderPos);
+        // ... set world/view/projection on the effect and draw, as in the previous example ...
+    }
+
+private:
+    void Step(float dt) {
+        body_.velocity.Y -= 9.81f * dt;
+        body_.position    = body_.position + body_.velocity * dt;
+        if (body_.position.Y &lt; 0.0f) {
+            body_.position.Y = 0.0f;
+            body_.velocity.Y = -body_.velocity.Y * 0.7f;
+        }
+    }
+
+    static constexpr double kStep = 1.0 / 60.0;
+    GraphicsDeviceManager graphics_;
+    PhysicsBody           body_;
+    double                accumulator_ = 0.0;
+};</code></pre>
+        <p>This pattern also behaves the same on the web frame body described above, because it does not care whether <code>Update</code> receives a measured or a fixed <code>dt</code>. If you want a fixed update rate but want to skip a frame&rsquo;s drawing, call <code>Game::SuppressDraw()</code> from <code>Update</code>.</p>
+
         <h2>Key takeaways</h2>
         <ul>
-          <li>Use <code>IsFixedTimeStep = true</code> for any simulation that integrates state over time &mdash; it removes floating-point jitter from variable frame rates.</li>
-          <li>Store <code>prevPosition</code> before each physics step and interpolate in <code>Draw</code> for smooth rendering at any frame rate.</li>
-          <li>Check <code>gameTime.IsRunningSlowly</code> to skip optional work when the CPU cannot keep up.</li>
-          <li><code>gameTime.TotalGameTime</code> counts wall-clock elapsed time; use it for time-based animations that should not stutter on slow frames.</li>
+          <li>Use <code>IsFixedTimeStep = true</code> (the default) for any simulation that integrates state over time &mdash; every <code>Update</code> sees the same <code>dt</code>, which removes the jitter of variable frame rates.</li>
+          <li>The first <code>Update</code> sees <code>ElapsedGameTime == 0</code>, so a state that divides by <code>dt</code> must guard against zero.</li>
+          <li>Fixed mode calls <code>Draw</code> once per tick, so it cannot render faster than it updates. For interpolated rendering, use a variable step with your own accumulator, storing the previous state before each physics step.</li>
+          <li>Check <code>gameTime.getIsRunningSlowlyProperty()</code> to skip optional work when the CPU cannot keep up.</li>
+          <li><code>gameTime.getTotalGameTimeProperty()</code> is game time, not wall-clock time: it is the sum of the <code>ElapsedGameTime</code> values of the completed updates, so in fixed mode it moves in whole steps. Use it for time-based animation that should follow the simulation.</li>
         </ul>
 
         <nav class="docs-pagination" aria-label="Page navigation">
@@ -278,7 +337,7 @@ private:
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>

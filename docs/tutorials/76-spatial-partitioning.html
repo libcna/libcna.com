@@ -21,7 +21,7 @@
   "headline": "Tutorial 76: Spatial Partitioning",
   "url": "https://libcna.com/docs/tutorials/76-spatial-partitioning.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-08-11",
+  "dateModified": "2026-09-24",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -105,9 +105,12 @@
 #pragma once
 #include "Microsoft/Xna/Framework/Vector2.hpp"
 #include "Microsoft/Xna/Framework/Vector3.hpp"
+#include &lt;algorithm&gt;   // std::clamp
 #include &lt;vector&gt;
 #include &lt;cmath&gt;
 #include &lt;functional&gt;
+
+using namespace Microsoft::Xna::Framework;
 
 template &lt;typename T&gt;
 class UniformGrid {
@@ -126,18 +129,19 @@ public:
     }
 
     void Clear() {
-        for (auto& cell : cells_) cell.clear();
+        for (auto&amp; cell : cells_) cell.clear();
     }
 
     // Insert an item at position (x, z)
-    void Insert(float x, float z, const T& item) {
+    void Insert(float x, float z, const T&amp; item) {
         int ci = CellIndex(x, z);
         if (ci &gt;= 0) cells_[ci].push_back(item);
     }
 
-    // Query all items within radius of (x, z)
+    // Broad phase: returns every item stored in a cell that overlaps the query
+    // square around (x, z). It does NOT filter by exact distance; the narrow phase does that.
     void QueryRadius(float x, float z, float radius,
-                     std::vector&lt;T&gt;& results) const {
+                     std::vector&lt;T&gt;&amp; results) const {
         int cx0 = ToCell(x - radius, worldMin_.X);
         int cx1 = ToCell(x + radius, worldMin_.X);
         int cy0 = ToCell(z - radius, worldMin_.Y);
@@ -148,10 +152,9 @@ public:
         cy0 = std::clamp(cy0, 0, rows_ - 1);
         cy1 = std::clamp(cy1, 0, rows_ - 1);
 
-        float r2 = radius * radius;
         for (int cy = cy0; cy &lt;= cy1; ++cy) {
             for (int cx = cx0; cx &lt;= cx1; ++cx) {
-                for (const T& item : cells_[cy * cols_ + cx]) {
+                for (const T&amp; item : cells_[cy * cols_ + cx]) {
                     results.push_back(item);
                 }
             }
@@ -160,7 +163,8 @@ public:
 
 private:
     int ToCell(float v, float origin) const {
-        return static_cast&lt;int&gt;((v - origin) / cellSize_);
+        // floor, not a plain cast: truncation would map values just below the origin to cell 0
+        return static_cast&lt;int&gt;(std::floor((v - origin) / cellSize_));
     }
 
     int CellIndex(float x, float z) const {
@@ -176,6 +180,8 @@ private:
     int                  rows_ = 0;
     std::vector&lt;std::vector&lt;T&gt;&gt; cells_;
 };</code></pre>
+
+      <p>This grid stores each item in one cell, so it suits objects that are small relative to <code>cellSize</code>. Objects that span several cells must be inserted into every cell they overlap (and de-duplicated in query results).</p>
 
       <h2>Using UniformGrid for collision neighbour queries</h2>
       <pre><code class="language-cpp">// In Game::LoadContent or level load:
@@ -194,7 +200,7 @@ for (int i = 0; i &lt; static_cast&lt;int&gt;(entities_.size()); ++i) {
 
 // Per-entity narrow-phase: only check entities in nearby cells
 std::vector&lt;int&gt; neighbours;
-for (auto& e : entities_) {
+for (auto&amp; e : entities_) {
     neighbours.clear();
     grid_-&gt;QueryRadius(e.position.X, e.position.Z,
                        e.collisionRadius * 2.0f, neighbours);
@@ -214,43 +220,68 @@ for (auto& e : entities_) {
 
       <h2>Octree (3D)</h2>
       <p>An octree is the 3D equivalent of a quadtree — each node subdivides into eight child octants instead of four. Use an octree when objects occupy a significant 3D volume (e.g. flying enemies, 3D asteroids). For mostly flat worlds (terrain-based games), a quadtree over the XZ plane is cheaper and sufficient.</p>
-      <p>A minimal recursive octree node:</p>
-      <pre><code class="language-cpp">struct OctreeNode {
+      <p>A minimal recursive octree of point objects. Each leaf keeps the objects it holds together with their positions, so a leaf that grows past <code>MAX_OBJECTS</code> can subdivide and hand its objects down to the eight children. <code>BoundingBox::Contains(Vector3)</code> returns a <code>ContainmentType</code> (not a <code>bool</code>), so the test is written against <code>ContainmentType::Disjoint</code>:</p>
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/BoundingBox.hpp"
+#include "Microsoft/Xna/Framework/BoundingFrustum.hpp"
+#include &lt;memory&gt;
+
+struct OctreeNode {
+    struct Item { int index; Vector3 position; };
+
     BoundingBox       bounds;
-    std::vector&lt;int&gt;  objectIndices;  // indices into scene object array
+    std::vector&lt;Item&gt; items;                 // leaf payload: scene-object index + position
     std::unique_ptr&lt;OctreeNode&gt; children[8];
     bool isLeaf = true;
 
     static constexpr int MAX_OBJECTS = 8;
     static constexpr int MAX_DEPTH   = 6;
 
-    void Insert(int idx, const Vector3& pos, int depth = 0) {
-        if (!bounds.Contains(pos)) return;
+    explicit OctreeNode(const BoundingBox&amp; b) : bounds(b) {}
+
+    // Returns true if this subtree stored the object.
+    bool Insert(int idx, const Vector3&amp; pos, int depth = 0) {
+        if (bounds.Contains(pos) == ContainmentType::Disjoint) return false;
         if (isLeaf) {
-            objectIndices.push_back(idx);
-            if (static_cast&lt;int&gt;(objectIndices.size()) &gt; MAX_OBJECTS
-                &amp;&amp; depth &lt; MAX_DEPTH) {
-                Subdivide();
-            }
-        } else {
-            for (auto& child : children)
-                if (child) child-&gt;Insert(idx, pos, depth + 1);
+            items.push_back({idx, pos});
+            if (static_cast&lt;int&gt;(items.size()) &gt; MAX_OBJECTS &amp;&amp; depth &lt; MAX_DEPTH)
+                Subdivide(depth);
+            return true;
         }
+        // A point on a shared face is accepted by several children; the first one wins,
+        // so the object is stored exactly once.
+        for (auto&amp; child : children)
+            if (child &amp;&amp; child-&gt;Insert(idx, pos, depth + 1)) return true;
+        return false;
     }
 
-    void FrustumQuery(const BoundingFrustum& frustum,
-                      std::vector&lt;int&gt;& results) const {
+    void FrustumQuery(const BoundingFrustum&amp; frustum,
+                      std::vector&lt;int&gt;&amp; results) const {
         if (frustum.Contains(bounds) == ContainmentType::Disjoint)
             return;
         if (isLeaf) {
-            for (int i : objectIndices) results.push_back(i);
+            for (const Item&amp; it : items) results.push_back(it.index);
         } else {
-            for (auto& child : children)
+            for (auto&amp; child : children)
                 if (child) child-&gt;FrustumQuery(frustum, results);
         }
     }
 
-    void Subdivide();  // splits bounds into 8 children
+    void Subdivide(int depth) {
+        const Vector3 c = (bounds.Min + bounds.Max) * 0.5f;
+        for (int i = 0; i &lt; 8; ++i) {   // bit 0 = x half, bit 1 = y half, bit 2 = z half
+            Vector3 lo((i &amp; 1) ? c.X : bounds.Min.X,
+                       (i &amp; 2) ? c.Y : bounds.Min.Y,
+                       (i &amp; 4) ? c.Z : bounds.Min.Z);
+            Vector3 hi((i &amp; 1) ? bounds.Max.X : c.X,
+                       (i &amp; 2) ? bounds.Max.Y : c.Y,
+                       (i &amp; 4) ? bounds.Max.Z : c.Z);
+            children[i] = std::make_unique&lt;OctreeNode&gt;(BoundingBox(lo, hi));
+        }
+        isLeaf = false;
+        std::vector&lt;Item&gt; moved;
+        moved.swap(items);
+        for (const Item&amp; it : moved) Insert(it.index, it.position, depth);
+    }
 };</code></pre>
 
       <h2>BVH overview</h2>
@@ -262,7 +293,7 @@ for (auto& e : entities_) {
         <thead><tr><th>Query type</th><th>Use case</th><th>CNA type</th></tr></thead>
         <tbody>
           <tr><td>Range (sphere/circle)</td><td>AOE damage, proximity AI</td><td><code>BoundingSphere::Intersects</code></td></tr>
-          <tr><td>Ray cast</td><td>Mouse picking, bullet hit, line-of-sight</td><td><code>Ray::Intersects(BoundingBox)</code></td></tr>
+          <tr><td>Ray cast</td><td>Mouse picking, bullet hit, line-of-sight</td><td><code>Ray::Intersects(BoundingBox)</code>, <code>Ray::Intersects(BoundingSphere)</code> (returns a distance or no hit; not <code>BoundingFrustum::Intersects(Ray)</code>, which is only partly implemented as in XNA &mdash; see <a href="44-bounding-volumes.html">Tutorial 44</a>)</td></tr>
           <tr><td>Frustum</td><td>Visibility culling for rendering</td><td><code>BoundingFrustum::Contains</code></td></tr>
           <tr><td>AABB overlap</td><td>Collision detection</td><td><code>BoundingBox::Intersects</code></td></tr>
         </tbody>
@@ -273,7 +304,7 @@ for (auto& e : entities_) {
       <p>The octree's <code>FrustumQuery</code> method integrates directly with CNA's <code>BoundingFrustum</code> — the same object you construct from your view-projection matrix in Tutorial 74. Pass it to the tree and receive back only the object indices that might be visible, skipping the rest entirely:</p>
       <pre><code class="language-cpp">BoundingFrustum frustum(view_ * proj_);
 std::vector&lt;int&gt; visibleObjects;
-octree_-&gt;FrustumQuery(frustum, visibleObjects);
+octree_-&gt;FrustumQuery(frustum, visibleObjects);   // octree_ is a std::unique_ptr&lt;OctreeNode&gt;
 
 for (int idx : visibleObjects) {
     DrawObject(sceneObjects_[idx]);
@@ -302,7 +333,7 @@ for (int idx : visibleObjects) {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
