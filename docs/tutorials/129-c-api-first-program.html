@@ -3,19 +3,19 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tutorial 129: Inspect the Experimental C API Boundary - CNA Tutorials</title>
-  <meta name="description" content="Inspect CNA 0.1.0-alpha.1's experimental C ABI 0.7.0 source surface, reproduce its renderer-map compile blocker, and prepare for a corrected release.">
+  <title>Tutorial 129: Your First C Program Against the Experimental C API - CNA Tutorials</title>
+  <meta name="description" content="Install CNA's experimental C ABI 0.29.0 package, find it from a plain C99 CMake project and write a first C program: ABI check, game callbacks, renderer query, error diagnostics and teardown.">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="CNA">
   <meta property="og:url" content="https://libcna.com/docs/tutorials/129-c-api-first-program.html">
-  <meta property="og:title" content="Tutorial 129: Inspect the Experimental C API Boundary - CNA Tutorials">
-  <meta property="og:description" content="Inspect CNA 0.1.0-alpha.1's experimental C ABI 0.7.0 source surface, reproduce its renderer-map compile blocker, and prepare for a corrected release.">
+  <meta property="og:title" content="Tutorial 129: Your First C Program Against the Experimental C API - CNA Tutorials">
+  <meta property="og:description" content="Install CNA's experimental C ABI 0.29.0 package, find it from a plain C99 CMake project and write a first C program: ABI check, game callbacks, renderer query, error diagnostics and teardown.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/129-c-api-first-program.html">
   <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"TechArticle","headline":"Tutorial 129: Inspect the Experimental C API Boundary","description":"Inspect CNA 0.1.0-alpha.1's C ABI 0.7.0 source surface, its renderer-map compile blocker, and the intended consumer contract.","url":"https://libcna.com/docs/tutorials/129-c-api-first-program.html","datePublished":"2026-08-20","dateModified":"2026-08-20","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Tutorial Series","url":"https://libcna.com/tutorials.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Intermediate"}
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Tutorial 129: Your First C Program Against the Experimental C API","description":"Install CNA's experimental C ABI 0.29.0 package, find it from a plain C99 CMake project and write a first C program: ABI check, game callbacks, renderer query, error diagnostics and teardown.","url":"https://libcna.com/docs/tutorials/129-c-api-first-program.html","datePublished":"2026-08-20","dateModified":"2026-09-24","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Tutorial Series","url":"https://libcna.com/tutorials.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Intermediate"}
   </script>
   <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
 </head>
@@ -48,114 +48,263 @@
 </div></nav>
 <main id="main-content"><div class="tutorial-layout"><div class="docs-main"><article class="docs-content">
   <nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="../../index.html">Home</a></li><li><a href="../../tutorials.html">Tutorials</a></li><li aria-current="page">Tutorial 129</li></ol></nav>
-  <h1>Tutorial 129: Inspect the Experimental C API Boundary</h1>
-  <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; CNA 0.1.0-alpha.1</p>
+  <h1>Tutorial 129: Your First C Program Against the Experimental C API</h1>
+  <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; C ABI 0.29.0</p>
 
-  <div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Do not attempt to ship the alpha.1 C library.</strong> Product release <code>0.1.0-alpha.1</code> contains a broad C ABI 0.7.0 source surface, but its final C API implementation cannot compile: the C renderer table has 49 entries while CNA has 50 identities. NanoVG has no C identity.</p></div>
+  <div class="callout callout--info"><span class="callout-icon">&#8505;</span><p><strong>What you&rsquo;ll learn:</strong> install CNA&rsquo;s C ABI package (<code>CNACApi</code>), find it from a plain C99 CMake project, and write a complete first program: an ABI check, a game with C callbacks, the borrowed graphics device, a capability query, the count-then-copy string idiom, the error diagnostic and the teardown order.</p></div>
 
-  <h2 id="build">Confirm the tag-level blocker</h2>
-  <p>Inspect <code>modules/c-api/src/CnaCApiCoreExt.cpp</code>. Its <code>RendererIdentities</code> array ends at <code>PIXIJS</code>, has 49 rows, and is checked against the generated canonical C++ renderer count:</p>
-  <pre><code class="language-cpp">static_assert(RendererIdentities.size() == CanonicalRendererCount(),
-              "A renderer was added to CNA::GraphicsRendererType without a C identity.");</code></pre>
-  <p>The tag's C++ enum includes NanoVG as identity 50, so the assertion fails. An isolated Headless/Null-audio build with default networking reproduces <code>comparison reduces to (49 == 50)</code>. This is a useful fail-closed guard: the C contract cannot silently return the wrong identity. It also means the later configure, install and consumer steps in the repository describe an intended design, not a usable alpha.1 package.</p>
-  <p>Do not try to avoid the issue with <code>-DCNA_ENABLE_NET=OFF</code>. Alpha.1 configures that combination but then fails earlier because the C API unconditionally includes a GamerServices header whose module is disabled.</p>
+  <div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Read this first &mdash; the C library is source-level, not build-verified.</strong> The C API is experimental (ABI <code>0.29.0</code>, pre-1.0) and belongs to the unreleased development snapshot <code>009d40f5</code>, not to a release. At the <code>v0.1.0-alpha.1</code> tag the C library could not compile at all (its renderer-identity table had 49 rows against 50 identities). That blocker is gone in source, but <strong>no CI workflow builds the C library and the authors of this tutorial did not build it</strong>. The program below was checked to compile against the snapshot&rsquo;s headers with <code>gcc -std=c99 -Wall -Wextra -Wpedantic -Werror</code>; the library steps are written from the CMake files and CNA&rsquo;s own installed-consumer test, not from a run of ours. If a step fails, that is a real finding: see <a href="../c-api.html#limits">the limitations</a> and report it.</p></div>
 
-  <h2 id="consumer">Understand the intended consumer project</h2>
-  <p>After a later release corrects the renderer map, the declared package shape is a C99-compatible public header surface backed by C17 implementation targets:</p>
+  <div class="callout callout--note"><span class="callout-icon">&#8505;</span><p><strong>Do not attempt to ship the alpha.1 C library.</strong> This tutorial used to be an inspection exercise for exactly that reason: product release <code>0.1.0-alpha.1</code> carried a broad C ABI 0.7.0 source surface, but its final C API implementation could not compile because the C renderer table had 49 entries while CNA had 50 identities. The development snapshot corrected that, which is why a real first program is now possible to write. The history is on the <a href="../c-api.html#blocker">C API page</a>.</p></div>
+
+  <h2 id="prereq">Prerequisites</h2>
+  <p>You need the development snapshot, not the default branch: <code>git clone https://github.com/libcna/cna.git</code> gives you <code>develop</code>, which is the alpha.1 commit. Clone branch <code>next</code>, and give it the same sibling checkouts <a href="02-setup.html">Tutorial 02</a> describes, with one difference from older instructions &mdash; <code>sharp-runtime</code> must also be its <code>next</code> branch:</p>
+  <pre><code class="language-bash">mkdir my-cna-workspace &amp;&amp; cd my-cna-workspace
+git clone -b next https://github.com/libcna/cna.git
+git clone -b next https://github.com/libcna/sharp-runtime.git
+git clone https://github.com/libcna/easy-gl.git      # default branch; needed by the Linux default renderer
+git clone https://github.com/libcna/meta-gl.git      # default branch; needed by easy-gl
+git -C cna submodule update --init</code></pre>
+  <p>You also need CMake 3.20 or newer, a C compiler and the C++23 toolchain CNA itself needs (the C library is an adapter over the C++ runtime). The C API requires networking to stay enabled (<code>CNA_ENABLE_NET=ON</code> is the default), because it exports the GamerServices routes.</p>
+
+  <h2 id="build">Build and install the C package</h2>
+  <p>Configure CNA with the C API switched on, build the shared library (and the optional static archive, which is part of the default build), then install <em>only</em> the <code>CNACApi</code> component into a prefix of your own:</p>
+  <pre><code class="language-bash">cd cna
+cmake -S . -B build -DCNA_BUILD_C_API=ON
+cmake --build build --target cna_c_api cna_c_api_static -j"$(nproc)"
+cmake --install build --component CNACApi --prefix "$HOME/cna-c"</code></pre>
+  <p>The component contains the shared library <code>libcna_c_api.so</code>, the public headers under <code>include/CNA/C/</code>, the SDL3 libraries CNA built (installed beside the library, whose RPATH is <code>$ORIGIN</code>, so you need no <code>LD_LIBRARY_PATH</code>), and the CMake package under <code>lib/cmake/CNA</code>. To skip the static archive pass <code>-DCNA_C_API_BUILD_STATIC=OFF</code> and build only <code>cna_c_api</code>.</p>
+  <div class="callout callout--note"><span class="callout-icon">&#8505;</span><p><strong>No display?</strong> Add <code>-DCNA_PLATFORM=HEADLESS -DCNA_GRAPHICS_RENDERER=HEADLESS -DCNA_AUDIO_PLATFORM=NULL</code> to the configure line for a window-less build. If you keep a windowed platform on a machine with no display, only renderers that need no GL context run under SDL&rsquo;s dummy video driver (<code>SDL_VIDEODRIVER=dummy</code>).</p></div>
+
+  <h2 id="consumer">Write the consumer project</h2>
+  <p>Create a project that knows nothing about the CNA source tree. It needs only the prefix:</p>
+  <pre><code class="language-bash">mkdir my-c-game &amp;&amp; cd my-c-game</code></pre>
+  <p><code>CMakeLists.txt</code>:</p>
   <pre><code class="language-cmake">cmake_minimum_required(VERSION 3.20)
-project(hello_cna_c LANGUAGES C)
+project(my_c_game LANGUAGES C)
 
-find_package(CNA 0.7 CONFIG REQUIRED)
+# The package version *is* the C ABI version, and CMake accepts any same-major version at or
+# above the one requested. Request the minor you wrote against and leave it there.
+find_package(CNA 0.1 CONFIG REQUIRED)
 
-add_executable(hello_cna main.c)
-set_target_properties(hello_cna PROPERTIES
-  C_STANDARD 99
+add_executable(my_c_game main.c)
+set_target_properties(my_c_game PROPERTIES
+  C_STANDARD 99            # the floor CNA holds its public headers to
   C_STANDARD_REQUIRED ON
   C_EXTENSIONS OFF)
-target_link_libraries(hello_cna PRIVATE CNA::CApi)</code></pre>
+target_compile_options(my_c_game PRIVATE
+  $&lt;$&lt;NOT:$&lt;C_COMPILER_ID:MSVC&gt;&gt;:-Wall;-Wextra;-Wpedantic&gt;)
+target_link_libraries(my_c_game PRIVATE CNA::CApi)   # or CNA::CApiStatic for one archive</code></pre>
+  <p>There is exactly one target for the shared library, <code>CNA::CApi</code>, and one for the archive, <code>CNA::CApiStatic</code> (which defines <code>CNA_C_API_STATIC</code> for you). Every C++ module is linked into the library privately, behind hidden visibility and a version script, so a C consumer never sees <code>cna_core</code>, <code>cna_graphics</code> or Sharp Runtime. Without CMake, the same library links with <code>cc -std=c99 -I"$HOME/cna-c/include" main.c -L"$HOME/cna-c/lib" -lcna_c_api</code>.</p>
 
-  <h2 id="program">Read the source-owned example</h2>
-  <p>The following excerpt shows the intended API style. It is documentation only at alpha.1; you cannot link it against a successfully built tag artifact.</p>
-  <pre><code class="language-c">#include &lt;CNA/C/cna.h&gt;
+  <h2 id="program">Write <code>main.c</code></h2>
+  <p>The program does what every first CNA C program has to do, in the order it has to do it. Read the comments; each numbered step is a rule of the ABI.</p>
+<pre><code class="language-c">/* main.c -- a first CNA C program: version check, game, callback, renderer query, teardown. */
+#include &lt;CNA/C/cna.h&gt;
 
-#include &lt;stdint.h&gt;
 #include &lt;stdio.h&gt;
 #include &lt;string.h&gt;
 
-static CNA_Result update(
-    CNA_Handle game,
-    const CNA_GameTime* time,
-    void* context,
-    CNA_CallbackError* error)
+typedef struct AppState {
+    int frames;
+    char renderer[128];
+} AppState;
+
+/* Every fallible route returns a CNA_Result. This helper prints the diagnostic the ABI keeps
+   for the failing thread, using the count-then-copy idiom, and returns non-zero on failure. */
+static int failed(const char* what, CNA_Result result)
 {
-    (void)time;
-    (void)context;
-    (void)error;
-    return cna_game_request_exit(game);
+    CNA_ErrorInfo info;
+    char message[512];
+    uint64_t needed = 0U;
+
+    if (result == CNA_RESULT_SUCCESS) {
+        return 0;
+    }
+    fprintf(stderr, "%s failed with result %u", what, (unsigned)result);
+
+    memset(&amp;info, 0, sizeof(info));
+    info.struct_size = (uint32_t)sizeof(info);
+    info.struct_version = UINT32_C(1);
+    if (cna_error_get_last_info(&amp;info) == CNA_RESULT_SUCCESS) {
+        fprintf(stderr, " (category %u)", (unsigned)info.category);
+    }
+    if (cna_error_copy_last_message(message, sizeof(message) - 1U, &amp;needed) == CNA_RESULT_SUCCESS) {
+        message[needed] = '\0';
+        fprintf(stderr, ": %s", message);
+    }
+    fprintf(stderr, "\n");
+    return 1;
+}
+
+/* Runs once per frame on the game's thread. `game` is borrowed for the duration of the call. */
+static CNA_Result on_update(
+    CNA_Handle game,
+    const CNA_GameTime* game_time,
+    void* context,
+    CNA_CallbackError* out_error)
+{
+    AppState* state = (AppState*)context;
+    (void)game_time;
+    (void)out_error;
+
+    if (state-&gt;frames == 0) {
+        CNA_Handle device = CNA_INVALID_HANDLE;
+        CNA_RendererInfo info;
+        CNA_Bool three_d = CNA_FALSE;
+        uint64_t name_bytes = 0U;
+        CNA_Result result;
+
+        /* The graphics device may only be borrowed inside a lifecycle callback and must
+           never be released by the caller. */
+        result = cna_game_get_graphics_device(game, &amp;device);
+        if (result != CNA_RESULT_SUCCESS) return result;
+
+        memset(&amp;info, 0, sizeof(info));
+        info.struct_size = (uint32_t)sizeof(info);
+        info.struct_version = UINT32_C(1);
+        result = cna_graphics_device_get_renderer_info(device, &amp;info);
+        if (result != CNA_RESULT_SUCCESS) return result;
+
+        /* Count, then copy: the count excludes any terminator, so leave room for one. */
+        result = cna_graphics_device_copy_renderer_name(
+            device, state-&gt;renderer, sizeof(state-&gt;renderer) - 1U, &amp;name_bytes);
+        if (result != CNA_RESULT_SUCCESS) return result;
+        state-&gt;renderer[name_bytes] = '\0';
+
+        /* Ask what the renderer can do instead of branching on its name. */
+        result = cna_graphics_device_supports_capability(
+            device, CNA_GRAPHICS_CAPABILITY_THREE_D, &amp;three_d);
+        if (result != CNA_RESULT_SUCCESS) return result;
+
+        printf("renderer: %s (max texture %u, 3D %s)\n", state-&gt;renderer,
+               (unsigned)info.max_texture_dimension,
+               three_d == CNA_TRUE ? "supported" : "unavailable");
+    }
+
+    state-&gt;frames++;
+    if (state-&gt;frames &gt;= 3) {
+        return cna_game_request_exit(game);   /* ends cna_game_run() at its next safe point */
+    }
+    return CNA_RESULT_SUCCESS;
 }
 
 int main(void)
 {
-    const uint32_t abi = cna_get_abi_version();
-    if ((abi &gt;&gt; 16U) != CNA_ABI_VERSION_MAJOR) {
-        fprintf(stderr, "incompatible CNA C ABI\n");
-        return 1;
-    }
-
+    const uint32_t runtime_abi = cna_get_abi_version();
+    static const char title[] = "First C program";
+    AppState state;
     CNA_GameCallbacks callbacks;
     CNA_GameCreateInfo create_info;
     CNA_Handle game = CNA_INVALID_HANDLE;
-    static const char title[] = "CNA C API";
+    CNA_Result result;
 
+    /* 1. Check the ABI before anything else. A different major is never compatible. While the
+          ABI is 0.x, also require the exact minor you compiled against. */
+    if (runtime_abi != CNA_ABI_VERSION) {
+        fprintf(stderr, "CNA ABI mismatch: built against %u.%u.%u, found %u.%u.%u\n",
+                (unsigned)CNA_ABI_VERSION_MAJOR, (unsigned)CNA_ABI_VERSION_MINOR,
+                (unsigned)CNA_ABI_VERSION_PATCH, (unsigned)(runtime_abi &gt;&gt; 16U),
+                (unsigned)((runtime_abi &gt;&gt; 8U) &amp; 0xFFU), (unsigned)(runtime_abi &amp; 0xFFU));
+        return 1;
+    }
+    printf("CNA C ABI %u.%u.%u\n", (unsigned)(runtime_abi &gt;&gt; 16U),
+           (unsigned)((runtime_abi &gt;&gt; 8U) &amp; 0xFFU), (unsigned)(runtime_abi &amp; 0xFFU));
+
+    /* 2. Create the process's one game. Versioned structs: zero, then size and version. */
+    memset(&amp;state, 0, sizeof(state));
     memset(&amp;callbacks, 0, sizeof(callbacks));
     callbacks.struct_size = (uint32_t)sizeof(callbacks);
     callbacks.struct_version = UINT32_C(1);
-    callbacks.update = update;
+    callbacks.update = on_update;
+    callbacks.context = &amp;state;
 
     memset(&amp;create_info, 0, sizeof(create_info));
     create_info.struct_size = (uint32_t)sizeof(create_info);
     create_info.struct_version = UINT32_C(1);
     create_info.is_fixed_time_step = CNA_TRUE;
-    create_info.target_elapsed_time_ticks = INT64_C(166667);
+    create_info.target_elapsed_time_ticks = INT64_C(166667);   /* 100 ns ticks: about 60 Hz */
     create_info.window_title.data = title;
     create_info.window_title.byte_length = sizeof(title) - 1U;
     create_info.callbacks = &amp;callbacks;
 
-    CNA_Result result = cna_game_create(&amp;create_info, &amp;game);
-    if (result == CNA_RESULT_SUCCESS) {
-        result = cna_game_run(game);
+    result = cna_game_create(&amp;create_info, &amp;game);
+    if (failed("cna_game_create", result)) return 1;
+
+    /* 3. Let CNA own the loop until the callback asks it to exit. */
+    result = cna_game_run(game);
+    (void)failed("cna_game_run", result);
+
+    /* 4. Two deliberate mistakes: the ABI tells an argument error from a handle error. */
+    {
+        CNA_Bool active = CNA_FALSE;
+        (void)failed("cna_game_get_is_active(live handle, NULL output)",
+                     cna_game_get_is_active(game, NULL));
+        (void)failed("cna_game_get_is_active(handle never issued)",
+                     cna_game_get_is_active(UINT64_C(0xDEADBEEF), &amp;active));
     }
 
-    if (game != CNA_INVALID_HANDLE) {
-        CNA_Result destroy_result = cna_game_destroy(game);
-        if (result == CNA_RESULT_SUCCESS) result = destroy_result;
-    }
+    /* 5. Teardown: owned children first (this program created none), then the game. */
+    if (failed("cna_game_destroy", cna_game_destroy(game))) return 1;
 
+    printf("done after %d frame(s)\n", state.frames);
     return result == CNA_RESULT_SUCCESS ? 0 : 1;
 }</code></pre>
-  <p>Every fallible operation returns <code>CNA_Result</code>. Versioned structures must be zero-initialized and must set <code>struct_size</code> plus <code>struct_version</code>. Handles are opaque, generation-checked and thread-affine; owned child objects must be destroyed before their owning game.</p>
+  <div class="table-wrap"><table><thead><tr><th scope="col">Step</th><th scope="col">Rule it demonstrates</th></tr></thead><tbody>
+    <tr><td>1. ABI check</td><td>Compare <code>cna_get_abi_version()</code> with <code>CNA_ABI_VERSION</code> before anything else. CNA&rsquo;s own <code>hello_cna</code> accepts any equal-or-newer minor of the same major; while the ABI is <code>0.x</code> two minor steps since alpha.1 (0.28.0, 0.29.0) were incompatible, so this program insists on the exact version it was built against.</td></tr>
+    <tr><td>2. Create</td><td>Versioned structs start with <code>struct_size</code> and <code>struct_version</code>; zero them first. The callback table is copied during creation, the context pointer must outlive the game. One active game per process (a second <code>cna_game_create</code> answers <code>CNA_RESULT_INVALID_STATE</code>).</td></tr>
+    <tr><td>Callback</td><td>Callbacks run synchronously on the game&rsquo;s thread. The <code>game</code> handle is borrowed for the call. The graphics device may be borrowed only inside a lifecycle callback, and that handle is borrowed too: never release it. Returning anything but <code>CNA_RESULT_SUCCESS</code> stops the game and the enclosing call reports <code>CNA_RESULT_CALLBACK</code>. Never throw or <code>longjmp</code> out of it.</td></tr>
+    <tr><td>Count-then-copy</td><td><code>cna_graphics_device_copy_renderer_name</code> and <code>cna_error_copy_last_message</code> write into <em>your</em> buffer and report the required count, which excludes any terminator. A buffer that is too small is refused with <code>CNA_RESULT_BUFFER_TOO_SMALL</code> and nothing is partially written.</td></tr>
+    <tr><td>Capability</td><td>Ask <code>cna_graphics_device_supports_capability</code> what the renderer can do; never branch on its name or numeric identity.</td></tr>
+    <tr><td>3. Run</td><td><code>cna_game_run</code> owns the loop until <code>cna_game_request_exit</code>; <code>cna_game_run_one_frame</code> is the manual alternative.</td></tr>
+    <tr><td>4. Two deliberate mistakes</td><td>A null output is an <em>argument</em> failure (result 1, category 1); a handle that was never issued is a <em>handle</em> failure (result 2, category 2). Arguments are checked before handles, and neither call touches anything.</td></tr>
+    <tr><td>5. Teardown</td><td>Destroy owned children first, then the game. A game refuses to be destroyed while an owned child is alive, which is a diagnosable error rather than a crash.</td></tr>
+  </tbody></table></div>
 
-  <h2 id="configure">What to require from a later release</h2>
-  <ul><li>The native library compiles with all 50 renderer identities mapped, or the public identity set is intentionally versioned.</li><li>An installed consumer builds against the staged <code>CNACApi</code> package in both claimed shared/static modes.</li><li><code>cna_get_abi_version()</code> matches the public <code>CNA_ABI_VERSION</code> policy.</li><li>Runtime vertical slices execute for every configuration the release claims, with structured failures and ownership rules checked.</li></ul>
-  <p>The complete source-owned example at <code>modules/c-api/examples/c/hello_cna.c</code> remains useful for reviewing capability queries, count-then-copy strings, resource ownership and diagnostics, but it is not alpha.1 runtime evidence.</p>
+  <h2 id="run">Configure, build and run</h2>
+  <pre><code class="language-bash">cmake -S . -B build -DCMAKE_PREFIX_PATH="$HOME/cna-c"
+cmake --build build
+./build/my_c_game</code></pre>
+  <p>You should see the ABI line, the renderer line and, at the end, a frame count; the two deliberate failures print on <em>stderr</em>. The exact renderer name and texture limit depend on the renderer and platform you configured:</p>
+  <pre><code class="language-bash">CNA C ABI 0.29.0
+renderer: &lt;the active renderer&rsquo;s name&gt; (max texture &lt;n&gt;, 3D supported|unavailable)
+cna_game_get_is_active(live handle, NULL output) failed with result 1 (category 1): &lt;message&gt;
+cna_game_get_is_active(handle never issued) failed with result 2 (category 2): &lt;message&gt;
+done after 3 frame(s)</code></pre>
+  <p>(A windowed build opens a window for a moment. Message texts are CNA&rsquo;s; the result and category numbers above are the contract: <code>CNA_RESULT_INVALID_ARGUMENT</code> is 1 and <code>CNA_RESULT_INVALID_HANDLE</code> is 2.)</p>
 
-  <div class="callout callout--info"><span class="callout-icon">&#8505;</span><p><strong>What is still measurable:</strong> the tag contains 59 public C headers and 2,861 declared route names; its checked-in inventory records 6,317 implemented, 15 partial and 380 not-applicable rows out of 6,712. These are source and generated-report counts, not proof of a linkable or runnable C library.</p></div>
+  <h3>If something goes wrong</h3>
+  <div class="table-wrap"><table><thead><tr><th scope="col">Symptom</th><th scope="col">Likely cause and what to check</th></tr></thead><tbody>
+    <tr><td>CMake configure of CNA stops with &ldquo;CNA_BUILD_C_API=ON requires CNA_ENABLE_NET=ON&rdquo;</td><td>Networking was switched off. Leave <code>CNA_ENABLE_NET</code> at its default <code>ON</code>.</td></tr>
+    <tr><td><code>find_package(CNA)</code> cannot find the package</td><td><code>CMAKE_PREFIX_PATH</code> must be the install prefix (<code>$HOME/cna-c</code>), and the component must have been installed with <code>--component CNACApi</code>.</td></tr>
+    <tr><td>The program prints &ldquo;CNA ABI mismatch&rdquo;</td><td>The library you loaded was built from a different snapshot than the headers you compiled against. Use headers and library from one prefix.</td></tr>
+    <tr><td>Loader cannot find <code>libSDL3</code></td><td>The SDL3 libraries ship in the same directory as <code>libcna_c_api.so</code>; a prefix assembled by hand may have dropped them.</td></tr>
+    <tr><td><code>cna_game_create</code> fails with result 3</td><td>A game already exists in this process. There is one active game per process.</td></tr>
+    <tr><td>The library build itself fails</td><td>Not verified by us at this snapshot; please report it with your compiler and configure line. Remember that the C ABI is experimental.</td></tr>
+  </tbody></table></div>
+
+  <h2 id="configure">What to check before you rely on it</h2>
+  <ul><li>You built <code>cna_c_api</code> yourself from the exact snapshot you are documenting against; no CI job does, and nothing here is a release artifact.</li><li>Your program pins the ABI it was written against and refuses a different major or minor, since <code>0.x</code> minors can be incompatible (0.28.0 and 0.29.0 were).</li><li>The installed-consumer test that CNA runs locally (<code>CApi_InstalledConsumer</code>) passes for you: it installs the component, builds CNA&rsquo;s own <code>hello_cna</code> shared and static from a standalone project, and runs both.</li><li>You call the C API only from the thread that created the game, and you destroy children before the game.</li></ul>
+  <p>The complete source-owned example, <a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/examples/c/hello_cna.c" target="_blank" rel="noopener"><code>modules/c-api/examples/c/hello_cna.c</code></a> (354 lines), goes further than this tutorial: it creates a 2&times;2 texture, uploads pixels and draws them with a sprite batch, and treats <code>CNA_RESULT_NOT_SUPPORTED</code> from a renderer that cannot draw as an answer rather than a failure.</p>
+
+  <div class="callout callout--info"><span class="callout-icon">&#8505;</span><p><strong>What is still measurable:</strong> this snapshot declares 61 public C headers and 4,055 <code>cna_*</code> routes (alpha.1: 59 and 2,861), and CNA&rsquo;s generated inventory records 9,355 symbols &mdash; 8,363 implemented, 15 partial, 468 planned, 509 not applicable. The release gate for the C ABI says <strong>Not ready</strong> (the 468 planned rows). These are source and generated-report counts, not proof of a linkable or runnable library.</p></div>
 
   <h2 id="next">Next steps</h2>
-  <ul><li><a href="../c-api.html">Native C API overview and coverage</a></li><li><a href="../releases.html">Versioning and releases</a></li><li><a href="../building.html">Complete build options</a></li></ul>
+  <ul><li><a href="../c-api.html">Native C API overview, ABI history and bindings boundary</a></li><li><a href="../releases.html">Versioning and releases</a></li><li><a href="../building.html">Complete build options</a></li><li><a href="../rendering-backends.html">Renderers</a> &mdash; choose the renderer your C program will query</li></ul>
 
 </article></div></div></main>
 <footer><div class="footer-inner">
   <div class="footer-top">
-    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA 0.1.0-alpha.1, the first tagged pre-release. CNA exposes 50 renderer identities across 46 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
     <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
     <div class="footer-col"><h4>Docs</h4><ul><li><a href="../getting-started.html">Getting Started</a></li><li><a href="../building.html">Building</a></li><li><a href="../platforms.html">Platforms</a></li><li><a href="../rendering-backends.html">Renderers</a></li><li><a href="../faq.html">FAQ</a></li></ul></div>
     <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
   </div>
-  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/v0.1.0-alpha.1/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
 </div></footer>
 <script src="../../js/main.js"></script>
 <script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-c.min.js" defer></script>
 <script src="../../js/prism/prism-cpp.min.js" defer></script>
 <script src="../../js/prism/prism-bash.min.js" defer></script>
 <script src="../../js/prism/prism-cmake.min.js" defer></script>
