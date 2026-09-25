@@ -509,8 +509,8 @@ def counts_block() -> str:
                 status[u["status"]] += 1
                 for fd in u.get("findings", []):
                     ftypes[fd["type"]] += 1
-                for k, sub in (("residuals", ("reviewed", "lost")), ("dropped", ("reviewed", "false_drop", "restore_issue")), ("corrections", ("verified", "disagree"))):
-                    for fld in sub:
+                for k, fields in (("residuals", ("reviewed", "lost")), ("dropped", ("reviewed", "false_drop", "restore_issue")), ("corrections", ("verified", "disagree"))):
+                    for fld in fields:
                         tot[f"{k}.{fld}"] += (u.get(k) or {}).get(fld, 0)
     bc = c["by_class"]
     lines = [COUNTS_BEGIN, "",
