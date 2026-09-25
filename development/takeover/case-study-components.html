@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Case study: Game component lifetime - CNA Development</title>
+  <meta name="description" content="A reconstruction of CNA commit 3faa1930, which fixed components added or removed mid-frame, checked against what Game.cpp and its tests do at snapshot 009d40f5.">
+  <meta name="keywords" content="game components, componentlistsmutex_, onComponentRemoved, frame snapshot, gamecomponentcollection, use-after-free, loading screen, historical fix, recursive mutex">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/takeover/case-study-components.html">
+  <meta property="og:title" content="Case study: Game component lifetime - CNA Development">
+  <meta property="og:description" content="A reconstruction of CNA commit 3faa1930, which fixed components added or removed mid-frame, checked against what Game.cpp and its tests do at snapshot 009d40f5.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/takeover/case-study-components.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Case study: Game component lifetime","description":"A reconstruction of CNA commit 3faa1930, which fixed components added or removed mid-frame, checked against what Game.cpp and its tests do at snapshot 009d40f5.","url":"https://libcna.com/development/takeover/case-study-components.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Human Takeover</a>
+      <ul class="dev-nav-sub">
+        <li><a href="inherited.html" class="docs-nav-link">What you inherited</a></li>
+        <li><a href="mental-model.html" class="docs-nav-link">Mental model</a></li>
+        <li><a href="own-a-subsystem.html" class="docs-nav-link">Own a subsystem</a></li>
+        <li><a href="curriculum.html" class="docs-nav-link">First 10 / 50 / 100 hours</a></li>
+        <li><a href="investigation.html" class="docs-nav-link">Investigate unknown code</a></li>
+        <li><a href="worked-changes.html" class="docs-nav-link">Worked changes</a></li>
+        <li><a href="case-study-components.html" class="docs-nav-link active" aria-current="page">Case study: components</a></li>
+        <li><a href="case-study-storage.html" class="docs-nav-link">Case study: storage</a></li>
+        <li><a href="review-ai-generated-code.html" class="docs-nav-link">Review AI-era code</a></li>
+        <li><a href="ownership.html" class="docs-nav-link">Ownership map</a></li>
+        <li><a href="threading.html" class="docs-nav-link">Threads &amp; callbacks</a></li>
+        <li><a href="blast-radius.html" class="docs-nav-link">Blast radius</a></li>
+        <li><a href="validation.html" class="docs-nav-link">What must I test?</a></li>
+        <li><a href="xna-oracle.html" class="docs-nav-link">XNA oracle</a></li>
+        <li><a href="uncertainty.html" class="docs-nav-link">Uncertainty &amp; history</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Development</a></li>
+        <li><a href="index.html">Human Takeover</a></li>
+        <li aria-current="page">Case study: components</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Case study: Game component lifetime</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#history">The historical commit</a></li>
+          <li><a href="#symptom">From symptom to owning subsystem</a></li>
+          <li><a href="#two-races">Two distinct hazards, not one mutex problem</a></li>
+          <li><a href="#ownership-followup">The same-day ownership follow-up</a></li>
+          <li><a href="#tests">How the repair was proved</a></li>
+          <li><a href="#lesson">What this teaches a human reviewer</a></li>
+          <li><a href="#exercise">Exercise: repeat the reconstruction</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Human Takeover &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The pre-fix and post-fix failure counts are the commit author's records; the two regression tests skip when no window can be created.</p></div>
+
+<p class="lede">CNA commit <a href="https://github.com/libcna/cna/commit/3faa1930aaf0d6585a67faafe9208dfd18f6031c"><code>3faa1930</code></a> fixed a real crash: a sample aborted with &ldquo;pure virtual method called&rdquo; while its loading screen swapped game screens. The defect is <strong>historical and fixed</strong>; this page reconstructs it from the commit and then states what <code>Game</code> does in the TARGET snapshot, because the lesson generalizes to every raw-pointer snapshot in CNA. Nothing on this page was re-run: the failure counts quoted below are the commit author's records.</p>
+
+<h2 id="history">The historical commit</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Fact</th><th scope="col">Value</th></tr></thead>
+<tbody>
+<tr><td>Commit</td><td><code>3faa1930aaf0d6585a67faafe9208dfd18f6031c</code>, 2026-09-06, &ldquo;fix(SAMPLE-065): keep Game's components valid across the loading-screen pattern&rdquo;</td></tr>
+<tr><td>Files</td><td><code>Game.hpp</code> (+11), <code>Game.cpp</code> (+64/&minus;12), <code>GameTests.cpp</code> (+156): 219 insertions, 12 deletions</td></tr>
+<tr><td>Position in history</td><td>After the <code>v0.1.0-alpha.1</code> tag (alpha.1 still had the defect); an ancestor of snapshot <code>009d40f5</code> (checked with <code>git merge-base --is-ancestor</code>)</td></tr>
+<tr><td>State at TARGET</td><td>The locking and snapshot-nulling code is present verbatim in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a>; both regression tests are in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/tests/Microsoft/Xna/Framework/GameTests.cpp"><code>GameTests.cpp</code></a></td></tr>
+<tr><td>Same-day follow-up</td><td><a href="https://github.com/libcna/cna/commit/43748c8833ed19b7e11fa66136ce9ebb363799b6"><code>43748c88</code></a> &ldquo;let GameComponentCollection own what XNA's owns&rdquo; (see <a href="#ownership-followup">below</a>)</td></tr>
+</tbody>
+</table></div>
+<div class="callout callout--info"><span class="callout-icon">&#8505;</span><p>This is teaching material about a fixed defect, not a bug report. The point is the method: follow a pointer from the thread that inserted it, through the copy that captured it, to the code that may free its referent during a callback.</p></div>
+
+<h2 id="symptom">From symptom to owning subsystem</h2>
+<p>The commit message records the scenario. The XNA loading-screen pattern builds the next screen's components on a background thread and adds them to <code>Game.Components</code> while the game keeps drawing the loading art; NinjAcademy's and MarbleMaze's loading screens both do it. In one NinjAcademy transition the menu, faithful to the original game, rebuilds its loading screen on every frame it is still transitioning off, so a <code>GameplayScreen</code> that had already registered 87 components was dropped from inside the very update that was iterating them. The process aborted on &ldquo;pure virtual method called&rdquo;.</p>
+<p>A pure-virtual abort is what a call through an object whose derived part has already been destroyed looks like. It is not evidence of a renderer fault just because a game was on screen at the time. The comment above the regression tests adds the second mechanism: before the lists were guarded, the frame's snapshot copy was reading <code>updateableComponents_</code> while the loader thread's insert reallocated it.</p>
+<p>Read in this order:</p>
+<ol class="source-list">
+<li><code>Game::Update</code> and <code>Game::Draw</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a>: how each frame copies an ordered list into <code>currentlyUpdatingComponents_</code> / <code>currentlyDrawingComponents_</code> and then calls every component.</li>
+<li><code>Game::DoInitialize</code>: the initial categorization and the <code>ComponentAdded</code> / <code>ComponentRemoved</code> subscriptions that route collection changes to <code>OnComponentAdded</code> / <code>OnComponentRemoved</code>.</li>
+<li><code>CategorizeComponent</code>, <code>SortUpdateable</code>, <code>SortDrawable</code> and the order-changed handlers: the other writers of the ordered lists and of the two token maps.</li>
+<li>The private member block of <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/include/Microsoft/Xna/Framework/Game.hpp"><code>Game.hpp</code></a>: the four vectors of raw <code>IUpdateable*</code> / <code>IDrawable*</code> and the comment on <code>componentListsMutex_</code>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/GameComponentCollection.cpp"><code>GameComponentCollection.cpp</code></a>: <code>InsertItem</code> and <code>RemoveItem</code>, which raise the events that reach <code>Game</code>.</li>
+</ol>
+
+<h2 id="two-races">Two distinct hazards, not one mutex problem</h2>
+<pre class="diagram">
+Background loader  -&gt; Game.Components.Add -&gt; ComponentAdded -&gt; OnComponentAdded
+                                              (Initialize on the loader thread,
+                                               then CategorizeComponent under the lock)
+Game loop          -&gt; copy ordered list into frame snapshot (under the lock)
+                   -&gt; release the lock -&gt; call each component's Update/Draw
+Removal inside a callback -&gt; ComponentRemoved -&gt; OnComponentRemoved
+                   -&gt; owner may free the component immediately afterwards
+Frame snapshot holds raw pointers -&gt; the next call would target a freed object
+</pre>
+<p>The first hazard is concurrent mutation while a frame copies an ordered list. The fix adds <code>mutable std::recursive_mutex componentListsMutex_</code> and takes it around every list modification and around the snapshot copy. The lock is released before any component's <code>Update</code> or <code>Draw</code> runs, so game code never executes under it.</p>
+<p>The second hazard survives a perfect lock. CNA's in-flight snapshots are vectors of raw pointers. In XNA the snapshot holds strong references, so a removed component stays alive until the frame ends; in CNA whoever removes a component usually frees it in the same breath. <code>OnComponentRemoved</code> therefore removes the component from the ordered list <em>and</em> sets any matching entry in the in-flight snapshot to <code>nullptr</code>. It cannot erase the entry, because the range-for in <code>Update</code>/<code>Draw</code> is still walking that vector; both loops already skip null entries. These are two separate invariants: a safe list copy, and no later callback into a removed component.</p>
+<p>The mutex is recursive for a concrete reason recorded in the header comment: categorizing a component sorts it, and <code>CategorizeComponent</code> already holds the lock when it calls <code>SortUpdateable</code>/<code>SortDrawable</code>, which take it again; a component's own order-changed event re-enters through the same path. &ldquo;Recursive&rdquo; is a property of this implementation, not an invitation to hold the lock across arbitrary user code.</p>
+
+<h3 id="lock-coverage">What the lock covers in the TARGET snapshot</h3>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Code path in <code>Game.cpp</code></th><th scope="col">Under <code>componentListsMutex_</code>?</th><th scope="col">Note</th></tr></thead>
+<tbody>
+<tr><td>Snapshot copy in <code>Update</code> / <code>Draw</code></td><td>Yes</td><td>Released before the loop that calls components</td></tr>
+<tr><td>The loop calling <code>Update</code>/<code>Draw</code> on each entry</td><td>No</td><td>Skips <code>nullptr</code> and disabled/invisible entries</td></tr>
+<tr><td>Clearing the ordered lists in <code>DoInitialize</code></td><td>Yes</td><td></td></tr>
+<tr><td><code>CategorizeComponent</code> and the two order-changed token maps</td><td>Yes</td><td>The comment notes a loader thread writes the maps while the game thread reads and erases them</td></tr>
+<tr><td><code>SortUpdateable</code> / <code>SortDrawable</code></td><td>Yes (re-entered)</td><td>Also reached from <code>OnUpdateOrderChanged</code> / <code>OnDrawOrderChanged</code></td></tr>
+<tr><td><code>OnComponentRemoved</code>, including nulling snapshot entries and removing the order-changed token</td><td>Yes</td><td>Removing the token calls the component's event <code>Remove</code> under the lock</td></tr>
+<tr><td><code>OnComponentAdded</code>'s <code>component-&gt;Initialize()</code></td><td>No</td><td>Runs on the adding thread before <code>CategorizeComponent</code> takes the lock</td></tr>
+<tr><td><code>GameComponentCollection</code>'s own <code>items_</code> and <code>owned_</code></td><td>No lock at all</td><td>The collection is a plain vector plus a map</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="not-covered">What the fix does not establish</h3>
+<p>The following follow from reading the source; no test in the snapshot exercises them, so treat them as open questions for any change here, not as supported patterns:</p>
+<ul>
+<li><strong>Removal from another thread while a frame iterates.</strong> <code>OnComponentRemoved</code> writes the snapshot entry under the lock, but the game thread reads that entry without it. If a loader thread removes (and frees) a component while the game thread is inside the loop, nothing orders the two. The fix is designed for removal <em>on the game thread</em>, from inside a callback.</li>
+<li><strong>Concurrent collection mutation.</strong> <code>GameComponentCollection::Add</code> from a loader thread and <code>Remove</code> on the game thread both modify <code>items_</code> without a lock. The regression test only adds from one thread while the other thread calls <code>Game::Update</code>/<code>Game::Draw</code>, which never touch <code>items_</code>.</li>
+<li><strong>Initialization happens on the adding thread.</strong> Because <code>OnComponentAdded</code> calls <code>Initialize()</code> directly, a <code>DrawableGameComponent</code> added from a loader thread runs <code>LoadContent()</code> there (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/DrawableGameComponent.cpp"><code>DrawableGameComponent.cpp</code></a>). GPU work in that <code>LoadContent</code> is serialized against the frame only where a renderer implements a thread-context lease and only for the operations that take one; see the <a href="threading.html#renderer">thread and callback map</a>. <code>ContentManager</code> itself has no lock.</li>
+</ul>
+
+<h2 id="ownership-followup">The same-day ownership follow-up</h2>
+<p>Commit <code>43748c88</code> (also 2026-09-06, also SAMPLE-065) attacked the ownership half of the problem. XNA's <code>GameComponentCollection</code> is a <code>Collection&lt;IGameComponent&gt;</code> and so holds a strong reference; a game that drops its own last reference leaves a live component registered rather than a dangling one. CNA held raw pointers only, which forced a faithful port to track and unregister everything it owned. The follow-up added <code>Add(std::shared_ptr&lt;IGameComponent&gt;)</code> and the matching <code>Insert</code>; the raw-pointer overloads are unchanged and remain right for a component the game holds as a member.</p>
+<p>In <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/GameComponentCollection.cpp"><code>GameComponentCollection.cpp</code></a> at TARGET, the shared reference is stored in <code>owned_</code> <em>before</em> the insert (so a <code>ComponentAdded</code> handler that removes the component again finds a reference to release) and erased in <code>RemoveItem</code> <em>after</em> <code>ComponentRemoved</code> is raised. That ordering is what makes the snapshot nulling above sufficient for shared-owned components: <code>Game</code> nulls the in-flight entry while the component is still alive, and only then can dropping the collection's reference destroy it. The five tests are <code>GameComponentCollectionTest.AnAddedSharedComponentOutlivesTheCallersOwnReference</code>, <code>RemovingASharedComponentReleasesItAfterTheEvent</code>, <code>ClearReleasesEverySharedComponent</code>, <code>ARejectedSharedAddLeavesNoOwnershipBehind</code> and <code>TheCollectionReleasesWhatItStillOwnsWhenItGoesAway</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/tests/Microsoft/Xna/Framework/GameComponentCollectionTests.cpp"><code>GameComponentCollectionTests.cpp</code></a>.</p>
+<p>One more ownership edge matters at teardown: <code>Components_</code> is declared before <code>GraphicsDevice_</code> in <code>Game.hpp</code>, so a shared-owned component is destroyed <em>after</em> the device during <code>~Game</code>. Its graphics resources then rely on the weak device-lifetime token described in the <a href="ownership.html#graphics">ownership map</a>.</p>
+
+<h2 id="tests">How the repair was proved</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/tests/Microsoft/Xna/Framework/GameTests.cpp"><code>GameTests.cpp</code></a> contains the two regression tests:</p>
+<ul>
+<li><code>GameTest.AComponentRemovedMidFrameIsNotCalledLaterInThatSameFrame</code>: a <code>RemovingComponent</code> with update and draw order &minus;1 removes a <code>CountingComponent</code> from inside its own <code>Update()</code> and <code>Draw()</code> and then frees it with <code>unique_ptr::reset()</code>, exactly as a screen manager does. The test asserts the frame completes and the victim is gone.</li>
+<li><code>GameTest.ComponentsAddedFromALoadingThreadSurviveTheFrameThatIsIteratingThem</code>: a <code>std::thread</code> adds 200 components while the main thread loops <code>Update</code>/<code>Draw</code>; afterwards every component must have been updated and drawn at least once.</li>
+</ul>
+<p>The commit reports that the threaded case aborted in 3 of 8 runs before the fix and 0 of 8 after, and that the mid-frame case aborts in 4 of 4 runs with the fix removed. Those are the commit author's recorded results, not a run made for these pages.</p>
+<p>Both tests begin with <code>CNA::Runtime::Testing::DefaultPlatformCanCreateWindow()</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/tests/Microsoft/Xna/Framework/RuntimePlatformTestSupport.hpp"><code>RuntimePlatformTestSupport.hpp</code></a>) and call <code>GTEST_SKIP()</code> when the selected platform cannot create a hidden window. On a machine without a usable display they report <em>skipped</em>, not passed, so read the skip count. The threaded test's components use the default no-op <code>LoadContent()</code>, so it does not exercise GPU resource creation on the loader thread.</p>
+<p>On a prepared checkout of the snapshot, focused evidence looks like this (commands checked against <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakePresets.json"><code>CMakePresets.json</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>cmake/UnitTests.cmake</code></a>; not executed here):</p>
+<pre><code class="language-bash"># from the CNA checkout root (discovered tests also run from the source root)
+cmake --preset unit
+cmake --build --preset unit                  # builds the aggregate CnaTests
+./cmake-build-unit/CnaTests \
+  --gtest_filter='GameTest.AComponentRemovedMidFrameIsNotCalledLaterInThatSameFrame:GameTest.ComponentsAddedFromALoadingThreadSurviveTheFrameThatIsIteratingThem' \
+  --gtest_repeat=50
+
+# or the focused runtime binary, which is EXCLUDE_FROM_ALL and has no build preset of its own
+cmake --build cmake-build-unit --target CnaRuntimeTests
+./cmake-build-unit/CnaRuntimeTests --gtest_filter='GameTest.*:GameComponentCollectionTest.*'</code></pre>
+<p>Repeat the threaded case many times; one pass cannot establish the absence of a race. AddressSanitizer detects a dereference after destruction; ThreadSanitizer detects the data race itself; neither replaces a test that asserts same-frame semantics. There is no runtime-specific sanitizer preset, but <code>CNA_SANITIZE=address</code> or <code>CNA_SANITIZE=thread</code> in a separate build directory instruments every CNA-owned target, and the <code>devices-asan</code> / <code>devices-tsan</code> presets build the whole <code>CnaTests</code> aggregate (on the <code>OPENGLES3</code> renderer), so <code>GameTest.*</code> can run there too if the host has a display. Before merging a change to this path, also run <code>GameComponentCollectionTest.*</code>, <code>GameEventSemanticsGoldenTest.*</code>, <code>GamePlatformOwnershipTest.*</code> and the unfiltered aggregate (note that <code>GameComponentTests.cpp</code> and <code>DrawableGameComponentTests.cpp</code> exist but contain no tests at this snapshot); the <a href="validation.html#matrix">validation matrix</a> lists the broader gate.</p>
+
+<h2 id="lesson">What this teaches a human reviewer</h2>
+<ul>
+<li><strong>Do not stop at the crash site.</strong> Trace who inserted a pointer, who copied it, and who may destroy its referent during a callback.</li>
+<li><strong>Separate concurrency protection from ownership.</strong> The mutex protects list and snapshot transitions; it does not extend any object's lifetime after removal. Lifetime came from nulling the snapshot and, for shared-owned components, from releasing the collection's reference only after the event.</li>
+<li><strong>Compare compatibility expectations carefully.</strong> A similar XNA control flow does not imply XNA's strong-reference guarantees in CNA's C++ representation; check which overload a port uses.</li>
+<li><strong>Write one test per failure mechanism.</strong> Background mutation and in-frame removal are different mechanisms and got different tests.</li>
+<li><strong>Preserve callback placement relative to locks.</strong> A &ldquo;more synchronized&rdquo; patch that runs component code under <code>componentListsMutex_</code> invites deadlock and re-entrancy failures, because components add, remove and reorder components.</li>
+<li><strong>Write down the thread of every call you rely on.</strong> <code>OnComponentAdded</code> initializes on the adding thread; that single fact decides where a component's <code>LoadContent</code> runs.</li>
+<li><strong>Use Git history as evidence of symptom and intent, then verify against current source.</strong> The follow-up commit changed the ownership model the same day; the source could have moved again.</li>
+</ul>
+
+<h2 id="exercise">Exercise: repeat the reconstruction</h2>
+<ol>
+<li>Read the diff: <code>git show 3faa1930aa -- modules/runtime/src/Game.cpp modules/runtime/include/Microsoft/Xna/Framework/Game.hpp</code>, then <code>git show 43748c883</code>.</li>
+<li>Confirm both commits are ancestors of the snapshot: <code>git merge-base --is-ancestor 3faa1930aa 009d40f5 &amp;&amp; echo yes</code>.</li>
+<li>List every writer of <code>currentlyUpdatingComponents_</code> in <code>Game.cpp</code> at the snapshot and write the thread each runs on.</li>
+<li>Explain in two sentences why the mid-frame test passes without any second thread, and why the threaded test would still pass if <code>OnComponentRemoved</code> did not null snapshot entries.</li>
+<li>Sketch the test that would be needed before claiming cross-thread <em>removal</em> is safe, and name the assertion that would distinguish a pass from a lucky schedule.</li>
+</ol>
+<p>This case applies the method in <a href="investigation.html">How to understand code you did not write</a>. Its ownership edges also appear in the <a href="ownership.html">ownership and lifetime master map</a>, its thread and callback constraints in the <a href="threading.html">thread and callback map</a>, and the runtime frame itself in <a href="../internals/runtime/frame.html">One frame source trace</a>. The user-facing component model is described in the <a href="../../docs/game-loop.html#gamecomponent-and-drawablegamecomponent">Game loop guide</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/game-loop.html#gamecomponent-and-drawablegamecomponent">Game loop guide: components</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../architecture/runtime.html">Runtime lifecycle</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../internals/runtime/frame.html">One frame source trace</a> &middot; <a href="../internals/runtime/shutdown.html">Ownership and shutdown</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="investigation.html">How to understand code you did not write</a> &middot; <a href="../handbook/debug-shutdown-and-lifetime.html">Debug shutdown and lifetime behavior</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="validation.html">What to test after changing X</a> &middot; <a href="../testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="worked-changes.html" rel="prev"><span>Previous</span>Worked human changes</a><a class="dev-pager-next" href="case-study-storage.html" rel="next"><span>Next</span>Case study: storage containment</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
