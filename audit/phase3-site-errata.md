@@ -53,3 +53,5 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 46 | `docs/effects.html#stock-effects-at-a-glance` | the API is unchanged except shadow members | `BasicEffect` also gained XNA's parameter graph, technique name and `VertexColorEnabled` accessors | WP07 | open |
 | 47 | `docs/rendering-backends.html#texture-formats` | DIRECTX9 has a "native D3DFMT mapping" | DIRECTX9 has no `ClassifySurfaceFormatEXT`; public textures are Color-only (`Texture2D.cpp`, `ValidateTexture2DFormatEXT`) | WP10 | open |
 | 48 | `docs/tutorials/103-direct3d-windows.html#d3d12-split` | the routine suite reads render targets directly | at TARGET it runs forced-headless on an implicit back buffer, and 3 fixtures run through Proton | WP10 | open |
+| 49 | `docs/graphics-state.html#depthstencilstate` | `DepthBufferFunction` default is `Less` | `DepthStencilState.hpp` has `LessEqual` | WP06 | open |
+| 50 | `docs/3d-rendering.html#surface-formats` | the 7 EXT surface formats are Defer everywhere | `WebGPURenderer.cpp` classifies `Dxt5SrgbEXT`, `Bc7EXT`, `Bc7SrgbEXT` as Supported when BC is enabled | WP06 | open |
