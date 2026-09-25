@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ownership and shutdown - CNA Development</title>
+  <meta name="description" content="Game member order, explicit Dispose versus destructor teardown, GraphicsDevice disposal, the ambient platform stack and the bugs this order prevents, traced from source with the tests that pin it.">
+  <meta name="keywords" content="game::dispose, ~game, member order, graphicsdevice disposal, resourcedevicelifetime_, uninstallplatform, currentplatform, unloadcontent, video subsystem, weak lifetime token, shutdown">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/runtime/shutdown.html">
+  <meta property="og:title" content="Ownership and shutdown - CNA Development">
+  <meta property="og:description" content="Game member order, explicit Dispose versus destructor teardown, GraphicsDevice disposal, the ambient platform stack and the bugs this order prevents, traced from source with the tests that pin it.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/runtime/shutdown.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Ownership and shutdown","description":"Game member order, explicit Dispose versus destructor teardown, GraphicsDevice disposal, the ambient platform stack and the bugs this order prevents, traced from source with the tests that pin it.","url":"https://libcna.com/development/internals/runtime/shutdown.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="module.html" class="docs-nav-link is-group-active">Runtime internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="startup.html" class="docs-nav-link">Startup trace</a></li>
+        <li><a href="frame.html" class="docs-nav-link">One frame trace</a></li>
+        <li><a href="shutdown.html" class="docs-nav-link active" aria-current="page">Shutdown trace</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="module.html">Runtime</a></li>
+        <li aria-current="page">Shutdown trace</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Ownership and shutdown</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#tree">Ownership tree and borrowed references</a></li>
+          <li><a href="#exit">Exit versus dispose versus destructor</a></li>
+          <li><a href="#order">Teardown order, step by step</a></li>
+          <li><a href="#device">Inside GraphicsDevice disposal</a></li>
+          <li><a href="#ambient">Ambient platform and out-of-order games</a></li>
+          <li><a href="#failure">Bugs this order prevents</a></li>
+          <li><a href="#tests">Validation and source reading order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Runtime internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Order and ownership were read from Game.hpp, Game.cpp, GraphicsDeviceManager.cpp, GraphicsDevice.cpp, GraphicsResource.cpp and CurrentPlatform.cpp at this snapshot; the named tests exist and were not executed. Backend-specific native destruction paths, mobile and browser hosts and the C API's own teardown are outside what was checked here.</p></div>
+
+<p class="lede">The dangerous boundary in CNA is not simply &ldquo;call <code>Dispose</code>&rdquo;. A game has explicit disposal, C++ member destruction, borrowed service pointers, a device resource registry, a process-wide ambient platform and, for browsers, a loop that may still be running. Their order is visible in the code and differs depending on how the game ends. This page traces each path from the declaration order in <code>Game.hpp</code> to the last member destructor, names what each step guarantees, and records the bugs that order exists to prevent. It is for anyone touching a destructor, <code>Dispose</code>, a service registration or a device teardown step.</p>
+
+<h2 id="tree">Ownership tree and borrowed references</h2>
+<p>Declaration order is construction order and its reverse is destruction order, so the diagram below is also the teardown script read from the bottom up (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/include/Microsoft/Xna/Framework/Game.hpp"><code>Game.hpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp"><code>GraphicsDevice.hpp</code></a>).</p>
+<pre class="diagram">Game object                                     the caller owns it: stack, heap, or a C API handle slot
+├─ Activated, Deactivated, Disposed, Exiting, RunApplication     public members, declared first
+├─ platform_               unique_ptr&lt;IPlatform&gt;      physical lifetime encloses every later member
+├─ platformInstallation_   unique_ptr&lt;PlatformInstallation&gt;    undoes the ambient install if construction throws
+├─ platformCapabilities_   value, cached once
+├─ eventBatch_             unique_ptr&lt;PlatformEventBatch&gt;      reused vector for PollEvents
+├─ Components_             GameComponentCollection: raw items_ + owned_ shared_ptrs (shared overload only)
+├─ GraphicsDevice_         value member
+│    ├─ platform_          borrowed IPlatform* (the Game's, or the ambient lazy default for a bare device)
+│    ├─ platformWindow_    unique_ptr&lt;IPlatformWindow&gt;: owns a CNA-created window, borrows an adopted one
+│    ├─ surfacePresenter_  unique_ptr, declared before renderer_ so it outlives it
+│    ├─ renderer_          unique_ptr&lt;IGraphicsRenderer&gt;
+│    ├─ resourceDeviceLifetime_   shared_ptr&lt;void&gt; token that resources hold weakly
+│    ├─ state objects, texture and sampler collections     value members
+│    └─ resources_         vector&lt;GraphicsResource*&gt;: tracking only, deletes nothing
+├─ Content_                ContentManager value: borrowed device, loadedAssets_ cache
+├─ Window_                 GameWindow value: borrows the device's IPlatformWindow
+├─ LaunchParameters_
+├─ Services_               type_index -&gt; borrowed void*
+│    └─ GraphicsDeviceManager*     caller-owned, usually a member of the derived game
+├─ clock, flags, four ordered raw-pointer component vectors, componentListsMutex_, order-token maps
+└─ graphicsDeviceService_, graphicsDeviceManager_, currentAdapter_   cached raw pointers</pre>
+<div class="callout callout--info"><span class="callout-icon">&#8505;</span><p><strong>Member order to remember.</strong> <code>Components_</code> is declared before <code>GraphicsDevice_</code>, not after the window and content manager. Reverse order therefore destroys the device first and the component collection after it, and any component held through the <code>shared_ptr</code> overload of <code>Add</code> is destroyed <em>after</em> the device has gone. The header comment calls <code>platform_</code> the first member; strictly it is the first private data member, with the four events and <code>RunApplication</code> ahead of it.</p></div>
+<p>The device's resource vector records which objects must be disposed while the native device still exists. It does not mean <code>GraphicsDevice</code> allocated every <code>GraphicsResource</code> or may delete one. A resource keeps a raw device pointer plus a <code>std::weak_ptr&lt;void&gt;</code> copy of <code>resourceDeviceLifetime_</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsResource.cpp"><code>GraphicsResource.cpp</code></a>). <code>Dispose(bool)</code>, moves and move-assignments consult that token (<code>!graphicsDeviceLifetime_.expired()</code>) before calling <code>RemoveResourceReference</code> or <code>TransferResourceReference</code>, so a resource whose C++ destructor runs after its device does not dereference a dead one. <code>~GraphicsDevice</code> resets the token in its body, after <code>Dispose()</code> and before the device's own members are destroyed, so even those members see it expired. A texture or vertex buffer additionally owns a renderer-side allocation object (<code>ITextureRenderer</code>, <code>IVertexBufferRenderer</code>) that its own <code>Dispose</code> releases; whether every backend's allocation destructor tolerates the renderer being gone is a per-backend question these pages do not verify.</p>
+<p>State wrappers (<code>BlendState</code>, <code>DepthStencilState</code>, <code>RasterizerState</code>, <code>SamplerState</code>, <code>VertexDeclaration</code>) are copied and assigned freely and then made aliases of one <code>SharedIdentity</code> by <code>ShareResourceIdentityWith</code>; that block holds the device pointer, the weak token, name, tag, the disposed flag and an alias list, and disposing any alias disposes the identity and raises <code>Disposing</code> on every alias. This complicates the ordinary one-object-one-registration assumption, so read <code>GraphicsResource.cpp</code> before changing copy, move or disposal behaviour.</p>
+
+<h2 id="exit">Exit versus dispose versus destructor</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Action</th><th scope="col">What it does at this snapshot</th></tr></thead>
+<tbody>
+<tr><td><code>Game::Exit()</code></td><td>Sets <code>RunApplication</code> false and <code>suppressDraw_</code> true. Nothing is disposed.</td></tr>
+<tr><td><code>Game::Run()</code> returns</td><td>After the loop: <code>OnExiting</code>, <code>EndRun</code>, <code>AfterLoop</code>. The caller still owns the <code>Game</code>; nothing is disposed.</td></tr>
+<tr><td><code>Game::Dispose()</code></td><td>Calls <code>Dispose(true)</code>, then raises <code>Disposed</code> &mdash; on every call, including repeated ones. <code>Dispose(true)</code> (first call only) disposes each component that is <code>IDisposable</code>, then <code>Content_.Dispose()</code>, then the registered graphics device service if it is <code>IDisposable</code>, then sets <code>isDisposed_</code>. Afterwards <code>Run</code>, <code>DoInitialize</code> and a following <code>Update</code> throw <code>std::runtime_error</code>.</td></tr>
+<tr><td><code>~Game()</code></td><td>On Emscripten, first stops the browser loop if this game is driving it (with an error log line). Then <code>Dispose(false)</code>, which only marks the game disposed (no component, content or service disposal), then <code>UninstallPlatform</code>. Members are destroyed after the body, in reverse declaration order.</td></tr>
+</tbody></table></div>
+<p><strong>What actually disposes the device.</strong> <code>Game::Dispose(true)</code> does not call <code>GraphicsDevice_.Dispose()</code> for the usual Game-owned value member. A registered manager's <code>Dispose(true)</code> unregisters its two services, releases its frame lease, unsubscribes its device events, raises its own <code>DeviceDisposing</code> and, because <code>ownsGraphicsDevice_</code> is false for every Game-attached manager, neither disposes nor deletes the device before clearing its pointer. The device is disposed by <code>GraphicsDevice::~GraphicsDevice()</code>, or earlier if game code disposes it. (The gate matters: the raise of <code>DeviceDisposing</code> is deliberately <em>not</em> conditional on ownership, because gating it left the event permanently dead for the only configuration the code base constructs.)</p>
+<p><strong>What that means for <code>UnloadContent</code>.</strong> <code>Game::Initialize</code> subscribes <code>UnloadContent</code> to the graphics device service's <code>DeviceDisposing</code> event, and only when such a service is registered. So <code>UnloadContent</code> runs when (a) game code or a host disposes explicitly &mdash; <code>Game::Dispose()</code>, or the registered service's own <code>Dispose()</code> &mdash; and (b) a <code>GraphicsDeviceManager</code> (or another service) is registered. It runs <em>after</em> <code>Content_.Dispose()</code> has cleared the asset cache, so it is a place to release resources the game owns, not to touch content. It never runs from <code>~Game</code>, from <code>Run()</code> returning, or in a game that has no manager, such as the demo_2d executable. <code>GameTest.DisposingDeviceInvokesUnloadContent</code> and <code>RepeatedDisposeDoesNotReinvokeUnloadContent</code> pin the explicit path; the second holds because the manager's <code>disposed_</code> guard makes <code>DeviceDisposing</code> a one-time event even though <code>Game::Dispose()</code> re-raises <code>Disposed</code>.</p>
+<p>Controllers are not released here: <code>Game</code> no longer acquires that subsystem (the startup page records why), so the platform releases whatever it acquired for the gamepad or joystick services when it is destroyed, which is the last member destructor.</p>
+
+<h2 id="order">Teardown order, step by step</h2>
+<p>Two paths reach teardown, and a change must be checked against both.</p>
+<pre class="diagram">Explicit:  game.Dispose()  → Game::Dispose(true), then the Disposed event
+  1. every IDisposable component                 → Dispose()
+  2. Content_.Dispose()                          → Unload(): cached assets released
+  3. the registered graphics device service (a GraphicsDeviceManager):
+       unregister both services; drop the frame's renderer-context lease;
+       unsubscribe device events; raise DeviceDisposing  (Game::UnloadContent runs here);
+       never delete or dispose the Game-owned device
+  4. isDisposed_ = true                          (GraphicsDevice_ is NOT disposed here)
+
+Destruction (delete game, or scope exit):
+  0. the derived class first: its ~Derived body, then its members in reverse order
+     (a GraphicsDeviceManager member, textures, SpriteBatch ...) - all before any Game member
+  1. ~Game body: [Emscripten: stop the loop]; Dispose(false); UninstallPlatform(platform_)
+  2. Game members, reverse declaration order:
+       cached pointers, order-token maps, vectors, mutex, clock state
+       Services_ (drops borrowed pointers), LaunchParameters_, Window_ (borrows only)
+       Content_        (asset cache released; the device is still alive)
+       GraphicsDevice_ (~GraphicsDevice: Dispose() = Dispose(true) → Disposing raised,
+                        registry drained while the renderer lives, renderer → presenter → window,
+                        video reference released, lifetime token reset, then its own members)
+       Components_     (owned_ shared components destroyed - after the device)
+       eventBatch_, platformCapabilities_, platformInstallation_ (disarmed), platform_
+       finally the public events and RunApplication</pre>
+<p>Four consequences are easy to miss. First, the ambient platform is uninstalled in the <code>~Game</code> body, <em>before</em> any member is destroyed: during device teardown <code>GetCurrentPlatform()</code> names the successor game's platform, or, when none is installed, would lazily create a brand-new default platform (see the next section). The device's own borrowed <code>platform_</code> is still valid, which is why teardown code must use the stored dependency. Second, a <code>GraphicsDeviceManager</code> that is a member of the derived game is destroyed before every <code>Game</code> member: if the game was not explicitly disposed, its <code>Dispose(false)</code> unregisters the services (the <code>Game</code> and its container are still alive) and unsubscribes from the device, so the device's later <code>Disposing</code> event does not reach it, and <code>DeviceDisposing</code> is not raised at all. Third, shared-owned components outlive everything declared after <code>Components_</code> &mdash; the device, content manager, window and services &mdash; so a component destructor must not call back into any of them through its <code>Game</code> reference; its <code>GraphicsResource</code> members are safe only because of the weak token. Fourth, <code>~GameComponentCollection</code> is defaulted: it releases the owning references without raising <code>ComponentRemoved</code> and disposes nothing, so components (raw entries) are the caller's to destroy or, for <code>IDisposable</code>, to have disposed by an explicit <code>Game::Dispose()</code>.</p>
+<p>This is a composite of several lifecycles, not a claim that every application calls <code>Dispose()</code>. The same map with the thread side is in the <a href="../../takeover/ownership.html#order">Ownership and lifetime master map</a> and the <a href="../../takeover/threading.html">Thread and callback map</a>; the user-level hooks are on the <a href="../../../docs/game-loop.html#disposebool">Game loop guide</a>.</p>
+
+<h2 id="device">Inside GraphicsDevice disposal</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a>'s <code>Dispose(bool)</code> does, in this order:</p>
+<ol>
+<li>Returns if already disposed, otherwise sets <code>isDisposed_</code> <em>first</em>, before any callback or owned-resource work, so a re-entrant <code>Dispose</code> is a no-op and a <code>Disposing</code> handler cannot issue work against objects that are being torn down (the source ties this to FNA's lifecycle boundary).</li>
+<li>Raises <code>Disposing</code> when <code>disposing</code> is true. XNA's finalizer would pass false; C++ has no separate finalizer, so the destructor is the only other caller and it passes <em>true</em> because every member is still alive in a destructor body. The device's <code>Disposing</code> event is therefore raised during destruction as well. The manager's subscription uses it to release a still-active frame context lease so <code>EndDraw</code> cannot present on a destroyed renderer.</li>
+<li>Moves <code>resources_</code> into a local vector and clears the member, so a resource's re-entrant <code>RemoveResourceReference</code> finds an empty registry instead of mutating the iteration, then calls <code>Dispose()</code> on each tracked resource <em>while <code>renderer_</code> still exists</em>.</li>
+<li><code>destroyNativeResources()</code>: invalidates the cached capability profile, resets <code>renderer_</code>, then <code>surfacePresenter_</code>, clears the shared <code>TextInputEXT</code> and <code>Mouse</code> window handles if they still name this device's window (for owned and adopted windows alike), and resets <code>platformWindow_</code> &mdash; which destroys a CNA-created window and merely lets go of an adopted one.</li>
+<li><code>setVideoSubsystemAcquired(false)</code> releases this device's single video-subsystem reference. The source states why the window goes first: the video subsystem is what backs it. The platform object itself is destroyed later, by <code>Game</code>.</li>
+</ol>
+<p>The constructor has a mirror rollback: if resolving a renderer or applying the initial state throws, its <code>catch</code> calls <code>destroyNativeResources()</code>, balances the video reference and restores the caller's GL binding before rethrowing (see the startup page's failure table). This matters for testing fallback candidates and partial initialization. For a fallback chain, <code>discardOwnedWindow()</code> is the per-candidate variant: it drops the presenter, clears the shared input handles when they name the window, and resets the wrapper and the stored window handle; the attempt loop calls it only for a window this device owns, and resetting a borrowed wrapper could not destroy a caller's window in any case.</p>
+<p><strong>The video reference is a bool, not a counter.</strong> This is a worked historical case, fixed in the current code. Two independent campaigns each added an <code>AcquireSubsystem(Video)</code> (one where a window is created, one per fallback candidate) while a single release stayed in <code>Dispose</code>, so every windowed device took two references and returned one and the platform's video subsystem stayed up for the rest of the process; nothing observable failed. The repair is ownership rather than another release call: the device's count is <code>videoSubsystemAcquired_</code>, changed only by <code>setVideoSubsystemAcquired</code>, which acquires <em>before</em> setting the flag (an acquire can throw when there is no display server) and clears the flag before releasing, so every path &mdash; success, creation failure, fallback A to B to C, window failure, <code>Dispose</code>, the constructor's <code>catch</code> &mdash; balances by construction. <code>GraphicsDeviceSubsystemLifecycleTests.cpp</code> counts the acquisitions on a decorated real platform instead of faking one, because a fake that answers every call would have passed before the fix as well.</p>
+
+<h2 id="ambient">Ambient platform and out-of-order games</h2>
+<p>Some static XNA APIs (<code>Keyboard::GetState</code>, <code>StorageDevice</code>, <code>TitleContainer</code>) cannot be handed a <code>Game</code>, so <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/CurrentPlatform.cpp"><code>CurrentPlatform.cpp</code></a> keeps an ambient pointer, a lazily created owned default and a list of subsystem pins; <code>Game</code> installs its own platform for those APIs. A process-wide stack in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a> records the live games' platforms, in the order they installed, and the back entry is the one the accessor aims at. A per-game &ldquo;the platform I displaced&rdquo; pointer looks simpler and is wrong, because games are not guaranteed to be destroyed in reverse construction order: a game that saved a predecessor destroyed first would restore a dangling pointer on its way out.</p>
+<p><code>UninstallPlatform</code> removes the departing platform wherever it sits in the stack (searching from the back, so the middle case works), takes the new back as the successor, and re-aims the accessor <em>only if it currently points at the departing platform</em> &mdash; a test may have installed its own, and a game going away is no reason to take that over. <code>SetCurrentPlatform</code> then moves the ambient pins: for each pin held on the departing platform it acquires the subsystem on the replacement and releases it on the old one; if there is no replacement, or the acquire fails, the pin is released and dropped. The pin in practice is the <code>GraphicsAdapter</code> video pin taken by the first adapter enumeration (the startup page's device section); when it could not be transferred, the next use of the adapter cache re-raises it. When nothing is left installed, <code>GetCurrentPlatform()</code> would <em>create</em> a default platform on demand, so code that must not do that uses <code>HasCurrentPlatform()</code> (this is why <code>Game.cpp</code> wraps it in <code>InstalledPlatformOrNull</code>, and why <code>DestroyingAGameUninstallsItsPlatform</code> can assert that the accessor is empty afterwards).</p>
+<p>The stack, its mutex and every <code>CurrentPlatform</code> holder that has a destructor are deliberately <em>immortal</em>: allocated once, never destroyed, so unregistering is valid at any point of process teardown. The case that proved it is the C API. Its handle registry owns each C-created <code>Game</code> through a <code>shared_ptr</code> in a function-local static that is constructed on the first handle-creating call &mdash; necessarily before this file's statics, which are constructed inside that same call by the <code>Game</code> it is creating. Reverse-order destruction therefore destroys the stack first and the registry that still holds the <code>Game</code> second, and <code>~Game</code> read a freed vector at exit; the source records that AddressSanitizer reported a heap-use-after-free at <code>UninstallPlatform</code> for every C API smoke test that left a game handle alive. It is a fixed, always-wrong ordering, not a race, and reordering cannot fix it because the registry has to exist before the object it is about to store.</p>
+<p><code>~Game</code> unregisters the ambient pointer <em>before</em> the platform member is destroyed, so the accessor is never left aimed at a dead platform, while the platform object's physical lifetime still encloses the device and window members because it was declared first. Code added to a later member destructor should use its stored platform dependency and never assume the ambient accessor still names this game.</p>
+
+<h2 id="failure">Bugs this order prevents</h2>
+<ul>
+<li><strong>Video reference leak</strong> &mdash; two acquires and one release kept a native subsystem alive after the device (above). <code>setVideoSubsystemAcquired</code> centralizes a single owned reference.</li>
+<li><strong>Use-after-free at exit</strong> &mdash; an immortal C API handle registry can destroy a <code>Game</code> after ordinary statics, so the ambient platform stack and its mutex must still exist.</li>
+<li><strong>Dangling service</strong> &mdash; <code>Services_</code> stores borrowed providers; the manager's destructor unregisters its entries before the game next queries them. The registration is not symmetric, see the maintainer note below.</li>
+<li><strong>Dead renderer during resource disposal</strong> &mdash; the registry is drained before <code>renderer_</code> is reset, so a resource's <code>Dispose</code> runs while the backend that created its allocation still exists; reversing the two would leave resources unable to release native handles.</li>
+<li><strong>Invalid in-flight present</strong> &mdash; disposing the device from inside <code>Draw</code> needs the manager's <code>Disposing</code> listener to release the frame lease while the renderer's context still exists.</li>
+<li><strong>Failed-constructor leak</strong> &mdash; a throwing <code>GraphicsDevice_</code> constructor never reaches <code>~Game</code>; the installation guard must undo the ambient pointer before the platform argument is destroyed. <code>AFailedConstructionLeavesNothingInstalled</code> asserts the accessor is empty afterwards.</li>
+<li><strong>Resource outliving its device</strong> &mdash; the weak lifetime token keeps a late C++ destructor from calling into a destroyed device, including the device's own state members.</li>
+<li><strong>Re-entrant disposal</strong> &mdash; <code>isDisposed_</code> is set first and the registry is moved out before iteration. <code>GraphicsDeviceLifecycleTest.DisposalIsReentrantAndReleasesABoundRenderTarget</code> disposes from inside a <code>Disposing</code> handler and expects exactly one event and a released bound render target.</li>
+</ul>
+<div class="callout callout--note"><span class="callout-icon">&#9998;</span><p><strong>Maintainer note &mdash; shapes the order does not protect.</strong> Read from source, not observed: (1) <code>Game</code> caches <code>graphicsDeviceService_</code> and <code>graphicsDeviceManager_</code> as raw pointers that <code>unregisterServices</code> does not clear, and the manager's <code>ClientSizeChanged</code> subscription is never removed, so a manager destroyed while its game keeps running leaves both dangling; (2) <code>~GraphicsDeviceManager</code> runs <code>unregisterServices</code>, which dereferences its <code>Game</code>, so a manager that outlives an undisposed game reads a destroyed object; (3) <code>UnloadContent</code> runs after <code>Content_.Dispose()</code> on the explicit path and never on the destructor path. The supported shape is a manager nested inside its game's lifetime, typically a member of the derived class. No test covers the two unsupported shapes.</p></div>
+
+<h2 id="tests">Validation and source reading order</h2>
+<p>These tests exist at this snapshot; none was executed for this page. Each pins a narrow contract in its own configuration, and none proves every renderer's native destruction path.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Suite</th><th scope="col">Pins</th></tr></thead>
+<tbody>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/tests/Microsoft/Xna/Framework/GamePlatformOwnershipTests.cpp"><code>GamePlatformOwnershipTests.cpp</code></a> (13)</td><td>Install before members (<code>ExplicitPlatformIsOwnedAndInstalledBeforeGameMembers</code>), a failed construction leaves nothing installed, null rejected, install and uninstall, <code>AnInnerGameRestoresTheOuterOnesPlatformWhenItGoesAway</code>, <code>AnOuterGameOutlivingAnInnerOneDoesNotOverwriteTheInstallation</code>, <code>OutOfOrderDestructionLeavesNoDanglingInstallation</code>, one platform per game, repeated construct and destroy. The nested cases are guarded by a constant that is <code>true</code> at this snapshot.</td></tr>
+<tr><td><code>GameTests.cpp</code></td><td><code>DisposingDeviceInvokesUnloadContent</code>, <code>RepeatedDisposeDoesNotReinvokeUnloadContent</code>, <code>UnloadContentWorksAcrossRepeatedGameInstancesInOneProcess</code>.</td></tr>
+<tr><td><code>GraphicsDeviceManagerTests.cpp</code></td><td><code>RepeatedDisposeDoesNotReraiseDeviceDisposing</code>, reset-event forwarding.</td></tr>
+<tr><td><code>GameComponentCollectionTests.cpp</code></td><td>Shared ownership: an added shared component outlives the caller's reference, removal releases it after the event, <code>Clear</code> releases all, a rejected add leaves nothing behind, and the collection releases what it still owns when it goes away.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests"><code>modules/graphics/tests</code></a></td><td><code>GraphicsDeviceSubsystemLifecycleTests.cpp</code> (7 cases: video-reference balance across normal disposal, failed construction, fallback, initialization failure then success, repeated lifetimes and double disposal); <code>GraphicsDeviceLifecycleTest.RendererFacingOperationsRejectUseAfterDeviceDisposal</code> and <code>DisposalIsReentrantAndReleasesABoundRenderTarget</code>; <code>GraphicsResourceTest.CrossDeviceMoveAssignmentTransfersTrackingAndDetachesOldBindings</code>.</td></tr>
+</tbody></table></div>
+<p>For a resource-specific change also inspect the graphics resource lifetime tests of that resource type. Audio callback barriers, sensor lifetimes and the C API's own teardown rules are mapped on the neighbouring pages; the debugging procedure is in <a href="../../handbook/debug-shutdown-and-lifetime.html">Debug shutdown and lifetime behavior</a>.</p>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/include/Microsoft/Xna/Framework/Game.hpp"><code>Game.hpp</code></a> &mdash; declaration order and the borrowed manager and service members.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a> &mdash; <code>InstallPlatform</code>, the <code>PlatformInstallation</code> guard, <code>Dispose</code>, the destructor and the uninstall stack.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/GraphicsDeviceManager.cpp"><code>GraphicsDeviceManager.cpp</code></a> &mdash; service unregister, <code>DeviceDisposing</code> and frame-lease cleanup.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a> &mdash; <code>Dispose(bool)</code>, registry drain, <code>destroyNativeResources</code>, <code>discardOwnedWindow</code>, <code>setVideoSubsystemAcquired</code>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsResource.cpp"><code>GraphicsResource.cpp</code></a> &mdash; registration, the weak lifetime token and shared-identity semantics.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/CurrentPlatform.cpp"><code>CurrentPlatform.cpp</code></a> &mdash; the installed pointer, lazy default and pin transfer.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/game-loop.html#disposebool">Game loop: Dispose(bool)</a> &middot; <a href="../../../docs/game-loop.html#unloadcontent">Game loop: UnloadContent()</a> &middot; <a href="../../../docs/game-loop.html#lifecycle-diagram">Game loop: lifecycle diagram</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/runtime.html">Runtime lifecycle</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="module.html">Runtime module internals</a> &middot; <a href="startup.html">Startup source trace</a> &middot; <a href="frame.html">One frame source trace</a> &middot; <a href="../graphics/device.html">GraphicsDevice internals</a> &middot; <a href="../graphics/resources.html">Textures and render targets</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../takeover/ownership.html">Ownership and lifetime master map</a> &middot; <a href="../../takeover/threading.html">Thread and callback map</a> &middot; <a href="../../takeover/case-study-components.html">Case study: Game component lifetime</a> &middot; <a href="../../handbook/debug-shutdown-and-lifetime.html">Debug shutdown and lifetime behavior</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="frame.html" rel="prev"><span>Previous</span>One frame source trace</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
