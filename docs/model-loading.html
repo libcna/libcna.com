@@ -116,7 +116,7 @@
       </div>
 
       <h2>Overview</h2>
-      <p>The <code>Model</code> class lives in the <code>Microsoft::Xna::Framework::Graphics</code> namespace and represents a complete 3D mesh asset ready for rendering. A <code>Model</code> holds a hierarchy of <code>ModelMesh</code> objects; each mesh in turn contains one or more <code>ModelMeshPart</code> entries that map directly to a single draw call. Every part carries its own <code>VertexBuffer</code>, <code>IndexBuffer</code>, and <code>Effect</code>, mirroring the XNA 4.0 design exactly.</p>
+      <p>The <code>Model</code> class lives in the <code>Microsoft::Xna::Framework::Graphics</code> namespace and represents a complete 3D mesh asset ready for rendering. A <code>Model</code> holds a hierarchy of <code>ModelMesh</code> objects; each mesh in turn contains one or more <code>ModelMeshPart</code> entries that map directly to a single draw call. Every part references a <code>VertexBuffer</code>, an <code>IndexBuffer</code> and an <code>Effect</code> (the parts of one model may share them), the same shape as XNA 4.0. The shape is XNA&rsquo;s; the behaviour is not identical: CNA keeps deliberate C++ deviations, such as skipping a part whose effect is null, a copyable <code>Model</code> value over one shared graph and several XNA-internal setters exposed as <code>CNAEXT</code> members. <a href="../deep-dives/models/model-mesh-runtime.html">The runtime graph and draw contract</a> lists them.</p>
 
       <h2 id="runtime-gltf">Loading glTF 2.0 at runtime</h2>
       <p>The simplest path needs no tooling step at all: <strong>drop a <code>.gltf</code> or <code>.glb</code> into your content root and load it like any other asset.</strong> glTF support is compiled into every build &mdash; there is no CMake option to enable, and the loader (a vendored copy of <a href="https://github.com/jkuhlmann/cgltf" target="_blank" rel="noopener">cgltf</a>) is always present.</p>
@@ -393,7 +393,7 @@ cna_tool_gltf_to_cnj input/house.glb Content/models house 0.01</code></pre>
       <pre><code>Model model = getContentProperty().Load&lt;Model&gt;("models/house");</code></pre>
 
       <h3>3. Per-mesh effect override</h3>
-      <p>Override the default effect on each part to apply custom lighting or material properties per mesh.</p>
+      <p>Override the default effect on each part to apply custom lighting or material properties per mesh. The <code>BasicEffect</code> cast means this loop only touches <code>BasicEffect</code> parts: a model loaded from direct glTF or a converted <code>.cnj</code> usually carries <code>PbrEffect</code> or <code>SkinnedPbrEffect</code> for its metallic-roughness materials, which the cast skips. Set the matrices through <code>IEffectMatrices</code> (example 4) and cast to a concrete effect type only for that type&rsquo;s own properties.</p>
       <pre><code>for (ModelMesh* mesh : model.getMeshesProperty()) {
     for (ModelMeshPart* part : mesh-&gt;getMeshPartsProperty()) {
         if (auto* effect = dynamic_cast&lt;BasicEffect*&gt;(part-&gt;getEffectProperty())) {
@@ -412,12 +412,15 @@ cna_tool_gltf_to_cnj input/house.glb Content/models house 0.01</code></pre>
 model.CopyAbsoluteBoneTransformsTo(transforms);
 
 for (ModelMesh* mesh : model.getMeshesProperty()) {
-    Matrix meshWorld = transforms[mesh-&gt;getParentBoneProperty()-&gt;getIndexProperty()] * world;
-    for (ModelMeshPart* part : mesh-&gt;getMeshPartsProperty()) {
-        if (auto* effect = dynamic_cast&lt;BasicEffect*&gt;(part-&gt;getEffectProperty())) {
-            effect-&gt;setWorldProperty(meshWorld);
-            effect-&gt;setViewProperty(view);
-            effect-&gt;setProjectionProperty(projection);
+    ModelBone* parent = mesh-&gt;getParentBoneProperty();   // null only for an XNB mesh whose file names no parent
+    Matrix meshWorld = transforms[parent != nullptr ? parent-&gt;getIndexProperty() : 0] * world;
+    for (Effect* effect : mesh-&gt;getEffectsProperty()) {
+        // IEffectMatrices covers BasicEffect and the other stock effects, including the PbrEffect and
+        // SkinnedPbrEffect that glTF and converted .cnj models use; a dynamic_cast&lt;BasicEffect*&gt; would skip them.
+        if (auto* matrices = dynamic_cast&lt;IEffectMatrices*&gt;(effect)) {
+            matrices-&gt;setWorldProperty(meshWorld);
+            matrices-&gt;setViewProperty(view);
+            matrices-&gt;setProjectionProperty(projection);
         }
     }
     mesh-&gt;Draw();
