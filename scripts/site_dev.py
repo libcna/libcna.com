@@ -48,6 +48,9 @@ CNA_REPO = Path(os.environ.get("CNA_REPO", ROOT.parent / "cna"))
 EVIDENCE_LABELS = {
     "source-verified": "source-verified at the pinned commit",
     "test-present": "tests exist (not executed for this page)",
+    "executed": "executed for this entry (the Evidence section names exactly what was run)",
+    "recorded-by-cna": "recorded by CNA's own run (not repeated here)",
+    "inferred": "inferred from the source (the behaviour was not run)",
     "build-verified": "build-verified (recorded by CNA, not re-run here)",
     "runtime-observed": "runtime-observed (recorded by CNA, not re-run here)",
     "oracle-compared": "oracle-compared (recorded by CNA, not re-run here)",

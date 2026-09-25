@@ -57,7 +57,30 @@ SUBSYSTEMS = ["Math & geometry", "Core & runtime", "Graphics & renderers", "Cont
               "Documentation & release tooling"]
 STATUSES = {"open", "narrowed"}
 SEVERITIES = {"high", "medium", "low", "n/a"}
-CONFIDENCES = {"reproduced", "verified-by-reading", "strong", "probable"}
+CONFIDENCES = {"reproduced", "recorded-by-cna", "verified-by-reading", "strong", "probable"}
+# What each confidence value claims, in the words the pages use.  Source-verified is never allowed to imply an execution.
+CONFIDENCE_LABEL = {
+    "verified-by-reading": "Source-verified: read at TARGET, not executed",
+    "reproduced": "Reproduced: executed for this entry (the Evidence section names exactly what was run)",
+    "recorded-by-cna": "Recorded by CNA: CNA's own recorded run, not repeated here",
+    "strong": "Inferred (strong): follows from the code, but the behaviour was not run",
+    "probable": "Inferred (probable): depends on a platform or toolchain step nobody executed",
+}
+CONFIDENCE_SHORT = {"verified-by-reading": "source-verified", "reproduced": "reproduced", "recorded-by-cna": "recorded by CNA",
+                    "strong": "inferred (strong)", "probable": "inferred (probable)"}
+EVIDENCE_LEVELS = {"verified-by-reading": ["source-verified"], "reproduced": ["source-verified", "executed"],
+                   "recorded-by-cna": ["source-verified", "recorded-by-cna"], "strong": ["source-verified", "inferred"],
+                   "probable": ["source-verified", "inferred"]}
+# An entry's tests_current text always exists; whether a test *touches the affected area* is a separate fact.  An explicit
+# `tests_present` (set from the independent review) wins; the fallback reads the opening of the text.
+_NO_TEST_RX = re.compile(r"^\s*(?:<[^>]+>\s*)*(?:none\b|no (?:test|tests|unit test|regression test|existing test|gate|check|coverage)\b|nothing (?:covers|tests|asserts|exercises|checks)\b|not covered\b|untested\b)", re.I)
+
+
+def has_tests(it: dict) -> bool:
+    if isinstance(it.get("tests_present"), bool):
+        return it["tests_present"]
+    text = it.get("tests_current") or ""
+    return bool(text) and not _NO_TEST_RX.match(text)
 REQUIRED = ["cand_ids", "id", "class", "title", "summary", "subsystem", "status", "severity", "confidence", "public_contract", "expected", "actual",
             "sources", "evidence", "tests_current", "regression_test", "blast_radius", "related", "origin"]
 HTML_FIELDS = ["expected", "actual", "evidence", "reproduction", "tests_current", "regression_test", "blast_radius", "workaround"]
@@ -345,7 +368,7 @@ def issue_pages(issues: list[dict] | None = None) -> list[dict]:
 def public_entry(it: dict) -> dict:
     return {
         "id": it["id"], "class": it["class"], "title": it["title"], "summary": it["summary"], "subsystem": it["subsystem"],
-        "status": it["status"], "severity": it["severity"], "confidence": it["confidence"], "public_contract": it["public_contract"],
+        "status": it["status"], "severity": it["severity"], "confidence": it["confidence"], "tests_present": has_tests(it), "public_contract": it["public_contract"],
         "verified_against": TARGET, "detail": detail_path(it["id"], it["class"]),
         "sources": [s["path"] for s in it["sources"]],
         "related": sorted({l[0].split("#")[0] for ls in it["related"].values() for l in ls}),
@@ -368,7 +391,8 @@ def page_fragment(it: dict) -> tuple[dict, str]:
              ("Verified against", f"CNA <code>{TARGET_SHORT}</code> (<code>{TARGET}</code>)")]
     if it["severity"] != "n/a":
         facts.append(("Severity", f"{esc(it['severity'].capitalize())} <span class=\"issue-note\">(a triage suggestion, not a project priority)</span>"))
-    facts += [("Evidence basis", esc(it["confidence"].replace("-", " "))), ("Affected contract", esc(it["public_contract"]))]
+    facts += [("Evidence basis", esc(CONFIDENCE_LABEL[it["confidence"]])), ("Tests touching this area", "Yes: see Current tests" if has_tests(it) else "None"),
+              ("Affected contract", esc(it["public_contract"]))]
     dl = '<dl class="issue-facts">' + "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in facts) + "</dl>"
     src_items = "".join(f"<li>{{{{src:{s['path']}}}}}" + (f" &mdash; {esc(s['note'])}" if s.get("note") else "") + "</li>" for s in it["sources"])
     body = f'<p class="lede">{esc(it["summary"])}</p>\n{dl}\n'
@@ -388,7 +412,7 @@ def page_fragment(it: dict) -> tuple[dict, str]:
     layers.setdefault("issues", [["known-issues/" + cls["group"] + "/index.html", cls["label"] + " index"]])
     meta = {"title": f"{it['id']}: {it['title']}", "description": it["summary"][:220],
             "keywords": [it["id"].lower(), it["class"], it["subsystem"].lower(), "known issue", "cna"],
-            "evidence": {"levels": ["source-verified"] + (["test-present"] if it["tests_current"] else []),
+            "evidence": {"levels": EVIDENCE_LEVELS[it["confidence"]] + (["test-present"] if has_tests(it) else []),
                          "note": "Nothing on this page was executed unless the Evidence section says so."},
             "layers": layers}
     return meta, body
@@ -482,7 +506,7 @@ def hub_body(page: str, area_hub: str, group_key: str | None) -> tuple[dict, str
     trs = ""
     for i in items:
         trs += (f'<tr><td><a href="{rel_href(page, i["detail"])}"><code>{i["id"]}</code></a></td><td>{esc(i["title"])}</td><td>{esc(i["subsystem"])}</td>'
-                f'<td><span class="issue-status issue-status--{i["status"]}">{i["status"]}</span></td><td>{esc(i["severity"])}</td><td>{esc(i["confidence"].replace("-", " "))}</td></tr>')
+                f'<td><span class="issue-status issue-status--{i["status"]}">{i["status"]}</span></td><td>{esc(i["severity"])}</td><td>{esc(CONFIDENCE_SHORT[i["confidence"]])}</td></tr>')
     body = (f'<p class="lede">{esc(CLASS_DEF[cls])} Every entry below exists at CNA <code>{TARGET_SHORT}</code>; open an entry for its expected and actual behaviour, source locations, evidence and blast radius.</p>\n'
             f'<h2 id="entries">{len(items)} entries</h2>\n<div class="table-wrap"><table><thead><tr><th scope="col">ID</th><th scope="col">Title</th><th scope="col">Subsystem</th>'
             f'<th scope="col">Status</th><th scope="col">Severity</th><th scope="col">Evidence basis</th></tr></thead><tbody>{trs}</tbody></table></div>')
