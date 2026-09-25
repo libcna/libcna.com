@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Presentation modes, swap interval, native handles and back-buffer readback across renderers - CNA Deep Dives</title>
+  <meta name="description" content="What each renderer family does with the presentation mode, swap interval, formats and full-screen request, how window handles are borrowed, and exactly what GetBackBufferData returns.">
+  <meta name="keywords" content="presentation mode, letterbox, swap interval, presentinterval, vsync, back buffer, getbackbufferdata, readback, devicewindowhandle, window registry">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/renderers/presentation-and-backbuffer-readback.html">
+  <meta property="og:title" content="Presentation modes, swap interval, native handles and back-buffer readback across renderers - CNA Deep Dives">
+  <meta property="og:description" content="What each renderer family does with the presentation mode, swap interval, formats and full-screen request, how window handles are borrowed, and exactly what GetBackBufferData returns.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/renderers/presentation-and-backbuffer-readback.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Presentation modes, swap interval, native handles and back-buffer readback across renderers","description":"What each renderer family does with the presentation mode, swap interval, formats and full-screen request, how window handles are borrowed, and exactly what GetBackBufferData returns.","url":"https://libcna.com/deep-dives/renderers/presentation-and-backbuffer-readback.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine <span class="dev-nav-count">17</span></a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Renderers <span class="dev-nav-count">16</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="native-gpu-evidence-tiers.html" class="docs-nav-link">Modern GPU evidence tiers</a></li>
+        <li><a href="vulkan-presentation-and-readback.html" class="docs-nav-link">Vulkan presentation &amp; readback</a></li>
+        <li><a href="vulkan-deferred-state-and-descriptors.html" class="docs-nav-link">Vulkan state, queries &amp; descriptors</a></li>
+        <li><a href="sdl-gpu-pipeline-state-and-draw-order.html" class="docs-nav-link">SDL_GPU pipelines &amp; draw order</a></li>
+        <li><a href="sdl-gpu-resources-and-frame-recovery.html" class="docs-nav-link">SDL_GPU resources &amp; recovery</a></li>
+        <li><a href="webgpu-renderer-semantics.html" class="docs-nav-link">WebGPU semantics</a></li>
+        <li><a href="renderer-contract.html" class="docs-nav-link">The renderer contract</a></li>
+        <li><a href="presentation-and-backbuffer-readback.html" class="docs-nav-link active" aria-current="page">Presentation &amp; readback contract</a></li>
+        <li><a href="render-targets-clears-and-viewports.html" class="docs-nav-link">Targets, clears &amp; viewports</a></li>
+        <li><a href="easygl-gl-profiles.html" class="docs-nav-link">EasyGL profiles &amp; GL identities</a></li>
+        <li><a href="easygl-state-and-resource-semantics.html" class="docs-nav-link">EasyGL state &amp; resource semantics</a></li>
+        <li><a href="direct3d-evidence-and-wine.html" class="docs-nav-link">Direct3D evidence &amp; Wine</a></li>
+        <li><a href="direct3d9-xna-fidelity.html" class="docs-nav-link">DIRECTX9 fidelity</a></li>
+        <li><a href="direct3d-presentation-and-state.html" class="docs-nav-link">Direct3D presentation &amp; state</a></li>
+        <li><a href="direct3d11-and-12-resources.html" class="docs-nav-link">DIRECTX11/12 resources</a></li>
+        <li><a href="direct3d-shadereffect-contract.html" class="docs-nav-link">Direct3D ShaderEffect</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">4</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Renderers</a></li>
+        <li aria-current="page">Presentation &amp; readback contract</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Presentation modes, swap interval, native handles and back-buffer readback across renderers</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#request">One request, many outcomes</a></li>
+          <li><a href="#native-handles">Borrowed native handles</a></li>
+          <li><a href="#window-registry">The window registry behind input mapping</a></li>
+          <li><a href="#presentation-modes">Presentation modes</a></li>
+          <li><a href="#swap-interval">Swap interval</a></li>
+          <li><a href="#formats-and-fullscreen">Formats, full screen and the reset rollback</a></li>
+          <li><a href="#readback">Back-buffer readback</a></li>
+          <li><a href="#evidence">Evidence and limits</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Renderers &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Read from GraphicsDevice, the contract header and each family's presentation and readback bodies at 009d40f5; no pixel, vsync timing or full-screen behaviour was observed, and the Windows, macOS and browser families were not run.</p></div>
+
+<p class="lede">The public graphics API stores one presentation request — back-buffer size, presentation mode, swap interval, formats, full-screen flag — and the selected renderer family decides whether that request changes a swapchain, a compositor, a CPU buffer, only reported state, or nothing. This page states, family by family at snapshot <code>009d40f5</code>, what happens to each part of the request, how native window handles are borrowed in both directions, how input finds the renderer that owns a window, and exactly what <code>GetBackBufferData</code> returns. It is for anyone whose game looks right on one renderer and letterboxed, stretched, torn or unreadable on another, and for test authors who compare back-buffer pixels across renderers.</p>
+
+<h2 id="request">One request, many outcomes</h2>
+<p>A <code>Game</code> constructs its <code>GraphicsDevice</code> inside its own constructor with default presentation parameters, before a derived game's constructor has run. The game's preferences reach that existing device later: <code>GraphicsDeviceManager</code> applies the profile and presentation mode and then calls <code>GraphicsDevice::Reset</code>, which forwards size, formats, MSAA and swap interval to the live renderer. A family that read a value only from its construction arguments would therefore keep the default; at this snapshot the reset path forwards every part of the request through a renderer hook, and what the family does with the hook is the subject of the tables below. The manager's side — when <code>ApplyChanges</code> does nothing, the three kinds of truth its format getters report — is on <a href="../framework/window-and-device-manager.html#apply-changes">GameWindow and GraphicsDeviceManager</a>.</p>
+
+<h2 id="native-handles">Borrowed native handles</h2>
+<p>The renderer side of the contract names no windowing library. A family receives an immutable <code>RendererSurfaceInfo</code> snapshot — a stable <code>WindowId</code>, a typed <code>NativeWindowHandle</code>, the drawable size in physical pixels and the display scale — plus, if its descriptor asked for one, a GL-context, Vulkan-surface or surface-presenter service. The snapshot owns nothing, and its handle is valid only while the platform window with that id is alive. Older descriptions of pure-virtual accessors that handed out a toolkit window or renderer pointer from the renderer interface describe an API that no longer exists; the renderer never sees a toolkit object that the platform does not expose through that handle.</p>
+<p>The inverse route is <code>PresentationParameters::DeviceWindowHandle</code>. A nonzero value is an integer compatibility token that only the active platform interprets (<code>IPlatform::AdoptWindowHandle</code>); <code>GraphicsDevice</code> never casts it to a toolkit type. CNA marks such a window as not owned: it never destroys it, and a fallback candidate that needs a different window kind is skipped with <code>WindowKindConflict</code> rather than rebuilding the caller's window. An adopted window is published as the active input surface to <code>TextInputEXT</code> and <code>Mouse</code> exactly like a CNA-owned one, and <code>destroyNativeResources</code> clears those two global slots only if they still name this device's window. An embedding host must keep its window alive through renderer teardown.</p>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p>Two lifetime hazards follow from the source. First, the input slots are process-wide with last-writer-wins semantics, so two live devices replace each other's input target; no test covers that multi-device lifecycle. Second, <code>Game</code> hands its <code>GameWindow</code> facade a borrowed <code>IPlatformWindow*</code> once, in the <code>Game</code> constructor, and nothing rebinds or clears it when the game explicitly disposes the device (which destroys that window). Do not use the window facade, or a handle obtained from <code>GameWindow::GetNativeWindowHandleEXT()</code>, after an explicit device disposal; the case is recorded for Known Issues review. The facade's own contract is on <a href="../framework/window-and-device-manager.html#native-handle">GameWindow: a borrowed native handle</a>.</p></div>
+
+<h2 id="window-registry">The window registry behind input mapping</h2>
+<p>Mouse, touch and pointer positions become logical game coordinates through a registry declared in the contract header: <code>IGraphicsRenderer::RegisterForWindow(WindowId, IGraphicsRenderer*)</code>, <code>UnregisterForWindow(WindowId)</code> and <code>GetForWindow(WindowId)</code> over one function-local static <code>std::unordered_map</code>. Input asks the registered renderer to run <code>TransformWindowToLogical</code> (and its inverse for <code>Mouse::SetPosition</code>); with no registration, or a <code>false</code> answer, coordinates pass through unchanged. Which families register and how each maps a point is tabulated on <a href="../services/input-model.html#logical-coordinates">The input model: logical coordinates</a>.</p>
+<p>The registry itself carries three properties that matter for anyone adding a family or embedding CNA:</p>
+<ul>
+<li><strong>No ownership check.</strong> Registration overwrites by key and unregistration erases by window id alone. Two devices attached to the same borrowed window therefore fight: the second overwrites the first, and destroying the first removes the second's entry.</li>
+<li><strong>No synchronisation.</strong> The map has no lock; registration, lookup and removal are assumed to run on the game thread.</li>
+<li><strong>Registration must be the last constructor step.</strong> A throwing constructor never runs its destructor, so a family that registered early and then failed would leave a dangling pointer behind. EasyGL and OpenGL4 now call <code>RegisterForWindow</code> as the final step of construction for exactly this reason (see <a href="../../development/internals/graphics/easygl.html#identity">EasyGL internals</a> and <a href="../../development/internals/graphics/opengl4.html#construct">OpenGL4 internals</a>).</li>
+</ul>
+<p>No test found covers a constructor failure after registration, duplicate attachment to one window, or concurrent access. An immediate <code>Mouse::SetPosition</code>-then-<code>GetState</code> round trip is a weak test of the mapping, because the round trip can pass through the stored logical value even if the physical warp is wrong; the stronger evidence injects physical motion into a scaled presentation and observes the converted point, which is what the shared mouse test does with a fake renderer.</p>
+
+<h2 id="presentation-modes">Presentation modes</h2>
+<p><code>CnaPresentationMode</code> (CNAEXT, declared beside the contract) has five values: <code>Letterbox</code> (the default and the only one that reproduces XNA: the back buffer is scaled uniformly and centred), <code>Overscan</code> (scaled to cover, cropping edges), <code>Stretch</code>, <code>NativeBackBuffer</code> (no scaling; the client area is the logical surface and the requested back-buffer size is ignored) and <code>FixedHeightDynamicWidth</code> (logical width follows the window's aspect). Both the manager property and the renderer-create argument default to <code>Letterbox</code>; descriptions that give the fixed-height mode as the default predate this snapshot. The manager applies the mode before its reset, so a family that derives a logical width from the mode sees the intended value. The public side is on <a href="../framework/window-and-device-manager.html#presentation-mode">PresentationMode</a>.</p>
+<p>Every family implements the pure <code>SetPresentationMode</code>, but what the implementation does differs:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Families</th><th scope="col">Behaviour at this snapshot</th></tr></thead>
+<tbody>
+<tr><td>EasyGL (five identities), <code>OPENGL4</code></td><td>All five modes through the shared <code>GlPresentationSurfaceState</code> transform (logical versus drawable size, bars, crop); <code>GetDefaultViewportRect</code> reports the physical sub-rectangle</td></tr>
+<tr><td><code>VULKAN</code>, <code>WEBGPU</code>, <code>SDL_GPU</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>METAL</code>, <code>FNA3D</code></td><td>Compute a presented rectangle per mode and override <code>GetDefaultViewportRect</code>; the Direct3D pair share <code>ComputeD3DPresentationGeometry</code></td></tr>
+<tr><td><code>SDL_RENDERER</code></td><td>Maps the modes onto SDL's logical presentation (<code>SDL_SetRenderLogicalPresentation</code>), computing the width itself for the fixed-height mode</td></tr>
+<tr><td><code>DIRECT2D</code>, <code>GDI</code>, <code>HTML_DOM</code>, <code>SVG_DOM</code></td><td>Validate the ordinal and apply the mode through their own presentation layout (Direct2D rebuilds its main target and restores the previous mode if that fails)</td></tr>
+<tr><td><code>CANVAS</code></td><td>Stores the mode; only the fixed-height mode changes its output width</td></tr>
+<tr><td><code>FREEDIRECT</code></td><td>Stores the mode; the wrapped free-direct presenter hard-codes letterbox, so the other modes cannot reach physical output without changing that library</td></tr>
+<tr><td><code>DIRECTX9</code></td><td>Stores the value; no presentation geometry override</td></tr>
+<tr><td><code>SOFTWARE</code>, <code>HEADLESS</code>, <code>PORTABLEGL</code>, <code>STUB</code></td><td>No-op: there is no compositor, so bars and crop do not apply</td></tr>
+</tbody>
+</table></div>
+<p>Portable code configures the manager before normal initialisation and uses <code>NativeBackBuffer</code> when physical readback coordinates must equal logical ones. An enum round trip through the property proves nothing about output; only a pixel check on the target renderer shows bars, crop or stretch.</p>
+
+<h2 id="swap-interval">Swap interval</h2>
+<p>The device converts <code>PresentInterval</code> to a swap interval of 0 (<code>Immediate</code>), 1 (<code>Default</code>, <code>One</code>) or 2 (<code>Two</code>) and passes it on every reset through <code>SetSwapInterval</code>, whose default is a no-op. The manager's Boolean <code>SynchronizeWithVerticalRetrace</code> reaches only 0 or 1; asking for 2 needs the <code>PreparingDeviceSettings</code> route shown on <a href="../framework/game-time-and-timestep.html#present-interval-two">GameTime and the timestep</a>. <code>GetSwapIntervalEXT()</code> reports the last requested interval (or -1 from a family that does not record it: only DirectX 11, DirectX 12, EasyGL, OpenGL4, SDL_GPU and Vulkan do), which separates "CNA never forwarded it" from "the driver declined it".</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Families</th><th scope="col">0 / 1 / 2</th></tr></thead>
+<tbody>
+<tr><td>EasyGL, <code>OPENGL4</code></td><td>The exact integer goes to the platform GL context's swap-interval call; whether a driver honours 2 is the driver's decision</td></tr>
+<tr><td><code>DIRECTX11</code>, <code>DIRECTX12</code></td><td>The exact integer becomes DXGI's <code>Present</code> sync interval, so 2 waits for two vertical blanks; 0 may tear when tearing is supported and the game did not ask for vsync</td></tr>
+<tr><td><code>DIRECTX9</code></td><td>Maps to <code>D3DPRESENT_INTERVAL_IMMEDIATE</code>, <code>ONE</code> or <code>TWO</code> and applies it through a device reset (D3D9 has no per-present knob)</td></tr>
+<tr><td><code>FNA3D</code></td><td>Maps to FNA3D's own interval and resets the FNA3D back buffer</td></tr>
+<tr><td><code>SDL_RENDERER</code></td><td>At construction any positive value becomes 1; at run time the integer is passed to <code>SDL_SetRenderVSync</code> and, if the driver refuses 2, retried as 1</td></tr>
+<tr><td><code>VULKAN</code></td><td>Maps to present modes with fallbacks and rebuilds the swapchain when the interval changes; 2 is not half-rate (see <a href="vulkan-presentation-and-readback.html#present-modes">Vulkan present modes</a>)</td></tr>
+<tr><td><code>WEBGPU</code>, <code>SDL_GPU</code></td><td>Choose immediate, mailbox or FIFO/vsync; 2 behaves as 1 (SDL_GPU has no half-rate present mode and records an applied interval of 1)</td></tr>
+<tr><td><code>METAL</code></td><td>Any nonzero value enables display sync, so 2 behaves as 1</td></tr>
+<tr><td><code>DIRECT2D</code></td><td>Validates 0 to 2 and stores the request</td></tr>
+<tr><td><code>GDI</code> (empty override), <code>CANVAS</code>, <code>FREEDIRECT</code>, <code>HTML_DOM</code>, <code>SVG_DOM</code>, <code>SOFTWARE</code>, <code>HEADLESS</code>, <code>PORTABLEGL</code>, <code>STUB</code></td><td>No display-interval implementation; the public property still changes</td></tr>
+</tbody>
+</table></div>
+<p>The registered interval tests on EasyGL, SDL_RENDERER and SDL_GPU check storage, forwarding and that nothing crashes; the EasyGL test says explicitly that vsync timing cannot be verified headlessly. No test found times half-refresh presentation against ordinary vsync on any family.</p>
+
+<h2 id="formats-and-fullscreen">Formats, full screen and the reset rollback</h2>
+<p><code>GraphicsDevice::Reset</code> raises <code>DeviceResetting</code>, unbinds any render targets (as XNA does), asks the renderer to normalise the requested colour and depth formats (<code>GetAppliedBackBufferFormatEXT</code>, <code>GetAppliedDepthStencilFormatEXT</code>) and stages the result as public state. Applying the window and the virtual resolution is a rollback block: if either throws, the previous presentation parameters, adapter, virtual size and touch-panel dimensions are restored, the old window state is re-applied, and the original exception is rethrown. The format update (<code>UpdatePresentationFormatEXT</code>), the MSAA count (<code>ApplyMultiSampleCount</code>, whose applied value is written back) and the swap interval follow <em>after</em> that block, in that order, and are not rolled back.</p>
+<p>The applied-format hooks default to echoing the request. Fixed-format families override them so that <code>PresentationParameters</code> reports what exists: DirectX 11, DirectX 12, Direct2D, EasyGL, GDI, Metal, OpenGL4, PortableGL, SDL_GPU, Software and Vulkan report <code>SurfaceFormat::Color</code> for the back buffer whatever was requested; for depth, DirectX 11 and 12 report the request unless DXGI has no matching format, SDL_GPU, Software and Vulkan report what they allocated, Metal and PortableGL always report <code>Depth24Stencil8</code>, and Direct2D and GDI report <code>None</code>. FNA3D reports FNA3D's own applied formats, and DirectX 9 honours real formats through a device reset. A family that keeps the echo default (Canvas, FreeDirect, the DOM families, SDL_RENDERER, Stub) can still report a format its 2D target does not have. Which families override <code>UpdatePresentationFormatEXT</code>, and why full screen is a window operation that DirectX 11 and 12 never turn into DXGI exclusive mode, is on <a href="../framework/window-and-device-manager.html#format-preferences">Format and fullscreen preferences</a>; the Vulkan back buffer's always-present depth image is on <a href="vulkan-presentation-and-readback.html#backbuffer-depth">Vulkan back-buffer depth</a>.</p>
+<div class="callout callout--note"><span class="callout-icon">&#8505;</span><p>A full-screen request is not silently swallowed at this snapshot: on SDL3 a refused request throws <code>PlatformException</code>, and the reset's rollback restores the previous presentation state before rethrowing. <code>IsFullScreen</code> is still requested state, not proof that a window manager or browser accepted it.</p></div>
+
+<h2 id="readback">Back-buffer readback</h2>
+<h3 id="readback-public">The public contract</h3>
+<p><code>GraphicsDevice::GetBackBufferData</code> (all three overloads funnel into <code>GetBackBufferDataCore</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a>) validates strictly before any renderer is involved:</p>
+<ul>
+<li>it throws <code>NotSupportedException</code> under the <strong>Reach</strong> profile — back-buffer readback is a HiDef feature, as in XNA;</li>
+<li>a null destination, a negative <code>startIndex</code>, a non-positive <code>elementCount</code> and a <code>startIndex + elementCount</code> that overflows <code>int</code> are rejected;</li>
+<li>it throws <code>InvalidOperationException</code> while <strong>any render target is bound</strong>, so the public call can only ever read the back buffer;</li>
+<li>the region comes from <code>PresentationParameters</code>, never from the renderer's live viewport: no rectangle means the complete logical back buffer, and a rectangle must be non-empty and inside the back-buffer bounds;</li>
+<li><code>elementCount</code> must describe exactly the requested pixel count (the byte counts must match), and the result is unpacked into real <code>Color</code> objects at <code>startIndex</code>.</li>
+</ul>
+<p>The capacity of the caller's array after <code>startIndex</code> cannot be checked from a raw pointer; that remains the caller's obligation. The renderer hook itself, <code>ReadBackbuffer(x, y, w, h, pixels)</code>, promises tightly packed RGBA8 with a top-left origin and throws by default.</p>
+
+<h3 id="readback-families">What each family reads</h3>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Class</th><th scope="col">Families</th><th scope="col">Image returned</th></tr></thead>
+<tbody>
+<tr><td>Physical back buffer</td><td><code>VULKAN</code>, <code>WEBGPU</code>, <code>SDL_GPU</code>, <code>DIRECTX9</code>, <code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>FNA3D</code></td><td>The swapchain or back-buffer resource (MSAA resolved first where it applies). Logical and physical sizes can differ under a scaled presentation or on a high-density display, which is why the region is taken from <code>PresentationParameters</code>. Vulkan's deferred present and readback cache are explained in <a href="vulkan-presentation-and-readback.html#deferred-present">Vulkan deferred present</a></td></tr>
+<tr><td>The family's current drawing surface</td><td>EasyGL, <code>OPENGL4</code>, <code>SOFTWARE</code>, <code>GDI</code>, <code>PORTABLEGL</code>, <code>SDL_RENDERER</code>, <code>DIRECT2D</code>, <code>FREEDIRECT</code>, <code>CANVAS</code></td><td>The bound target when one is bound, otherwise the back buffer or logical surface. Through the public API that distinction is unreachable, because a bound target makes <code>GetBackBufferData</code> throw first; it matters only to code that calls the renderer directly</td></tr>
+<tr><td>Only a bound target</td><td><code>HTML_DOM</code>, <code>SVG_DOM</code></td><td>The browser rasterises the DOM scene only when asked for a render target; the back buffer itself cannot be read</td></tr>
+<tr><td>Explicit refusal</td><td><code>HEADLESS</code>, <code>METAL</code>, <code>STUB</code></td><td>Headless throws <code>NotSupportedException</code> after the public validation (it formerly filled the buffer with the last clear colour, which made a non-rasterising device indistinguishable from a real frame); Metal throws because a historical macOS run returned clear-colour-only data; Stub inherits the throwing default</td></tr>
+</tbody>
+</table></div>
+<p>DirectX 11 and DirectX 12 name a missing back buffer instead of returning the zero-filled scratch buffer as a successful read, the same "refuse, never fabricate" rule the texture transfers follow. There is no capability member for readback; a portable pixel test names the family, the source image, the coordinate space and the oracle, and runs under HiDef. <a href="../../docs/tutorials/125-pixel-testing.html">Tutorial 125: pixel testing</a> teaches the task; the CPU renderers' off-screen use is in <a href="../../docs/tutorials/107-cpu-renderers.html">Tutorial 107</a>.</p>
+
+<h2 id="evidence">Evidence and limits</h2>
+<p>Checked by reading the device, platform-facing and family sources at <code>009d40f5</code>; not executed. The family tables come from reading each family's <code>SetPresentationMode</code>, <code>SetSwapInterval</code>, applied-format and <code>ReadBackbuffer</code> bodies; no pixel, timing or full-screen behaviour was observed, and the Windows, macOS and browser families are chiefly exercised on hosts or lanes that were not examined here.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/game-loop.html#graphicsdevicemanager">Game loop: GraphicsDeviceManager</a> &middot; <a href="../../docs/rendering-backends.html#how-renderers-work">Renderers: how renderers work</a> &middot; <a href="../../docs/tutorials/125-pixel-testing.html">Tutorial 125: pixel testing</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/graphics/device.html#present">GraphicsDevice internals: present and the back buffer</a> &middot; <a href="../../development/internals/graphics/backends.html">Graphics backends (family map)</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/handbook/fix-a-renderer-bug.html">Fix a renderer bug</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html#gpu">Test architecture: GPU tests</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="renderer-contract.html">The renderer contract</a> &middot; <a href="../framework/window-and-device-manager.html">GameWindow and GraphicsDeviceManager</a> &middot; <a href="../services/input-model.html">The input model</a> &middot; <a href="vulkan-presentation-and-readback.html">Vulkan presentation and readback</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="renderer-contract.html" rel="prev"><span>Previous</span>The renderer contract: IGraphicsRenderer defaults, factories and failure shapes</a><a class="dev-pager-next" href="render-targets-clears-and-viewports.html" rel="next"><span>Next</span>Render-target binding, clears, viewport and scissor across renderers</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
