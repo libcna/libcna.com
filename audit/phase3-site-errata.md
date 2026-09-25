@@ -38,3 +38,5 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 31 | `docs/math-types.html#core-types` (Rectangle row) | `Contains(x, y)` has "integer and float overloads" | no float overload exists (`Rectangle.hpp`) | WP04 | open |
 | 32 | `docs/math-types.html` (MathHelper) | "Mirrors … exactly"; `WithinEpsilon`, `MachineEpsilonFloat` … are "the remaining XNA constants" | those, plus `Clamp(int)` and `ClosestMSAAPower`, are FNA-internal helpers, not XNA API | WP04 | open |
 | 33 | `docs/math-types.html` (Point) | lists `+ - * /` | those operators are not XNA API and carry no CNAEXT marker | WP04 | open |
+| 34 | `docs/spritebatch.html#overview` | SpriteBatch "submits them to the GPU as a single batched draw" | `SpriteBatch.cpp` (`flushBatch`): one renderer call per sprite, then one native draw per texture run on GPU families; one call per sprite on SDL_RENDERER | WP05 | open |
+| 35 | `docs/tutorials/21-spritebatch.html` (flush section) | describes GPU-renderer vertex batching as if every renderer did it | only the GPU families batch per texture run | WP05 | open |

@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SpriteBatch sorting, flushing and renderer batching - CNA Deep Dives</title>
+  <meta name="description" content="How CNA&#x27;s SpriteBatch flushes and sorts (XNA&#x27;s unstable quicksort, reproduced), what each renderer kind does with the sprite stream, the viewport-local projection and the Direct3D 9 half-pixel offset.">
+  <meta name="keywords" content="spritebatch, spritesortmode, backtofront, texture sort, array.sort, draw calls, half-pixel offset, mutation testing, sprite projection, sdl_renderer">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/graphics/spritebatch-sorting-and-batching.html">
+  <meta property="og:title" content="SpriteBatch sorting, flushing and renderer batching - CNA Deep Dives">
+  <meta property="og:description" content="How CNA&#x27;s SpriteBatch flushes and sorts (XNA&#x27;s unstable quicksort, reproduced), what each renderer kind does with the sprite stream, the viewport-local projection and the Direct3D 9 half-pixel offset.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/graphics/spritebatch-sorting-and-batching.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"SpriteBatch sorting, flushing and renderer batching","description":"How CNA's SpriteBatch flushes and sorts (XNA's unstable quicksort, reproduced), what each renderer kind does with the sprite stream, the viewport-local projection and the Direct3D 9 half-pixel offset.","url":"https://libcna.com/deep-dives/graphics/spritebatch-sorting-and-batching.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">The graphics machine <span class="dev-nav-count">11</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="graphicsdevice-contract.html" class="docs-nav-link">GraphicsDevice contract</a></li>
+        <li><a href="device-reset-and-lifetime.html" class="docs-nav-link">Device reset and lifetime</a></li>
+        <li><a href="spritebatch-semantics.html" class="docs-nav-link">SpriteBatch semantics</a></li>
+        <li><a href="spritebatch-sorting-and-batching.html" class="docs-nav-link active" aria-current="page">SpriteBatch sorting and batching</a></li>
+        <li><a href="spritefont-text-layout.html" class="docs-nav-link">SpriteFont text layout</a></li>
+        <li><a href="surface-formats.html" class="docs-nav-link">Surface formats</a></li>
+        <li><a href="texture-data-transfer.html" class="docs-nav-link">Texture data transfer</a></li>
+        <li><a href="render-target-semantics.html" class="docs-nav-link">Render target semantics</a></li>
+        <li><a href="vertex-and-index-buffers.html" class="docs-nav-link">Vertex and index buffers</a></li>
+        <li><a href="resource-lifetime.html" class="docs-nav-link">Resource lifetime</a></li>
+        <li><a href="state-objects.html" class="docs-nav-link">State objects</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../renderers/index.html" class="docs-nav-link">Renderers <span class="dev-nav-count">16</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">3</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">The graphics machine</a></li>
+        <li aria-current="page">SpriteBatch sorting and batching</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>SpriteBatch sorting, flushing and renderer batching</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#flow">From Draw to the renderer</a></li>
+          <li><a href="#sort-modes">The five sort modes</a></li>
+          <li><a href="#renderer-batching">What the renderers do with the stream</a></li>
+          <li><a href="#projection">The sprite projection is viewport-local</a></li>
+          <li><a href="#half-pixel">The Direct3D 9 half-pixel offset</a></li>
+          <li><a href="#sdl-renderer">SDL_RENDERER specifics</a></li>
+          <li><a href="#evidence">Evidence by renderer</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; The graphics machine &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Checked by reading SpriteBatch.cpp and the renderer sprite paths at 009d40f5; no test was executed. The Direct3D 9 oracle match is CNA's own recorded result under Wine and DXVK, not repeated here.</p></div>
+
+<p class="lede">“Batch” names two different things in CNA: the shared <code>SpriteBatch</code> queues and sorts sprites, and each renderer family decides how many native draws it spends on them. This page follows a sprite from <code>Draw</code> to the renderer — the flush boundaries, the five sort modes and the XNA quicksort CNA reproduces on purpose, what each kind of renderer does with the stream, the viewport-local sprite projection, the Direct3D 9 half-pixel offset and the mutation-testing lesson it taught — and closes with the per-renderer evidence. The state and error contract is on <a href="spritebatch-semantics.html">SpriteBatch semantics</a>.</p>
+
+<h2 id="flow">From Draw to the renderer</h2>
+<figure class="diagram-figure" role="group" aria-labelledby="fig-sprite-flow-cap">
+<pre class="diagram">
+ Begin()  resolve states ---- Immediate: apply states now, renderer.SetImmediateMode(true)
+    |
+ Draw(...) / DrawString(...)   validate texture (disposed? other device?)
+    |
+    +-- Immediate --> flushSingle ------------------------------+
+    |                                                           |
+    +-- other modes --> CPU queue (float destination, texture   |
+                        renderer reference, colour, depth ...)  |
+                                                                |
+ End()  apply states --> sort by mode (XNA quicksort) --> flushSingle per sprite
+                                                                |
+                                                                v
+                         ISpriteBatchRenderer::Draw  (one call per sprite)
+                                                                |
+                         family: accumulate quads; flush on texture change,
+                         capacity, custom-effect change or End()
+                                                                |
+                                                                v
+                         native draws (GPU) | per-sprite calls (SDL_RENDERER,
+                         DOM) | CPU raster (SOFTWARE) | trace (HEADLESS)
+</pre>
+<figcaption id="fig-sprite-flow-cap"><strong>Figure.</strong> The sprite submission path. Begin resolves the states and, for Immediate only, applies them at once. Each Draw validates its texture and then either submits immediately (Immediate) or appends a record with a floating-point destination to a CPU queue. For the other modes, End applies the states, sorts the queue by the mode's key and hands the renderer one Draw call per sprite. Grouping into native draws happens below that seam and differs by family, so one ISpriteBatchRenderer::Draw is not one GPU draw and a sort is not a coalescing guarantee.</figcaption>
+</figure>
+<p>The flush boundaries are therefore: every <code>Draw</code> in <code>Immediate</code> mode, and <code>End</code> for the other four modes. <code>flushBatch()</code> sorts if the mode asks for it and then calls <code>flushSingle()</code> for every queued sprite; <code>flushSingle()</code> runs the device's draw-time checks for the sprite's texture and calls the renderer's float-destination <code>Draw</code> once. Roughly a thousand sprites produce roughly a thousand renderer calls; the shared class coalesces <em>sort decisions</em>, and any coalescing into fewer native draws is the family's work (below). The source is <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/SpriteBatch.cpp"><code>SpriteBatch.cpp</code></a> (<code>pushSprite</code>, <code>flushSingle</code>, <code>flushBatch</code>, <code>End</code>).</p>
+
+<h2 id="sort-modes">The five sort modes</h2>
+<p><code>SpriteSortMode</code> has five values with XNA's ordinals: <code>Deferred</code> (0), <code>Immediate</code> (1), <code>Texture</code> (2), <code>BackToFront</code> (3) and <code>FrontToBack</code> (4). Its underlying type is fixed as <code>int</code> because XNA callers can cast any integer into the enum; <code>Begin</code> stores an unnamed value, and <code>End</code> throws <code>NotSupportedException</code> for it only when there are sprites to sort (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/Microsoft/Xna/Framework/Graphics/SpriteSortMode.hpp"><code>SpriteSortMode.hpp</code></a>). Only <code>BackToFront</code> (descending <code>layerDepth</code>, far first) and <code>FrontToBack</code> (ascending) read <code>layerDepth</code> for ordering; <code>Deferred</code> keeps submission order, <code>Texture</code> groups by texture and <code>Immediate</code> submits in call order. The user guide with the three oracle frames is <a href="../../docs/tutorials/25-sprite-sort-mode.html">Tutorial 25: SpriteSortMode and layering</a>.</p>
+<h3 id="xna-sort">XNA's unstable quicksort, reproduced</h3>
+<p>Microsoft XNA sorts its sprite index array with .NET Framework 4's <code>Array.Sort</code>, a quicksort that is deliberately <em>not</em> stable. CNA reproduces that algorithm rather than calling <code>std::sort</code> or <code>std::stable_sort</code> (<code>XnaArraySort</code>: median-of-three by pairwise swaps of the first, middle and last element, then the partition loop, recursing into the smaller side). Two reasons are given in the source: the visible order of equal keys has to match XNA, and XNA's depth comparer treats <code>NaN</code> as equal to every value, which would be undefined behaviour for a standard C++ sort but is well defined in the reproduced loop. The consequences are observable:</p>
+<ul>
+<li><strong>Equal depths are reordered.</strong> Three sprites submitted with the same <code>layerDepth</code> come out in the order 3, 2, 1 in both depth modes (<code>EqualDepthsMatchXnaArraySortOrdering</code>); two overlapping sprites with equal keys come out reversed, so the first-issued one ends on top. Give overlapping sprites distinct depths, or draw them in separate <code>Begin</code>/<code>End</code> pairs.</li>
+<li><strong><code>NaN</code> depths</strong> compare equal to everything and land wherever the partition leaves them (<code>NonFiniteLayerDepthsMatchXnaArraySort</code>).</li>
+<li><strong><code>Texture</code> mode sorts on the renderer object's address</strong> — the <code>ITextureRenderer</code> shared by all copies of a texture, not the <code>Texture2D</code> wrapper — in descending address order. Sprites that share a texture become adjacent, but the order <em>between</em> groups depends on allocation addresses and can differ between runs and renderers, and within a group the quicksort reorders equal keys as above (<code>TextureGroupsDrawsAndMatchesXnaEqualKeyOrdering</code> records the reversal of the two outer entries of an A, B, A submission). As Microsoft's own documentation scopes it, <code>Texture</code> mode is for sprites that do not overlap.</li>
+</ul>
+<p>Descriptions of CNA's sorting as a stable sort of texture pointers are older than this reproduction. The shared conformance scene <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/spritebatch_sort_mode_semantics_test.cpp"><code>spritebatch_sort_mode_semantics_test.cpp</code></a> (registered for EasyGL, <code>OPENGL4</code> and <code>VULKAN</code>) asserts what the modes guarantee on pixels: no sprite is lost, each reaches its own destination, and equal-key sprites come out reversed.</p>
+
+<h2 id="renderer-batching">What the renderers do with the stream</h2>
+<p>Below the <code>ISpriteBatchRenderer</code> seam the families differ in kind:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Kind</th><th scope="col">Families (read at this snapshot)</th><th scope="col">What a sprite costs</th></tr></thead>
+<tbody>
+<tr><td>GPU quad batchers</td><td>EasyGL (<code>FlushBatch</code>, at most 2,048 sprites per batch), <code>OPENGL4</code> (the same limit), <code>DIRECTX11</code> (<code>FlushBatch</code>, 65,536 vertices per batch), <code>DIRECTX9</code>, <code>VULKAN</code> (<code>FlushTexture</code> on a texture change), <code>WEBGPU</code> and <code>SDL_GPU</code> (sprites queued in the renderer)</td><td>Consecutive sprites with the same texture share one native draw; a texture change, the capacity limit, a custom-effect change or <code>End</code> closes the run. A compiled XNA effect applies its passes once per run.</td></tr>
+<tr><td>Per-sprite 2D APIs</td><td><code>SDL_RENDERER</code> (one <code>SDL_RenderTextureRotated</code> or <code>SDL_RenderTextureAffine</code> call per sprite), the browser DOM renderers (one element per sprite), <code>CANVAS</code> (one <code>drawImage</code> per sprite)</td><td>One API call per sprite, regardless of order.</td></tr>
+<tr><td>CPU rasterisers</td><td><code>SOFTWARE</code>, <code>GDI</code>, <code>PORTABLEGL</code></td><td>Rasterised into the framebuffer in submission order.</td></tr>
+<tr><td>No pixels</td><td><code>HEADLESS</code> (validates and traces), <code>STUB</code></td><td>Nothing drawn.</td></tr>
+</tbody>
+</table></div>
+<p>So on a GPU family the practical draw-call count is the number of texture runs after sorting, which is why atlases and <code>Texture</code> mode help there — and why the same advice changes nothing on <code>SDL_RENDERER</code>. The 2,048-sprite chunk is XNA's and FNA's own native batch size; a batch that grew past it would wrap a 16-bit quad index. The conformance scene <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/spritebatch_large_batch_contract_test.cpp"><code>spritebatch_large_batch_contract_test.cpp</code></a> makes the 16,385th same-texture sprite the only visible output and is registered for EasyGL, <code>OPENGL4</code> and <code>SOFTWARE</code>.</p>
+<h3 id="immediate-below-the-seam">Immediate mode below the seam</h3>
+<p><code>Immediate</code> makes the shared layer call the renderer inside each <code>Draw</code>, and <code>Begin</code> tells the renderer so through <code>SetImmediateMode</code> (overridden by EasyGL, <code>OPENGL4</code>, <code>SOFTWARE</code>, <code>VULKAN</code>, <code>SDL_GPU</code>, <code>FNA3D</code>, <code>CANVAS</code> and the two DOM renderers). What a renderer does with that differs. The conformance scene <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/spritebatch_immediate_submission_contract_test.cpp"><code>spritebatch_immediate_submission_contract_test.cpp</code></a> switches render targets between two <code>Draw</code> calls and requires each sprite to stay in the target that was active when it was drawn; it is registered for EasyGL, <code>OPENGL4</code> and <code>SOFTWARE</code>. A texture whose <em>contents</em> change between two <code>Draw</code> calls is a different matter: CNA's own records (the sort-mode scene's notes) state that EasyGL keeps appending to its vertex batch until the bound texture changes or <code>End</code>, and that Vulkan replays its batches at present, so both rasterise every sprite of the batch against the texture's final contents — a divergence from XNA that the source records as open. Do not rely on <code>Immediate</code> to snapshot a texture that is rewritten mid-batch; end the batch instead.</p>
+
+<h2 id="projection">The sprite projection is viewport-local</h2>
+<p>XNA builds the sprite projection from the <em>active viewport</em>: <code>CreateOrthographicOffCenter(0, Viewport.Width, Viewport.Height, 0, 0, 1)</code>, applied after <code>Begin</code>'s transform matrix. Sprite coordinates are therefore relative to the viewport's top-left corner, and the viewport's <code>X</code>/<code>Y</code> position the result through the rasteriser viewport — they are never subtracted from sprite coordinates. Each renderer family builds this projection itself; the conformance scene <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/spritebatch_custom_viewport_test.cpp"><code>spritebatch_custom_viewport_test.cpp</code></a> draws a viewport-local rectangle inside a custom viewport and checks its exact footprint, including the converse case (a full-target batch followed by a sub-viewport must stay full-target). It is registered for EasyGL, <code>OPENGL4</code>, <code>VULKAN</code>, <code>WEBGPU</code> and the Direct3D 11/12 parity corpus; companion scenes cover render targets (<code>spritebatch_custom_viewport_rt_test.cpp</code>) and a viewport change between batches (<code>spritebatch_viewport_switch_test.cpp</code>). Before those fixes several GPU families built the projection over the full target, which either squeezed sprites into the viewport or ignored it. On EasyGL the default viewport under <code>Letterbox</code> is the presentation rectangle rather than the whole drawable, and the sprite path compares against that rectangle so letterbox bars are not mistaken for a game-set sub-viewport. The viewport rules themselves are on <a href="graphicsdevice-contract.html#viewport-scissor">Viewport and scissor rectangle</a>.</p>
+
+<h2 id="half-pixel">The Direct3D 9 half-pixel offset</h2>
+<p>XNA 4.0 ran on Direct3D 9, whose rasteriser puts texel centres at integer pixel coordinates rather than at pixel centres. XNA's sprite batch compensated inside the projection it built, and FNA — a reimplementation targeting modern APIs — has no such term. CNA's shared <code>SpriteBatch.cpp</code> carries no compensation either, which is correct for every renderer built on an API with pixel-centre conventions; adding an offset in the shared layer would misplace sprites everywhere else. The compensation lives in exactly one place, <code>D3D9SpriteBatchRenderer::BuildMatrixTransformEXT</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/D3D9SpriteBatch.cpp"><code>D3D9SpriteBatch.cpp</code></a>, folded into the sprite projection:</p>
+<pre><code class="language-cpp">// DIRECTX9 only: the half-texel shift is part of the sprite MatrixTransform.
+Matrix projection = Matrix::CreateOrthographicOffCenter(
+    0.0f, viewportWidth, viewportHeight, 0.0f, 0.0f, -1.0f);   // far plane -1: identity Z row
+projection.M41 += -0.5f * projection.M11;                       // half a pixel in NDC, X
+projection.M42 += -0.5f * projection.M22;                       // half a pixel in NDC, Y
+// MatrixTransform = Begin's transform matrix, then this projection (row vectors).</code></pre>
+<p>The far plane is −1, not the 1 that XNA's documented formula suggests: with 1 the projection maps any <code>layerDepth</code> above 0 to a negative Direct3D 9 clip-space depth, and the sprite is clipped away silently. That defect surfaced only when the first oracle scene drew with a non-zero <code>layerDepth</code>; with −1 the Z row is the identity and the depth range is the documented [0, 1]. The <code>M41</code>/<code>M42</code> shift depends only on <code>M11</code>/<code>M22</code>, so the far-plane fix did not move any earlier result. CNA's comment records the formula as verified against the real XNA 4.0 runtime through the oracle scenes, not derived from first principles.</p>
+<h3 id="mutation-trap">A test that could not fail</h3>
+<p>The half-pixel offset is also a lesson in regression tests. The first checks in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/examples/directx9_spritebatch_test.cpp"><code>directx9_spritebatch_test.cpp</code></a> passed whether or not the offset was present: a 1 × 1 texture stretched into a rectangle, and samples at the centres of solid-colour quadrants. The offset shifts <em>which texel a screen pixel samples</em>, not where a sprite's geometric edges fall, so a one-texel texture has nothing to shift onto and a quadrant centre is far from any texel boundary. Deliberately commenting out the two <code>M41</code>/<code>M42</code> lines — mutation testing the test — left every check green. The replacement samples the internal boundary between two texels of a flipped sprite, at the destination's horizontal centre under the default <code>LinearClamp</code> filter: with the offset that pixel is (130, 125, 0), without it (128, 128, 0), and the expected value is taken from the XNA oracle scene rather than reasoned out. The general rule: a regression test must fail when the behaviour it protects is removed, and mutating the protected code is the direct way to establish that. The test is registered as <code>DirectX9_SpriteBatch</code>; like every Direct3D 9 check it runs where a Direct3D 9 device exists — in CNA's setup, cross-compiled and run under Wine with DXVK on Linux.</p>
+
+<h2 id="sdl-renderer">SDL_RENDERER specifics</h2>
+<p><code>SDL_RENDERER</code> draws each sprite with one SDL call, and two conventions had to be bridged (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-renderer/src/SdlRenderer.cpp"><code>SdlRenderer.cpp</code></a>). XNA's origin maps to the destination position and stays there under rotation, while <code>SDL_RenderTextureRotated</code> places the rectangle unrotated and pivots around a point inside it; the renderer offsets the destination by the scaled origin so the pivot lands where XNA puts it. <code>SDL_RenderTextureRotated</code> also cannot take an arbitrary transform, so when <code>Begin</code>'s transform matrix is not the identity the renderer computes the rotated corners, transforms them with the matrix and draws through <code>SDL_RenderTextureAffine</code>, expressing flips by permuting which corner is the origin; the common untransformed path keeps the cheaper rotated call. Both were defects in earlier builds (the pivot was misplaced and the transform matrix ignored). The renderer takes whole-pixel destinations (it has no sub-pixel override), and <code>SDL_RENDERER</code> has its own SpriteFont pixel tests (see <a href="spritefont-text-layout.html#evidence">text evidence</a>).</p>
+
+<h2 id="evidence">Evidence by renderer</h2>
+<p>The claims on this page rest on three kinds of evidence, which establish different things:</p>
+<ul>
+<li><strong>Shared-layer tests with a recording renderer</strong> (<code>SpriteBatchSortModeTest</code>, <code>SpriteBatchRendererInjectionTest</code> and neighbours in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/SpriteBatchTests.cpp"><code>SpriteBatchTests.cpp</code></a>): the exact order and parameters that reach a renderer, independent of any family. They say nothing about pixels.</li>
+<li><strong>Shared conformance scenes</strong> in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples"><code>modules/graphics/examples</code></a>, each registered per family: the scissor-through-<code>Begin</code>, custom-viewport, sub-pixel, large-batch, immediate-submission, sort-mode and sprite-then-3D scenes named on these pages, plus <code>spritebatch_sampler0_publication_test.cpp</code> (the batch's sampler left in <code>SamplerStates[0]</code>; EasyGL, <code>OPENGL4</code>, <code>SDL_GPU</code>, <code>VULKAN</code>) and <code>spritebatch_3d_order_test.cpp</code> (sprite and 3D draws interleaved; registered for most GPU families, <code>SOFTWARE</code> and <code>HEADLESS</code>). Each is evidence only for the families that register it; the lists above are from the CMake registrations at this snapshot. None was executed for this page.</li>
+<li><strong>XNA oracle scenes</strong>: <code>sprite_basic_quad</code>, <code>sprite_rotated_quad</code>, <code>sprite_flipped_quad</code>, <code>sprite_wrap_quad</code>, <code>sprite_mirror_quad</code>, <code>sprite_multitexture_quad</code> and the three <code>sprite_sortmode_*</code> scenes in <code>tools/xna-oracle/scenes</code>, captured from the real XNA 4.0 runtime under Wine and DXVK. CNA's records report the <code>DIRECTX9</code> renderer matching them at tolerance 0; that comparison is not run in CI and was not repeated here. They cover placement, rotation, flipping, addressing, a texture change mid-batch and the depth modes; they do not cover <code>Immediate</code> or <code>Texture</code> ordering.</li>
+</ul>
+<p>One EasyGL report remains unresolved in CNA's own records: a full-back-buffer <code>SpriteBatch</code> draw before the frame's first 3D draw was reported to break that frame's 3D rendering, with the cause not isolated, and CNA's migration guide still lists it. A later renderer-neutral scene, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/fullscreen_spritebatch_then_3d_test.cpp"><code>fullscreen_spritebatch_then_3d_test.cpp</code></a>, registered as <code>EasyGL_FullscreenSpriteThen3D</code> and <code>Vulkan_FullscreenSpriteThen3D</code>, did not reproduce it on either renderer according to CNA's Vulkan plan, which records that as weaker than “fixed”. Its status is tracked through the known-issues process, not here.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/spritebatch.html#spritesortmode">SpriteBatch: SpriteSortMode</a> &middot; <a href="../../docs/tutorials/25-sprite-sort-mode.html">Tutorial 25: SpriteSortMode and layering</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/graphics.html#frame">Graphics architecture: frame and submission flow</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/graphics/backends.html">Renderer backends internals</a> &middot; <a href="../../development/takeover/xna-oracle.html">The XNA oracle</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/handbook/add-a-regression-test.html">Add a regression test</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="spritebatch-semantics.html">SpriteBatch semantics</a> &middot; <a href="spritefont-text-layout.html">SpriteFont text layout</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="spritebatch-semantics.html" rel="prev"><span>Previous</span>SpriteBatch: state, lifecycle and error semantics</a><a class="dev-pager-next" href="spritefont-text-layout.html" rel="next"><span>Next</span>SpriteFont and DrawString text layout</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
