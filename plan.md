@@ -1,5 +1,17 @@
 # libcna.com — CNA accuracy audit and website refresh
 
+## Phase 3 (2026-09-25/26): the CNA Bible absorbed — Deep Dives and Known Issues
+
+Same TARGET (`cnahead` = `009d40f5dd085c4e674d3479675fac84b12b3e0a`); Phase-2 base `2c4970c` (`PHASE2_BASE`). Phase 3 absorbed every useful **current** piece of the CNA Bible
+(`bible.libcna.com`, read from its *working tree*, uncommitted work included; it documents an older CNA commit, `d6e9ff05`, and many chapters older still) **after re-verifying it against TARGET**.
+Result: a **Deep Dives** area (`deep-dives/`, 14 subject groups, one page per concept: exact semantics, invariants, evidence, limits), expansions of existing guide/Development pages,
+a **Known Issues** area (`known-issues/`: current bugs, functional gaps, platform limitations, verification gaps; machine-readable index `data/known-issues.json`), and 76 corrections to
+statements on existing pages that the absorption showed to be wrong. **Ledger:** `audit/bible-absorption-phase3.md` (+ `audit/bible-absorption-phase3-concepts.md`, `audit/bible-depth-audit-phase3.md`;
+data in `audit/data/bible/`) · **Guides:** `audit/data/phase3-editorial-guide.md`, `phase3-issues-guide.md`, `phase3-aux-guide.md` · **Errata pass:** `audit/phase3-site-errata.md` · **Resume/history:** `audit/phase3-handoff.md`.
+Tooling: `scripts/bible_inventory.py` (mechanical source graph), `bible_ledger.py` (record checks, tokens must exist in the destination page), `site_deep.py` + `deep_manifest.py` (area generator),
+`apply_expansions.py`, `backlinks.py`, `known_issues.py` (validate/merge/build), `issues_candidates.py`, `cnabugs_record.py`, `site_grep.py`, `check_deep_page.py`; all wired into `scripts/validate_all.sh`.
+Only defects that exist at TARGET are published; fixed defects, obsolete renderer findings and XNA-faithful behaviour are recorded (with evidence) in the non-public dispositions, never on the site.
+
 ## Phase 2 (2026-09-25): the Development area, absorbed from developer.libcna.com
 
 Same TARGET (`cnahead` = `009d40f5dd085c4e674d3479675fac84b12b3e0a`); Phase-1 base `94d758a`. Phase 2 added a maintainer layer under `development/` (Human Takeover,
