@@ -85,6 +85,26 @@ def main() -> int:
                 if re.search(r"alpha\.1|earlier|previous|BASE|was |had |historical|\(BASE", ctx, re.I):
                     continue
                 print(f"STALE? {page}: '{needle}' ({what}) … {ctx.strip()[:150]}"); bad += 1
+    # Phase 2: a whole-registry count written on any page (Development pages included) must equal the canonical fact
+    drift = [
+        (r"\b(\d+)\s+public\s+(?:renderer\s+)?identities", F["renderer_identities"], "renderer identity count"),
+        (r"\b(\d+)\s+(?:renderer\s+)?implementation\s+families", F["implementation_families"], "implementation family count"),
+        (r"\b(\d+)\s+(?:CNA_PLATFORM|platform)\s+implementations", F["platform_implementations"], "platform implementation count"),
+        (r"\b(\d+)\s+(?:CNA_AUDIO_PLATFORM|audio)\s+implementations", F["audio_implementations"], "audio implementation count"),
+        (r"\b(\d+)\s+production\s+modules", 23, "production module count"),
+    ]
+    for page in [p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.html")]:
+        if page == "docs/releases.html":
+            continue
+        body = cache.get(page) or text(page)
+        for rx, want, what in drift:
+            for m in re.finditer(rx, body, re.I):
+                if int(m.group(1)) == want:
+                    continue
+                ctx = body[max(0, m.start() - 90): m.end() + 60]
+                if re.search(r"alpha\.1|earlier|previous|BASE|was |had |historical|Developer|compiled|of the 25|spread over", ctx, re.I):
+                    continue
+                print(f"DRIFT {page}: {what} {m.group(1)} != {want} ... {ctx.strip()[:150]}"); bad += 1
     print(f"fact checks: {bad} problem(s)")
     return 1 if bad else 0
 

@@ -13,6 +13,12 @@ Usage:
     compare_presentation.py                       # whole site
     compare_presentation.py --page demos.html     # one page (use after each protected-page edit)
     compare_presentation.py --report audit/phase1-presentation-comparison.md
+
+Phase 2 uses the same engine against the PHASE1_BASE inventory with a stricter size guard:
+    compare_presentation.py --phase2 [--report audit/phase2-presentation-comparison.md]
+        baseline    audit/data/phase2-baseline-inventory.json   (inventory of 94d758a)
+        dispositions audit/data/phase2-dispositions.json
+        page-shrink / block-shrink fire on a >10% reduction (Phase 1: 40% / 50%)
 """
 
 from __future__ import annotations
@@ -29,6 +35,11 @@ from inventory_presentation import ROOT, extract_page  # noqa: E402
 
 BASELINE = ROOT / "audit" / "data" / "phase1-baseline-inventory.json"
 DISPOSITIONS = ROOT / "audit" / "data" / "phase1-dispositions.json"
+PHASE2_BASELINE = ROOT / "audit" / "data" / "phase2-baseline-inventory.json"
+PHASE2_DISPOSITIONS = ROOT / "audit" / "data" / "phase2-dispositions.json"
+# fraction of the baseline size below which a block / page counts as shrunk
+BLOCK_KEEP = 0.5
+PAGE_KEEP = 0.6
 ROLE_RANK = {"primary": 3, "secondary": 2, "outline": 1, "plain": 0}
 FUZZY = 0.82
 
@@ -175,26 +186,34 @@ def compare_page(rel: str, base: dict, cur: dict | None) -> tuple[list[Loss], li
                 losses.append(Loss(rel, "block", b["heading"], f"{b['words']} words"))
             continue
         w = max(x["words"] for x in cand)
-        if b["words"] >= 60 and w < 0.5 * b["words"]:
+        if b["words"] >= 60 and w < BLOCK_KEEP * b["words"]:
             losses.append(Loss(rel, "block-shrink", b["heading"], f"{b['words']} -> {w} words"))
 
     # whole-page size guard
-    if base["words"] >= 400 and cur["words"] < 0.6 * base["words"]:
+    if base["words"] >= 400 and cur["words"] < PAGE_KEEP * base["words"]:
         losses.append(Loss(rel, "page-shrink", rel, f"{base['words']} -> {cur['words']} words"))
     return losses, notes
 
 
 def main() -> int:
+    global BLOCK_KEEP, PAGE_KEEP
     ap = argparse.ArgumentParser()
     ap.add_argument("--page", action="append", help="limit to page(s)")
     ap.add_argument("--report")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--phase2", action="store_true",
+                    help="compare against the PHASE1_BASE inventory with the strict 10%% shrink guard")
     args = ap.parse_args()
 
-    base = json.loads(BASELINE.read_text(encoding="utf-8"))["pages"]
+    baseline_path, disp_path = (PHASE2_BASELINE, PHASE2_DISPOSITIONS) if args.phase2 else (BASELINE, DISPOSITIONS)
+    if args.phase2:
+        BLOCK_KEEP = PAGE_KEEP = 0.9
+    baseline_doc = json.loads(baseline_path.read_text(encoding="utf-8"))
+    base = baseline_doc["pages"]
+    baseline_label = baseline_doc.get("meta", {}).get("sha", "")[:7] or "baseline"
     dispositions = []
-    if DISPOSITIONS.exists():
-        dispositions = json.loads(DISPOSITIONS.read_text(encoding="utf-8"))["dispositions"]
+    if disp_path.exists():
+        dispositions = json.loads(disp_path.read_text(encoding="utf-8"))["dispositions"]
 
     all_losses: list[Loss] = []
     all_notes: list[str] = []
@@ -215,7 +234,10 @@ def main() -> int:
                 break
         (explained if loss.disposition else unexplained).append(loss)
 
-    lines = ["# Phase-1 presentation comparison (baseline `be35902` vs working tree)", "",
+    phase = "Phase-2" if args.phase2 else "Phase-1"
+    if not args.phase2:
+        baseline_label = "be35902"
+    lines = [f"# {phase} presentation comparison (baseline `{baseline_label}` vs working tree)", "",
              f"- baseline pages compared: {len(base) if not args.page else len(args.page)}",
              f"- unexplained losses: **{len(unexplained)}**",
              f"- dispositioned differences: **{len(explained)}**",

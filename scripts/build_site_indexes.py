@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 SITE = "https://libcna.com"
-UPDATED = "2026-09-24"
+UPDATED = "2026-09-25"  # Phase 2: Development area added; every page gained the header entry
 EXCLUDED = {
     "404.html",
     "search.html",
@@ -46,6 +46,10 @@ NEW_TAGS = {
 }
 
 
+DEV_HUBS = {"development/index.html", "development/handbook/index.html", "development/takeover/index.html",
+            "development/internals/index.html", "development/repository/index.html"}
+
+
 class MetadataParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
@@ -53,6 +57,7 @@ class MetadataParser(HTMLParser):
         self.in_title = False
         self.description = ""
         self.canonical = ""
+        self.keywords: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = {key.lower(): value or "" for key, value in attrs}
@@ -60,6 +65,8 @@ class MetadataParser(HTMLParser):
             self.in_title = True
         elif tag.lower() == "meta" and values.get("name", "").lower() == "description":
             self.description = values.get("content", "").strip()
+        elif tag.lower() == "meta" and values.get("name", "").lower() == "keywords":
+            self.keywords = [k.strip().lower() for k in values.get("content", "").split(",") if k.strip()]
         elif tag.lower() == "link" and "canonical" in values.get("rel", "").lower().split():
             self.canonical = values.get("href", "").strip()
 
@@ -147,6 +154,9 @@ def main() -> None:
         url = parsed.path or "/"
         search_url = "/index.html" if rel == "index.html" else "/" + rel
         tags = NEW_TAGS.get(search_url, old_search.get(search_url, {}).get("tags"))
+        if not tags and parser.keywords:
+            # Development pages carry their own search terms in <meta name="keywords">
+            tags = list(dict.fromkeys(parser.keywords + (["development"] if rel.startswith("development/") else [])))[:16]
         if not tags:
             tags = fallback_tags(search_url, parser.title)
         search.append({
@@ -159,6 +169,8 @@ def main() -> None:
         old_date, old_priority = old_sitemap.get(parser.canonical, (UPDATED, "0.6"))
         date = UPDATED if rel in MATERIALLY_UPDATED else old_date
         priority = "1.0" if rel == "index.html" else old_priority
+        if rel in DEV_HUBS:
+            priority = "0.8"
         if rel in {"docs/releases.html", "docs/runtime-renderer-selection.html", "docs/c-api.html",
                    "docs/content-pipeline.html", "docs/cnb-format.html", "docs/diagnostics.html",
                    "docs/inspector.html", "docs/native-platforms.html", "docs/cnaext-engine.html"}:

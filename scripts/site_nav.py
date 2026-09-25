@@ -132,7 +132,7 @@ def head_block(rel: str, title: str, description: str, root_prefix: str, kind: s
 def nav_block(root_prefix: str, active: str) -> str:
     items = [("index.html", "Home"), ("about.html", "About"), ("features.html", "Features"),
              ("architecture.html", "Architecture"), ("documentation.html", "Documentation"),
-             ("tutorials.html", "Tutorials"), ("demos.html", "Demos"), ("showcase.html", "Showcase"),
+             ("development/index.html", "Development"), ("tutorials.html", "Tutorials"), ("demos.html", "Demos"), ("showcase.html", "Showcase"),
              ("videos.html", "Videos"), ("roadmap.html", "Roadmap"), ("contact.html", "Contact"),
              ("network.html", "Network"), ("search.html", "Search")]
     links = "\n".join(
@@ -171,7 +171,7 @@ def footer_block(root_prefix: str, docs_prefix: str, tutorial: bool) -> str:
     <div class="footer-col"><h4>Docs</h4><ul><li><a href="{docs_prefix}getting-started.html">Getting Started</a></li><li><a href="{docs_prefix}building.html">Building</a></li><li><a href="{docs_prefix}platforms.html">Platforms</a></li><li><a href="{docs_prefix}rendering-backends.html">Renderers</a></li><li><a href="{docs_prefix}faq.html">FAQ</a></li></ul></div>
     <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="{root_prefix}demos.html">Demos</a></li><li><a href="{root_prefix}videos.html">Videos</a></li><li><a href="{root_prefix}contact.html">Contact</a></li></ul></div>
   </div>
-  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/master/LICENSE" target="_blank" rel="noopener">License</a><a href="{root_prefix}contact.html">Contact</a></div></div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="{root_prefix}contact.html">Contact</a></div></div>
 </div></footer>
 {tail}</body>
 </html>
