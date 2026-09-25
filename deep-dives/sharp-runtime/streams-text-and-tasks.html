@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>sharp-runtime streams, UTF-8 text and tasks - CNA Deep Dives</title>
+  <meta name="description" content="Exact semantics of sharp-runtime&#x27;s Stream and MemoryStream (as CNA&#x27;s content streams use them), UTF8Encoding&#x27;s validation and U+FFFD fallback, and the Task, WhenAll, WhenAny, TaskCompletionSource and Thread model.">
+  <meta name="keywords" content="sharp-runtime, memorystream, stream, utf8encoding, overlong utf-8, u+fffd, task, continuewith, whenall, whenany, taskcompletionsource, thread">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/sharp-runtime/streams-text-and-tasks.html">
+  <meta property="og:title" content="sharp-runtime streams, UTF-8 text and tasks - CNA Deep Dives">
+  <meta property="og:description" content="Exact semantics of sharp-runtime&#x27;s Stream and MemoryStream (as CNA&#x27;s content streams use them), UTF8Encoding&#x27;s validation and U+FFFD fallback, and the Task, WhenAll, WhenAny, TaskCompletionSource and Thread model.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/sharp-runtime/streams-text-and-tasks.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"sharp-runtime streams, UTF-8 text and tasks","description":"Exact semantics of sharp-runtime's Stream and MemoryStream (as CNA's content streams use them), UTF8Encoding's validation and U+FFFD fallback, and the Task, WhenAll, WhenAny, TaskCompletionSource and Thread model.","url":"https://libcna.com/deep-dives/sharp-runtime/streams-text-and-tasks.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine <span class="dev-nav-count">17</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../renderers/index.html" class="docs-nav-link">Renderers <span class="dev-nav-count">16</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">sharp-runtime <span class="dev-nav-count">4</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="components-and-consumption.html" class="docs-nav-link">Components and consumption</a></li>
+        <li><a href="object-model-and-core-types.html" class="docs-nav-link">Object model and core types</a></li>
+        <li><a href="streams-text-and-tasks.html" class="docs-nav-link active" aria-current="page">Streams, text and tasks</a></li>
+        <li><a href="parity-and-verification.html" class="docs-nav-link">Parity and verification</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification <span class="dev-nav-count">2</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">5</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">sharp-runtime</a></li>
+        <li aria-current="page">Streams, text and tasks</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>sharp-runtime streams, UTF-8 text and tasks</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#stream">Stream: a lightweight subset, honest about it</a></li>
+          <li><a href="#memorystream">MemoryStream</a></li>
+          <li><a href="#utf8">UTF8Encoding: validation and fallback</a></li>
+          <li><a href="#tasks">Tasks: a real but scoped async model</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; sharp-runtime &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. sharp-runtime statements were read at next @ 41b918c9, which CNA 009d40f5 does not pin; CNA statements at 009d40f5. Examples were syntax-checked with g++ -std=c++23 -fsyntax-only against the CNA headers and that sharp-runtime checkout; the TrySetResult listing is quoted from the sharp-runtime header. Test names are quoted, not executed.</p></div>
+
+<p class="lede">Three sharp-runtime families carry most of the behaviour a CNA game touches below the XNA surface: the stream classes every content load goes through, the UTF-8 encoding that decides what malformed text becomes, and the task and thread types a game may use for background work. This page gives their exact semantics, the places where they deliberately differ from .NET, and the evidence behind each rule. sharp-runtime statements were read at <code>next</code> @ <code>41b918c9</code>, which CNA snapshot <code>009d40f5</code> does not pin; CNA statements at <code>009d40f5</code>.</p>
+
+<h2 id="stream">Stream: a lightweight subset, honest about it</h2>
+<p><code>System::IO::Stream</code> calls itself a "lightweight subset of the .NET Stream API". A subclass must implement three members: <code>Read(buffer, offset, count)</code>, <code>Close()</code> and <code>getLengthProperty()</code>. Everything else has a default that describes a read-only, non-seekable stream: <code>Write</code> and <code>WriteByte</code> throw <code>NotSupportedException</code>, the <code>Position</code> getter and setter throw <code>NotSupportedException</code> (and the default <code>Seek</code> is written in terms of <code>Position</code> and <code>Length</code>, so it fails the same way), <code>getCanWriteProperty()</code> and <code>getCanSeekProperty()</code> return false, and <code>getCanReadProperty()</code> returns true. Note that <code>getCanSeekProperty()</code> does not gate <code>Seek()</code>; it only reports. That is the shape of .NET's own read-only streams, and it spares a subclass from implementing a full read/write/seek contract it does not support.</p>
+<p>The header documents the two ways the defaults can lie. A stream that overrides <code>Write</code> but not <code>getCanWriteProperty()</code> writes while claiming it cannot, and a caller that checks the property first never writes; a stream that cannot read must override <code>getCanReadProperty()</code>, because the default says yes. The rule is: every capability you implement, you also report. A minimal honest subclass looks like this:</p>
+<pre><code class="language-cpp">class MemoryBlobStream final : public System::IO::Stream
+{
+public:
+    explicit MemoryBlobStream(std::vector&lt;SharpRuntime::bytecs&gt; data) : data_(std::move(data)) {}
+
+    SharpRuntime::intcs Read(SharpRuntime::bytecs buffer[], SharpRuntime::intcs offset,
+                             SharpRuntime::intcs count) override
+    {
+        if (buffer == nullptr &amp;&amp; count != 0) throw System::ArgumentNullException("buffer");
+        if (offset &lt; 0) throw System::ArgumentOutOfRangeException("offset");
+        if (count &lt; 0) throw System::ArgumentOutOfRangeException("count");
+        const auto remaining = static_cast&lt;SharpRuntime::intcs&gt;(data_.size()) - position_;
+        const SharpRuntime::intcs n = std::min(count, remaining);
+        if (n &gt; 0) std::memcpy(buffer + offset, data_.data() + position_, static_cast&lt;std::size_t&gt;(n));
+        position_ += n;
+        return n;                     // 0 only at the end, never for a bad argument
+    }
+    void Close() override {}
+    [[nodiscard]] SharpRuntime::intcs getLengthProperty() const override
+    {
+        return static_cast&lt;SharpRuntime::intcs&gt;(data_.size());
+    }
+    // Write/WriteByte/Seek keep their NotSupportedException defaults, and the
+    // inherited CanWrite == false and CanSeek == false describe them truthfully.
+private:
+    std::vector&lt;SharpRuntime::bytecs&gt; data_;
+    SharpRuntime::intcs position_ = 0;
+};</code></pre>
+
+<h2 id="memorystream">MemoryStream</h2>
+<p><code>System::IO::MemoryStream</code> is the concrete stream CNA actually uses. Its default constructor creates an empty, writable buffer, as .NET's does. The buffer-copy constructor makes the same default explicit and adds a C++-only way to ask for a read-only copy:</p>
+<pre><code class="language-cpp">MemoryStream(const bytecs* buffer, intcs size, bool writable = true);</code></pre>
+<p>The arguments are validated before the copy is formed. A null pointer with a non-zero size throws <code>ArgumentNullException</code>, and that check runs first, matching .NET's order; a negative size throws <code>ArgumentOutOfRangeException</code>. The one deliberate adaptation is <code>(nullptr, 0)</code>, accepted as an empty range because C++ can express an empty pointer range where .NET's array overload simply rejects a null array (sharp-runtime's own <code>BinaryData::ToStream()</code> reaches the constructor that way for empty content). Passing <code>false</code> creates a readable, seekable, non-writable copy whose <code>Write</code> and <code>WriteByte</code> throw <code>NotSupportedException</code>.</p>
+<p>CNA relies on exactly that read-only form. <code>ContentManager::OpenStream</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xna/ContentManager.cpp"><code>modules/content/src/Xna/ContentManager.cpp</code></a> reads the whole asset first, from the file system or, for a relative path on Android, from the packaged assets through the platform file system, and returns <code>std::make_unique&lt;System::IO::MemoryStream&gt;(bytes.data(), size, false)</code>; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xna/ResourceContentManager.cpp"><code>modules/content/src/Xna/ResourceContentManager.cpp</code></a> does the same for embedded resources. Because the stream copies the range, it owns its bytes outright and nothing stays open on the manager's behalf. An asset larger than <code>INT32_MAX</code> bytes is refused with a <code>ContentLoadException</code> before the cast to <code>intcs</code>. The XNB decompressor uses two further memory streams for the compressed input and the decompressed output. How loading continues from that stream is on <a href="../../development/internals/content/runtime.html">content runtime internals</a>.</p>
+<h3 id="memorystream-close">Closing closes operations, not the bytes</h3>
+<p><code>MemoryStream::Close()</code> changes only its open flag; it keeps both the byte vector and the position. After it, <code>Read</code>, <code>Write</code>, <code>WriteByte</code>, <code>Seek</code>, <code>Length</code> and <code>Position</code> throw <code>ObjectDisposedException</code> ("Cannot access a closed Stream."), and <code>CanRead</code> and <code>CanSeek</code> return false. <code>CanWrite</code> deliberately keeps the construction-time writable flag, because .NET's property is <code>CanWrite =&gt; _writable</code> and does not fold in the disposed state. <code>ToArray()</code> and <code>GetBuffer()</code> remain usable, since .NET's own <code>Dispose</code> leaves the buffer in place ("allow TryGetBuffer, GetBuffer &amp; ToArray to work") and the <code>ensureNotClosed()</code> guard follows the same rule. A producer can therefore finish an in-memory blob, close the stream to catch accidental later I/O, and still hand a copy on. The two extraction methods differ: <code>ToArray()</code> returns an independent vector, safe across later writes, while <code>GetBuffer()</code> returns a reference to the live vector that a later reallocation can invalidate.</p>
+<pre><code class="language-cpp">System::IO::MemoryStream stream;
+const SharpRuntime::bytecs payload[] = {1, 2, 3, 4};
+stream.Write(payload, 0, 4);
+stream.Close();
+
+std::vector&lt;SharpRuntime::bytecs&gt; saved = stream.ToArray();   // still {1, 2, 3, 4}
+// stream.getLengthProperty();   // throws ObjectDisposedException
+
+System::IO::MemoryStream readOnly(payload, 4, false);
+// readOnly.WriteByte(9);        // throws NotSupportedException</code></pre>
+<h3 id="memorystream-limits">Argument and size limits</h3>
+<p>Two further properties keep a "memory only" stream from becoming an unchecked byte container. A null buffer throws <code>ArgumentNullException</code> and a negative offset or count throws <code>ArgumentOutOfRangeException</code>; neither is mistaken for an end-of-stream return of zero (before commit <code>0bf2faf5</code>, <code>Write</code> silently did nothing on invalid arguments and a negative offset reached an out-of-bounds read). A caller may set <code>Position</code> beyond the current end, but the next write computes <code>position + count</code> in <code>int64_t</code> before resizing, and if the sum exceeds the <code>intcs</code> range it throws <code>IO::IOException</code> ("Stream was too long.") instead of wrapping negative and writing outside the vector. The narrower calculation it replaced had the same signed-overflow shape that a UBSan reproduction had already confirmed in <code>Span&lt;T&gt;::Slice</code>, and a wrapped sum would have compared as small enough to skip the resize, turning undefined behaviour into a heap overflow; <code>StreamTests.cpp</code> sets <code>Position</code> to 2147483647 and writes ten bytes to require the exception, for both <code>MemoryStream</code> and <code>UnmanagedMemoryStream</code>.</p>
+
+<h2 id="utf8">UTF8Encoding: validation and fallback</h2>
+<p><code>System::Text::UTF8Encoding</code> does not pass bytes through as opaque <code>char</code> values. <code>GetBytes()</code> and <code>GetString()</code> validate that the input is well-formed UTF-8 and route each ill-formed byte through the configured fallback before resuming. The rule lives in one place: <code>System::detail::TryDecodeUtf8Scalar()</code> in <code>System/detail/Utf8Scalar.hpp</code> (owned by <code>Core.Base</code>). Five copies of the decode had accumulated across the text module; two refactors (tickets #2014 and #2354, the second on 2026-08-18) moved every caller onto the shared function, and <code>UTF8Encoding.cpp</code>'s local <code>wellFormedUtf8Length()</code> is now a thin wrapper that returns the validated length or zero.</p>
+<p>The decoder walks the lead byte against the real UTF-8 grammar and checks every continuation byte for the <code>10xxxxxx</code> pattern. A structurally complete sequence is still rejected if it is <em>overlong</em> (a two-byte form decoding below U+0080, a three-byte form below U+0800, a four-byte form below U+10000), if it encodes a UTF-16 surrogate (U+D800 to U+DFFF, which exist only as a UTF-16 artefact), or if it lies above U+10FFFF. Overlong forms are the historically security-relevant case: a decoder that accepts <code>C0 AF</code> as <code>/</code> lets that byte past a filter that checks only the raw stream. On any failure the function reports a length of one, so the caller advances exactly one byte.</p>
+<p>The constructor installs U+FFFD (<code>EF BF BD</code>) as both encoder and decoder replacement, as .NET's <code>UTF8Encoding.SetDefaultFallbacks()</code> does, not the base <code>Encoding</code> class's <code>"?"</code>, which is only right for single-byte code pages. Because the loop advances one byte per failure, replacement is per invalid byte, not per attempted sequence:</p>
+<pre><code class="language-cpp">System::Text::UTF8Encoding utf8;
+
+const SharpRuntime::bytecs euroSign[] = {0xE2, 0x82, 0xAC};        // U+20AC, well formed
+std::string ok = utf8.GetString(euroSign, 0, 3);                    // unchanged
+
+const SharpRuntime::bytecs overlongSlash[] = {0xC0, 0xAF};          // '/' in a 2-byte form
+std::string rejected = utf8.GetString(overlongSlash, 0, 2);         // two U+FFFD
+
+const SharpRuntime::bytecs loneContinuation[] = {0x80};
+std::string alsoRejected = utf8.GetString(loneContinuation, 0, 1);  // one U+FFFD</code></pre>
+<p>Three test surfaces pin this at <code>41b918c9</code> (named here, not run): <code>UTF8EncodingTests</code> covers round trips, bad continuation bytes, overlong input, truncated sequences, directly encoded surrogates and the exception fallbacks (<code>EncoderFallbackException</code>, <code>DecoderFallbackException</code>); <code>Utf8SharedScalarDecodeTests</code> pins the shared decoder, including <code>AnEncodingSubstitutesOneReplacementPerByteForBothKinds</code>; and the <code>Utf8Tests</code> family validates the span-oriented validator for overlong sequences, surrogates, code points above U+10FFFF, truncation and lone continuation bytes. <code>BinaryReader::ReadChar()</code>, which CNA's XNB readers call, applies the same grammar but throws <code>FormatException</code> instead of substituting (<a href="../foundations/language-conventions.html#missing-dependencies">how that method arrived in sharp-runtime</a>). Remember that lengths and indices here are bytes (<a href="object-model-and-core-types.html#string">the UTF-8 unit</a>).</p>
+
+<h2 id="tasks">Tasks: a real but scoped async model</h2>
+<p><code>System::Threading::Tasks::Task</code> lives in the <code>Threading.Tasks</code> component, which is not in CNA's closure; CNA's modules include no task header, so a game that uses tasks names that component itself (<a href="components-and-consumption.html#selection">how</a>). The model is real but deliberately small.</p>
+<ul>
+<li><strong>No pool, no scheduler.</strong> <code>Task::Run</code> and the task constructors start the work with <code>std::async(std::launch::async, …)</code>, one thread per task. In a single-threaded Emscripten build they throw <code>PlatformNotSupportedException</code> ("std::async requires pthreads"); threaded WebAssembly needs <code>SHARP_RUNTIME_ENABLE_EMSCRIPTEN_THREADS</code>, which CNA sets from <code>CNA_ENABLE_EMSCRIPTEN_THREADS</code>.</li>
+<li><strong>Wait.</strong> <code>Wait()</code> rethrows a faulted task's stored exception directly, not wrapped in <code>AggregateException</code>, and throws <code>TaskCanceledException</code> for a canceled one.</li>
+<li><strong>Continuations run inline.</strong> A continuation runs synchronously on whichever thread completes the antecedent, or immediately on the calling thread if the antecedent has already finished: always as if <code>TaskContinuationOptions::ExecuteSynchronously</code> were set. <code>NotOnFaulted</code>, <code>NotOnCanceled</code>, <code>NotOnRanToCompletion</code> and their <code>OnlyOn…</code> compositions are honoured; <code>PreferFairness</code>, <code>LongRunning</code>, <code>AttachedToParent</code>, <code>DenyChildAttach</code>, <code>HideScheduler</code> and <code>LazyCancellation</code> are accepted for API parity and have no effect. The continuation captures the antecedent's state through a <code>std::weak_ptr</code>, so the antecedent's own continuation list cannot keep itself alive in a cycle. A continuation does not rethrow the antecedent's exception; it inspects it.</li>
+<li><strong>Generic results.</strong> <code>TaskT&lt;TResult&gt;</code> has both an action overload of <code>ContinueWith</code> returning <code>Task</code> and a result-producing overload returning <code>TaskT&lt;TNewResult&gt;</code>. The lightweight antecedent handed to a callback shares the terminal status, result and exception, but not the original cancellation token: its token property reports <code>CancellationToken::None()</code>.</li>
+</ul>
+<pre><code class="language-cpp">using System::Threading::Tasks::Task;
+
+Task loadTask = Task::Run([] { LoadLevelFromDisk(); });   // its own thread
+Task continuation = loadTask.ContinueWith([](Task antecedent) {
+    if (antecedent.getIsFaultedProperty()) {
+        LogLevelLoadFailure();       // the exception is NOT rethrown here
+        return;
+    }
+    FinishLevelSetup();              // runs inline on the thread that finished loadTask
+});
+continuation.Wait();</code></pre>
+<h3 id="combinators">WhenAll, WhenAny and the missing generic combinators</h3>
+<p><code>Task::WhenAll(std::vector&lt;Task&gt;)</code> returns an already completed task for an empty vector without starting a thread, throws <code>ArgumentException</code> for a moved-from task (this port's equivalent of a null <code>Task</code>), and otherwise waits for every input, never short-circuiting on the first fault. If any faulted, the first fault in input order is rethrown when the result is waited on, the same "rethrow, do not aggregate" simplification <code>Wait()</code> makes. If none faulted but one was canceled, waiting throws <code>TaskCanceledException</code>, yet the returned task's status reads Faulted, not Canceled, because it is built from an action that can only escape by throwing; that is a documented deviation. Since 2026-07-14 it tells a genuinely canceled input from one that faulted with a directly thrown <code>TaskCanceledException</code> by the input's own status rather than by the exception type.</p>
+<p><code>Task::WhenAny(std::vector&lt;Task&gt;)</code> returns a <code>TaskT&lt;Task&gt;</code> that always completes successfully with the first input to reach any terminal state; the caller inspects that task's own status. An empty vector throws <code>ArgumentException</code>. It was rebuilt on 2026-07-14 to follow .NET's zero-extra-thread design: it registers an inline callback on each input's shared state, the first callback to win an atomic compare-exchange completes the result, and later ones are no-ops, so no watcher thread is created, joined or detached. Neither combinator has an overload for <code>std::vector&lt;TaskT&lt;TResult&gt;&gt;</code>: a caller can continue one generic task but cannot express .NET's generic <code>WhenAll</code>/<code>WhenAny</code> that produce a result array or a typed winner.</p>
+<h3 id="task-completion-source">TaskCompletionSource and Thread</h3>
+<p><code>TaskCompletionSource&lt;TResult&gt;</code> bridges an external producer into a task. Its <code>Try…</code> methods claim completion with an atomic compare-exchange, so two racing producers cannot both settle the promise. <code>TrySetCanceled()</code> and a caller's <code>SetException(TaskCanceledException)</code> both settle the promise with the same exception type, so a separate producer-set atomic flag identifies only the genuine cancellation path; a caller's own exception stays a Faulted result. The same file carries a repaired race between two valid-looking steps: <code>TrySetResult</code> claimed completion before copying the result into the promise, so a throwing copy constructor left the source claimed but never ready, and every waiter hung. The fix stores the copy failure in the promise and still rethrows to the immediate producer:</p>
+<pre><code class="language-cpp">bool TrySetResult(const TResult&amp; result) {
+    bool expected = false;
+    if (!completed_.compare_exchange_strong(expected, true)) return false;
+    try {
+        promise_.set_value(result);
+    } catch (...) {
+        promise_.set_exception(std::current_exception());   // waiters become ready
+        throw;                                              // the producer still sees it
+    }
+    return true;
+}</code></pre>
+<p><code>System::Threading::Thread</code> is a thin wrapper over <code>std::thread</code> that does not start at construction. A second <code>Start()</code> throws <code>ThreadStateException</code> ("Thread is running or terminated; it cannot restart."), .NET's one-shot contract, instead of silently restarting; a parameterised thread started with the parameterless <code>Start()</code> runs with a null argument and no exception, which is .NET's own asymmetry and is pinned by a test. Channels use <code>notify_all()</code> rather than <code>notify_one()</code> on their condition variables, because several writers or readers can be blocked at once and waking one could strand the others; that lost wake-up was found by a code review and reproduced before the fix (<code>5770e476</code>).</p>
+<p>What these types prove and what they do not is part of the evidence model on <a href="parity-and-verification.html#sanitizers">parity and verification</a>: the sanitizer and review findings behind several of the rules above are listed there.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/tutorials/89-sharp-runtime.html">Tutorial 89: Extending CNA with sharp-runtime</a> &middot; <a href="../../docs/content-pipeline.html">Content pipeline guide</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture.html#siblings">Architecture: required sibling repositories</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/content/runtime.html">Content runtime internals</a> &middot; <a href="../../development/internals/modules/core.html#boundary">Core module internals: the sharp-runtime boundary</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="object-model-and-core-types.html">sharp-runtime object model</a> &middot; <a href="components-and-consumption.html">sharp-runtime components and consumption</a> &middot; <a href="parity-and-verification.html">sharp-runtime parity and verification</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="object-model-and-core-types.html" rel="prev"><span>Previous</span>The sharp-runtime object model: Object, strings, exceptions, delegates and collections</a><a class="dev-pager-next" href="parity-and-verification.html" rel="next"><span>Next</span>sharp-runtime parity boundaries and verification</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
