@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 SITE = "https://libcna.com"
-UPDATED = "2026-09-25"  # Phase 2: Development area added; every page gained the header entry
+UPDATED = "2026-09-25"  # Phase 3: Deep Dives and Known Issues added; every page gained the header entries
 EXCLUDED = {
     "404.html",
     "search.html",
@@ -47,7 +47,8 @@ NEW_TAGS = {
 
 
 DEV_HUBS = {"development/index.html", "development/handbook/index.html", "development/takeover/index.html",
-            "development/internals/index.html", "development/repository/index.html"}
+            "development/internals/index.html", "development/repository/index.html",
+            "deep-dives/index.html", "known-issues/index.html"}
 
 
 class MetadataParser(HTMLParser):
@@ -156,7 +157,9 @@ def main() -> None:
         tags = NEW_TAGS.get(search_url, old_search.get(search_url, {}).get("tags"))
         if not tags and parser.keywords:
             # Development pages carry their own search terms in <meta name="keywords">
-            tags = list(dict.fromkeys(parser.keywords + (["development"] if rel.startswith("development/") else [])))[:16]
+            area_tag = ("development" if rel.startswith("development/") else "deep dive" if rel.startswith("deep-dives/")
+                        else "known issue" if rel.startswith("known-issues/") else None)
+            tags = list(dict.fromkeys(parser.keywords + ([area_tag] if area_tag else [])))[:16]
         if not tags:
             tags = fallback_tags(search_url, parser.title)
         search.append({
@@ -169,7 +172,7 @@ def main() -> None:
         old_date, old_priority = old_sitemap.get(parser.canonical, (UPDATED, "0.6"))
         date = UPDATED if rel in MATERIALLY_UPDATED else old_date
         priority = "1.0" if rel == "index.html" else old_priority
-        if rel in DEV_HUBS:
+        if rel in DEV_HUBS or (rel.startswith(("deep-dives/", "known-issues/")) and rel.endswith("/index.html")):
             priority = "0.8"
         if rel in {"docs/releases.html", "docs/runtime-renderer-selection.html", "docs/c-api.html",
                    "docs/content-pipeline.html", "docs/cnb-format.html", "docs/diagnostics.html",

@@ -60,7 +60,7 @@ def marker(key: str) -> tuple[str, str]:
     return f"<!--p3:begin {key}-->", f"<!--p3:end {key}-->"
 
 
-TAIL_RX = [re.compile(r'<section class="dev-layers"'), re.compile(r"<!--dev:pager-->"), re.compile(r"<!--deep:pager-->"),
+TAIL_RX = [re.compile(r"<!--p3:deep-links-->"), re.compile(r"<!--p3:issue-links-->"), re.compile(r'<section class="dev-layers"'), re.compile(r"<!--dev:pager-->"), re.compile(r"<!--deep:pager-->"),
            re.compile(r'<nav class="docs-pagination"'), re.compile(r'<div class="docs-pagination"'), re.compile(r"</article>")]
 
 

@@ -269,6 +269,11 @@ def hub_body(page: str) -> tuple[dict, str]:
     a = area_cfg(page)
     idx = DM.page_index()
     group, entry = idx[page]
+    if a["name"] == "known-issues":
+        import known_issues as KI
+        res = KI.hub_body(page, a["hub"], None if page == a["hub"] else group["key"])
+        if res:
+            return res
     if page == a["hub"]:
         cards = []
         for g in a["groups"]:

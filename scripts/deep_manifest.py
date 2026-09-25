@@ -118,7 +118,13 @@ def all_pages() -> list[dict]:
         for g in a["groups"]:
             pages.append({"path": group_landing(name, g["key"]), "title": g["label"], "label": g["label"], "area": name,
                           "group": g["key"], "order": -1, "kind": "hub"})
-    for p in load_pages():
+    try:
+        import known_issues as _KI
+        issue_pages = _KI.issue_pages()
+    except Exception:  # noqa: BLE001  (no index yet)
+        issue_pages = []
+    for p in load_pages() + issue_pages:
+        p = dict(p)
         area = area_of(p["path"])
         p["area"] = area
         p.setdefault("kind", "new")
