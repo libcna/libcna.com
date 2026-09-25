@@ -1,0 +1,267 @@
+{
+ "pkg": "B1",
+ "candidates": [
+  {
+   "cand": "CNA-BUG-001",
+   "source": "bible-cnabugs",
+   "title": "`Plane::Transform(Plane, Matrix)` computes a symmetrization, not an inverse-transpose",
+   "bible_body": "### CNA-BUG-001 — `Plane::Transform(Plane, Matrix)` computes a symmetrization, not an inverse-transpose\n**Severity: high · Confidence: VERIFIED · Area: `modules/math`**\n\n`Matrix::Transpose(const Matrix&, Matrix&)` writes `result` field-by-field while reading `matrix`\n(`modules/math/src/Matrix.cpp:1191-1209`):\n\n```cpp\nresult.M12 = matrix.M21;   // :1194\n...\nresult.M21 = matrix.M12;   // :1197 — reads the value :1194 just overwrote\n```\n\nIt is therefore not aliasing-safe, and `Plane::Transform` calls it aliased\n(`modules/math/src/Plane.cpp:147-158`):\n\n```cpp\nMatrix transformedMatrix;\nMatrix::Invert(matrix, transformedMatrix);\nMatrix::Transpose(transformedMatrix, transformedMatrix);   // :151 — same object twice\n```\n\nEach upper-triangle cell receives its lower-triangle mirror; each lower-triangle cell then\nre-reads the cell that was just overwritten and is left unchanged. The net effect is\n`symmetrize_from_lower(M)`, which coincides with `transpose(M)` only when `M` is already\nsymmetric.\n\n**Worked counterexample.** For `M = CreateTranslation(1,0,0)`, `inverse(M)` has `M41 = −1` and\n`M14 = 0`. The aliased call produces `M14 = −1` *and* `M41 = −1`; a true transpose produces\n`M14 = −1`, `M41 = 0`. Transforming the plane `y = 1` (Normal `(0,1,0)`, `D = −1`) then yields\nNormal `(1,1,0)` instead of the correct, unchanged `(0,1,0)` — **a pure translation silently\nrotates the plane's normal.**\n\n**Blast radius is exactly one function.** `Matrix::Transpose` has 20 call sites; `Plane.cpp:151`\nis the only aliased one. Every other caller uses the value-returning overload\n(`Matrix.cpp:1184-1189`), which allocates a distinct result and is safe.\n\n**Why it was never caught:** both `Plane::Transform(Matrix)` tests use the identity matrix\n(`PlaneTests.cpp:215-221`, `:298-305`), whose inverse is symmetric — the single input class for\nwhich symmetrize and transpose agree.\n\n**Suggested fix:** make `Matrix::Transpose` aliasing-safe (compute into a temporary, or swap\npairs), or have `Plane::Transform` transpose into a second `Matrix`.",
+   "previous_status": "open",
+   "bible_target_status": "open",
+   "bible_target_evidence": "aliased inverse/transpose call remains in `modules/math/src/Plane.cpp`",
+   "bible_action": "retain"
+  },
+  {
+   "cand": "CNA-BUG-002",
+   "source": "bible-cnabugs",
+   "title": "`BoundingSphere::Contains(BoundingFrustum)` can never return `Disjoint`",
+   "bible_body": "### CNA-BUG-002 — `BoundingSphere::Contains(BoundingFrustum)` can never return `Disjoint`\n**Severity: medium · Confidence: VERIFIED · Area: `modules/math`**\n\n`modules/math/src/BoundingSphere.cpp:112-136`: `dmin` is declared and compared, but never\ncomputed between those two points. The `Disjoint` branch is therefore unreachable, and a frustum\nentirely outside the sphere reports as intersecting. CNA's own `AUDIT.md:22` marks\n`BoundingFrustum` \"✅ API complete\", so this is invisible to a marker-based audit.",
+   "previous_status": "open",
+   "bible_target_status": "open",
+   "bible_target_evidence": "frustum branch still leaves `dmin` at zero in `BoundingSphere.cpp`",
+   "bible_action": "retain"
+  },
+  {
+   "cand": "CNA-BUG-003",
+   "source": "bible-cnabugs",
+   "title": "`BoundingBox::Contains(BoundingFrustum)` answers the reverse question",
+   "bible_body": "### CNA-BUG-003 — `BoundingBox::Contains(BoundingFrustum)` answers the reverse question\n**Severity: medium · Confidence: VERIFIED · Area: `modules/math`**\n\n`modules/math/src/BoundingBox.cpp:93-128` tests the frustum's corners against the box — i.e. it\ncomputes whether the frustum's corner hull is inside the box, not the documented containment\nrelation. The comment above it reads only `// Legacy behavior:`, with no explanation, and no\n`TODO`/`FIXME` marker.",
+   "previous_status": "open",
+   "bible_target_status": "open",
+   "bible_target_evidence": "corner-only/reverse classification remains in `BoundingBox.cpp`",
+   "bible_action": "retain"
+  },
+  {
+   "cand": "CNA-BUG-004",
+   "source": "bible-cnabugs",
+   "title": "`BoundingFrustum::Intersects(Ray)` throws on its main case while documented complete",
+   "bible_body": "### CNA-BUG-004 — `BoundingFrustum::Intersects(Ray)` throws on its main case while documented complete\n**Severity: low · Confidence: VERIFIED · Area: `modules/math`**\n\n`modules/math/src/BoundingFrustum.cpp:264` throws `System::NotImplementedException`.\n`RayTests.cpp:211-214` acknowledges this in a comment and omits the test. CNA's `AUDIT.md:22`\nnonetheless records the type as complete.\n\n> **Cross-cutting note for CNA-BUG-002/003/004:** all three are unfinished or wrong functions that\n> carry **no `TODO` or `FIXME` marker** — in two cases FNA's own `TODO` comments appear to have\n> been replaced with neutral prose during the port. A marker-based sweep of `modules/math` reports\n> \"no known gaps\" while these remain.",
+   "previous_status": "open",
+   "bible_target_status": "open",
+   "bible_target_evidence": "intersecting ray branch still throws `NotImplementedException`",
+   "bible_action": "retain"
+  },
+  {
+   "cand": "CNA-BUG-024",
+   "source": "bible-cnabugs",
+   "title": "Exception base classes diverge across namespaces, undocumented",
+   "bible_body": "### CNA-BUG-024 — Exception base classes diverge across namespaces, undocumented\n**Severity: low · Confidence: STRONG · Area: cross-cutting**\n\nXNA-native exception types split across two roots. `Audio`, `GamerServices`, `Net` and `Sensors`\nexceptions derive from `System::Exception`; `Graphics`'s `DeviceLostException`,\n`DeviceNotResetException` and `NoSuitableGraphicsDeviceException` (`…/Graphics/*.hpp:10`) and\n`Content`'s `ContentLoadException` (`…/Content/ContentLoadException.hpp:10`) derive from\n**`std::runtime_error`**. In real XNA all four descend from `System.Exception`. This is not listed\nin `CHECKLIST.md`'s deliberate-deviations table, so it reads as drift rather than decision.\n\nA related trap for callers, worth documenting whichever way it is resolved: `System::Exception`\nderives from **`std::exception`, not `std::runtime_error`**\n(`sharp-runtime/modules/core/include/System/Exception.hpp:32`), and `modules/runtime` throws only\nraw `std::` types and never a `System::*` type. So no single `catch` clause short of\n`catch (const std::exception&)` spans the framework.",
+   "previous_status": "open",
+   "bible_target_status": "open",
+   "bible_target_evidence": "exception hierarchy divergence remains in the public contract",
+   "bible_action": "retain"
+  },
+  {
+   "cand": "CNA-BUG-025",
+   "source": "bible-cnabugs",
+   "title": "`PlaneIntersectionType`'s documentation is the inverse of every implementation",
+   "bible_body": "### CNA-BUG-025 — `PlaneIntersectionType`'s documentation is the inverse of every implementation\n**Severity: low · Confidence: VERIFIED · Area: `modules/math`**\n\n`PlaneIntersectionType.hpp:10-17` documents `Front` as \"the negative half-space\" and `Back` as\n\"the positive half-space\". `Plane::IntersectsPoint` returns `Front` for `distance > 0`\n(`Plane.cpp:114-117`), and `BoundingSphere::Intersects(Plane)` (`:355-357`) and\n`BoundingBox::Intersects(Plane)` (`:424-434`) both agree with the code. Operationally `Front`\nmeans entirely on the **+N** side.",
+   "previous_status": "open",
+   "bible_target_status": "open",
+   "bible_target_evidence": "plane-intersection documentation still disagrees with implementation meaning",
+   "bible_action": "retain"
+  },
+  {
+   "cand": "CNA-BUG-026",
+   "source": "bible-cnabugs",
+   "title": "`CreatePerspectiveFieldOfView` does not reject a field of view of exactly π",
+   "bible_body": "### CNA-BUG-026 — `CreatePerspectiveFieldOfView` does not reject a field of view of exactly π\n**Severity: low · Confidence: VERIFIED · Area: `modules/math`**\n\nThe upper guard literal is `3.141593f`, which is numerically **above** `MathHelper::Pi`\n(`3.14159274f`), so `CreatePerspectiveFieldOfView(MathHelper::Pi, …)` passes validation and\nproduces a degenerate projection instead of throwing.",
+   "previous_status": "open",
+   "bible_target_status": "open",
+   "bible_target_evidence": "the decimal PI guard still admits the exact single-precision PI boundary",
+   "bible_action": "retain"
+  },
+  {
+   "cand": "CNA-BUG-027",
+   "source": "bible-cnabugs",
+   "title": "The two `Clamp` implementations disagree on inverted ranges",
+   "bible_body": "### CNA-BUG-027 — The two `Clamp` implementations disagree on inverted ranges\n**Severity: low · Confidence: VERIFIED · Area: `modules/math`**\n\n`MathHelper::Clamp` clamps against `max` first, then `min`, so **`min` wins** when `min > max`\n(`MathHelper.cpp:46-51`). The vectors' file-local `ClampScalar` is\n`std::min(std::max(v,min),max)`, so **`max` wins** (`Vector3.cpp:26-29`). `MathHelper::Clamp(5,10,1)`\nreturns `10`; a component-wise vector clamp on the same inputs returns `1`. `MathHelper::Max/Min`\nare ternaries while the vectors use `std::max`/`std::min`, giving different NaN behaviour too.",
+   "previous_status": "open",
+   "bible_target_status": "open",
+   "bible_target_evidence": "scalar and vector clamp orders still disagree for inverted bounds",
+   "bible_action": "retain"
+  },
+  {
+   "cand": "CNA-BUG-028",
+   "source": "bible-cnabugs",
+   "title": "`Curve::ComputeTangent` uses two different degeneracy epsilons for the same test",
+   "bible_body": "### CNA-BUG-028 — `Curve::ComputeTangent` uses two different degeneracy epsilons for the same test\n**Severity: low · Confidence: VERIFIED · Area: `modules/math`**\n\n`TangentIn` uses `MathHelper::WithinEpsilon(pn, 0.0f)` ≈ 5.96e-8 (`Curve.cpp:229`); `TangentOut`\nuses `std::fabs(pn) < std::numeric_limits<float>::denorm_min()` ≈ 1.4e-45 (`:254`) — a ratio of\nroughly 4×10³⁷ inside one function. The `TangentOut` form matches C#'s `float.Epsilon`, so the\n`TangentIn` line is the deviation.",
+   "previous_status": "open",
+   "bible_target_status": "open",
+   "bible_target_evidence": "tangent-in and tangent-out still use different zero tests",
+   "bible_action": "retain"
+  },
+  {
+   "cand": "CNA-BUG-042",
+   "source": "bible-cnabugs",
+   "title": "`CheckForNaNs()` and `getDebugDisplayStringProperty()` are dead across the math module",
+   "bible_body": "### CNA-BUG-042 — `CheckForNaNs()` and `getDebugDisplayStringProperty()` are dead across the math module\n**Severity: trivial · Confidence: VERIFIED · Area: `modules/math`**\n\n`CheckForNaNs()` is declared on `Vector2/3/4`, `Quaternion` and `Matrix`, defined in each `.cpp`\nto throw `std::logic_error`, and has **zero call sites repo-wide** (5 declarations + 5 definitions\nonly). `getDebugDisplayStringProperty()` is declared on ten types, 20 occurrences, **zero call\nsites** — not from `ToString`, not from any test, not from any renderer. Both are structurally\nported XNA `[Conditional(\"DEBUG\")]` hooks that were never wired up.",
+   "previous_status": "open",
+   "bible_target_status": "open",
+   "bible_target_evidence": "diagnostic helpers remain public but have no in-tree production callers",
+   "bible_action": "retain"
+  },
+  {
+   "cand": "CNA-BUG-043",
+   "source": "bible-cnabugs",
+   "title": "`ExitingEventArgs` is unreferenced",
+   "bible_body": "### CNA-BUG-043 — `ExitingEventArgs` is unreferenced\n**Severity: trivial · Confidence: VERIFIED · Area: `modules/runtime`**\n\nAn empty `: System::EventArgs` with a defaulted constructor, a one-line `.cpp`, and references\nonly from its own header, its own source and its own two-case test. `Game::Exiting` is typed\n`EventHandler<System::EventArgs>` (`Game.hpp:50`). CNA's `AUDIT.md:34` marks it\n\"✅ CNA-specific addition matching XNA pattern\".",
+   "previous_status": "architecture decision",
+   "bible_target_status": "architecture decision",
+   "bible_target_evidence": "intentionally retained type remains non-defect",
+   "bible_action": "exclude from backlog"
+  },
+  {
+   "cand": "P2-061",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/core.html",
+   "summary": "modules/core/CMakeLists.txt still adds -lembind for Emscripten although the browser preference reader no longer uses embind.",
+   "evidence": "modules/core/CMakeLists.txt; modules/core/src/GraphicsRendererSelectionEmscripten.cpp",
+   "note": "stale build option; recorded for the later bug catalogue; removal needs an Emscripten bundle link"
+  },
+  {
+   "cand": "P2-062",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/core.html",
+   "summary": "An invalid or not-compiled-in CNA_GRAPHICS_RENDERER value (or Module.cnaPreferredRenderer) is read during static initialisation through PublishAvailable, so it terminates the process instead of throwing into game code. No test sets an invalid value.",
+   "evidence": "cmake/templates/CnaRendererRegistry.generated.cpp.in (cnaRendererRegistryPublished); modules/core/src/GraphicsRendererSelection.cpp (PublishAvailable, RebuildAttemptOrder, ConsultEnvironmentOnce)",
+   "note": "derived from source, not executed; language rule: an exception leaving a dynamic initialiser calls std::terminate"
+  },
+  {
+   "cand": "P2-063",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/core.html",
+   "summary": "Logger::minimumLevel_ is a plain static read without the lock, and the user sink is called under a non-recursive mutex, so concurrent level changes race and a re-entrant sink deadlocks; neither is tested.",
+   "evidence": "modules/core/src/Logger.cpp (Log, SetMinimumLevel, SetSink); modules/core/tests/CNA/LoggerTests.cpp",
+   "note": "documented limit, not a defect claim"
+  },
+  {
+   "cand": "P2-064",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/core.html",
+   "summary": "Renderer selection state is unsynchronised apart from the latch flag; ThrowLatched reads the active identity non-atomically.",
+   "evidence": "modules/core/src/GraphicsRendererSelection.cpp (SelectionState, ThrowLatched)",
+   "note": "supported rule is select before any graphics thread starts"
+  },
+  {
+   "cand": "P2-065",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/core.html",
+   "summary": "The IsLatched() header comment says the latch happens when the first device begins construction; the implementation latches on successful resolution. A probe_core comment in ModuleProbes.cmake still describes SDL3 in Logger.cpp.",
+   "evidence": "modules/core/include/CNA/GraphicsRendererSelection.hpp; modules/graphics/src/Xna/GraphicsDevice.cpp (resolveRenderer); cmake/Tests/ModuleProbes.cmake",
+   "note": "documentation drift"
+  },
+  {
+   "cand": "P2-066",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/design.html",
+   "summary": "The comment on supportStringConvert in MathTypeConverter.hpp says only BoundingBox, BoundingSphere and Ray clear the flag and that the matrix and rectangle converters leave it set; the constructors clear it for Rectangle, Matrix, BoundingBox, BoundingSphere, Plane and Ray.",
+   "evidence": "modules/design/include/Microsoft/Xna/Framework/Design/MathTypeConverter.hpp; modules/design/src/Converters.cpp; FrameworkDesignTests.cpp (expectStringInputDisabled)",
+   "note": "documentation drift"
+  },
+  {
+   "cand": "P2-067",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/design.html",
+   "summary": "Registration passes only a TypeConverterAttribute per type, so TypeDescriptor::GetProperties(Type) is empty for these types and property descriptors are reachable only through the converter; CNA's docs/framework-design.md describes registration as also carrying ordered descriptor collections.",
+   "evidence": "modules/design/src/Registration.cpp (registerConverter); Sharp Runtime TypeDescriptor.cpp (GetProperties) read at 41b918c9; docs/framework-design.md",
+   "note": "derived from reading; no test makes the type-level query"
+  },
+  {
+   "cand": "P2-068",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/design.html",
+   "summary": "The descriptors' OnValueChanged call delivers no notification at the read Sharp Runtime revision (protected no-op hook, no handler list).",
+   "evidence": "modules/design/include/CNA/Internal/Design/PropertyDescriptors.hpp; Sharp Runtime PropertyDescriptor.hpp at 41b918c9",
+   "note": "depends on the Sharp Runtime revision in use"
+  },
+  {
+   "cand": "P2-069",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/design.html",
+   "summary": "Registration depends on a header include plus a link; nothing orders it against other static initialisers and no test covers a lookup from another translation unit's static initialiser.",
+   "evidence": "modules/design/include/CNA/Internal/Design/Registration.hpp",
+   "note": "design constraint"
+  },
+  {
+   "cand": "P2-070",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/design.html",
+   "summary": "No automated oracle, no consuming-editor test, no cross-thread test; no workflow names CnaDesignTests (the unfiltered CnaTests run would include the cases).",
+   "evidence": "modules/design/tests; .github/workflows/general-tests-ci.yml",
+   "note": "coverage gap"
+  },
+  {
+   "cand": "P2-107",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/math.html",
+   "summary": "Vector3::Length, LengthSquared, Distance and DistanceSquared accumulate in float, although the oracle-test comments record that XNA accumulates x*x+y*y+z*z wider than float; only BoundingSphere.cpp's private helpers reproduce that. No oracle covers the public functions.",
+   "evidence": "modules/math/src/Vector3.cpp (Length, LengthSquared, Distance, DistanceSquared); modules/math/src/BoundingSphere.cpp (SquaredLength, WideLength, WideDistance); modules/math/tests/Microsoft/Xna/Framework/BoundingSphereOracleTests.cpp header comment",
+   "note": "possible last-bit divergence from XNA for callers of the public functions; not measured by the site"
+  },
+  {
+   "cand": "P2-108",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/math.html",
+   "summary": "Curve step continuity returns next.Value when position >= 1.0f (an absolute constant) and prev.Value otherwise; the only Step test evaluates at 0.5 in a 0..1 segment. XNA parity of the >= 1 branch is not established.",
+   "evidence": "modules/math/src/Curve.cpp (GetCurvePosition); CurveTest.StepContinuityReturnsCurrentSegmentValue",
+   "note": "source-read, untested"
+  },
+  {
+   "cand": "P2-109",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/math.html",
+   "summary": "Curve::ComputeTangent uses MathHelper::WithinEpsilon for the smooth in tangent and |pn| < denorm_min for the smooth out tangent; the only smooth-tangent test uses equal values.",
+   "evidence": "modules/math/src/Curve.cpp (ComputeTangent); CurveTest.ComputeTangentSmoothMiddleKey",
+   "note": "asymmetry, untested"
+  },
+  {
+   "cand": "P2-110",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/math.html",
+   "summary": "Cyclic loop modes divide by last.Position - first.Position without a guard (infinity cast to int for a zero span) and Evaluate divides by the segment width even when duplicate key positions were accepted by CurveKeyCollection::Add.",
+   "evidence": "modules/math/src/Curve.cpp (GetNumberOfCycle, GetCurvePosition); modules/math/src/CurveKeyCollection.cpp (Add)",
+   "note": "degenerate input; source-read, not exercised"
+  },
+  {
+   "cand": "P2-111",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/math.html",
+   "summary": "Matrix::Decompose uses a file-local epsilon (FLT_EPSILON, <=) while MathHelper::WithinEpsilon uses MachineEpsilonFloat (<); a comment calls them typically identical.",
+   "evidence": "modules/math/src/Matrix.cpp (WithinEpsilon, Decompose); modules/math/src/MathHelper.cpp",
+   "note": "factor-of-two difference"
+  },
+  {
+   "cand": "P2-112",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/math.html",
+   "summary": "CheckForNaNs is inconsistent (Vector2/3/4 always throw, Matrix and Quaternion only without NDEBUG) and is never called in the snapshot.",
+   "evidence": "modules/math/src/Vector2.cpp, Vector3.cpp, Vector4.cpp, Matrix.cpp, Quaternion.cpp",
+   "note": "unused public surface"
+  },
+  {
+   "cand": "P2-113",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/math.html",
+   "summary": "CreateLookAt and the perspective/orthographic builders have no oracle and no value-level unit test (only M44, thrown cases and M34 are asserted); their terms are exercised only through consumer tests in other modules.",
+   "evidence": "modules/math/tests/Microsoft/Xna/Framework/MatrixTests.cpp",
+   "note": "coverage gap"
+  },
+  {
+   "cand": "P2-114",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/math.html",
+   "summary": "BoundingFrustum::Intersects(Ray) never computes an entry distance and throws NotImplementedException for an origin on a plane; Contains(point) stops at the first plane the point lies exactly on.",
+   "evidence": "modules/math/src/BoundingFrustum.cpp; BoundingFrustumTest.IntersectsRay*",
+   "note": "partial implementation; also documented in Phase-1 math-types"
+  },
+  {
+   "cand": "P2-115",
+   "source": "phase2",
+   "dest_page": "development/internals/modules/math.html",
+   "summary": "Exception families differ across near-identical functions (BoundingBox::CreateFromPoints throws System::ArgumentException, BoundingSphere::CreateFromPoints std::invalid_argument; GetCorners uses ArgumentOutOfRange for the box and std::out_of_range for the frustum).",
+   "evidence": "modules/math/src/BoundingBox.cpp, BoundingSphere.cpp, BoundingFrustum.cpp",
+   "note": "C ABI mapping may differ per family"
+  }
+ ]
+}

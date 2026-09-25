@@ -26,6 +26,7 @@ dateModified is refreshed.  KEY must be globally unique.  Nothing already on the
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import re
 import sys
@@ -165,6 +166,10 @@ def apply_one(exp: dict, errors: list[str]) -> bool:
 
 
 def cmd_apply(args: argparse.Namespace) -> int:
+    # several work packages may apply expansions at the same time: serialise read-modify-write of the target pages
+    EXP.mkdir(parents=True, exist_ok=True)
+    lock = open(EXP / ".lock", "w")
+    fcntl.flock(lock, fcntl.LOCK_EX)
     exps = load_all()
     if args.only:
         exps = [e for e in exps if e["key"] in args.only]
