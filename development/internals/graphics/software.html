@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Software renderer internals - CNA Development</title>
+  <meta name="description" content="How the SOFTWARE CPU renderer stores, rasterises and presents pixels, why GDI compiles part of it, what its shader and capability answers mean, and which tests exist in which configuration.">
+  <meta name="keywords" content="software renderer, cpu rasterizer, softwareframebuffer, surface presenter, terminal, gdi 2d-only, cna_software_2d_only, cna_software_compiled_effects, render target readback, msaa resolve, xna line coverage">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/graphics/software.html">
+  <meta property="og:title" content="Software renderer internals - CNA Development">
+  <meta property="og:description" content="How the SOFTWARE CPU renderer stores, rasterises and presents pixels, why GDI compiles part of it, what its shader and capability answers mean, and which tests exist in which configuration.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/graphics/software.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Software renderer internals","description":"How the SOFTWARE CPU renderer stores, rasterises and presents pixels, why GDI compiles part of it, what its shader and capability answers mean, and which tests exist in which configuration.","url":"https://libcna.com/development/internals/graphics/software.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="selection.html" class="docs-nav-link is-group-active">Graphics internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="device.html" class="docs-nav-link">GraphicsDevice &amp; contract</a></li>
+        <li><a href="draw-call.html" class="docs-nav-link">Indexed draw trace</a></li>
+        <li><a href="resources.html" class="docs-nav-link">Textures &amp; render targets</a></li>
+        <li><a href="backends.html" class="docs-nav-link">Renderer family map</a></li>
+        <li><a href="easygl.html" class="docs-nav-link">EasyGL</a></li>
+        <li><a href="vulkan.html" class="docs-nav-link">Vulkan</a></li>
+        <li><a href="opengl4.html" class="docs-nav-link">OpenGL4</a></li>
+        <li><a href="sdl-gpu.html" class="docs-nav-link">SDL_gpu</a></li>
+        <li><a href="software.html" class="docs-nav-link active" aria-current="page">Software</a></li>
+        <li><a href="headless.html" class="docs-nav-link">Headless</a></li>
+        <li><a href="stub.html" class="docs-nav-link">Stub</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="selection.html">Graphics</a></li>
+        <li aria-current="page">Software</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Software renderer internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#build">Identity, build target and unusual GDI reuse</a></li>
+          <li><a href="#frame">Framebuffer, draw and present path</a></li>
+          <li><a href="#targets">Texture and render-target ownership</a></li>
+          <li><a href="#shaders">What shader/effect support actually means</a></li>
+          <li><a href="#tests">Validation and known limits</a></li>
+          <li><a href="#reading">Source reading route for a maintainer</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Graphics internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The full shader-opcode and format matrix and the GDI 2D consumer were not audited line by line; no test was executed.</p></div>
+
+<p class="lede">The <code>SOFTWARE</code> identity is a real CPU renderer, not a headless no-op: <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software"><code>modules/renderers/software/</code></a> owns vertex and index bytes, textures, render-target framebuffers and rasterised colour, depth and stencil in host memory. That makes it a valuable differential implementation when a graphics contract is in doubt, but an exact output oracle only where the tested feature path implements the same semantics. The GDI identity compiles a deliberately restricted subset of this family, not a second copy of its 3D engine, which is the first thing to remember before editing a "local" 2D file here.</p>
+
+<h2 id="build">Identity, build target and unusual GDI reuse</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/CMakeLists.txt"><code>software/CMakeLists.txt</code></a> builds the full <code>cna_renderer_software</code> archive when the family is entered as <code>SOFTWARE</code>: it globs every <code>src/*.cpp</code> except the 2D-only wrapper and compiles it once. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRendererDescriptor.cpp"><code>SoftwareRendererDescriptor.cpp</code></a> publishes one <code>GraphicsRendererType::Software</code> descriptor: <code>RendererWindowKind::None</code>, no required window or video subsystem, <code>AlwaysAvailable</code>, and <code>needsSurfacePresenter</code>, a request for the <code>IPlatformSurfacePresenter</code> seam. The factory at the end of <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRenderer.cpp"><code>SoftwareRenderer.cpp</code></a> constructs <code>SoftwareRenderer</code> from the virtual size and the depth format (depth storage unless <code>None</code>, stencil only for <code>Depth24Stencil8</code>), applies the multisample count and attaches the presenter <code>GraphicsDevice</code> supplied, which is null on every configuration where nothing can display a CPU frame. A windowing platform does not gain a visible Software window: only a platform that hands over a presenter, in practice <a href="../platforms/terminal.html">the Terminal platform</a>, displays its output. An off-screen Software frame is still real and readable; see <a href="../../../docs/rendering-backends.html#cpu-renderers">CPU and no-GPU renderers</a>.</p>
+<p>When <code>GDI</code> is selected instead, the same file exports <code>CNA_GDI_SOFTWARE_SOURCES</code>, a curated list of eight translation units (framebuffer and texture allocation, <code>SoftwareFramebuffer.cpp</code>, <code>SoftwareTexture2D.cpp</code>, <code>SoftwareRenderTarget2D.cpp</code>, <code>SoftwareRenderer2DState.cpp</code>, <code>SoftwareSpriteBatch.cpp</code> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRenderer2D.cpp"><code>SoftwareRenderer2D.cpp</code></a>), plus the interface target <code>cna_renderer_software_headers</code> for the GDI archive. <code>SoftwareRenderer2D.cpp</code> defines <code>CNA_SOFTWARE_2D_ONLY</code> and includes <code>SoftwareRenderer.cpp</code>, omitting Software's 3D and cube implementation and 3D draw entries (they throw <code>NotSupportedException</code> or <code>std::runtime_error</code> in that compilation). This is the one documented physical-source/target-membership exception: changing a supposedly local 2D unit can change GDI, and adding a new Software translation unit to GDI without reviewing the 2D-only boundary is unsafe. For the same reason GDI and SOFTWARE cannot be linked into one binary (<a href="../../../docs/rendering-backends.html#combination-rules">combination rules</a>). Optional <code>CNA_SOFTWARE_COMPILED_EFFECTS</code> adds a Python build step that embeds FNA3D's <code>SpriteEffect.fxb</code> through <code>embed_effects.py</code> and links the MojoShader effect helper; it is not the baseline build and does not imply arbitrary shader parity.</p>
+
+<h2 id="frame">Framebuffer, draw and present path</h2>
+<pre class="diagram">GraphicsDevice neutral validation and state
+  -> SoftwareRenderer::DrawIndexedPrimitivesEx
+  -> DrawIndexedPrimitivesInternal: count/topology checks, compiled-effect gate
+  -> declared vertex streams or legacy fixed-stride record; index decode + startIndex/baseVertex
+  -> world * view * projection -> clip to the view volume -> framebuffer/viewport/scissor
+  -> CPU point / line / triangle rasterizer -> active SoftwareFramebuffer(s)
+  -> depth / stencil / blend / format / sample writes
+  -> SoftwareRenderer::Present: resolve backbuffer_ -> SurfaceFrame
+  -> IPlatformSurfacePresenter::Present if attached; otherwise nothing</pre>
+<p><code>SoftwareVertexBufferRenderer</code> and <code>SoftwareIndexBufferRenderer</code> own byte vectors. A declared vertex buffer resolves attributes by semantic, index and stream-local offset; the older no-declaration path accepts only a fixed list of strides (16, 20, 24, 32, 48, 52, 56, 60, 68, 76, 80 bytes) and throws for anything else. <code>DrawIndexedPrimitivesInternal</code> rejects a non-positive primitive count and topologies other than triangle list and strip, line list and strip, and <code>PointListEXT</code>; routes a compiled-effect draw (or throws <code>NotSupportedException</code> when the option was not built); and uses <code>params.startIndex</code> as an index-element offset and <code>params.baseVertex</code> once per index (REMED-GFX-110: both used to be dropped). <code>minVertexIndex</code> and <code>numVertices</code> remain hints and are not consulted. Raw fallback addressing is validated strictly because it would otherwise form host pointers; declared public streams pass native ranges through and default missing records as XNA does. The draw snapshots depth, stencil and blend state, transforms, clips, intersects framebuffer, viewport and scissor, and rasterises points, lines or clipped triangulated polygons. All of this happens inside the draw call: there is no command queue, fence or device-loss model to reason about.</p>
+<p><code>SoftwareFramebuffer</code>, declared in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/include/CNA/Internal/Renderers/Software/SoftwareRenderer.hpp"><code>SoftwareRenderer.hpp</code></a> and implemented in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareFramebuffer.cpp"><code>SoftwareFramebuffer.cpp</code></a>, owns resolved RGBA8 colour, an optional wide floating-point colour plane for float and half targets, depth and stencil, and optional four-sample planes (<code>multiSampleCount</code> 4 is the only multisample mode). Its declared-format encode, decode and quantisation matter for render targets: storing RGBA8 for a non-<code>Color</code> format would make readback and sampling lie. <code>ResolveColor</code> collapses the sample planes into the presentation and readback cache. There are allocation plans, overflow and bounds checks, and a native presenter lifetime to respect; "CPU" does not mean "unbounded safe allocation".</p>
+<p><code>Present</code>, in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRenderer2DState.cpp"><code>SoftwareRenderer2DState.cpp</code></a>, deliberately presents <code>backbuffer_</code>, not <code>CurrentFramebuffer()</code>: a render target left bound at frame end must not be displayed. With no presenter it returns immediately; otherwise it resolves MSAA, checks dimensions and storage, and hands a borrowed pointer to tightly packed, top-row-first RGBA8 bytes (<code>strideBytes</code> 0) to the presenter, which owns display and scaling from there. <code>PresentRegionEXT</code> accepts a source rectangle, clips it again against the framebuffer actually allocated (a resize may have happened in between) and presents it by row stride without copying, but returns false for a destination rectangle or an override window handle, which the presenter contract cannot express. <code>SetVirtualResolution</code> resizes the back buffer only while no render target, cube target or MRT set is bound, and <code>GetViewportSize</code> reports the current framebuffer, so a wrong viewport size while a target is bound is not necessarily a window-resize bug. <code>ReadBackbuffer</code> resolves for the same reason <code>Present</code> does.</p>
+
+<h2 id="targets">Texture and render-target ownership</h2>
+<p>Creation methods return <code>unique_ptr</code> renderer resources. Software textures own CPU pixel and mip storage; 2D and cube render targets own a <code>SoftwareFramebuffer</code> plus optional mip levels. <code>SoftwareRenderTargetRenderer</code> validates an allocation layout before constructing storage and catches allocation failure during mip creation, and <code>CreateRenderTarget2DEXT</code> refuses a format <code>ClassifyRenderTargetFormatEXT</code> does not support. <code>UpdatePixels</code> honours a positive row stride, rejects a pitch shorter than one declared-format row, loads exact format values and invalidates or regenerates mips where appropriate. A target exposes its colour through <code>SoftwareColorSurface</code>, the read-only sampling interface a texture also implements, so a completed target is sampled as a texture rather than accidentally shading white. The neutral <code>GraphicsResource</code> still owns and disposes the renderer resource; Software's <code>unique_ptr</code> is the backend-native half, not the public lifetime registry (<a href="resources.html">textures and render targets</a>).</p>
+<p><code>SetRenderTarget2D</code> throws for a resource from another renderer, unbinds the old target and binds the new one. <code>SetRenderTargets</code> routes a single binding to the single-target or cube-face path, accepts at most four bindings, checks every binding's type before mutating active state, binds them in order, and unbinds the partial set if a bind throws. <code>UnbindCurrentTargets</code> resolves and finalises through each target implementation before returning to the back buffer, so a target-sampling or mip regression may originate at unbind or resolve rather than in the later sampler. The first MRT attachment owns depth and stencil, stock effects write only colour 0, and clear, resolve and mip finalisation visit every attachment. The 2D-only GDI compilation rejects cube targets. When changing this code review disposal while bound and incomplete construction, not only steady-state pixels.</p>
+
+<h2 id="shaders">What shader/effect support actually means</h2>
+<p>The ordinary draw path contains built-in CPU shading for XNA's stock effects and for texture and sampler state. <code>SupportsCapability(CustomEffects)</code> answers false: <code>SoftwareEffectRenderer</code> accepts source text for resource compatibility, but the rasteriser never executes it (see <a href="../../../docs/effects.html#renderer-parity">renderer parity</a>). Optional compiled effects use <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareCompiledEffect.cpp"><code>SoftwareCompiledEffect.cpp</code></a> with MojoShader translation plus CPU vertex and pixel interpreters (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareShaderInterpreter.cpp"><code>SoftwareShaderInterpreter.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwarePixelShaderInterpreter.cpp"><code>SoftwarePixelShaderInterpreter.cpp</code></a>), a separate execution path with bounded reflected items, shader bytes and register arrays. <code>CreateCompiledEffect</code> returns null in a build without the option. It cannot be inferred from effect construction alone that every source shader or opcode is supported; the indexed draw path, for example, refuses compiled-effect <code>PointListEXT</code> with <code>NotSupportedException</code>. When fixing one shader case, identify whether the failing path is stock shading, the translated compiled effect, the vertex interpreter, the pixel interpreter or sampler/format handling, and test a real output pixel, not only effect construction.</p>
+<p>Several capability answers promise storage or CPU behaviour rather than GPU features: <code>Texture3D</code> (exact CPU volume storage), <code>AnisotropicFiltering</code> (a CPU footprint filter), <code>OcclusionQuery</code> (counts samples surviving the shared fragment path), <code>MultiStreamVertexInput</code>, <code>MultipleRenderTargets</code> (four), <code>FloatRenderTargets</code>/<code>HalfFloatRenderTargets</code> and <code>Instancing</code>. The switch ends in <code>default: return true</code>; the public answers for the members <code>GraphicsDevice</code> derives from separate virtuals come from those virtuals, as the <a href="../../../docs/rendering-backends.html#capability-matrix">capability matrix</a> records. There is no shadow or image-based-lighting reception here.</p>
+
+<h2 id="tests">Validation and known limits</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/examples/CMakeLists.txt"><code>examples/CMakeLists.txt</code></a> returns early, with a status message, when the configuration has no <code>SDL3::SDL3</code> target, because its test harness links SDL3 directly even though the renderer needs no display or SDL. Otherwise it registers inside <code>if(CNA_BUILD_TESTS AND CNA_GRAPHICS_RENDERER STREQUAL "SOFTWARE")</code>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/CMakeLists.txt"><code>modules/renderers/CMakeLists.txt</code></a> re-points <code>CNA_GRAPHICS_RENDERER</code> to each family's identity while entering it, so the block is also entered when <code>SOFTWARE</code> is a non-default member of <code>CNA_GRAPHICS_RENDERERS</code> (the <code>multi-renderer</code> preset is <code>HEADLESS;SOFTWARE;STUB</code> with HEADLESS as default); the registrations set no renderer selection, so in such a build confirm which renderer each executable creates before citing a Software result. Check the configured inventory and skips (<code>ctest -N</code>) before claiming the suite ran.</p>
+<p>Registered families include <code>Software_Smoke</code>, <code>Software_Rasterizer</code>, <code>Software_Effects</code>, depth, culling and clipping (<code>Software_DepthState</code>, <code>Software_Culling</code>, <code>Software_Clipping</code>, <code>Software_XnaPixelCenter</code>, <code>Software_TopLeftFill</code>), stencil (<code>Software_DepthStencilState_*</code>), declaration and addressing (<code>Software_VertexDeclaration</code>, <code>Software_IndexedAddressing</code>), readback and MSAA (<code>Software_RenderTargetReadback</code>, <code>Software_MsaaStorage</code>, <code>Software_MsaaFragmentContract</code>), presentation (<code>Software_PresentationResetContract</code>, <code>Software_BackbufferResize</code>), lifetime (<code>Software_BoundResourceDispose</code>, <code>Software_ResourceLeak</code>, <code>Software_DeviceDisposeOrder</code>), shared <code>GraphicsDevice</code> contracts, SpriteBatch and SpriteFont parity, model loading, and <code>Software_XnaLineCoverage</code>, the family's gate on two scenes of the XNA oracle corpus (<a href="../../../docs/rendering-backends.html#verification">how renderers are verified</a>); that script fails the test on a render failure or a missing reference but only prints a pixel difference. Many of these sources are shared with other renderers (EasyGL, SDL_GPU and HEADLESS register the same fixtures), which makes differential review possible. <code>Software_CompiledEffectRuntime</code> exists only with <code>CNA_SOFTWARE_COMPILED_EFFECTS</code>.</p>
+<p>Module GoogleTests live under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/tests"><code>tests/</code></a>: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/tests/CNA/Internal/Renderers/Software/SoftwarePresentationTests.cpp"><code>SoftwarePresentationTests.cpp</code></a> (<code>SoftwarePresentation.*</code>: no-op without a presenter, first-frame dimensions, RGBA8 channel order, tightly packed rows, consecutive and unchanged frames, resize, MSAA resolve before presentation, nothing presented after destruction), compiled only when <code>CNA_RENDERER_SOFTWARE</code> is defined, and the compiled-effect conformance tests, which additionally need <code>CNA_SOFTWARE_COMPILED_EFFECTS</code>.</p>
+<p>For a pixel mismatch: run the smallest named Software test, capture the exact input, state and back-buffer bytes, and compare the same neutral contract on EasyGL or another backend. Decide first whether the expected pixel is an XNA or renderer-neutral contract or an assumption encoded in one test. A Software pass proves its CPU implementation, not hardware parity; a GPU pass alone can hide a common neutral-state error. For presenter or resize work run <code>SoftwarePresentation</code> and, where possible, a Terminal live smoke; for target or format work pair exact-format readback with target-as-texture sampling; for compiled effects build both option states. <a href="../../takeover/validation.html">What to test after changing X</a> explains how to report configured and skipped evidence. The CNA-recorded oracle figures for this renderer are summarised in <a href="../../../docs/tutorials/107-cpu-renderers.html#software-fidelity">Tutorial 107</a>; nothing was run for this page.</p>
+
+<h2 id="reading">Source reading route for a maintainer</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/CMakeLists.txt"><code>software/CMakeLists.txt</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRendererDescriptor.cpp"><code>SoftwareRendererDescriptor.cpp</code></a>, then the factory at the end of <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRenderer.cpp"><code>SoftwareRenderer.cpp</code></a>: physical target, identity, no-window/presenter contract and the GDI split, before tracing pixels.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/include/CNA/Internal/Renderers/Software/SoftwareRenderer.hpp"><code>SoftwareRenderer.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRenderer2DState.cpp"><code>SoftwareRenderer2DState.cpp</code></a>: current framebuffer, state and target binding, resize, readback and <code>Present</code> ownership.</li>
+<li><code>DrawIndexedPrimitivesInternal</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRenderer.cpp"><code>SoftwareRenderer.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareFramebuffer.cpp"><code>SoftwareFramebuffer.cpp</code></a>: follow one index through declaration streams, clipping, per-sample state and exact format storage; then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRenderTarget2D.cpp"><code>SoftwareRenderTarget2D.cpp</code></a> for bind, unbind and mips.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareCompiledEffect.cpp"><code>SoftwareCompiledEffect.cpp</code></a> and the two interpreter files, only if the build enables compiled effects; their opcode handling is not the baseline shading route.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/examples/CMakeLists.txt"><code>examples/CMakeLists.txt</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/tests/CNA/Internal/Renderers/Software/SoftwarePresentationTests.cpp"><code>SoftwarePresentationTests.cpp</code></a>: pick an executable pixel test and know which configuration includes it.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/rendering-backends.html#cpu-renderers">CPU and no-GPU renderers</a> &middot; <a href="../../../docs/tutorials/107-cpu-renderers.html#software">Tutorial 107: Software</a> &middot; <a href="../../../docs/render-targets.html#mrt">Render targets: MRT</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="draw-call.html">Indexed draw trace</a> &middot; <a href="resources.html">Textures and render targets</a> &middot; <a href="headless.html">HEADLESS renderer</a> &middot; <a href="../platforms/terminal.html">Terminal platform (the presenter)</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/fix-a-renderer-bug.html">Fix a renderer bug</a> &middot; <a href="../../invariants.html">Architectural invariants</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a> &middot; <a href="../../reference/cmake-options.html">CMake option index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="sdl-gpu.html" rel="prev"><span>Previous</span>SDL_gpu renderer internals</a><a class="dev-pager-next" href="headless.html" rel="next"><span>Next</span>Headless renderer internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

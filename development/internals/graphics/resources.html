@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Textures and render targets - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s Texture2D, RenderTarget2D and GraphicsResource are created, shared, bound and disposed, including the SetRenderTargets transaction and Vulkan&#x27;s frame-gated retirement of render targets.">
+  <meta name="keywords" content="texture2d, rendertarget2d, graphicsresource, setrendertargets, resource registry, cpu shadow, itexturerenderer, detachdestroyedrendertarget, mrt, vulkanmrtproxy, texture lifetime">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/graphics/resources.html">
+  <meta property="og:title" content="Textures and render targets - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s Texture2D, RenderTarget2D and GraphicsResource are created, shared, bound and disposed, including the SetRenderTargets transaction and Vulkan&#x27;s frame-gated retirement of render targets.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/graphics/resources.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Textures and render targets","description":"How CNA's Texture2D, RenderTarget2D and GraphicsResource are created, shared, bound and disposed, including the SetRenderTargets transaction and Vulkan's frame-gated retirement of render targets.","url":"https://libcna.com/development/internals/graphics/resources.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="selection.html" class="docs-nav-link is-group-active">Graphics internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="device.html" class="docs-nav-link">GraphicsDevice &amp; contract</a></li>
+        <li><a href="draw-call.html" class="docs-nav-link">Indexed draw trace</a></li>
+        <li><a href="resources.html" class="docs-nav-link active" aria-current="page">Textures &amp; render targets</a></li>
+        <li><a href="backends.html" class="docs-nav-link">Renderer family map</a></li>
+        <li><a href="easygl.html" class="docs-nav-link">EasyGL</a></li>
+        <li><a href="vulkan.html" class="docs-nav-link">Vulkan</a></li>
+        <li><a href="opengl4.html" class="docs-nav-link">OpenGL4</a></li>
+        <li><a href="sdl-gpu.html" class="docs-nav-link">SDL_gpu</a></li>
+        <li><a href="software.html" class="docs-nav-link">Software</a></li>
+        <li><a href="headless.html" class="docs-nav-link">Headless</a></li>
+        <li><a href="stub.html" class="docs-nav-link">Stub</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="selection.html">Graphics</a></li>
+        <li aria-current="page">Textures &amp; render targets</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Textures and render targets</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#texture-flow">Texture2D construction and data path</a></li>
+          <li><a href="#registry">Why registration is not ownership</a></li>
+          <li><a href="#target-create">RenderTarget2D is a texture with attachment policy</a></li>
+          <li><a href="#bind">SetRenderTargets: neutral transaction</a></li>
+          <li><a href="#vulkan-target">Why Vulkan cannot free on unbind</a></li>
+          <li><a href="#dispose-target">Bound target disposal has two paths</a></li>
+          <li><a href="#failure">Change and validation guide</a></li>
+          <li><a href="#reading">Read in lifecycle order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Graphics internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The listed tests exist at this snapshot; none was run for this page. Per-family native allocation, upload and destruction are covered only for Vulkan here.</p></div>
+
+<p class="lede">The public texture is not the native texture. <code>GraphicsResource</code> registers a disposable C++ object with its device; <code>Texture2D</code> holds a shareable renderer-side <code>ITextureRenderer</code>; <code>RenderTarget2D</code> adds attachment semantics and a binding relationship with the device. These lifetimes overlap but are not interchangeable, and most resource bugs come from treating one as another. This page follows construction, upload, binding and disposal through the neutral layer and into Vulkan's frame-gated retirement.</p>
+
+<h2 id="texture-flow">Texture2D construction and data path</h2>
+<pre class="diagram">Texture2D(device, width, height, mipMap, format)
+  → Texture / GraphicsResource(&amp;device): register this, ResourceCreated, weak device-lifetime token
+  → ValidateTextureSizeForProfileEXT, ValidateTextureDimensionEXT,
+    ValidateTexture2DFormatEXT, ValidateTexture2DCreationShapeEXT
+  → ImageData{ width, height, mipLevels, surfaceFormat, zero-filled level 0 }
+       (block-compressed formats: ceil(w/4) × ceil(h/4) blocks, not w × h texels)
+  → IGraphicsRenderer::CreateTexture(ImageData)  → unique_ptr&lt;ITextureRenderer&gt;
+       held by Texture2D::renderer_ as shared_ptr (value copies share it)
+  → cpuPixels_ (shared CPU shadow) → renderer_-&gt;ShareCpuPixels(cpuPixels_) → MaybeFreeCpuPixels()
+  → SetData / GetData … bind through TextureCollection or an effect → sampled at draw time
+  → Texture2D::Dispose(bool): DetachDestroyedRenderTarget(this) if the device is alive,
+                              renderer_.reset(), Texture::Dispose → GraphicsResource::Dispose</pre>
+<p>The constructors in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/Texture2D.cpp"><code>Texture2D.cpp</code></a> differ in what they promise. <code>Texture2D(assetName, device)</code> decodes through <code>ImageLoader::Load</code> and immediately creates the backend texture. <code>Texture2D(assetName)</code> loads CPU pixels but has no device, so <code>renderer_</code> stays null until the texture is attached; treating every <code>Texture2D</code> as GPU-backed is wrong. The dimension constructors validate the profile's size limit and the renderer's dimension, and the format constructor also validates the format and the shape (mip chain, block alignment) against the active renderer. Allocation is always <code>IGraphicsRenderer::CreateTexture(ImageData)</code>, never <code>GraphicsResource</code>.</p>
+<p><strong>The CPU shadow is a context-loss copy.</strong> <code>MaybeFreeCpuPixels()</code> drops <code>cpuPixels_</code> only when the device's context recovery is disabled (<code>GraphicsDevice::SetContextRecoveryEnabled(false)</code>); by default the shadow is kept and shared with the renderer through <code>ShareCpuPixels()</code>, which is what lets context-backed families re-upload after a loss. A later partial <code>SetData</code> on level 0 of an ordinary texture whose shadow was freed throws, rather than re-uploading a zero-filled buffer over the untouched texels. A new upload or readback path must therefore check both <code>MaybeFreeCpuPixels()</code> and the specific family's storage assumptions.</p>
+<p><strong>Renderer objects are shareable.</strong> <code>Texture2D</code>'s copy constructor and copy assignment are defaulted (CNAEXT), so a value copy &mdash; such as the copies ContentManager hands out from its cache &mdash; shares the same <code>renderer_</code> and CPU shadow and adds no registry entry. Two consequences follow in the source:</p>
+<ul>
+<li>A full-level <code>SetData(const Color*, int)</code> on an ordinary texture builds a <em>fresh</em> renderer object instead of updating in place, so one wrapper's upload is never published to other holders of the cached renderer. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/Texture2DCacheReconstructionTests.cpp"><code>Texture2DCacheReconstructionTests.cpp</code></a> and the content-side cache isolation tests pin this.</li>
+<li>A renderer object can outlive both the wrapper that created it and the family's renderer. On Vulkan, <code>VulkanRenderer::CreateTexture</code> records each <code>VulkanTextureRenderer</code> in <code>liveTextures_</code>; the texture removes itself on destruction, and the renderer's teardown releases the Vulkan resources of every still-listed texture and disconnects it from the owner, so a surviving wrapper never touches a destroyed <code>VkDevice</code>.</li>
+</ul>
+
+<h2 id="registry">Why registration is not ownership</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsResource.cpp"><code>GraphicsResource(GraphicsDevice*)</code></a> appends its address to <code>GraphicsDevice::resources_</code>, raises <code>ResourceCreated</code>, and copies a <code>weak_ptr</code> to the device's <code>resourceDeviceLifetime_</code>. The device uses the list to dispose resources while the renderer still exists. <code>GraphicsResource::Dispose(bool)</code> on an ordinary resource returns if already disposed, raises <code>Disposing</code> only on the explicit path, and &mdash; only if the weak token has not expired &mdash; raises the device's <code>ResourceDestroyed</code> and unregisters, then marks itself disposed. A C++ resource object may outlive its device; the token is what prevents dereferencing the stale raw <code>graphicsDevice_</code>.</p>
+<p>Value-style states (<code>BlendState</code>, <code>DepthStencilState</code>, <code>RasterizerState</code>, <code>SamplerState</code>, <code>VertexDeclaration</code>) use a <code>SharedIdentity</code>: copy construction registers nothing, and <code>ShareResourceIdentityWith()</code> makes the copy an alias of one canonical object whose device, name, tag and disposed flag are shared. Disposing any alias marks all of them disposed and, on the explicit path, raises <code>Disposing</code> on each with the canonical object as sender; destroying an alias only detaches it. This is why <code>SpriteBatch::Begin</code> assigning four states does not flood the create/destroy event stream. Moves transfer the registry entry with <code>TransferResourceReference()</code> (and, for shared identities, re-point the alias), and a moved texture also transfers its texture-slot and render-target bindings through <code>TransferMovedTexture()</code>. Any change to copy, move or dispose needs tests that cover both ordinary resources and shared identities.</p>
+<p>When the device itself disposes, it marks itself disposed before callbacks, moves and clears the registry, and calls each tracked resource's public <code>Dispose()</code>; only then does it destroy the renderer and the window. Re-entrant unregistering during that loop is therefore harmless. Do not replace the registry with owning <code>unique_ptr</code>s without redesigning public resource allocation and value semantics: the pointer list is a disposal-order mechanism, not an allocator. The full disposal order is on <a href="device.html#resources">GraphicsDevice internals</a>.</p>
+
+<h2 id="target-create">RenderTarget2D is a texture with attachment policy</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/RenderTarget2D.cpp"><code>RenderTarget2D</code></a> computes its format and renderer <em>before</em> the <code>Texture2D</code> base receives them. <code>SelectRenderTargetFormatEXT</code> implements XNA's &ldquo;preferred&rdquo; semantics: a format the profile forbids, or that the renderer classifies as <code>Unsupported</code> or <code>Defer</code>, becomes <code>Color</code>. <code>CreateValidatedRenderTargetRenderer</code> then checks positive dimensions, the profile's maximum size (widened only inside the CNAEXT engine layer's texture-size scope), a 2048:1 aspect-ratio limit and the renderer's format verdict, rounds the multisample request down to a power of two, and calls <code>CreateRenderTarget2DEXT</code>. A family without render-target storage returns null and construction still succeeds; binding such a target later throws <code>NotSupportedException</code> (see <a href="../../../docs/render-targets.html#renderer-implementation">which families have real render targets</a>).</p>
+<p>The protected base constructor marks the content GPU-only (<code>gpuOnlyContent_</code>): the live renderer is the sole authority for the pixels, so a full-level <code>SetData</code> updates the target in place and keeps no CPU shadow, and a partial update seeds itself from the renderer's <code>GetData</code> (or throws if the family cannot read back). The target records the depth format the renderer actually applied and the renderer-clamped sample count, not the requested ones. <code>rtRenderer_</code> is a borrowed <code>IRenderTargetRenderer*</code> into the object the base texture's <code>renderer_</code> owns; <code>RenderTarget2D::Dispose</code> clears it after base disposal so <code>GetRenderTargetRenderer()</code> cannot return a dangling pointer. <code>RenderTargetCube</code> has its own face-binding path (<code>RenderTargetBindingDescriptor::ForRenderTargetCubeFace</code>); it is not a disguised 2D target.</p>
+
+<h2 id="bind">SetRenderTargets: neutral transaction</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice::SetRenderTargets</code></a> &mdash; the path every <code>SetRenderTarget</code> overload now funnels into, so there is one place to keep correct:</p>
+<ol>
+<li>Compare resource identity and cube face with the current set. An unchanged set returns immediately, without resolving, discarding or resetting viewport and scissor; an empty-to-empty call is therefore a no-op &mdash; except after a bound target was destroyed, when <code>boundRenderTargetDestroyed_</code> forces a real transition even though no binding remains to compare.</li>
+<li>Enforce XNA's four-binding ceiling (<code>MAX_RENDERTARGET_BINDINGS</code>), then the renderer's <code>GetMaxRenderTargetsForProfileEXT()</code> (default: one under <code>Reach</code>, four under <code>HiDef</code>).</li>
+<li>Empty set: <code>renderer_-&gt;SetRenderTargets(nullptr, 0)</code> first; only after it returns clear the public bindings and both flags and reset viewport and scissor to the back-buffer size.</li>
+<li>For each binding reject null, disposed and foreign-device targets; convert a <code>RenderTarget2D</code> (array slice must be 0) or a cube face (face range checked) into a <code>RenderTargetBindingDescriptor</code>; a missing renderer object is <code>NotSupportedException</code>.</li>
+<li>Reject a resource bound to two slots, mismatched dimensions, mismatched <em>applied</em> sample counts and mismatched pixel sizes. Equal byte size is compatible even when the exact formats differ, as in XNA.</li>
+<li>Call <code>renderer_-&gt;SetRenderTargets(descriptors, count)</code> before touching public state. Only after it succeeds: clear each target's content-lost flag, publish <code>currentRenderTargets_</code>, set <code>renderTargetBound_</code>, clear <code>boundRenderTargetDestroyed_</code>, reset viewport and scissor to the first target, and for <code>DiscardContents</code> clear colour to opaque black plus whichever depth and stencil buffers really exist.</li>
+</ol>
+<p>Because a target is a writable attachment, reordering these steps could report a successful bind, or restored content, while the native bind threw. <code>GraphicsDevice::Present()</code> refuses to present while <code>renderTargetBound_</code> is true; code that implements &ldquo;render target to back buffer&rdquo; must unbind through <code>SetRenderTargets</code> and then present. Changing only the renderer's native target without the device's public flag breaks the invariant. <code>Reset()</code> unbinds for the same reason. The user-level contract is on <a href="../../../docs/render-targets.html#setting-the-render-target">Render targets: setting the render target</a> and <a href="../../../docs/render-targets.html#restoring-the-back-buffer">restoring the back buffer</a>.</p>
+
+<h2 id="vulkan-target">Why Vulkan cannot free on unbind</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/VulkanRenderer.cpp"><code>VulkanRenderer::SetRenderTargets</code></a> routes a single 2D target to <code>VulkanRenderTargetRenderer::BindAsRenderTarget()</code> and a single cube face to <code>BindAsRenderTargetFace()</code>. For two or more targets it builds a <code>VulkanMRTProxy</code>, which refuses more than four targets or more than the device's <code>maxColorAttachments</code>, requires <code>independentBlend</code>, derives each attachment's colour, multisample, resolve and depth views and sample count, rejects mismatched dimensions or sample counts and a subresource bound twice, obtains a matching render pass, and creates its own <code>VkFramebuffer</code>. An empty set begins a new back-buffer render-pass segment.</p>
+<p>The proxy is a destination that deferred draw records reference. On replacement or return to the back buffer the old proxy is moved to <code>retiredMrtProxies_</code>, tagged with the current frame generation, rather than destroyed. <code>ProcessRetiredResources()</code>, called at the start of each <code>SubmitFrame</code> after the fence wait, frees a proxy only when its generation is more than <code>MaxFramesInFlight</code> frames old &mdash; and frees proxies before the same-generation resource buckets, because the proxy's framebuffer borrows its targets' views. Freeing the framebuffer at unbind time would invalidate work still queued or executing on the GPU. This is a family-specific lifetime rule layered underneath the neutral transaction; the Vulkan page covers the rest of its retirement machinery.</p>
+
+<h2 id="dispose-target">Bound target disposal has two paths</h2>
+<p><code>RenderTarget2D::Dispose(bool)</code> throws <code>InvalidOperationException</code> (&ldquo;Disposing target that is still bound&rdquo;) when the target is still in the live device's bindings. A C++ destructor cannot throw, and by the time <code>~Texture2D</code> runs the object is no longer a <code>RenderTarget2D</code>, so the destructor path reaches <code>Texture2D::Dispose(bool)</code>, which calls <code>GraphicsDevice::DetachDestroyedRenderTarget(this)</code> before resetting the backend object. That helper, when the target is bound:</p>
+<ul>
+<li>asks the renderer to return to the back buffer while the target's backend still exists (errors swallowed &mdash; it is <code>noexcept</code>), because not every family detaches a dying backend itself (DirectX 11/12 and EasyGL do; Software keeps a raw pointer it would only unbind on the next transition);</li>
+<li>clears <code>currentRenderTargets_</code>, so <code>GetRenderTargets()</code>, draws and the identity comparison can never see the dead pointer (or treat a new target built at the same address as already bound);</li>
+<li>sets <code>boundRenderTargetDestroyed_</code> and deliberately leaves <code>renderTargetBound_</code> set, so <code>Present()</code> keeps refusing until the caller explicitly calls <code>SetRenderTargets</code> again.</li>
+</ul>
+<p>The split prevents use-after-free without pretending a valid back-buffer transition occurred. Move-assigning over a bound <code>RenderTarget2D</code> is also rejected (&ldquo;Moving over a render target that is still bound&rdquo;). The shared fixture <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/bound_target_lifetime_test.cpp"><code>bound_target_lifetime_test.cpp</code></a> is registered as <code>&lt;Family&gt;_BoundTargetLifetime</code> for EasyGL, Headless, SDL_gpu, Software, Vulkan and WebGPU, as <code>OpenGL4_EasyGLParity_BoundTargetLifetime</code> through the OpenGL4 parity corpus, and as <code>Resource_BoundTargetLifetime</code> in the DirectX 11/12 inventory <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/DirectXParityTests.cmake"><code>DirectXParityTests.cmake</code></a>.</p>
+
+<h2 id="failure">Change and validation guide</h2>
+<p>For a new surface format, start with the public shape and format checks in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/Texture.cpp"><code>Texture.cpp</code></a> and <code>Texture2D</code>, then the renderer's <code>ClassifySurfaceFormatEXT</code> and <code>ClassifyRenderTargetFormatEXT</code> (a family with no classifier accepts <code>Color</code> only), then upload, readback and attachment for each family that claims it. Test ordinary sampling and render-target use separately; a format can support one and not the other.</p>
+<p>For a render-target transition bug, first establish which of three things happened: validation failed before the renderer was called, the renderer threw during the transition, or public state diverged after a successful native call. Cover same-binding, empty-to-empty, cube face, MRT, cross-device, move, destruction while bound and <code>Present</code>-after-unbind. For a texture upload bug, cover an ordinary texture, a value copy from the content cache, a render target, and the context-recovery-disabled case. Renderer conformance is required beyond neutral unit tests; Vulkan additionally needs validation and multi-frame retirement coverage.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Test source</th><th scope="col">Establishes</th></tr></thead>
+<tbody>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/Texture2DTests.cpp"><code>Texture2DTests.cpp</code></a></td><td>Public texture construction, format acceptance per renderer, transfer contracts.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/Texture2DCacheReconstructionTests.cpp"><code>Texture2DCacheReconstructionTests.cpp</code></a></td><td>CPU-shadow round trips, detaching on upload, no aliasing between reconstructed wrappers, render targets keeping in-place semantics.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/RenderTargetSemanticsTests.cpp"><code>RenderTargetSemanticsTests.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/RenderTargetFormatAgreementTests.cpp"><code>RenderTargetFormatAgreementTests.cpp</code></a></td><td>Binding semantics, and agreement between <code>SupportsSurfaceFormatAsRenderTargetEXT</code> and the constructor's preferred-format selection for every <code>SurfaceFormat</code>.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/bound_target_lifetime_test.cpp"><code>bound_target_lifetime_test.cpp</code></a> and the Vulkan <code>Vulkan_DeferredResourceLifetime</code>, <code>Vulkan_MRT_MsaaResolve</code>, <code>Vulkan_MRT_MixedFormats</code> registrations</td><td>Destruction while bound, and deferred retirement on the family that defers.</td></tr>
+</tbody></table></div>
+<p>These tests establish public semantics; they do not necessarily cover every native format translation or GPU completion order, and none was run for this page.</p>
+
+<h2 id="reading">Read in lifecycle order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsResource.cpp"><code>GraphicsResource.cpp</code></a>: registration, the weak lifetime token and shared identities, before any concrete resource.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/Texture2D.cpp"><code>Texture2D.cpp</code></a>: constructors, <code>MaybeFreeCpuPixels</code>, the full-level and partial <code>SetData</code> paths, move and <code>Dispose</code>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/RenderTarget2D.cpp"><code>RenderTarget2D.cpp</code></a>: format selection, validated native creation, applied parameters, bound-disposal and bound-move refusal.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a>: <code>SetRenderTargets</code>, <code>DetachDestroyedRenderTarget</code>, <code>TransferMovedTexture</code>, <code>Present</code> and <code>Dispose</code>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/VulkanRenderer.cpp"><code>VulkanRenderer.cpp</code></a>: <code>CreateTexture</code>, <code>SetRenderTargets</code>, <code>VulkanMRTProxy</code>, <code>SubmitFrame</code> and <code>ProcessRetiredResources</code>.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/render-targets.html">Render targets</a> &middot; <a href="../../../docs/render-targets.html#renderer-implementation">Render targets: renderer implementation</a> &middot; <a href="../../../docs/3d-rendering.html#rendertarget2d">3D rendering: RenderTarget2D</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="device.html">GraphicsDevice internals</a> &middot; <a href="vulkan.html">Vulkan renderer internals</a> &middot; <a href="../content/runtime.html">Content runtime internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/fix-a-renderer-bug.html">Fix a renderer bug</a> &middot; <a href="../../handbook/debug-shutdown-and-lifetime.html">Debug shutdown and lifetime</a> &middot; <a href="../../takeover/ownership.html">Ownership and lifetime master map</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="draw-call.html" rel="prev"><span>Previous</span>Indexed draw trace</a><a class="dev-pager-next" href="backends.html" rel="next"><span>Next</span>Graphics backends</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

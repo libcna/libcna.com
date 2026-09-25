@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GraphicsDevice internals - CNA Development</title>
+  <meta name="description" content="What CNA&#x27;s GraphicsDevice owns and borrows, how it constructs and disposes its renderer, window and resources, and the present, capability, device-loss and threading rules it enforces.">
+  <meta name="keywords" content="graphicsdevice, igraphicsrenderer, graphicsrenderercreateargs, graphicsdevicemanager, dispose order, resource registry, present, device lost, capability, context lease, renderer boundary">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/graphics/device.html">
+  <meta property="og:title" content="GraphicsDevice internals - CNA Development">
+  <meta property="og:description" content="What CNA&#x27;s GraphicsDevice owns and borrows, how it constructs and disposes its renderer, window and resources, and the present, capability, device-loss and threading rules it enforces.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/graphics/device.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"GraphicsDevice internals","description":"What CNA's GraphicsDevice owns and borrows, how it constructs and disposes its renderer, window and resources, and the present, capability, device-loss and threading rules it enforces.","url":"https://libcna.com/development/internals/graphics/device.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="selection.html" class="docs-nav-link is-group-active">Graphics internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="device.html" class="docs-nav-link active" aria-current="page">GraphicsDevice &amp; contract</a></li>
+        <li><a href="draw-call.html" class="docs-nav-link">Indexed draw trace</a></li>
+        <li><a href="resources.html" class="docs-nav-link">Textures &amp; render targets</a></li>
+        <li><a href="backends.html" class="docs-nav-link">Renderer family map</a></li>
+        <li><a href="easygl.html" class="docs-nav-link">EasyGL</a></li>
+        <li><a href="vulkan.html" class="docs-nav-link">Vulkan</a></li>
+        <li><a href="opengl4.html" class="docs-nav-link">OpenGL4</a></li>
+        <li><a href="sdl-gpu.html" class="docs-nav-link">SDL_gpu</a></li>
+        <li><a href="software.html" class="docs-nav-link">Software</a></li>
+        <li><a href="headless.html" class="docs-nav-link">Headless</a></li>
+        <li><a href="stub.html" class="docs-nav-link">Stub</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="selection.html">Graphics</a></li>
+        <li aria-current="page">GraphicsDevice &amp; contract</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>GraphicsDevice internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#layers">Objects and dependency direction</a></li>
+          <li><a href="#construct">Construction: the native boundary moves</a></li>
+          <li><a href="#state">Public state is observable state</a></li>
+          <li><a href="#present">Present, viewport and the backbuffer</a></li>
+          <li><a href="#capabilities">Capability answers</a></li>
+          <li><a href="#resources">Resource registry versus C++ ownership</a></li>
+          <li><a href="#thread">Context and thread rules</a></li>
+          <li><a href="#change">How to change this layer</a></li>
+          <li><a href="#tests">Evidence and gaps</a></li>
+          <li><a href="#reading">Curated source tour</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Graphics internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Test files named here exist at this snapshot; none was run for this page. Device-loss behaviour is stated from the source of each family, not from a run.</p></div>
+
+<p class="lede"><code>GraphicsDevice</code> is CNA's public, XNA-shaped graphics state machine. It validates calls, owns the selected <code>IGraphicsRenderer</code>, tracks public resources and translates platform-independent state into the renderer contract; the renderer owns the API-specific GPU or CPU objects. Because every family sits behind this one class, a change here can alter every renderer even when no renderer file is edited. This page maps what the device owns, how it is built and torn down, and which rules a change must keep.</p>
+
+<h2 id="layers">Objects and dependency direction</h2>
+<pre class="diagram">Game  (owns Graphics::GraphicsDevice GraphicsDevice_ as a value member)
+  └─ GraphicsDeviceManager      borrows the Game's device; applies preferences via Reset();
+  │                             holds the per-frame renderer context lease
+  └─ GraphicsDevice
+       ├─ platform_             IPlatform* — the process-current platform (the Game installs its own)
+       ├─ platformWindow_       unique_ptr&lt;IPlatformWindow&gt;: created (owns) or adopted (borrows)
+       ├─ ownsWindow_           policy flag: may a fallback destroy and rebuild this window?
+       ├─ surfacePresenter_     unique_ptr&lt;IPlatformSurfacePresenter&gt; (Software on a TTY only)
+       ├─ renderer_             unique_ptr&lt;IGraphicsRenderer&gt; — the native implementation
+       │     └─ ITextureRenderer / IVertexBufferRenderer / IRenderTargetRenderer … per resource
+       ├─ activeDescriptor_     borrowed pointer into the static registry table
+       ├─ rendererCapabilityProfile_   lazily built, invalidated on renderer rebuild
+       ├─ PresentationParameters, Viewport, Blend/DepthStencil/Rasterizer state, scissor
+       ├─ current effect, vertex/index bindings, Texture/SamplerState collections
+       ├─ currentRenderTargets_, renderTargetBound_, boundRenderTargetDestroyed_
+       ├─ resources_            vector&lt;GraphicsResource*&gt; — tracking for disposal, not allocation
+       └─ resourceDeviceLifetime_   shared_ptr&lt;void&gt;; resources hold weak_ptr copies</pre>
+<p>The manager is a runtime service: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/GraphicsDeviceManager.cpp"><code>GraphicsDeviceManager.cpp</code></a> points at <code>Game::getGraphicsDeviceProperty()</code> with <code>ownsGraphicsDevice_ = false</code> and never deletes the Game's device (its <code>CreateDevice()</code> refuses to run without a Game-owned device). The device reads its platform from <code>CNA::Platform::GetCurrentPlatform()</code> in the constructor; a <code>Game</code> installs its own platform as the current one, and a bare device triggers the lazy default. The platform outlives both the window and the device. The window wrapper may own the native window (<code>IPlatform::CreateWindow</code>) or merely adopt a caller-supplied <code>DeviceWindowHandle</code> (<code>AdoptWindowHandle</code>); the wrapper enforces native-handle ownership, and <code>ownsWindow_</code> survives only as the fallback policy &ldquo;may CNA replace this window?&rdquo;. <code>surfacePresenter_</code> is declared before <code>renderer_</code>, so reverse member destruction keeps presentation alive through the renderer's destructor. See <a href="../runtime/shutdown.html">Ownership and shutdown</a> for the enclosing Game tree.</p>
+<p>The renderer contract lives in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Renderers/Common"><code>CNA/Internal/Renderers/Common</code></a>, mainly <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp"><code>IGraphicsRenderer.hpp</code></a>. Public device code does not bind Vulkan or Direct3D objects; it passes neutral values such as <code>GpuDrawParams</code>, <code>GpuVertexStreamBinding</code>, <code>RenderTargetBindingDescriptor</code>, <code>RendererSurfaceInfo</code> and <code>GraphicsRendererCreateArgs</code>, and each family implements the operation. Capability hooks are part of the contract because not every family supports every operation; a public call must refuse unsupported behaviour honestly rather than silently downgrade it.</p>
+
+<h2 id="construct">Construction: the native boundary moves</h2>
+<p>The constructor in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a> takes an adapter, a <code>GraphicsProfile</code> and <code>PresentationParameters</code> (the default constructor uses the default adapter, <code>Reach</code> and default parameters). In order:</p>
+<ol>
+<li>Member initialisation: platform pointer, collections bound to <code>this</code>, default <code>BlendState::Opaque</code>, <code>DepthStencilState::Default</code>, <code>RasterizerState::CullCounterClockwise</code> as C++ values, virtual resolution from the back-buffer size, and the lifetime token (declared before the collections so they never observe it unconstructed).</li>
+<li>Capture the caller's current GL binding (if the platform has a GL context service), so it can be restored on both success and failure.</li>
+<li>Publish the virtual size to <code>TouchPanel</code>.</li>
+<li><code>resolveRenderer()</code>: device-type flags, attempt order, and per candidate the video-subsystem reference, window creation or adoption, <code>applyPresentationParametersToWindow()</code>, and <code>createRenderer()</code>; the selection latches when a renderer exists. The loop is traced in <a href="selection.html#resolve">Renderer selection internals</a>.</li>
+<li><code>createRenderer()</code> invalidates the capability profile, fills <code>GraphicsRendererCreateArgs</code> &mdash; the surface snapshot (window id, native handle, drawable size, display scale), only the narrow services the descriptor asks for (surface presenter, GL context, Vulkan surface), virtual size, context-recovery flag, MSAA count, swap interval, back-buffer and depth formats, full-screen flag, profile, and a <code>deviceEventCallback</code> &mdash; and calls <code>descriptor.create(args)</code>. It then sets the virtual resolution, normalises the applied presentation formats, writes back the renderer's applied MSAA count, and logs the active renderer name once (with &ldquo;selected at runtime from N compiled in&rdquo; in a multi-renderer build).</li>
+<li><code>UpdateViewportFromWindow()</code>, then push the three default states to the real renderer. The depth-stencil push is skipped when <code>SupportsDepthStencil()</code> is false (2D-only families), so they can refuse every later assignment consistently. C++ field defaults alone would leave each native API at its own defaults.</li>
+<li>Restore the caller's GL binding.</li>
+</ol>
+<p>Any exception in steps 4&ndash;6 is caught: <code>destroyNativeResources()</code> (renderer, presenter, input handles, window), release the video reference through <code>setVideoSubsystemAcquired(false)</code>, restore the caller's GL binding, rethrow. The video reference is a single boolean-owned count changed only by <code>setVideoSubsystemAcquired()</code>, which is what keeps every path &mdash; success, failure, fallback A&rarr;B&rarr;C, <code>Dispose()</code> &mdash; balanced by construction.</p>
+
+<h2 id="state">Public state is observable state</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp"><code>GraphicsDevice.hpp</code></a> stores the current effect, vertex and index bindings, texture and sampler collections, blend, depth-stencil and rasterizer state, blend factor, multisample mask, reference stencil, viewport, scissor and render-target bindings. Draw paths consume these fields; they are not pass-through setters. <code>DrawIndexedPrimitives</code> requires an applied effect and bound buffers, extracts the effect's matrices, fills <code>GpuDrawParams</code>, folds vertex-stream offsets exactly once, validates profile, ranges, draw state and stream capability, pushes rasterizer and sampler state, and only then calls <code>DrawIndexedPrimitivesEx</code>. Whether the device also enforces buffer ranges is the renderer's answer (<code>RequiresManagedBufferedDrawRangeValidationEXT()</code>), not the device's assumption. The function-level trace is on <a href="draw-call.html">Indexed draw trace</a>.</p>
+<p><code>SetRenderTargets</code> is likewise more than a setter: it returns early for an unchanged set, enforces the four-binding ceiling and the profile's limit, rejects null, disposed and foreign-device targets, duplicate resources and mismatched dimensions, applied sample counts or pixel sizes, and calls the renderer <em>before</em> publishing the new bindings, then resets viewport and scissor to the first target and performs the <code>DiscardContents</code> clear. A failed renderer transition must not leave the device claiming a successful bind. <a href="resources.html#bind">Textures and render targets</a> traces it step by step.</p>
+
+<h2 id="present">Present, viewport and the backbuffer</h2>
+<ul>
+<li><code>Present()</code> throws <code>InvalidOperationException</code> (&ldquo;Cannot present while render targets are bound&rdquo;) while <code>renderTargetBound_</code> is true &mdash; including after a bound target was destroyed, until the next <code>SetRenderTargets</code>. It acquires a context lease (<code>RestorePreviousBinding</code>), calls <code>renderer_-&gt;Present()</code>, then <code>UpdateViewportFromWindow()</code>.</li>
+<li><code>Present(sourceRectangle, destinationRectangle, overrideWindowHandle)</code> with all three empty is <code>Present()</code>. Otherwise rectangles must have positive extent and are clipped to the back buffer (source) or the window's pixel size (destination); a rectangle clipped to nothing is an <code>ArgumentException</code>. The renderer's <code>PresentRegionEXT()</code> decides; only the Headless and Software families implement it at this snapshot. Headless accepts all three arguments (it records them in its trace); Software accepts a source rectangle only (for its surface presenter) and refuses a destination rectangle or an override window. Every other family, and any refused request, gets a <code>NotSupportedException</code> rather than a whole-frame present.</li>
+<li><code>UpdateViewportFromWindow()</code> refreshes the renderer's surface snapshot (<code>OnSurfaceChanged</code>; a platform that refuses the size query is logged and the old surface kept), takes the <em>logical</em> size from <code>GetViewportSize()</code> and the <em>physical</em> rectangle from <code>GetDefaultViewportRect()</code>, and resets <code>Viewport</code> and scissor only when either changed since the last time this method ran, so a game-set split-screen viewport survives an ordinary <code>Present()</code>. The physical rectangle differs from the logical size only under Letterbox or Overscan; families with a real virtual-resolution transform override <code>GetDefaultViewportRect()</code> (EasyGL, OpenGL4, Vulkan, WebGPU, SDL_gpu, DirectX 11/12, FNA3D, Metal).</li>
+<li><code>Reset(parameters, adapter)</code> raises <code>DeviceResetting</code>, unbinds any render targets (XNA does the same), applies the new presentation parameters to the window and the virtual resolution to the renderer &mdash; restoring every public field and rethrowing if that resize fails &mdash; then calls <code>UpdatePresentationFormatEXT</code>, <code>ApplyMultiSampleCount</code> (writing back the clamped count), <code>SetSwapInterval</code>, updates the viewport and raises <code>DeviceReset</code>. The renderer object is kept; only the CNAEXT hook <code>RecreateRendererForMultiSampleCount()</code> (used by tests and the C API) rebuilds it, with the pinned descriptor.</li>
+</ul>
+
+<h2 id="capabilities">Capability answers</h2>
+<p><code>GraphicsDevice::SupportsCapability()</code> answers the 19 <code>GraphicsCapability</code> members, but not all from the renderer's own switch. <code>CompiledEffects</code>, <code>HalfFloatTextureLinearFiltering</code>, <code>ComputeShaders</code> and <code>IndirectDraw</code> come from separate renderer virtuals whose default is false; <code>FloatRenderTargets</code> and <code>HalfFloatRenderTargets</code> are derived from whether <code>Vector4</code> and <code>HdrBlendable</code> are accepted as render-target formats; <code>MultipleRenderTargets</code> is the renderer's answer ANDed with the profile's limit being greater than one. The reason is structural: several renderer switches end in <code>default: return true</code>, and an enumerator added later must not be claimed by a switch that has never heard of it. The device-level answer is the public one; a caller holding the renderer interface directly can see different values.</p>
+<p><code>GetRendererCapabilityProfileEXT()</code> builds a <code>RendererCapabilityProfile</code> (32 features, 22 limits, 27 per-format usage entries, an English report) on first use and caches it in <code>rendererCapabilityProfile_</code>; <code>createRenderer()</code>, <code>destroyNativeResources()</code>, a <code>Reset</code> that applies an MSAA count and <code>RecreateRendererForMultiSampleCount()</code> invalidate it. The public view of both APIs is <a href="../../../docs/rendering-backends.html#capability-reporting">Capability reporting</a> and <a href="../../../docs/rendering-backends.html#capability-profile">RendererCapabilityProfile</a>.</p>
+
+<h2 id="resources">Resource registry versus C++ ownership</h2>
+<p>A <code>GraphicsResource</code> constructed with a device appends its raw <code>this</code> to <code>resources_</code>, raises <code>ResourceCreated</code>, and stores a <code>weak_ptr</code> to <code>resourceDeviceLifetime_</code>. The registry lets device disposal call <code>Dispose()</code> on live resources while their renderer objects can still be released; it does not make the device the C++ allocator of textures, buffers or states. A copied value-style state shares one resource identity instead of producing a second create/destroy event, and a moved resource transfers its registry entry (and, for textures, bound texture and render-target references). Read the copy and move code in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsResource.cpp"><code>GraphicsResource.cpp</code></a> before adding resource members or assuming a simple unique-ownership tree; <a href="resources.html#registry">Textures and render targets</a> covers it in detail.</p>
+<p><code>Dispose(bool disposing)</code> runs in this order:</p>
+<ol>
+<li>Return if already disposed; otherwise set <code>isDisposed_</code> first, so re-entrant disposal is a no-op and a <code>Disposing</code> handler cannot issue work against objects being torn down.</li>
+<li>Raise <code>Disposing</code>, only for an explicit disposal (<code>disposing == true</code>).</li>
+<li>Move <code>resources_</code> into a local vector and clear it, then call each resource's public <code>Dispose()</code>; their re-entrant <code>RemoveResourceReference()</code> calls are harmless no-ops.</li>
+<li><code>destroyNativeResources()</code>: invalidate the capability profile, reset the renderer, then the presenter, clear the <code>TextInputEXT</code> and <code>Mouse</code> window handles if they point at this window, then reset the window wrapper.</li>
+<li>Release the video-subsystem reference (after the window, because the subsystem backs it).</li>
+</ol>
+<p>The destructor calls <code>Dispose()</code> and then resets <code>resourceDeviceLifetime_</code>, which expires every resource's weak token. Inserting teardown after the renderer reset can turn an ordinary resource destructor into a use-after-free.</p>
+<p>Device loss is not one uniform cross-renderer protocol. <code>createRenderer()</code> hands every family a <code>deviceEventCallback</code> that maps <code>Lost</code>, <code>Resetting</code> and <code>Reset</code> to <code>GraphicsDeviceStatus</code> and the public <code>DeviceLost</code>, <code>DeviceResetting</code> and <code>DeviceReset</code> events (plus <code>ContentLost</code> notification on <code>Reset</code>). At this snapshot six families call it: DirectX 9, DirectX 11, DirectX 12, Direct2D and WebGPU report loss and reset; Vulkan reports <code>Lost</code> once and then throws from the failing call, because a lost <code>VkDevice</code> is not recreated under live wrappers. The other families never call it, and the member comment in <code>GraphicsDevice.hpp</code> that says only Direct3D 9 does is out of date. Do not promise device-loss behaviour from the public events' existence alone.</p>
+
+<h2 id="thread">Context and thread rules</h2>
+<p><code>GraphicsDeviceManager::BeginDraw()</code> returns false when <code>CanBeginDrawEXT()</code> says the renderer cannot draw (a lost browser WebGL context), otherwise stores <code>AcquireRendererThreadContextLeaseForFrame()</code>; <code>EndDraw()</code> presents and releases the lease, also on exception, and a <code>Disposing</code> handler releases it if the game disposes the device from <code>Draw()</code>. The lease is an <code>IRendererThreadContextLease</code>; only the EasyGL and OpenGL4 families return one (to move a GL context between the game thread and background content loading); every other family returns null. The lease is not evidence that <code>GraphicsDevice</code> is generally thread-safe: public state, the resource registry and bindings are mutated without any lock in this class. Treat game-thread use as the supported default unless a specific renderer contract and call site prove otherwise. GPU completion is family-specific: Software finishes a draw inside the call, Vulkan records it and executes at submit (see <a href="draw-call.html#vulkan">the Vulkan path</a>). The cross-subsystem picture is in <a href="../../takeover/threading.html">Thread and callback map</a>.</p>
+
+<h2 id="change">How to change this layer</h2>
+<ul>
+<li><strong>A public validation change:</strong> find the exact public method and every overload that funnels into it (the many <code>DrawUserPrimitives</code> overloads, <code>SetRenderTarget</code> into <code>SetRenderTargets</code>); read the neutral tests for the same call; compare at least two families, one that stages through the CPU and one that forwards to a native API, because <code>RequiresManagedBufferedDrawRangeValidationEXT()</code> splits them.</li>
+<li><strong>A new native capability:</strong> decide whether it belongs in the neutral <code>IGraphicsRenderer</code> contract, an EXT hook with a false default, or one family only. If the neutral contract changes, enumerate all 21 families and check that each default means &ldquo;unsupported&rdquo;. If it is a new <code>GraphicsCapability</code> member, derive it at device level, from a renderer virtual whose default is false or from a format query, as the six guarded members (<code>CompiledEffects</code>, both float render-target entries, half-float linear filtering, compute and indirect draw) are; <code>MultipleRenderTargets</code> is the seventh special case, derived for a different reason (the profile limit).</li>
+<li><strong>Public headers or enum values:</strong> audit the C ABI and the external bindings separately (<a href="../bindings/c-api-internals.html">C API internals</a>).</li>
+<li><strong>Ownership or teardown:</strong> test explicit <code>Dispose()</code>, the <code>Game</code> destructor, a failed constructor, move construction and assignment, disposal during <code>Draw()</code>, and a fallback that crosses window kinds.</li>
+</ul>
+
+<h2 id="tests">Evidence and gaps</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Test source</th><th scope="col">Covers</th></tr></thead>
+<tbody>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/GraphicsDeviceValidationTests.cpp"><code>GraphicsDeviceValidationTests.cpp</code></a></td><td>Public argument and state rejection, including the four-target <code>SetRenderTargets</code> cap.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/RenderTargetSemanticsTests.cpp"><code>RenderTargetSemanticsTests.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/RenderTargetBindingTests.cpp"><code>RenderTargetBindingTests.cpp</code></a></td><td>Binding semantics and the <code>RenderTargetBinding</code> value type.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/GraphicsDeviceDisposalHookTests.cpp"><code>GraphicsDeviceDisposalHookTests.cpp</code></a></td><td>Public <code>Dispose</code> reaches the protected hook, repeated disposal is inert, the device is already disposed when <code>Disposing</code> fires, <code>Disposing</code> only on explicit disposal, owned resources still disposed.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/GraphicsDeviceCapabilityTests.cpp"><code>GraphicsDeviceCapabilityTests.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/RendererCapabilityProfileTests.cpp"><code>RendererCapabilityProfileTests.cpp</code></a></td><td>Device-level capability answers and the profile API.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/GraphicsDeviceRendererTests.cpp"><code>GraphicsDeviceRendererTests.cpp</code></a></td><td>Renderer identity reporting, including that the startup diagnostic never writes to stdout.</td></tr>
+<tr><td>Selection, fallback and registry tests</td><td>Construction policy; see <a href="selection.html#tests">Renderer selection internals</a>.</td></tr>
+</tbody></table></div>
+<p>These tests compile into <code>CnaGraphicsTests</code> and run against whichever renderer the configuration compiled in; many are guarded with <code>CNA_RENDERER_IS(...)</code> or <code>CNA_SKIP_IF_RENDERER_IS_NONE_OF(...)</code>. In the last commits before this snapshot, <code>OpenGL4</code> was added to those guards in 30 neutral test files, so an OPENGL4 build now takes the same branches as the other capable GL renderers. The tests are necessary but not sufficient for API-specific submission, native resource retirement or swapchain behaviour; those claims need the family's own tests on a host that has the API. Nothing listed here was executed for this page.</p>
+
+<h2 id="reading">Curated source tour</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/GraphicsDeviceManager.cpp"><code>GraphicsDeviceManager.cpp</code></a>: how a Game's manager borrows the device, applies preferences through <code>Reset</code>, subscribes to device events and holds the frame lease.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp"><code>GraphicsDevice.hpp</code></a>: the private members at the end of the class &mdash; ownership, lifetime token, binding state and the flags that <code>Present</code> and <code>SetRenderTargets</code> share.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a>: constructor, <code>resolveRenderer</code>, <code>createOrAttachWindow</code>, <code>createRenderer</code>, <code>DrawIndexedPrimitives</code>, <code>SetRenderTargets</code>, <code>Present</code>, <code>Reset</code>, <code>Dispose</code>, in that order.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp"><code>IGraphicsRenderer.hpp</code></a>: <code>GraphicsRendererCreateArgs</code>, <code>RendererSurfaceInfo</code>, the lease interface and the capability defaults.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsResource.cpp"><code>GraphicsResource.cpp</code></a>: why the raw registry is safe only with the weak lifetime token and the transfer logic.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests"><code>modules/graphics/tests</code></a>: map the neutral contract assertions before visiting one family's tests.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/game-loop.html#graphicsdevicemanager">Game loop: GraphicsDeviceManager</a> &middot; <a href="../../../docs/graphics-state.html">Graphics state</a> &middot; <a href="../../../docs/rendering-backends.html#capability-reporting">Renderers: capability reporting</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../../architecture.html#renderer-registry">Renderer registry, descriptors and selection</a> &middot; <a href="../../architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="selection.html">Renderer selection internals</a> &middot; <a href="draw-call.html">Indexed draw trace</a> &middot; <a href="resources.html">Textures and render targets</a> &middot; <a href="../runtime/shutdown.html">Ownership and shutdown</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/fix-a-renderer-bug.html">Fix a renderer bug</a> &middot; <a href="../../handbook/debug-shutdown-and-lifetime.html">Debug shutdown and lifetime</a> &middot; <a href="../../takeover/ownership.html">Ownership and lifetime master map</a> &middot; <a href="../../takeover/threading.html">Thread and callback map</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/public-headers.html">Public header index</a> &middot; <a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="selection.html" rel="prev"><span>Previous</span>Renderer selection internals</a><a class="dev-pager-next" href="draw-call.html" rel="next"><span>Next</span>Indexed draw trace</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

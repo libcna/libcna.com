@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vulkan renderer internals - CNA Development</title>
+  <meta name="description" content="How the VULKAN renderer builds its instance and device, records draws as deferred records, submits and presents, recreates the swapchain, retires resources, disconnects owners at shutdown and gates its tests.">
+  <meta name="keywords" content="vulkan, vulkanrenderer, pending3ddraw, submitframe, swapchain, maxframesinflight, resource retirement, disconnectowner, validation layer, cna_vulkan_compiled_effects, shadow_sampling.glsl, cna_vulkan_lifetime_trace">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/graphics/vulkan.html">
+  <meta property="og:title" content="Vulkan renderer internals - CNA Development">
+  <meta property="og:description" content="How the VULKAN renderer builds its instance and device, records draws as deferred records, submits and presents, recreates the swapchain, retires resources, disconnects owners at shutdown and gates its tests.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/graphics/vulkan.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Vulkan renderer internals","description":"How the VULKAN renderer builds its instance and device, records draws as deferred records, submits and presents, recreates the swapchain, retires resources, disconnects owners at shutdown and gates its tests.","url":"https://libcna.com/development/internals/graphics/vulkan.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="selection.html" class="docs-nav-link is-group-active">Graphics internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="device.html" class="docs-nav-link">GraphicsDevice &amp; contract</a></li>
+        <li><a href="draw-call.html" class="docs-nav-link">Indexed draw trace</a></li>
+        <li><a href="resources.html" class="docs-nav-link">Textures &amp; render targets</a></li>
+        <li><a href="backends.html" class="docs-nav-link">Renderer family map</a></li>
+        <li><a href="easygl.html" class="docs-nav-link">EasyGL</a></li>
+        <li><a href="vulkan.html" class="docs-nav-link active" aria-current="page">Vulkan</a></li>
+        <li><a href="opengl4.html" class="docs-nav-link">OpenGL4</a></li>
+        <li><a href="sdl-gpu.html" class="docs-nav-link">SDL_gpu</a></li>
+        <li><a href="software.html" class="docs-nav-link">Software</a></li>
+        <li><a href="headless.html" class="docs-nav-link">Headless</a></li>
+        <li><a href="stub.html" class="docs-nav-link">Stub</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="selection.html">Graphics</a></li>
+        <li aria-current="page">Vulkan</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Vulkan renderer internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#entry">Build and registration</a></li>
+          <li><a href="#construct">Constructor in actual dependency order</a></li>
+          <li><a href="#draw">A draw is a record, not necessarily a submit</a></li>
+          <li><a href="#present">SubmitFrame and synchronization</a></li>
+          <li><a href="#swapchain">Swapchain policy, resize and reset</a></li>
+          <li><a href="#targets">Render targets and retirement</a></li>
+          <li><a href="#shutdown">Destructor: explicit owner disconnection</a></li>
+          <li><a href="#shaders">Shader and pipeline boundaries</a></li>
+          <li><a href="#validation">Testing and a maintainer workflow</a></li>
+          <li><a href="#reading">Curated reading order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Graphics internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Modern compute paths, every shader family and the exact CI host matrix were not audited test by test; no Vulkan test was run for this page.</p></div>
+
+<p class="lede">The <code>VULKAN</code> identity maps to one physical family, <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan"><code>modules/renderers/vulkan/</code></a>, built as <code>cna_renderer_vulkan</code>. It implements CNA's neutral renderer contract, but its draw methods usually stage records: actual Vulkan commands are recorded and submitted at <code>Present</code> or at a deliberate flush or readback boundary. That separation in time decides state snapshots, resource retirement and shutdown order, and it is what a maintainer has to keep in mind before touching any of them.</p>
+
+<h2 id="entry">Build and registration</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>RendererSelection.cmake</code></a> maps <code>VULKAN</code> to <code>modules/renderers/vulkan</code> and <code>cna_renderer_vulkan</code>, defines <code>CNA_RENDERER_VULKAN</code>, runs <code>find_package(Vulkan REQUIRED)</code> and declares <code>CNA_VULKAN_COMPILED_EFFECTS</code> (default OFF; configures MojoShader and defines the macro). <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/CMakeLists.txt"><code>vulkan/CMakeLists.txt</code></a> links <code>Vulkan::Vulkan</code>, adds the shared <code>cna_renderer_mojoshader_effect</code> target only with compiled effects (Vulkan has no MojoShader adapter; its nine-function effect backend is CNA's own), and on GNU/Clang compiles the family with <code>-Werror=switch</code>. <code>VulkanRenderer::SupportsCapability</code> has no <code>default:</code> arm, so appending a <code>GraphicsCapability</code> member stops the build until this renderer answers it. That is a compile-time coverage invariant, not a claim of feature parity.</p>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/VulkanRendererDescriptor.cpp"><code>VulkanRendererDescriptor.cpp</code></a>: <code>GetDescriptor()</code> declares identity <code>Vulkan</code>, <code>RendererWindowKind::Vulkan</code> (the platform refuses to build a Vulkan surface from a window created without that intent), <code>needsWindow</code>, <code>needsVideoSubsystem</code> and <code>needsVulkanSurface</code>. Its availability hook is <code>AlwaysAvailable</code>: the descriptor does not pre-probe the host, so a usable instance and device are not guaranteed and creation can still throw. Its only adapter query is <code>clampMultiSampleCount = VulkanRenderer::ClampAdapterMultiSampleCountEXT</code> (VULKAN-187), so <code>GraphicsAdapter</code> can answer MSAA questions before any device exists. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererRegistry.cmake"><code>RendererRegistry.cmake</code></a> generates the registry row that references <code>GetDescriptor</code>, and <code>GraphicsDevice</code> passes a window surface snapshot and the narrow <code>IPlatformVulkanSurface</code> service, not the whole platform object. Review <a href="selection.html">renderer selection internals</a> before changing registration, and <a href="../../../docs/rendering-backends.html#platform-services">what each renderer needs from the platform</a> for which platforms provide a Vulkan surface.</p>
+
+<h2 id="construct">Constructor in actual dependency order</h2>
+<pre class="diagram">GraphicsDevice::createRenderer -> descriptor.create(args)
+  -> VulkanRenderer(args): RequirePlatformVulkanSurface(args.vulkanSurface) + window id
+  -> CreateInstance -> [debug messenger if validation is active] -> CreateSurface
+  -> PickPhysicalDevice -> CreateLogicalDevice -> publish adapter sample counts
+  -> PickSampleCount (device framebuffer limits) -> CreateSwapchain -> image views
+  -> depth resources -> render pass -> [MSAA colour + MSAA render pass] -> framebuffers
+  -> command pool / buffers -> per-frame sync objects
+  -> default sampler -> descriptor set layout / pool -> sprite buffers
+  -> initialized_ = true -> RegisterForWindow(window id)</pre>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/VulkanRenderer.cpp"><code>VulkanRenderer.cpp</code></a> stores the window surface snapshot (id, drawable size, display scale, defaulting a non-positive scale to 1) and a borrowed surface service, and throws for a missing window id. Physical-device selection precedes the sample-count choice, which uses the selected device's colour and depth framebuffer sample limits; the intersection is also stored in a process-wide atomic for adapter queries that may run before another device exists. Validation is requested in non-<code>NDEBUG</code> builds and dropped at run time, with a log line, when <code>VK_LAYER_KHRONOS_validation</code> is not installed, so confirm that it is really active rather than assuming it from a Debug build. Render-target, MRT and swapchain render passes and the 2D sprite pipelines are created lazily and cached by compatibility key (<code>GetOrCreateRTRenderPass</code>, <code>GetOrCreateMRTRenderPass</code>, <code>GetOrCreateSwapchainRenderPass</code>), not all eagerly here. Registration is the last step. If startup fails part-way, the caller's <code>GraphicsDevice</code> construction or fallback path releases the window and video reference; native partial-creation cleanup inside this class has not been audited here, so do not claim every exception path leak-free.</p>
+
+<h2 id="draw">A draw is a record, not necessarily a submit</h2>
+<p>The public indexed draw reaches <code>VulkanRenderer::DrawIndexedPrimitivesEx</code> with neutral <code>GpuDrawParams</code>. A custom effect goes to <code>QueueCustomEffect3DDrawEXT</code> before any declaration guard. Otherwise the method packs multiple vertex streams if present, selects a stock family (PBR, alpha test, dual texture, environment map, skinned, lit or unlit, decided from effect parameters and from whether the declaration really supplies a normal, not from stride alone), verifies that the declaration supplies what the shader reads, notes sampled render-target sources, and builds a <code>Pending3DDraw</code>: copied vertex and index bytes, the draw count, transforms including the XNA pixel-centre correction, depth and blend state with per-channel blend factors, the current render target (null means backbuffer), the vertex layout taken from the caller's declaration at draw time, and the effect's pipeline and descriptor set. With compiled effects built, <code>PrepareCompiledEffectDrawEXT</code> replaces the stock selection and refuses a vertex buffer without a declaration; without them, a compiled-effect draw throws <code>NotSupportedException</code> instead of silently using a stock shader.</p>
+<p><code>PushPending3DDraw</code> then tags the active occlusion query and snapshots scissor (REMED-GFX-013), viewport (REMED-GFX-062) and blend factor (REMED-GFX-070) into the record before queuing it. A developer adding state must decide whether it is draw-time or replay-time state; draw-time state has to be copied into this record, because reading the renderer's mutable state during replay would retroactively change earlier draws in the frame. The full neutral-to-Vulkan comparison is in <a href="draw-call.html">the indexed draw trace</a>.</p>
+<p>Vulkan also queues ordered clears, sprite batches, modern commands and render-target cycles. A mid-frame readback can flush deferred render-target work (<code>FlushDeferredRenderTarget</code> pulls in only the off-screen bind cycles that produce the read target; backbuffer cycles are excluded so the one-acquire, one-submit, one-present frame is kept). "One Present per frame" is therefore not a complete model of submissions: inspect <code>FlushDeferredRenderTarget</code>, <code>ReadBackbuffer</code> and the modern-command flushes when changing synchronisation.</p>
+
+<h2 id="present">SubmitFrame and synchronization</h2>
+<p><code>Present()</code> calls <code>SubmitFrame(false)</code>. With <code>MaxFramesInFlight</code> = 2 frame slots, <code>SubmitFrame</code>:</p>
+<ol>
+<li>waits for the current slot's in-flight fence and advances the completed generation;</li>
+<li>runs <code>ProcessRetiredResources(false)</code>, freeing retired native handles whose consuming frame is now provably complete;</li>
+<li>acquires a swapchain image with the slot's image-available semaphore; on <code>VK_ERROR_OUT_OF_DATE_KHR</code> it recreates the swapchain and returns <em>before</em> resetting the fence, because resetting it there would leave an unsignalled fence with no submission and hang the next frame;</li>
+<li>resets the fence and command buffer, and <code>RecordCommandBuffer</code> translates the pending records;</li>
+<li>submits to <code>graphicsQueue_</code>, waiting on image availability at colour-attachment output and signalling render completion, then advances the retirement generation;</li>
+<li>presents with the render-finished semaphore; an out-of-date or suboptimal present recreates the swapchain; the slot advances modulo <code>MaxFramesInFlight</code>.</li>
+</ol>
+<p><code>ReadBackbuffer</code> can use the deferred-swap variant: <code>SubmitFrame(true)</code> submits, waits for render and readback copy, and holds the image while the CPU reads the staging memory; <code>FinishDeferredPresent</code> presents afterwards. That keeps presentation-engine timing from corrupting the captured pixels, and a readback or cache change must account for this route as well as the ordinary one. <code>CheckDeviceLostEXT</code> checks results at the fence wait, acquire, submit and present (VULKAN-334); a failure at one of those boundaries is not necessarily where the offending draw was queued. Test-only injection of out-of-date acquires and present results exists for exactly these branches.</p>
+
+<h2 id="swapchain">Swapchain policy, resize and reset</h2>
+<p><code>CreateSwapchain</code> queries surface capabilities, formats and present modes. It prefers linear <code>B8G8R8A8_UNORM</code> with the sRGB-nonlinear colour space for XNA's default <code>Color</code> back buffer rather than silently sRGB-encoding it (the gamma-encoded variant is a separate extension format). Swap interval 0 prefers <code>IMMEDIATE</code>, then <code>MAILBOX</code>, then <code>FIFO</code>; interval 2 prefers <code>FIFO_RELAXED</code>, then <code>FIFO</code>; the default interval uses <code>FIFO</code>. The applied mode is recorded separately from the request. The native surface may dictate the current extent; otherwise requested drawable pixels are clamped to supported bounds. Separate graphics and present queue families use concurrent sharing, a single family exclusive sharing.</p>
+<p><code>RecreateSwapchain</code> ignores a zero-sized drawable, waits for device idle, destroys framebuffers, MSAA colour resources and swapchain image views, rebuilds swapchain, views, depth, MSAA and framebuffers, resets the observed image-index record and invalidates the cached backbuffer readback (VULKAN-404: it described the destroyed swapchain). Per-frame fences and semaphores are not recreated: they are indexed by frame slot, not by the changing image count. Base render passes are deliberately kept for the renderer's lifetime. The cleanup also clears the renderer's custom-viewport flag: <code>GraphicsDevice</code>'s <code>UpdateViewportFromWindow</code> must reconcile the viewport after a resize, so do not assume an old custom viewport stays meaningful. <code>SetSwapInterval</code> records the request first and uses this same rebuild when the device is initialised; an unchanged interval is a no-op.</p>
+
+<h2 id="targets">Render targets and retirement</h2>
+<p>A single <code>RenderTarget2D</code> or cube face is translated to its Vulkan target renderer. MRT builds a <code>VulkanMRTProxy</code> from existing attachment views and checks the real attachment count, independent blend, dimensions, sample counts and duplicate subresources. The proxy's framebuffer can be named by the current binding and by pending draw, clear and batch records; on unbind it moves to a frame-generation retirement list. Ordinary native destruction is deferred the same way until a fence proves the consuming frame complete, and <code>ProcessRetiredResources(false)</code> runs after that wait at the next submission (REMED-GFX-075). Never free an attachment, descriptor or proxy because the public target was unbound: submitted or queued work may still refer to it. The neutral transaction is described in <a href="resources.html">textures and render targets</a>; the user-side MRT rules are in <a href="../../../docs/render-targets.html#mrt">Render targets</a>.</p>
+
+<h2 id="shutdown">Destructor: explicit owner disconnection</h2>
+<p>The destructor unregisters its window mapping first. Without a logical device it only destroys the instance. Otherwise it waits for device idle and then works through an ordered walk:</p>
+<ol>
+<li>Release every current and retired MRT proxy's framebuffer and disconnect its owner (VULKAN-405: a proxy share left in a pending record by a process that exits without presenting would otherwise be destroyed after <code>vkDestroyDevice</code>, reading a finished renderer).</li>
+<li>GPU timers, compute shaders and storage buffers (compute pipelines own descriptor sets naming storage buffers), each <code>ReleaseVulkanResources()</code> then <code>DisconnectOwner()</code>.</li>
+<li>Externally owned render targets, vertex and index buffers; then the renderer's own per-frame sprite, 3D and instance buffers.</li>
+<li>Externally owned textures, 2D texture arrays, storage textures, and the 3D textures, texture cubes and render-target cubes that VULKAN-407 added after they were found in no list at all.</li>
+<li>Force-free every retirement bucket (<code>ProcessRetiredResources(true)</code>) after idle and before the descriptor pools the retired sets came from are destroyed; then MSAA and depth resources.</li>
+<li>Descriptor pools including chained overflow pools, the layout, the sampler cache and default sampler, pipelines and per-frame uniform buffers, render passes, per-frame semaphores and fences, the command pool, then the swapchain.</li>
+<li><code>vkDestroyDevice</code>, then the debug messenger, the platform surface and finally the instance.</li>
+</ol>
+<p>The live lists are non-owning registries. A resource C++ object that outlives the renderer must have its owner pointer disconnected so that its later destructor neither frees through a dead device nor reads a dead <code>VulkanRenderer</code>. That is a concrete invariant for any new Vulkan resource class: add it to the right live list, give it <code>ReleaseVulkanResources</code> and <code>DisconnectOwner</code>, and put it in the destructor's ordered walk; a conventional destructor alone is insufficient if public objects can outlive the device. See <a href="../../handbook/debug-shutdown-and-lifetime.html">debugging shutdown and lifetime</a> and <a href="../../invariants.html">architectural invariants</a>.</p>
+
+<h2 id="shaders">Shader and pipeline boundaries</h2>
+<p>Stock GLSL sources live in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/shaders"><code>src/shaders</code></a>; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/shaders/spirv_shaders.hpp"><code>spirv_shaders.hpp</code></a> is the embedded SPIR-V the renderer consumes and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/shaders/compile_shaders.py"><code>compile_shaders.py</code></a> regenerates it. Do not edit the generated header apart from its GLSL. One source file now has two consumers: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/shaders/shadow_sampling.glsl"><code>shadow_sampling.glsl</code></a>, included into the per-pixel BasicEffect, SkinnedEffect and PBR fragment stages, is also inlined by the SDL_GPU renderer's shader script (SMG-0032). Its resource sets and bindings are now the <code>CNA_SHADOW_*</code> macros, defaulting to this renderer's own set 1 layout (so Vulkan's SPIR-V is unchanged) and redefined by SDL_GPU for SDL_gpu's fixed sets. A change to its sampling, cascade, PCF or punctual formulas therefore needs both generated headers regenerated and both renderers tested; see <a href="sdl-gpu.html#shaders">SDL_gpu shader routes</a>.</p>
+<p>The ordinary draw route selects shader families from effect parameters and declared vertex inputs. A custom <code>ShaderEffect</code> takes SPIR-V words, not GLSL text (<a href="../../../docs/shader-effects.html#renderer-availability">renderer availability</a>); its scalar uniforms live in a fixed 128-byte push-constant block, and its texture unit N samples through <code>SamplerStates[N]</code> (VULKAN-166). Compiled XNA effects are conditional on <code>CNA_VULKAN_COMPILED_EFFECTS</code> and have their own path in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/VulkanCompiledEffect.cpp"><code>VulkanCompiledEffect.cpp</code></a>, using MojoShader's SPIR-V profile with fixed sets 0 to 3 and vertex-stage sampling refused. Pipeline and render-pass compatibility is keyed and cached; a change to vertex layout, formats, MSAA, depth or effect descriptors needs a cache-key audit, not just a shader edit.</p>
+
+<h2 id="validation">Testing and a maintainer workflow</h2>
+<p>The family has one GoogleTest source, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/tests/CNA/Internal/Renderers/Vulkan/VulkanCompiledEffectTests.cpp"><code>VulkanCompiledEffectTests.cpp</code></a>, and a very large example-based suite in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/examples/CMakeLists.txt"><code>examples/CMakeLists.txt</code></a>. That suite is guarded by <code>CNA_BUILD_EXAMPLES</code>, <code>CNA_BUILD_TESTS</code>, not Emscripten, not Windows, and <code>CNA_GRAPHICS_RENDERER STREQUAL "VULKAN"</code>. Because <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/CMakeLists.txt"><code>modules/renderers/CMakeLists.txt</code></a> re-points <code>CNA_GRAPHICS_RENDERER</code> to each family's identity while entering it, the guard is also true when <code>VULKAN</code> is a non-default member of <code>CNA_GRAPHICS_RENDERERS</code>; the registrations set no renderer selection, so in such a build confirm which renderer each executable actually creates before citing a result (the EasyGL and HEADLESS suites compare against the build default for this reason). The suite no longer needs SDL: without an SDL3 target the examples build with <code>CNA_EXAMPLES_NO_SDL</code> and run on the native X11 or Wayland platforms.</p>
+<p>It registers smoke, orientation, shader and effect, draw, render-target, swapchain (<code>Vulkan_SwapchainOutOfDate</code>, <code>Vulkan_SwapchainChurn</code>, <code>Vulkan_Swapchain_Sync</code>), lifetime (<code>Vulkan_ResourceLeak</code>, <code>Vulkan_MoveSemantics</code>, <code>Vulkan_DisposedResource</code>, <code>Vulkan_BoundResourceDispose</code>, <code>Vulkan_DeviceDisposeOrder</code>, <code>Vulkan_DeferredResourceLifetime</code>, <code>Vulkan_ModernResourceLifetime</code>), adapter (<code>Vulkan_AdapterQueryContract</code>) and modern tests (<code>Vulkan_ComputeStorageBuffer</code>, <code>Vulkan_IndirectDraw</code>, <code>Vulkan_ShadowCasterWinding</code>), among many others. Some diagnostic corpus executables write pixel dumps for <code>cna_diag_compare</code> and are intentionally not CTest tests. Every example links a narrow terminate handler that turns "no usable Vulkan device" into a CTest skip; a skipped oracle is not a pass. In any build containing <code>VULKAN</code>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/TestHelpers.cmake"><code>TestHelpers.cmake</code></a> adds the <code>[Vulkan Validation]</code> output gate to every <code>cna_register_renderer_test</code> registration (VULKAN-393/408), because leak reports arrive during <code>vkDestroyDevice</code>, after the last statement a test could check; a small exemption list exists and <code>cna_apply_vulkan_validation_gate</code> re-applies the gate where a registration overwrote its fail pattern. Linux CI installs Vulkan development packages and Mesa drivers in platform and glTF jobs (lavapipe in the glTF job), but the exact host coverage of every test is not mapped here.</p>
+<p>For a backend patch:</p>
+<ol>
+<li>Reproduce with the smallest registered Vulkan test.</li>
+<li>Decide whether the fault is before queuing, during command recording, at submit or present, or at retirement.</li>
+<li>Confirm the Khronos layer is actually active; for ownership issues set <code>CNA_VULKAN_LIFETIME_TRACE=1</code> (one line per ownership transition, from enqueue to native free). <code>CNA_VULKAN_SAMPLER_TRACE</code> and <code>CNA_VULKAN_TARGET_READBACK_TRACE</code> are narrower probes for sampler/descriptor and render-target readback paths.</li>
+<li>Add a test covering the relevant second frame, resize or disposal path.</li>
+<li>Run the focused test and renderer conformance, then a neutral graphics test and an independent backend.</li>
+</ol>
+<p>Do not infer that all Vulkan features are complete from descriptor registration or a large test count. User-side setup is in <a href="../../../docs/tutorials/85-vulkan-backend.html">Tutorial 85</a>; how CNA's evidence is organised is in <a href="../../testing/architecture.html">test architecture</a>. No Vulkan test was executed for this page.</p>
+
+<h2 id="reading">Curated reading order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/CMakeLists.txt"><code>vulkan/CMakeLists.txt</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/VulkanRendererDescriptor.cpp"><code>VulkanRendererDescriptor.cpp</code></a>: compile gate, public identity and pre-window requirements.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/include/CNA/Internal/Renderers/Vulkan/VulkanRenderer.hpp"><code>VulkanRenderer.hpp</code></a>: pending-record queues, live registries, swapchain and frame-slot fields and caches, before the very large implementation.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/VulkanRenderer.cpp"><code>VulkanRenderer.cpp</code></a>: constructor and destructor, <code>CreateSwapchain</code>/<code>RecreateSwapchain</code>, <code>DrawIndexedPrimitivesEx</code>/<code>PushPending3DDraw</code>, <code>RecordCommandBuffer</code>/<code>SubmitFrame</code>, <code>SetRenderTargets</code>/<code>ProcessRetiredResources</code>, in that order.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/VulkanCompiledEffect.cpp"><code>VulkanCompiledEffect.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/shaders"><code>the shaders directory</code></a>: the stock versus compiled effect paths, and the shadow include shared with SDL_GPU.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/examples/CMakeLists.txt"><code>examples/CMakeLists.txt</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/TestHelpers.cmake"><code>TestHelpers.cmake</code></a>: the test whose preconditions and failure signal match the change, and the output gate it runs under.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/rendering-backends.html#modern-gpu">Modern GPU APIs</a> &middot; <a href="../../../docs/tutorials/85-vulkan-backend.html">Tutorial 85: Vulkan</a> &middot; <a href="../../../docs/rendering-backends.html#platform-services">What each renderer needs from the platform</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="draw-call.html">Indexed draw trace</a> &middot; <a href="resources.html">Textures and render targets</a> &middot; <a href="sdl-gpu.html">SDL_gpu (shares the shadow GLSL)</a> &middot; <a href="selection.html">Renderer selection internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/fix-a-renderer-bug.html">Fix a renderer bug</a> &middot; <a href="../../handbook/debug-shutdown-and-lifetime.html">Debug shutdown and lifetime</a> &middot; <a href="../../invariants.html">Architectural invariants</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a> &middot; <a href="../../reference/cmake-options.html">CMake option index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="easygl.html" rel="prev"><span>Previous</span>EasyGL renderer internals</a><a class="dev-pager-next" href="opengl4.html" rel="next"><span>Next</span>OpenGL4 renderer internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

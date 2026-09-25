@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SDL_gpu renderer internals - CNA Development</title>
+  <meta name="description" content="How the SDL_GPU renderer creates its device, queues and replays draws in pass segments, translates SPIR-V, runs compute and storage resources, tears down in order, and what its tests prove.">
+  <meta name="keywords" content="sdl_gpu, sdlgpurenderer, pass segment, deferred draw replay, spir-v remap, sdl_shadercross, cna_sdl_gpu_shadercross, compute shader, storage buffer, indirect draw, shadow reception, destruction order">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/graphics/sdl-gpu.html">
+  <meta property="og:title" content="SDL_gpu renderer internals - CNA Development">
+  <meta property="og:description" content="How the SDL_GPU renderer creates its device, queues and replays draws in pass segments, translates SPIR-V, runs compute and storage resources, tears down in order, and what its tests prove.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/graphics/sdl-gpu.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"SDL_gpu renderer internals","description":"How the SDL_GPU renderer creates its device, queues and replays draws in pass segments, translates SPIR-V, runs compute and storage resources, tears down in order, and what its tests prove.","url":"https://libcna.com/development/internals/graphics/sdl-gpu.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="selection.html" class="docs-nav-link is-group-active">Graphics internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="device.html" class="docs-nav-link">GraphicsDevice &amp; contract</a></li>
+        <li><a href="draw-call.html" class="docs-nav-link">Indexed draw trace</a></li>
+        <li><a href="resources.html" class="docs-nav-link">Textures &amp; render targets</a></li>
+        <li><a href="backends.html" class="docs-nav-link">Renderer family map</a></li>
+        <li><a href="easygl.html" class="docs-nav-link">EasyGL</a></li>
+        <li><a href="vulkan.html" class="docs-nav-link">Vulkan</a></li>
+        <li><a href="opengl4.html" class="docs-nav-link">OpenGL4</a></li>
+        <li><a href="sdl-gpu.html" class="docs-nav-link active" aria-current="page">SDL_gpu</a></li>
+        <li><a href="software.html" class="docs-nav-link">Software</a></li>
+        <li><a href="headless.html" class="docs-nav-link">Headless</a></li>
+        <li><a href="stub.html" class="docs-nav-link">Stub</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="selection.html">Graphics</a></li>
+        <li aria-current="page">SDL_gpu</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>SDL_gpu renderer internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#selection">Where platform, renderer and native driver meet</a></li>
+          <li><a href="#construction">Device and presentation setup</a></li>
+          <li><a href="#shaders">Shader routes: stock SPIR-V, SPIR-V intake, GLSL and compiled effects</a></li>
+          <li><a href="#queue">Why one public draw is not yet one GPU draw</a></li>
+          <li><a href="#modern">Modern resources: compute, storage buffers and images</a></li>
+          <li><a href="#segments">Render targets are ordered pass segments</a></li>
+          <li><a href="#resize">Resize, readback and limitations</a></li>
+          <li><a href="#shutdown">Destruction order is part of the renderer contract</a></li>
+          <li><a href="#tests">Validation that matches the risk</a></li>
+          <li><a href="#reading">Read in this order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Graphics internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Driver-specific live validation remains open: no workflow selects SDL_GPU, Direct3D 12 evidence is a Wine/vkd3d-proton route, and Metal has none recorded here.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu"><code>modules/renderers/sdl-gpu/</code></a> implements the one public <code>SDL_GPU</code> renderer identity. It is neither an OpenGL wrapper nor CNA's SDL platform backend: it owns an <code>SDL_GPUDevice</code>, records every CNA draw in CPU-side command queues, and only acquires a GPU command buffer and a swapchain texture when the frame is flushed. That delay is the key to its resource lifetime, render-target ordering and debugging rules. At this snapshot the family also carries a SPIR-V shader intake, a 3D custom-effect path, compute, storage buffers and images, indirect draws, instanced stock draws, shadow reception and image-based lighting; this page covers the whole of it for a maintainer who has to change or debug it.</p>
+
+<h2 id="selection">Where platform, renderer and native driver meet</h2>
+<pre class="diagram">CMake SDL_GPU identity -> cna_renderer_sdl_gpu (REQUIRES_PLATFORM SDL3, links SDL3::SDL3)
+  -> SdlGpuRendererDescriptor: RendererWindowKind::Plain, window + video subsystem
+  -> GraphicsDevice -> SdlGpu::CreateGraphicsRenderer(args)
+       resolves the SDL_Window from args.surface.windowId (the family's one SDL3 edge)
+  -> SDL_CreateGPUDevice(SPIR-V [+ SDL_shadercross formats], debug mode, driver auto-selection)
+  -> SDL_ClaimWindowForGPUDevice(device, SDL_Window*)      (skipped in headless mode)
+  -> SDL_gpu native driver: Vulkan / Direct3D 12 / Metal, whichever SDL chose</pre>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/CMakeLists.txt"><code>sdl-gpu/CMakeLists.txt</code></a> creates the target with <code>cna_add_renderer()</code> and sets <code>REQUIRES_PLATFORM SDL3</code>. There is no separate SDL_gpu library: <code>SDL_gpu.h</code> is part of the vendored SDL3 every SDL-backed renderer links, so an X11, Wayland or Win32 platform selection is not sufficient merely because it can supply a window, and the SDL2 platform and <code>CNA_ENABLE_SDL=OFF</code> refuse the identity by name (see <a href="../../../docs/rendering-backends.html#middleware">Translation and adapter layers</a>). The family links <code>SDL3::SDL3</code> after every static archive that calls it (SDLGPU-98: single-pass GNU/MinGW archive resolution otherwise left SDL_shadercross's SDL references unresolved).</p>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuRendererDescriptor.cpp"><code>SdlGpuRendererDescriptor.cpp</code></a> declares <code>RendererWindowKind::Plain</code>, <code>needsWindow</code> and <code>needsVideoSubsystem</code> true and <code>AlwaysAvailable</code>: the descriptor does not probe the host, so a registered SDL_GPU identity is no promise that a device will be created. It needs a plain window, not an OpenGL context. The factory at the end of <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp"><code>SdlGpuRenderer.cpp</code></a> resolves the <code>SDL_Window*</code> through <code>CNA::Platform::Detail::ResolveSdl3RendererWindow(args.surface.windowId)</code> and forwards virtual size, presentation mode, swap interval, multisample count and depth format; everything else comes from SDL. Review <a href="selection.html">renderer selection internals</a> before changing registration.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Build switch</th><th scope="col">Default</th><th scope="col">What it controls</th></tr></thead>
+<tbody>
+<tr><td><code>CNA_SDL_GPU_SHADERCROSS</code></td><td>ON on Windows and Apple, OFF elsewhere</td><td>Declared in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>RendererSelection.cmake</code></a>; includes <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/ThirdPartySDLShaderCross.cmake"><code>ThirdPartySDLShaderCross.cmake</code></a> (pinned SDL_shadercross plus SPIRV-Cross), links <code>cna_sdl_shadercross</code> statically and defines <code>CNA_SDL_GPU_SHADERCROSS</code>. A configure with the option on and no configured target is a <code>FATAL_ERROR</code>.</td></tr>
+<tr><td><code>CNA_SDL_GPU_COMPILED_EFFECTS</code></td><td>OFF</td><td>Compiled XNA effects through MojoShader's own SDL_GPU adapter; links <code>cna_renderer_mojoshader_effect</code>. See <a href="../../../docs/effects.html#compiled-effects">Compiled effects</a>.</td></tr>
+<tr><td>GLSL <code>ShaderEffect</code> route</td><td>detected, no option</td><td>The family CMake looks for a target-native <code>shaderc_shared</code>/<code>shaderc</code> library, but never on <code>WIN32</code>, <code>APPLE</code> or <code>EMSCRIPTEN</code> targets, and never by globbing host library directories when cross-compiling. Found: it links the library, defines <code>CNA_SDL_GPU_SHADER_EFFECTS</code> and sets <code>CNA_SDL_GPU_SHADER_EFFECTS_AVAILABLE</code>; the configure log says which.</td></tr>
+<tr><td><code>CNA_SDLGPU_TEST_VIDEO_DRIVER</code></td><td><code>x11</code> on Linux; <code>windows</code>, <code>cocoa</code>, <code>android</code>, <code>uikit</code> elsewhere</td><td>Cache variable in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/examples/CMakeLists.txt"><code>examples/CMakeLists.txt</code></a>: the SDL video driver the integration tests run under (see <a href="#tests">validation</a>).</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="construction">Device and presentation setup</h2>
+<p>The public constructor delegates to a test-hook constructor with an empty <code>SdlGpuTestHooksEXT</code>. Every native acquisition happens inside a local <code>ConstructionResources</code> object, which owns the partially created device, window claim, construction shaders, ShaderCross session and window-registry entry until the last fallible step has succeeded; only <code>CommitTo()</code> moves raw handles into renderer members. The order in the constructor body is:</p>
+<ol>
+<li>Test-headless guard: <code>CNA_SDLGPU_TEST_FORCE_HEADLESS</code> is honoured only when it is exactly <code>1</code>, and with a real window it is refused (<code>std::runtime_error</code>) unless <code>SDL_GetCurrentVideoDriver()</code> is <code>dummy</code> or <code>offscreen</code>. Headless mode is a null window (the public <code>PresentationParameters::HeadlessEXT</code> route) or that test switch.</li>
+<li>Debug mode: on whenever <code>NDEBUG</code> is not defined, which on Vulkan asks SDL for its validation layer.</li>
+<li>Shader formats: SPIR-V, plus <code>SDL_ShaderCross_GetSPIRVShaderFormats()</code> after a reference-counted ShaderCross session is acquired when the option is built. Without ShaderCross the constructor first asks <code>SDL_GPUSupportsShaderFormats</code> and throws "no installed SDL_gpu driver accepts SPIR-V; rebuild with CNA_SDL_GPU_SHADERCROSS=ON" when nothing does.</li>
+<li><code>SDL_CreateGPUDevice</code>, then <code>SDL_ClaimWindowForGPUDevice</code> unless headless.</li>
+<li>Swapchain: <code>ConfigureSwapchain</code> and <code>SDL_GetGPUSwapchainTextureFormat</code>; in headless mode an RGBA8 colour-target format, falling back to BGRA8, or a refusal.</li>
+<li>Depth/stencil format for the requested <code>DepthFormat</code>, and the sample count clamped by <code>ClampSampleCount</code> against the chosen formats.</li>
+<li><code>CreateConstructionShaders</code>: the stock sprite, colored, textured, lit, alpha-test, dual-texture, environment-map, skinned and PBR vertex/fragment modules (instanced variants are created later, on first use).</li>
+<li>Drawable pixels from <code>SDL_GetWindowSizeInPixels</code> (virtual size in headless mode), then <code>IGraphicsRenderer::RegisterForWindow</code>.</li>
+<li><code>CommitTo(*this)</code>, <code>BeginBackbufferSegment()</code> (the backbuffer owns a real first bind cycle), and an <code>SDL_Log</code> line naming the backend SDL actually chose (SMG-0031).</li>
+</ol>
+<p>If any step throws, <code>~ConstructionResources</code> unwinds in reverse: window registry entry, construction shaders (reverse order), window claim, device, ShaderCross session. <code>SdlGpuFailurePointEXT</code> names every stage a test can fail on purpose (<code>DeviceCreation</code>, <code>WindowClaim</code>, <code>SwapchainSetup</code>, <code>DepthStencilFormatQuery</code>, each construction shader, <code>WindowMetricsInitialization</code>, <code>RendererRegistration</code>, <code>AfterRendererRegistration</code>, and later <code>FrameCommandBufferAcquisition</code>, <code>GraphicsPipelineCreation</code>, <code>SamplerCreation</code> and the default-texture creations); successful stages still acquire real SDL objects, and <code>SdlGpuTestHooksEXT::resourceEvent</code> reports every acquisition and release (device, window claim, shader, frame command buffer, pipeline, sampler, default texture, ShaderCross session, storage buffer) so a test can prove that rollback releases exactly what was acquired. <code>forceNoDepthStencilFormat</code> and <code>forceShaderCrossCompilation</code> force the two branches a Vulkan host would otherwise never take.</p>
+<p>Swap interval: SDL_gpu has no half-rate present mode, so <code>PresentInterval.Two</code> becomes VSYNC. Interval 0 prefers <code>IMMEDIATE</code>, then <code>MAILBOX</code> (recorded as applied interval 1, because mailbox is still vblank-synchronised); a refused <code>SDL_SetGPUSwapchainParameters</code> is logged and leaves the previous applied value. In headless mode the interval is only recorded. <code>GetDriverNameEXT()</code> returns <code>SDL_GetGPUDeviceDriver</code>: record it in every bug report, because the public identity says nothing about which native API ran.</p>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p>Headless here is a renderer mode that renders into an offscreen proxy instead of a swapchain. It is not evidence that every SDL_gpu driver works without a display, and a headless pass says nothing about window claim, swapchain acquisition or presentation.</p></div>
+
+<h2 id="shaders">Shader routes: stock SPIR-V, SPIR-V intake, GLSL and compiled effects</h2>
+<p>Five different code paths create shaders on this renderer. A shader bug starts with deciding which one is involved.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Route</th><th scope="col">Input</th><th scope="col">Where</th><th scope="col">Availability</th></tr></thead>
+<tbody>
+<tr><td>Stock effects and SpriteBatch</td><td>Committed SPIR-V in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/shaders/spirv_shaders.hpp"><code>spirv_shaders.hpp</code></a></td><td><code>CreateSdlGpuShaderEXT</code>, route chosen by <code>SelectSdlGpuShaderCreationRouteEXT</code></td><td>Every build with a device that accepts SPIR-V, or whose formats SDL_shadercross can produce</td></tr>
+<tr><td>Instanced stock vertex modules</td><td>The same sources compiled again with <code>CNA_INSTANCED</code></td><td><code>StockVertexShaderEXT</code>, created on first use</td><td>As the stock route</td></tr>
+<tr><td><code>ShaderEffect</code> from SPIR-V</td><td>Caller or shader-package SPIR-V words (<code>LooksLikeSpirvEXT</code>)</td><td><code>SdlGpuEffectRenderer::CompileSpirvProgramEXT</code> after <code>RemapSpirvForSdlGpuEXT</code></td><td>Every build (no runtime compiler needed)</td></tr>
+<tr><td><code>ShaderEffect</code> from GLSL</td><td>GLSL text compiled to SPIR-V by libshaderc at run time</td><td><code>SdlGpuEffectRenderer::CompileProgram</code></td><td>Only with <code>CNA_SDL_GPU_SHADER_EFFECTS</code>; otherwise an invalid effect with a compile error naming the missing compiler</td></tr>
+<tr><td>Compute</td><td>SPIR-V only</td><td><code>SdlGpuComputeShaderRenderer::CompileProgram</code></td><td>Any device (see <a href="#modern">modern resources</a>)</td></tr>
+<tr><td>Compiled XNA effects</td><td>D3D9 Effect Framework bytecode via MojoShader</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuCompiledEffect.cpp"><code>SdlGpuCompiledEffect.cpp</code></a></td><td>Only with <code>CNA_SDL_GPU_COMPILED_EFFECTS</code></td></tr>
+</tbody>
+</table></div>
+<p><strong>Stock shaders.</strong> The GLSL sources under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/shaders"><code>src/shaders</code></a> are compiled offline by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/shaders/compile_shaders.py"><code>compile_shaders.py</code></a> (libshaderc through <code>ctypes</code>; not run by CMake) into the checked-in header; never edit the header apart from its sources. The script now does two textual things before compiling: it inlines <code>#include "shadow_sampling.glsl"</code> from the Vulkan renderer's <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/shaders/shadow_sampling.glsl"><code>shadow_sampling.glsl</code></a> (SMG-0032: one piece of shadow GLSL, with <code>CNA_SHADOW_*</code> defines moving its resources into SDL_gpu's sets), and it inserts an instance prologue into every vertex shader that is the identity unless <code>CNA_INSTANCED</code> is defined, in which case four per-instance matrix columns arrive at locations 12 to 15 (STREETS-0001). The old position-only <code>instanced3d</code> module is gone. <code>SelectSdlGpuShaderCreationRouteEXT</code> picks <code>DirectSpirv</code> when the device accepts SPIR-V, <code>ShaderCross</code> when the device's formats intersect what SDL_shadercross can produce (or when the test hook forces it), and <code>Unsupported</code> otherwise; the ShaderCross route reflects the SPIR-V and refuses a module whose reflected sampler, storage and uniform counts differ from the create info. The shader sources follow SDL_gpu's set convention, not the Vulkan renderer's, as the script's docstring warns.</p>
+<p><strong>SPIR-V intake (SMG-0006/0007).</strong> CNA's portable shader packages are compiled from sources written for the Vulkan renderer's descriptor layout. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuSpirvBindings.hpp"><code>SdlGpuSpirvBindings.hpp</code></a> is the one translation layer: <code>RemapSpirvForSdlGpuEXT</code> rewrites a module word by word into the layout SDL_gpu mandates, reports each resource's original and assigned <code>(set, binding)</code> and its SDL slot, and turns a <code>push_constant</code> block into a uniform buffer (SDL_gpu has no push constants). A block that is not already std140-legal is refused by name, and a failed remap must be surfaced, never replaced by the untransformed module, because a module left in the Vulkan layout binds the wrong resources silently.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Stage</th><th scope="col">set 0</th><th scope="col">set 1</th><th scope="col">set 2</th><th scope="col">set 3</th></tr></thead>
+<tbody>
+<tr><td>vertex</td><td>sampled textures, storage textures, storage buffers</td><td>uniform buffers</td><td>&mdash;</td><td>&mdash;</td></tr>
+<tr><td>fragment</td><td>&mdash;</td><td>&mdash;</td><td>sampled textures, storage textures, storage buffers</td><td>uniform buffers</td></tr>
+<tr><td>compute</td><td>sampled textures, read-only storage textures and buffers</td><td>read-write storage textures and buffers</td><td>uniform buffers</td><td>&mdash;</td></tr>
+</tbody>
+</table></div>
+<p>The portable conventions the runtime binds against are constants in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp"><code>SdlGpuRenderer.hpp</code></a>: an effect's own textures in set 1 at bindings 0 to 3 (2D), 4 to 7 (cube) and 8 to 11 (volume), up to <code>kMaxCustomEffectSamplersEXT</code> = 4 units per kind; the <code>FloatArray</code>, <code>Vec2Array</code>, <code>Vec3Array</code> and <code>Mat4Array</code> uniform blocks at bindings 12 to 15 (72 std140 elements each, held in a shared <code>SdlGpuUniformArrayBlockEXT</code>); and six engine-owned matrices at binding 19 (<code>kEngineMatricesBindingEXT</code>). The texture unit is read from the declared binding, not from the compacted SDL slot, because a sampler the compiler dead-strips shifts every later slot.</p>
+<div class="callout callout--note"><span class="callout-icon">&#8505;</span><p>The SPIR-V intake and the compute pipeline hand SPIR-V straight to <code>SDL_CreateGPUShader</code>/<code>SDL_CreateGPUComputePipeline</code>; neither goes through SDL_shadercross, whereas <code>SupportsShaderLanguageEXT(SpirV, …)</code> and <code>SupportsComputeShadersEXT()</code> answer true for any device. On a Direct3D 12 or Metal driver the create call is therefore the point of refusal. This is a reading of the source at this snapshot; no D3D12 or Metal run was made for this page.</p></div>
+
+<h2 id="queue">Why one public draw is not yet one GPU draw</h2>
+<p><code>DrawPrimitivesEx</code> and <code>DrawIndexedPrimitivesEx</code> first send a compiled-effect draw to <code>QueueCompiledEffectDraw</code> (when built), then call <code>DispatchStockDrawEXT</code>. That function now starts with the custom-effect case: a valid <code>SdlGpuEffectRenderer</code> goes to <code>QueueCustomEffect3DDrawEXT</code> (SMG-0019; before that, a 3D <code>ShaderEffect</code> draw fell through and was shaded by whatever stock family its declaration matched). Otherwise <code>CollectStockVertexStreamsEXT</code> and <code>SelectStockVertexShapeEXT</code> choose a shape and one typed queue: colored, textured, colored-textured, lit, alpha-test, dual-texture or environment-map, with <code>StrideDerived</code> reserved for <code>SkinnedEffect</code> (selected by effect state) and the PBR strides; anything else throws <code>NotSupportedException</code>. <code>SdlGpuVertexBufferRenderer</code> and <code>SdlGpuIndexBufferRenderer</code> keep CPU shadow copies because user draws may pass temporary sources that are gone before <code>Present</code>.</p>
+<p>Each queued command snapshots what the draw needs by value: matrices (with the XNA pixel-centre correction), topology, vertex and index bytes, effect uniforms, <code>RenderStateSnapshot</code> (blend equation, per-slot colour write masks, cull, wireframe, both depth-bias values, stencil state and reference), sampler slots, and textures as <code>SdlGpuSampledTextureEXT</code> values whose <code>keepAlive</code> keeps the owning GPU state alive until the submit that consumes it. <code>PushDrawOrder</code>, the one choke point, appends a <code>QueuedDrawRef</code> carrying the queue kind, index, pass segment, viewport, scissor and blend factor. Replaying "all sprites, then all 3D", or reading live state at <code>Present</code>, would change public draw order and state semantics. Newer snapshots follow the same rule:</p>
+<ul>
+<li><strong>Custom 3D effects.</strong> The attribute location of a declaration element is its index in the <code>VertexDeclaration</code> (the convention EasyGL and Vulkan use); reflection drops elements the shader does not read and a consumed location the declaration does not supply throws <code>NotSupportedException</code>. The command captures the 128-byte per-draw block (overlaid by <code>Apply3DUniformsEXT</code>), uniform arrays, reflected uniform/sampler/storage maps, bound textures, the <code>SamplerStates[0..3]</code> that XNA applies per texture unit (STREETS-0004), storage buffers published through <code>BindStorageBufferForDrawEXT</code> with keep-alives (SMG-0020), and an instance count. Its pipeline key adds stride and every attribute's location, format and offset.</li>
+<li><strong>Instanced stock draws (STREETS-0001).</strong> <code>DrawInstancedPrimitivesEx</code> routes a compiled effect and a custom effect with their instance count; a custom effect that is not a valid SDL_GPU effect throws <code>NotSupportedException</code>. Without a per-instance stream it is an ordinary indexed draw. Otherwise it range-checks every per-instance and per-vertex binding (<code>ArgumentOutOfRangeException</code>) and re-enters <code>DispatchStockDrawEXT</code> with <code>pendingInstanceCountEXT_</code> set, so the effect family is kept and only the vertex module changes. Skinned and PBR draws, whose vertex record is fixed, carry the matrix columns in a second per-instance buffer at slot 1 (<code>InstanceTransformStreamEXT</code>).</li>
+<li><strong>Indirect draws (SMG-0023/0025).</strong> <code>DrawPrimitivesIndirectEXT</code> and <code>DrawIndexedPrimitivesIndirectEXT</code> accept only this renderer's own storage buffer (<code>NotSupportedException</code> otherwise), park the buffer, offset and a <code>shared_from_this()</code> keep-alive in <code>pendingIndirect*</code> members for the duration of the dispatch, and clear them on every exit. At replay the arguments stay on the GPU: CNA's <code>IndirectDrawIndexedArguments</code> is field-for-field <code>SDL_GPUIndexedIndirectDrawCommand</code>.</li>
+<li><strong>Shadow reception (SMG-0032).</strong> <code>CaptureShadowReceptionEXT</code> fills the 132-float <code>CnaShadowParams</code> block float-for-float as Vulkan and WebGPU do, resolves the directional or cascade map, the point-light cube and the spot map with keep-alives, and copies <code>SamplerStates[7..9]</code>. A shadow map attached after the draw is not that draw's. Receivers always bind all three samplers, so neutral default textures (including a white cube) are created on the queueing side, where a failure still has a caller.</li>
+</ul>
+<p>At flush, <code>EnsureFrameRendered</code> acquires one <code>SDL_GPUCommandBuffer</code> (owned by a <code>FrameCommandBufferOwner</code>), inserts the frame's queued <code>SetStringMarkerEXT</code> labels (SMG-0027), and acquires one swapchain texture with <code>SDL_WaitAndAcquireGPUSwapchainTexture</code>, or uses the proxy in headless mode. A null texture (for example a minimised window) is a non-error skip, but a command buffer that attempted acquisition is still submitted, on every exit. Sprite and scene vertex/index data is uploaded in a copy pass before any render pass, because SDL_gpu forbids a copy pass inside a render pass. The walk over <code>passSegments_</code> then opens one native pass per segment in bind order and calls <code>RenderQueuedDraws</code> in the captured order, the readable backbuffer proxy is blitted to the swapchain if active, and the buffer is submitted; SDL presents the acquired swapchain texture on submission, so <code>Present()</code> only calls <code>EnsureFrameRendered</code>. The same flush also runs from <code>ReadBackbuffer</code>, render-target readback and <code>FlushPendingGpuWorkEXT</code> (compute dispatch, storage-buffer readback and copy). The neutral trace leading here is in <a href="draw-call.html">the indexed draw trace</a>.</p>
+
+<h2 id="modern">Modern resources: compute, storage buffers and images</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuModern.hpp"><code>SdlGpuModern.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuModern.cpp"><code>SdlGpuModern.cpp</code></a> hold the CNAEXT engine layer's resources (SMG-0012): <code>SdlGpuStorageBufferRenderer</code>, <code>SdlGpuStorageTexture2DRenderer</code> and <code>SdlGpuComputeShaderRenderer</code>. The ordering rule this deferred renderer needs is stated there: a dispatch first flushes the pending frame (<code>FlushPendingGpuWorkEXT</code>) and then records its own command buffer, so SDL's submission order yields render, compute, render and compute-write-before-graphics-read without hand-written barriers.</p>
+<ul>
+<li><strong>Storage buffers.</strong> One <code>SDL_GPUBuffer</code> plus a CPU shadow, zero-filled on creation. SDL_gpu has no uniform-buffer usage at all, so a <code>Constant</code>-usage buffer is pushed from its shadow with <code>SDL_PushGPU*UniformData</code> at bind time. <code>GetDataRangeEXT</code>, <code>CopyToEXT</code> and <code>RefreshShadowFromGpuEXT</code> flush the pending frame first, so a readback observes work queued before it. Every buffer registers with the renderer (<code>RegisterStorageBufferEXT</code>); see <a href="#shutdown">destruction order</a> for why.</li>
+<li><strong>Storage textures.</strong> SDL_gpu has no separate storage-image object: a texture is one when created with the compute storage usage bits. <code>TranslateStorageImageFormatEXT</code> is the single format table, shared with <code>GetSurfaceFormatUsageSupportEXT</code>, which asks <code>SDL_GPUTextureSupportsFormat</code> separately for storage read, storage write, sampled and render-target usage.</li>
+<li><strong>Compute shaders.</strong> <code>CompileProgram</code> accepts SPIR-V only, remaps it, refuses a non-compute entry point and refuses integer samplers (CNA textures are float-sampled), then creates the pipeline with the reflected counts and <code>LocalSize</code>. <code>DispatchEXT</code> binds storage buffers and textures by reflected slot, leaving a gap for an unbound resource instead of shifting neighbours (SMG-0013), gives every declared sampler a real image (default white texture and a nearest/clamp compute sampler), and pushes the uniform block or a bound constant buffer. Named scalars need <code>OpMemberName</code>, which an optimised package lacks.</li>
+</ul>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Reported limit</th><th scope="col">Value while a device exists</th></tr></thead>
+<tbody>
+<tr><td>Work-group count per axis</td><td>65535</td></tr>
+<tr><td>Work-group size X / Y / Z; invocations</td><td>128 / 128 / 64; 128</td></tr>
+<tr><td>Storage / uniform buffer bytes</td><td>134217728 / 16384</td></tr>
+<tr><td>Compute storage-buffer bindings; sampled textures per stage</td><td>8; 16</td></tr>
+<tr><td>Storage / uniform offset alignment</td><td>256 / 256</td></tr>
+</tbody>
+</table></div>
+<p>These are Vulkan 1.0 minimum guarantees hard-coded in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp"><code>SdlGpuRenderer.cpp</code></a>, because SDL_gpu exposes no device limits; they are not measured values. Capability answers come from several places: the renderer's own <code>SupportsCapability</code> switch answers <code>ComputeShaders</code>, <code>IndirectDraw</code>, the two float render-target members and <code>OcclusionQuery</code> false, while <code>GraphicsDevice</code> derives the public answers from <code>SupportsComputeShadersEXT()</code>, <code>SupportsIndirectDrawEXT()</code> and the format probes (true whenever a device exists), so the device-level answer is the one to trust (<a href="../../../docs/rendering-backends.html#capability-matrix">capability matrix</a>). <code>SupportsBaseInstanceDrawingEXT</code>, <code>SupportsShadowSamplingEXT</code> and <code>SupportsImageBasedLightingEXT</code> (the PBR shader's split-sum term, STREETS-0002) are true; <code>HalfFloatTextureLinearFiltering</code> is true when <code>HalfVector4</code> is a supported render-target format (STREETS-0003); <code>CreateOcclusionQuery</code> throws <code>NotSupportedException</code> because the vendored SDL_gpu exposes no query commands. Use-side coverage is in <a href="../../../docs/rendering-backends.html#modern-features">modern features by renderer</a>.</p>
+
+<h2 id="segments">Render targets are ordered pass segments</h2>
+<p>A <code>PassSegment</code> is one public bind cycle: exactly one native <code>SDL_BeginGPURenderPass</code>/<code>SDL_EndGPURenderPass</code> pair. Every bind opens a new segment, including a rebind of the same target, face, mip or MRT set, and segments are appended in the order they were opened, so replay is public order by construction (REMED-GFX-145). A target drawn into, unbound, sampled by a later draw and rebound in one frame is three passes, not two; merging by target identity would lose order and load actions. The backbuffer has real segments too (REMED-GFX-143): <code>kSwapchainSegment</code> (0) survives only as the before-first-cycle sentinel, empty earlier backbuffer segments issue no pass, and the last backbuffer segment always gets one so the acquired swapchain image is left presentable.</p>
+<ul>
+<li>A <code>Clear()</code> belongs to the segment it was issued in. If a draw of that segment already precedes it, <code>SegmentForOrderedClear</code> closes the segment and opens another over the same destination (<code>openedByClear</code>, REMED-GFX-156); leading clears fold into the pass load action.</li>
+<li>Load and store actions belong to the segment: an explicit clear wins, then the resource's first-use clear flag, otherwise <code>LOAD</code>. An MSAA target resolves into its sampled texture; when a later segment loads the same resource (<code>SegmentColorLoadedLater</code>) or contents are preserved, the store op becomes <code>RESOLVE_AND_STORE</code>. Backbuffer depth is always stored so a later backbuffer cycle still depth-tests against it.</li>
+<li>MRT extras (<code>rts[1..]</code>) are attachments of the segment their primary bind opened, with every attachment's own format in the pipeline description; a cube face in a multi-target set throws. A single cube face binds through its own route.</li>
+<li>Mip chains of a rendered target are regenerated per segment by <code>GenerateRenderTargetMipChain</code>, after the pass ends (REMED-GFX-187).</li>
+</ul>
+<p>The renderer does not treat a public target wrapper as the owner of GPU state. <code>SdlGpuRenderTarget2DState</code>, <code>SdlGpuRenderTargetCubeState</code> and <code>SdlGpuSampledTextureState</code> hold the native handles, are kept alive by <code>shared_ptr</code> from segments and commands, and in their destructors queue textures through <code>QueueTextureRelease</code> instead of releasing them. After a successful submit the renderer drains pending texture and pipeline releases, and SDL_gpu's own fencing takes it from there. On a flush exception the command buffer is finished for failure, transient draw buffers are released with <code>ReleaseSceneDrawBuffers(false)</code>, and the queued logical frame is kept, so a retry can re-record it; a resource fix must examine both paths. The neutral side of target lifetime is in <a href="resources.html">textures and render targets</a>.</p>
+
+<h2 id="resize">Resize, readback and limitations</h2>
+<p><code>OnSurfaceChanged</code> throws <code>std::invalid_argument</code> for a renderer without a window and for a different window identity; otherwise it records the drawable extent and a sanitised display scale (non-finite or non-positive becomes 1). Backbuffer depth and MSAA textures are sized when the next frame acquires its actual swapchain extent, so a minimised zero-size frame does not render. <code>ComputeLogicalViewport</code> applies the presentation modes (native, fixed-height dynamic-width, stretch, letterbox, overscan). Once <code>ReadBackbuffer</code> is called, <code>backbufferReadbackEnabled_</code> makes a self-owned proxy with the swapchain's format the draw destination (the swapchain texture is write-only) and the proxy is blitted to the swapchain before submit; nothing is paid until the first read. The read flushes, clamps to the proxy, downloads through a transfer buffer and a fence, swaps channels for a BGRA swapchain, and zero-fills anything outside the proxy or nothing at all if no proxy exists (a minimised window). If a mismatch appears only after resize or a screenshot, inspect proxy activation, the pass target format and sample count and the copy order before changing <code>GraphicsDevice</code>.</p>
+<p>Explicit limits at this snapshot:</p>
+<ul>
+<li><code>OcclusionQuery</code> is refused (see above); <code>GetAdditionalLimitationsTextEXT()</code> says so.</li>
+<li>That same text still states that CNAEXT <code>ShaderEffect</code> instancing is not implemented, although <code>DrawInstancedPrimitivesEx</code> now queues a custom-effect draw with its instance count (SMG-0022, the particle route that reads per-instance data from a storage buffer by <code>gl_InstanceIndex</code>). What the custom-effect command does not do is bind a per-instance vertex stream: it binds vertex buffer slot 0 only. Treat the text as stale and the stream limit as real.</li>
+<li>The GLSL <code>ShaderEffect</code> route exists only where the build found libshaderc, and <code>CustomEffects</code> follows that route alone (see <a href="../../../docs/shader-effects.html#renderer-availability">renderer availability</a>).</li>
+<li>One identity sits over several native APIs: a Vulkan result does not establish Direct3D 12 or Metal behaviour. Headless stock-draw validation (<code>ValidateStockDrawForDriverEXT</code>) is not native presentation.</li>
+</ul>
+
+<h2 id="shutdown">Destruction order is part of the renderer contract</h2>
+<p><code>~SdlGpuRenderer</code> runs these steps in this order, and each one depends on the next object still being alive:</p>
+<ol>
+<li>Release the cached compute sampler while the device exists.</li>
+<li>Unregister the window mapping.</li>
+<li>Drop queued scene, sprite, segment and order data (<code>ReleaseSceneDrawBuffers</code>, <code>spriteCommands_</code>, <code>passSegments_</code>, <code>drawOrder_</code>). Releasing a command's last texture reference may enqueue a native handle; the drain below frees it.</li>
+<li>Drop the storage-buffer draw bindings and the pending indirect-argument keep-alive (SMG-0040: as members they would otherwise die after the device, when a buffer can no longer release its <code>VkBuffer</code>).</li>
+<li>Destroy stock resources family by family: PBR, skinned, instanced, environment map, dual texture, alpha test, lit, textured, colored, sprite.</li>
+<li>With compiled effects: release compiled-effect pipelines, then every native compiled effect through <code>ReleaseCompiledEffectsForRendererTeardownEXT</code> (a public effect may outlive its device and becomes native-state-free), then the program leases, then the MojoShader context.</li>
+<li>Drain <code>pendingTextureReleases_</code> and <code>pendingGraphicsPipelineReleases_</code>; release depth, backbuffer MSAA and readback proxy textures.</li>
+<li><code>ReleaseStorageBuffersForRendererTeardownEXT</code>: every storage buffer still alive, whoever holds it, releases its native buffer and is detached, so its later destructor touches neither SDL nor the renderer.</li>
+<li>Unclaim the window, destroy the device, and finally release the ShaderCross session.</li>
+</ol>
+<p>Reversing command-drop and device destruction would leave delayed releases addressing a dead device; reversing compiled-effect pipelines and the MojoShader context risks callbacks into a destroyed context. A new native resource class needs the same treatment: a place in this walk, and detachment if its public object can outlive the renderer. See <a href="../../handbook/debug-shutdown-and-lifetime.html">debugging shutdown and lifetime</a> and <a href="../../invariants.html">architectural invariants</a>.</p>
+
+<h2 id="tests">Validation that matches the risk</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/examples/CMakeLists.txt"><code>examples/CMakeLists.txt</code></a> registers the integration tests inside <code>if(CNA_BUILD_TESTS AND CNA_GRAPHICS_RENDERER STREQUAL "SDL_GPU")</code>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/CMakeLists.txt"><code>modules/renderers/CMakeLists.txt</code></a> re-points <code>CNA_GRAPHICS_RENDERER</code> to each family's identity while it enters that family, so this block is also entered when <code>SDL_GPU</code> is a non-default member of <code>CNA_GRAPHICS_RENDERERS</code>; <code>cna_register_renderer_test</code> sets no renderer selection, so in such a build confirm which renderer an executable actually creates (the EasyGL and HEADLESS blocks compare against <code>_cna_default_renderer_identity</code> for exactly this reason). The environment comes from <code>CNA_SDLGPU_TEST_VIDEO_DRIVER</code>: only X11 receives <code>CNA_TEST_DISPLAY</code>, <code>dummy</code>/<code>offscreen</code> clear both display variables, and every test in the directory fails on <code>Validation (Error|Warning)</code>, <code>VUID-</code> or <code>D3D12 (ERROR|WARNING):</code> output (SDLGPU-115).</p>
+<ul>
+<li>The shared parity corpus from <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/parity/ParityFixtures.cmake"><code>ParityFixtures.cmake</code></a> as <code>SdlGpu_Parity_*</code>, plus <code>SdlGpu_Parity_backbuffer_msaa_Reset</code> (the A&nbsp;4x, B&nbsp;0x, A&nbsp;4x reset mode).</li>
+<li>Construction and lifecycle: <code>SdlGpu_ConstructorExceptionSafety</code>, <code>SdlGpu_Smoke</code> (now also checks the capability answers), <code>SdlGpu_SamplerCacheLifetime</code>, <code>SdlGpu_SwapchainRecovery</code>, <code>SdlGpu_MinimizedRetry</code>, <code>SdlGpu_PresentationSurface</code>, <code>SdlGpu_PresentLifecycle</code>.</li>
+<li>Targets and order: <code>SdlGpu_RenderTarget2D</code>, <code>SdlGpu_MRT</code>, <code>SdlGpu_RenderTarget2DMSAA</code>, <code>SdlGpu_DrawOrder</code>, <code>SdlGpu_GraphicsDevice_OrderedClear</code>, <code>SdlGpu_Backbuffer_PassOrder</code>, <code>SdlGpu_RenderTarget_PassBoundary</code>, <code>SdlGpu_BoundTargetLifetime</code>, <code>SdlGpu_DeferredSourceLifetime</code>.</li>
+<li>No-swapchain routes: <code>SdlGpu_HeadlessGraphicsDevice</code> (public <code>HeadlessEXT</code> device; <code>SDL_GPU_DRIVER=vulkan</code>, or <code>direct3d12</code> on Windows) and <code>SdlGpu_2D_HeadlessDriver</code> (the unchanged 2D scene with <code>CNA_SDLGPU_TEST_FORCE_HEADLESS=1</code>).</li>
+<li>Added for the modern work: <code>SdlGpu_StorageBufferLifetime</code> (no <code>SDL_GPUBuffer</code> survives device destruction in any order), <code>SdlGpu_TextureDefragment</code> (forces SDL_gpu's Vulkan defragmenter over textures), <code>SdlGpu_InstancedPbr3D</code>, <code>SdlGpu_InstancedStockFamilies</code>, <code>SdlGpu_BasicEffect_DiffuseColorClamp</code>, <code>SdlGpu_EnvironmentMapEffect_AmountClamp</code>, <code>SdlGpu_ShaderEffect_PerUnitSampler</code> (Vulkan's witness compiled again without its validation leg) and, only with <code>CNA_CNAEXT</code>, <code>SdlGpu_HalfFloatFiltering</code>.</li>
+<li>Built but deliberately not registered: <code>cna_test_sdlgpu_modern_stress</code>, a 3000-cycle soak over storage buffers and textures, texture arrays, resized offscreen targets, indirect draws, a custom-effect sprite and shadow reception, checking resident memory, file descriptors and threads (exit 77 without a modern route); and the manual diagnostic <code>cna_diag_sdlgpu_single_sprite</code>.</li>
+<li>GoogleTest sources under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/tests"><code>tests/</code></a>: compiled-effect, sampler-cache and ShaderCross tests; the compiled-effect one is also built standalone as <code>SdlGpu_CompiledEffectRuntime</code> when <code>CNA_SDL_GPU_COMPILED_EFFECTS</code> is on.</li>
+</ul>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p>Cross-compiled Windows executables run through <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/run-wine-vkd3d-headless.sh"><code>run-wine-vkd3d-headless.sh</code></a> (fresh Xvfb, SDL <code>dummy</code>, <code>direct3d12</code>, forced headless, a vkd3d-proton engagement gate); that is Wine evidence, not native Windows presentation, and no workflow selects SDL_GPU. On a non-Windows host the headless registrations reuse the ordinary test environment, which selects <code>x11</code> by default, while the constructor accepts the forced-headless switch only under <code>dummy</code> or <code>offscreen</code>; check <code>CNA_SDLGPU_TEST_VIDEO_DRIVER</code> before reading a <code>SdlGpu_2D_HeadlessDriver</code> result. None of these tests was executed for this page.</p></div>
+<p>A workable order: <code>ctest --test-dir &lt;build&gt; -N -R SdlGpu</code> to see what is registered, then the targeted subset, then <code>-L SdlGpu</code> or the parity label; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/platform/run_gpu_tests_private.sh"><code>run_gpu_tests_private.sh</code></a> is CNA's private-compositor runner for GPU tests (see <a href="../../../docs/tutorials/131-sdl-gpu.html#verify">Tutorial 131</a>). For a change, decide first whether it touches enqueue-time capture, replay-time state, pass segmentation, SDL resource ownership or a shader route, and add a test whose sequence separates old from new behaviour: target A, backbuffer, A again; a texture or storage buffer destroyed before <code>Present</code>; a resize between acquisition and rendering; a dispatch followed by a readback. Run it on the native driver named in the report and on a second driver where possible. If an interface signature changes, check <a href="device.html">GraphicsDevice internals</a> and the other renderers too.</p>
+
+<h2 id="reading">Read in this order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/CMakeLists.txt"><code>sdl-gpu/CMakeLists.txt</code></a>, the SDL_GPU block of <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>RendererSelection.cmake</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuRendererDescriptor.cpp"><code>SdlGpuRendererDescriptor.cpp</code></a>: the SDL3 dependency, the three shader switches and the pre-construction contract.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp"><code>SdlGpuRenderer.hpp</code></a>: <code>PassSegment</code>, <code>QueuedDrawRef</code>, the typed draw commands, the native state wrappers, the binding constants and the failure points, before the implementation.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp"><code>SdlGpuRenderer.cpp</code></a>: <code>ConstructionResources</code> and the constructor, then <code>DispatchStockDrawEXT</code> and one <code>Queue*Draw</code>, <code>EnsureFrameRendered</code>, <code>RenderToTarget</code>, and the destructor.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuSpirvBindings.hpp"><code>SdlGpuSpirvBindings.hpp</code></a> with <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuSpirvBindings.cpp"><code>SdlGpuSpirvBindings.cpp</code></a>, then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuModern.hpp"><code>SdlGpuModern.hpp</code></a> with <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuModern.cpp"><code>SdlGpuModern.cpp</code></a>: the SPIR-V intake and the modern resources.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/shaders/compile_shaders.py"><code>compile_shaders.py</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/examples/CMakeLists.txt"><code>examples/CMakeLists.txt</code></a>: how shader artifacts are produced and what a named test actually runs.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/rendering-backends.html#modern-gpu">Modern GPU APIs</a> &middot; <a href="../../../docs/rendering-backends.html#middleware">Translation and adapter layers</a> &middot; <a href="../../../docs/tutorials/131-sdl-gpu.html">Tutorial 131: SDL_GPU</a> &middot; <a href="../../../docs/shader-effects.html#renderer-availability">Shader effects: renderer availability</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="selection.html">Renderer selection internals</a> &middot; <a href="draw-call.html">Indexed draw trace</a> &middot; <a href="resources.html">Textures and render targets</a> &middot; <a href="vulkan.html">Vulkan (shares the shadow GLSL)</a> &middot; <a href="../platforms/sdl3.html">SDL3 platform internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/fix-a-renderer-bug.html">Fix a renderer bug</a> &middot; <a href="../../handbook/debug-shutdown-and-lifetime.html">Debug shutdown and lifetime</a> &middot; <a href="../../invariants.html">Architectural invariants</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a> &middot; <a href="../../reference/cmake-options.html">CMake option index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="opengl4.html" rel="prev"><span>Previous</span>OpenGL4 renderer internals</a><a class="dev-pager-next" href="software.html" rel="next"><span>Next</span>Software renderer internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

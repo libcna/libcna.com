@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Renderer selection internals - CNA Development</title>
+  <meta name="description" content="How CMake settles CNA&#x27;s compiled-in renderer set, how the generated registry and descriptors work, and how GraphicsRendererSelection and resolveRenderer choose and latch a renderer.">
+  <meta name="keywords" content="renderer selection, cna_graphics_renderer, cna_graphics_renderers, graphicsrendererselection, graphicsrendererdescriptor, renderer registry, resolverenderer, fallback chain, latch, descriptor gate, rendererselection.cmake">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/graphics/selection.html">
+  <meta property="og:title" content="Renderer selection internals - CNA Development">
+  <meta property="og:description" content="How CMake settles CNA&#x27;s compiled-in renderer set, how the generated registry and descriptors work, and how GraphicsRendererSelection and resolveRenderer choose and latch a renderer.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/graphics/selection.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Renderer selection internals","description":"How CMake settles CNA's compiled-in renderer set, how the generated registry and descriptors work, and how GraphicsRendererSelection and resolveRenderer choose and latch a renderer.","url":"https://libcna.com/development/internals/graphics/selection.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="selection.html" class="docs-nav-link active" aria-current="page">Graphics internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="device.html" class="docs-nav-link">GraphicsDevice &amp; contract</a></li>
+        <li><a href="draw-call.html" class="docs-nav-link">Indexed draw trace</a></li>
+        <li><a href="resources.html" class="docs-nav-link">Textures &amp; render targets</a></li>
+        <li><a href="backends.html" class="docs-nav-link">Renderer family map</a></li>
+        <li><a href="easygl.html" class="docs-nav-link">EasyGL</a></li>
+        <li><a href="vulkan.html" class="docs-nav-link">Vulkan</a></li>
+        <li><a href="opengl4.html" class="docs-nav-link">OpenGL4</a></li>
+        <li><a href="sdl-gpu.html" class="docs-nav-link">SDL_gpu</a></li>
+        <li><a href="software.html" class="docs-nav-link">Software</a></li>
+        <li><a href="headless.html" class="docs-nav-link">Headless</a></li>
+        <li><a href="stub.html" class="docs-nav-link">Stub</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li aria-current="page">Graphics</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Renderer selection internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#configure">Configure-time sequence</a></li>
+          <li><a href="#registry">Why the registry is generated</a></li>
+          <li><a href="#runtime">Runtime policy and latch</a></li>
+          <li><a href="#descriptor">What the descriptor knows before a renderer exists</a></li>
+          <li><a href="#worked">Worked change: add a renderer identity</a></li>
+          <li><a href="#tests">What tests establish</a></li>
+          <li><a href="#reading">Source reading order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Graphics internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The named CMake script tests and unit tests exist at this snapshot; none was run for this page.</p></div>
+
+<p class="lede">Two separate decisions pick a renderer. At configure time CMake decides which renderer implementation families exist in the binary and which identity is the default; at run time <code>CNA::GraphicsRendererSelection</code> decides which compiled-in identity the first <code>GraphicsDevice</code> attempts. A per-family <code>GraphicsRendererDescriptor</code> connects the two: it carries the pre-window policy and the factory. This page traces both halves through the source so that a maintainer adding, gating or debugging a renderer knows which file owns which rule.</p>
+
+<div class="callout callout--info"><span class="callout-icon">&#8505;</span><p>The user-facing contract (options, precedence, fallback API, device flags, debug variables) is documented in <a href="../../../docs/runtime-renderer-selection.html">Runtime renderer selection</a> and summarised in <a href="../../../architecture.html#renderer-registry">Architecture: renderer registry</a>. This page is the implementation underneath it: the CMake order, the generated registry, the policy state and the resolution loop.</p></div>
+
+<h2 id="configure">Configure-time sequence</h2>
+<p>The renderer is settled in several passes of the top-level <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakeLists.txt"><code>CMakeLists.txt</code></a>. The order matters: the identity check runs before any dependency is configured, and the registry translation unit is generated before a single module directory is entered.</p>
+<pre class="diagram">CMakeLists.txt
+  → cmake/RendererIdentities.cmake        refuse any name outside the 25 public identities
+                                          (all three routes), before SDL or any dependency
+  → cmake/PlatformSelection.cmake, AudioPlatformSelection.cmake, Sdl2OnlyConfiguration.cmake
+  → cmake/SdlAvailability.cmake
+      → RendererIdentityDefault.cmake     per-host default, needed to decide whether SDL is needed
+  → cmake/RendererSelection.cmake
+      → RendererIdentityDefault.cmake / RendererIdentities.cmake   (re-included, no-op)
+      → CNA_GRAPHICS_RENDERER cache value + 25 CNA_RENDERER_&lt;X&gt; switches (exactly one may be ON)
+      → RendererDefaultSelection.cmake    set + default first + dedupe → CNA_RENDERER_IDENTITIES
+      → RendererCombinations.cmake        cna_validate_renderer_combination()
+      → CNA_MULTI_RENDERER when more than one identity
+      → foreach identity: cna_configure_renderer_identity()
+           TERMINAL / Windows / Apple / Emscripten gates, family dir + target + defines, dependencies
+  → cmake/RendererRuntime.cmake           runtime payloads beside the final application
+  → cmake/RendererRegistry.cmake          cna_generate_renderer_registry()
+                                          → &lt;build&gt;/generated/CnaRendererRegistry.generated.cpp
+  → cmake/RendererDescriptorGate.cmake    option CNA_BUILD_RENDERER_DESCRIPTOR_GATE (default ON)
+  → add_subdirectory(modules)
+      → modules/graphics                  cna_graphics_core compiles the generated registry
+                                          and links every selected renderer archive
+      → modules/renderers                 enter each selected family once; descriptor gate
+  → executables link the CNA umbrella (static archives) or libcna.so (CNA_SHARED_LIBRARY)</pre>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>CNA_GRAPHICS_RENDERER</code></a> is the <em>default</em> identity. It is a cache string whose default comes from <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererIdentityDefault.cmake"><code>cmake/RendererIdentityDefault.cmake</code></a> (<code>WEBGL2</code> under Emscripten, <code>OPENGLES3</code> on Linux, <code>SDL_RENDERER</code> everywhere else) and whose <code>STRINGS</code> property is the public list. If <code>CNA_GRAPHICS_RENDERERS</code> is empty, only the default identity is compiled. The optional semicolon-separated list opts into a multi-renderer build: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererDefaultSelection.cmake"><code>cmake/RendererDefaultSelection.cmake</code></a> requires the default to be a member (a non-member is a <code>FATAL_ERROR</code>, never a silent substitution), removes it from the list, re-inserts it at the front and removes duplicates, then publishes <code>CNA_RENDERER_IDENTITIES</code> and prints <code>CNA: renderer set -- &lt;list&gt; (default: &lt;X&gt;)</code>. A <code>CNA_RENDERER_&lt;X&gt;=ON</code> compatibility switch selects exactly one identity and overrides the cache value for that configure; two switches ON is a configure error.</p>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererIdentities.cmake"><code>cmake/RendererIdentities.cmake</code></a> holds <code>CNA_RENDERER_PUBLIC_IDENTITIES</code> and a table of retired identities with their permanently reserved C ABI values. <code>cna_validate_renderer_identity_selection()</code> checks every route that can name a renderer &mdash; the singular option, each member of the plural list, and every retired <code>CNA_RENDERER_&lt;X&gt;</code> switch &mdash; so a stale switch left in a CMake cache is refused by name instead of sitting unread while the host default is quietly configured. Public names are matched case-sensitively (<code>IN_LIST</code>); retired names are recognised in any case and get their own message naming the reserved value. No retired identity is an alias for a current one.</p>
+<p>The per-identity work is the macro <code>cna_configure_renderer_identity()</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>cmake/RendererSelection.cmake</code></a>. It is a macro, not a function, so its <code>set()</code> and <code>add_subdirectory()</code> calls act in the caller's scope; the loop at the end of the file sets <code>CNA_GRAPHICS_RENDERER</code> to each identity in turn and appends <code>RENDERER_TARGET</code>, <code>RENDERER_DIR</code> and the identity's defines to <code>CNA_RENDERER_TARGETS</code>, <code>CNA_RENDERER_DIRS</code> and <code>CNA_RENDERER_TARGET_DEFINES</code>. The host gates live inside the macro, so they run per identity: <code>CNA_PLATFORM=TERMINAL</code> admits only <code>SOFTWARE</code>, <code>PORTABLEGL</code>, <code>HEADLESS</code> and <code>STUB</code>; the Direct3D, Direct2D and GDI identities require a Windows target; <code>METAL</code> requires macOS; the browser identities require Emscripten; the three native GL-profile identities refuse Emscripten.</p>
+<p>The five GL-profile identities (<code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL1</code>, <code>WEBGL2</code>) all map to <code>modules/renderers/easygl</code> and the single target <code>cna_renderer_easygl</code>; each identity adds <code>CNA_RENDERER_EASYGL</code> plus <code>CNA_GL_PROFILE_&lt;IDENTITY&gt;</code>, and the <code>../easy-gl</code> sibling is added as a subdirectory only once. <code>OPENGL4</code> is a different family with its own directory and target (see <a href="backends.html#opengl4-and-easygl">OPENGL4 and EasyGL</a>).</p>
+<p>Only the <em>default</em> identity's defines are applied project-wide with <code>add_compile_definitions()</code>; every other family's identity macro is private to its own target (applied in <code>cna_renderer_common_setup()</code>). This keeps <code>getCurrentGraphicsRendererType()</code> and the many compile-time <code>#ifdef</code> sites in tests and examples describing the default in a multi-renderer build. After the loop the file restores <code>CNA_GRAPHICS_RENDERER</code>, <code>RENDERER_TARGET</code>, <code>RENDERER_DIR</code> and <code>CNA_RENDERER_DEFINE</code> to the default, because <code>CNA_RENDERER_DEFINE</code> travels on <code>cna_build_config</code>'s interface to every module.</p>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/CMakeLists.txt"><code>modules/renderers/CMakeLists.txt</code></a> then enters the families. <code>cna_add_renderer()</code> derives the target name from the family directory (<code>modules/renderers/&lt;family&gt;</code> builds <code>cna_renderer_&lt;family&gt;</code>, with <code>-</code> replaced by <code>_</code>), and <code>cna_renderer_common_setup()</code> adds the common interface, the sharp-runtime closure, the family's include root, the family's private identity defines and real reverse edges <code>PRIVATE cna_graphics_core cna_core cna_math</code>. In a multi-renderer build a family is entered once even when several identities name it. Two directories sit outside that loop: <code>modules/renderers/metal</code> is entered unconditionally, ahead of it, so that its host-portable policy suites compile into the test corpus on every renderer (the loop skips it). The shared helpers are entered before the loop too: <code>common/mojoshader</code> whenever a <code>cna_mojoshader</code> target was configured (FNA3D, or a family's compiled-effects option), and <code>common/d3d</code> only when the <em>default</em> identity is <code>DIRECTX11</code> or <code>DIRECTX12</code> &mdash; the test reads <code>CNA_GRAPHICS_RENDERER</code>, which still names the default at that point. By code reading, a Windows multi-renderer build that lists one of those two as a non-default member would therefore reach a family file that links <code>cna_renderer_d3dcommon</code> without that directory having been entered; no such configuration was run for this page. The graphics core closes the cycle from the other side: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/CMakeLists.txt"><code>modules/graphics/CMakeLists.txt</code></a> compiles <code>${CNA_RENDERER_REGISTRY_SOURCE}</code> into <code>cna_graphics_core</code>, links <code>PRIVATE ${CNA_RENDERER_TARGETS}</code> and sets <code>LINK_INTERFACE_MULTIPLICITY 3</code> because the Direct3D families make the static-archive cycle one level deeper. This is why adding a renderer is build-graph work, not just a factory class. With <code>CNA_SHARED_LIBRARY</code> (the default on native ELF GNU/Clang with CMake 3.27 or newer) <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a> additionally names every compiled-in renderer target in the <code>libcna.so</code> closure.</p>
+
+<h3 id="configure-variables">Variables a family CMakeLists.txt can rely on</h3>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Variable</th><th scope="col">Set by</th><th scope="col">Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>CNA_GRAPHICS_RENDERER</code></td><td>cache, then re-pointed per family</td><td>The default identity; while a family directory is being entered it names the identity being entered, so family files can guard on <code>STREQUAL "&lt;IDENTITY&gt;"</code>.</td></tr>
+<tr><td><code>CNA_RENDERER_IDENTITIES</code></td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererDefaultSelection.cmake"><code>RendererDefaultSelection.cmake</code></a></td><td>Every compiled-in identity, default first.</td></tr>
+<tr><td><code>CNA_RENDERER_TARGETS</code> / <code>CNA_RENDERER_DIRS</code></td><td>the identity loop</td><td>One entry per identity (EasyGL repeats); linked by the graphics core.</td></tr>
+<tr><td><code>CNA_RENDERER_TARGET_DEFINE</code></td><td>re-pointed per family</td><td>Comma-joined identity defines applied <code>PRIVATE</code> to that family's target.</td></tr>
+<tr><td><code>RENDERER_TARGET</code></td><td>published by <code>cna_add_renderer()</code></td><td>Inside a family file: that family's own target. At top level: the default's. Never read it before the family has created its target; <code>RendererTargetDiscipline</code> checks this.</td></tr>
+<tr><td><code>CNA_MULTI_RENDERER</code></td><td>compile definition</td><td>Defined when more than one identity is compiled in.</td></tr>
+</tbody></table></div>
+<p>One change landed in this area in the last commits before the snapshot: the <code>OPENGL4</code> arm of the identity macro now declares <code>CNA_OPENGL4_COMPILED_EFFECTS</code> (default OFF), which includes <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/ThirdPartyFNA3D.cmake"><code>cmake/ThirdPartyFNA3D.cmake</code></a> and calls <code>cna_configure_mojoshader()</code> exactly as the EasyGL option does. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererIdentities.cmake"><code>RendererIdentities.cmake</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererDefaultSelection.cmake"><code>RendererDefaultSelection.cmake</code></a> did not change.</p>
+
+<h2 id="registry">Why the registry is generated</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererRegistry.cmake"><code>cmake/RendererRegistry.cmake</code></a> owns the identity-to-family map (<code>_cna_renderer_identity_map</code>): one row per public identity, <code>&lt;identity&gt; &lt;Namespace&gt;</code> or <code>&lt;identity&gt; &lt;Namespace&gt;|&lt;accessor&gt;</code>, where the accessor defaults to <code>GetDescriptor</code>. The five GL identities map to <code>EasyGL|GetDescriptorOpenGLES2</code> &hellip; <code>EasyGL|GetDescriptorWebGL2</code>. <code>cna_generate_renderer_registry()</code> walks the compiled-in identities, refuses two identities that resolve to the same <code>Namespace::accessor</code>, declares each accessor and fills <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/templates/CnaRendererRegistry.generated.cpp.in"><code>cmake/templates/CnaRendererRegistry.generated.cpp.in</code></a> into <code>&lt;build&gt;/generated/CnaRendererRegistry.generated.cpp</code>. The configure log line is <code>CNA: renderer registry -- &lt;n&gt; family/families: &lt;namespaces&gt;</code>. An identity with no map row is a <code>FATAL_ERROR</code> that names the three places a new identity must be registered.</p>
+<p>The generated translation unit implements <code>GraphicsRendererRegistry::All()</code>, <code>Count()</code>, <code>Find(GraphicsRendererType)</code>, <code>Find(std::string_view)</code> (case-insensitive) and <code>Default()</code> (the first entry). The table itself is a function-local static <code>std::array</code>, because its entries are produced by each family's own accessor and a namespace-scope constant would reintroduce static-initialisation ordering.</p>
+<p>Why not self-registration: a static archive's linker discards an object file nothing references, so a renderer translation unit that registered itself from a static initializer would silently vanish unless the whole archive were force-linked, and that would have to coexist with the declared <code>cna_graphics_core</code>&harr;renderer archive cycles. The explicit table directly references every selected family's descriptor, avoids that trap, and makes the compiled-in set inspectable in the build tree. The one static initializer the file does use &mdash; publishing the available set and default into the selection layer through <code>GraphicsRendererSelectionAccessEXT::PublishAvailable()</code> before <code>main()</code> &mdash; is safe for a different reason: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a> references <code>GraphicsRendererRegistry::Find()</code> and <code>Default()</code> directly, so the generated object is retained whenever graphics code is linked. Publishing eagerly is what lets <code>GetAvailable()</code> and <code>SetPreferred()</code> give real answers before any device exists.</p>
+
+<h3 id="descriptor-gate">The descriptor gate</h3>
+<p>A single-renderer build compiles exactly one family, so every other family's descriptor translation unit would otherwise never meet a compiler. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererDescriptorGate.cmake"><code>cmake/RendererDescriptorGate.cmake</code></a> (option <code>CNA_BUILD_RENDERER_DESCRIPTOR_GATE</code>, default ON) takes its inventory from <code>cna_all_renderer_identities()</code> &mdash; the same registry map &mdash; checks that some <code>modules/renderers/*/src/*RendererDescriptor.cpp</code> declares <code>namespace CNA::Internal::Renderers::&lt;Namespace&gt;</code> for every registered identity (a missing one is a <code>FATAL_ERROR</code>), and compiles the descriptors of families this configuration did not enter into an OBJECT library that nothing links. <code>directx9</code>, <code>directx11</code> and <code>directx12</code> are exempt because their descriptors query real Direct3D devices through Windows SDK headers; <code>vulkan</code> is deferred only when no Vulkan headers are found.</p>
+
+<h2 id="runtime">Runtime policy and latch</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/src/GraphicsRendererSelection.cpp"><code>modules/core/src/GraphicsRendererSelection.cpp</code></a> holds the selection policy and nothing graphical. Its function-local <code>SelectionState</code> records: the available identities and default (published by the registry), an explicit preference, an environment preference and whether the environment was consulted, whether fallback is enabled and the chain, the active identity, the fallback history, the cached attempt order and an atomic <code>latched</code> flag (atomic so that a program that violates the &ldquo;select before any graphics thread starts&rdquo; rule is detected rather than racing).</p>
+<ul>
+<li><strong>Precedence.</strong> <code>GetSelected()</code> returns the explicit <code>SetPreferred()</code> value if one exists; otherwise it consults the environment once (<code>CNA_GRAPHICS_RENDERER</code>; under Emscripten, when the variable is unset, <code>Module.cnaPreferredRenderer</code> read through <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/src/GraphicsRendererSelectionEmscripten.cpp"><code>GraphicsRendererSelectionEmscripten.cpp</code></a>); otherwise the compiled default. <code>GetSelected()</code> never latches.</li>
+<li><strong>Refusal.</strong> A name that parses to no identity throws (<code>ArgumentException</code> from <code>SetPreferred(std::string_view)</code>, <code>InvalidOperationException</code> from the environment). An identity that is not compiled in throws <code>InvalidOperationException</code> naming the available set &mdash; unless fallback is enabled, in which case the choice stands and the resolution loop records the skip. The environment is read once: the consulted flag is set before parsing, so by code reading a bad value throws on the first query only.</li>
+<li><strong>Fallback.</strong> <code>SetFallbackChain()</code> stores the chain and enables fallback; <code>EnableAutomaticFallback(true)</code> derives a chain from the compiled-in set, sorted by declared maturity with the Software category ten places later and <code>STUB</code> last; <code>EnableAutomaticFallback(false)</code> clears it. The attempt order is always the selected identity first, then chain entries not already present.</li>
+<li><strong>Latch.</strong> <code>SetPreferred</code>, <code>SetFallbackChain</code> and <code>EnableAutomaticFallback</code> throw once latched, naming the active renderer. Nothing un-latches except the test hook <code>ResetForTestingEXT()</code>, so the selection stays closed even after the device that latched it is gone.</li>
+</ul>
+
+<h3 id="resolve">GraphicsDevice::resolveRenderer, candidate by candidate</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice::resolveRenderer()</code></a> is where the policy meets the compiled-in set. It first calls <code>RequiredRendererForNewDevice()</code>: if <code>GraphicsAdapter.UseNullDevice</code> or <code>UseReferenceDevice</code> is set, the required renderer (<code>HEADLESS</code> or <code>SOFTWARE</code>) must be compiled in and, when the selection is still open, becomes the preference; otherwise <code>NoSuitableGraphicsDeviceException</code>. It then iterates <code>GetAttemptOrder()</code>:</p>
+<ol>
+<li>No descriptor in the registry &rarr; record <code>NotCompiledIn</code>, continue.</li>
+<li>A device-type flag requires another renderer &rarr; record <code>ProbeUnavailable</code>, continue (a chain may not satisfy the flag with a different device).</li>
+<li>An existing window of an incompatible <code>RendererWindowKind</code> &rarr; if the device owns it, <code>discardOwnedWindow()</code>; if the caller supplied it through <code>DeviceWindowHandle</code>, record <code>WindowKindConflict</code> and continue.</li>
+<li>Named in <code>CNA_DEBUG_UNAVAILABLE_RENDERERS</code>, or the descriptor's <code>isAvailable()</code> returns false &rarr; record <code>ProbeUnavailable</code>, continue. Every family's probe is <code>AlwaysAvailable</code> at this snapshot.</li>
+<li>Apply <code>PresentationParameters.HeadlessEXT</code> per candidate (the caller's value, or forced by <code>CNA_FORCE_HEADLESS_DEVICE_EXT</code>), pin <code>activeDescriptor_</code>, move the single video-subsystem reference to what this candidate needs, create or adopt a window when none exists, apply presentation parameters to it, honour <code>CNA_DEBUG_FAIL_RENDERER_INIT</code>, then <code>createRenderer()</code>.</li>
+<li>If that throws: clear <code>activeDescriptor_</code> and the renderer; with a one-entry order rethrow the original exception unchanged; otherwise record <code>InitializationFailed</code>, drop an <em>owned</em> window (a caller-supplied window is kept so the next candidate either accepts it or is refused with <code>WindowKindConflict</code>) and continue.</li>
+<li>On success: <code>GraphicsRendererSelectionAccessEXT::Latch(candidate-&gt;type)</code> and return.</li>
+</ol>
+<p>An exhausted order throws <code>InvalidOperationException</code> &ldquo;CNA: no graphics renderer could be created.&rdquo; with the first failure as the primary cause and one line per history record. Note that the skip records in steps 1&ndash;4 are written whether or not fallback was enabled; only an initialization failure distinguishes the one-entry case. Every record is also logged at warning level by <code>RecordFallback()</code>.</p>
+
+<h3 id="latch">When exactly the latch closes</h3>
+<p>The latch closes when a renderer object has been created, at the end of <code>resolveRenderer()</code> &mdash; not when construction begins (the header comment in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/GraphicsRendererSelection.hpp"><code>GraphicsRendererSelection.hpp</code></a> still says the latter). A failed resolution therefore leaves the selection open and a game can catch the error and retry with another configuration, which <code>GraphicsRendererFallbackTest.RecoveringAfterAFailedResolutionActuallyWorks</code> exercises. By code reading, the latch precedes the constructor's remaining steps (<code>UpdateViewportFromWindow()</code> and the default blend, depth-stencil and rasterizer pushes); if one of those throws, the constructor tears the renderer down but the selection stays latched to it. No test found covers that edge. A renderer rebuilt later on a live device (<code>RecreateRendererForMultiSampleCount()</code>) reuses the pinned <code>activeDescriptor_</code> and never reruns resolution, so an MSAA change cannot silently switch APIs mid-game.</p>
+
+<h2 id="descriptor">What the descriptor knows before a renderer exists</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Renderers/Common/GraphicsRendererDescriptor.hpp"><code>modules/graphics/include/CNA/Internal/Renderers/Common/GraphicsRendererDescriptor.hpp</code></a> is the pre-construction contract: everything <code>GraphicsDevice</code> needs before an <code>IGraphicsRenderer</code> exists, as data and function pointers instead of <code>#ifdef</code> chains. Every function pointer except the adapter queries must be non-null; families with nothing to probe use <code>AlwaysAvailable</code> from <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Renderers/Common/GraphicsRendererDescriptorHelpers.hpp"><code>GraphicsRendererDescriptorHelpers.hpp</code></a>.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Field</th><th scope="col">Consumed by</th><th scope="col">Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>type</code>, <code>name</code></td><td>registry lookup, logging</td><td>The public identity; <code>name</code> equals <code>getGraphicsRendererName(type)</code>.</td></tr>
+<tr><td><code>windowKind</code></td><td><code>resolveRenderer</code>, <code>createOrAttachWindow</code></td><td><code>None</code>, <code>Plain</code>, <code>OpenGL</code>, <code>Vulkan</code> or <code>Metal</code>; <code>AreWindowKindsCompatible()</code> decides whether a fallback may reuse a window. Mapped to the platform's <code>WindowRenderIntent</code>.</td></tr>
+<tr><td><code>needsWindow</code>, <code>needsVideoSubsystem</code></td><td>window and video-reference decisions</td><td>False for the four window-free families (Headless, Software, Stub, PortableGL); a registry test asserts that needing a window implies needing video.</td></tr>
+<tr><td><code>wantsHighDpi</code></td><td><code>WindowDescription::highDpi</code></td><td>Data that replaced a former window-flag hook; only Metal sets it.</td></tr>
+<tr><td><code>glFramebuffer</code></td><td><code>WindowDescription::openGlFramebuffer</code></td><td>Depth/stencil/double-buffer bits fixed before the window exists (a GLX visual is chosen at window creation). OpenGL4 and FNA3D request 24/8/double-buffered; EasyGL leaves it zeroed because it picks its config at context creation.</td></tr>
+<tr><td><code>needsSurfacePresenter</code>, <code>needsGlContext</code>, <code>needsVulkanSurface</code></td><td><code>createRenderer</code></td><td>Which narrow platform service the family receives. Only Software sets the presenter flag (Terminal display); EasyGL and OpenGL4 get the GL context service; Vulkan the Vulkan surface service.</td></tr>
+<tr><td><code>isAvailable</code>, <code>create</code></td><td>the resolution loop</td><td>Cheap side-effect-free probe; the family's own <code>CreateGraphicsRenderer</code> (or, for EasyGL, a lambda calling <code>CreateGraphicsRendererForProfile(args, profile)</code>).</td></tr>
+<tr><td><code>adapterQueries</code></td><td><code>GraphicsAdapter</code></td><td>Nullable hooks for profile support, render-target and back-buffer formats, back-buffer depth selection and MSAA clamping, answered before any device exists. Implemented at this snapshot by DirectX9 (profile, formats, MSAA), DirectX11/12 (formats, depth selection, MSAA), Vulkan (MSAA clamp only) and the four EasyGL profiles other than <code>OPENGL33</code> (render-target format: <code>Color</code> only).</td></tr>
+</tbody></table></div>
+<p>The descriptor transports neutral data only: it includes no windowing-library header and exposes no SDL flag bits to the graphics core. Declared maturity and category are <em>not</em> descriptor fields; they are <code>constexpr</code> lookups over <code>GraphicsRendererType</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/GraphicsBackendMaturity.hpp"><code>GraphicsBackendMaturity.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/GraphicsBackendCategory.hpp"><code>GraphicsBackendCategory.hpp</code></a>. The per-family values are tabulated in <a href="backends.html#map">the family map</a>.</p>
+
+<h2 id="worked">Worked change: add a renderer identity</h2>
+<p>A sequence that follows the source; it was not executed for this page.</p>
+<ol>
+<li>Define the public identity and its C ABI value together: append it to <code>CNA_RENDERER_PUBLIC_IDENTITIES</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererIdentities.cmake"><code>cmake/RendererIdentities.cmake</code></a>, the enum, name and parser in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/GraphicsRendererType.hpp"><code>modules/core/include/CNA/GraphicsRendererType.hpp</code></a>, the maturity and category switches, <code>CNA_GRAPHICS_RENDERER_&lt;X&gt;</code> (the next free value is 52; retired values stay reserved) and <code>CNA_GRAPHICS_RENDERER_MAXIMUM</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/graphics.h"><code>modules/c-api/include/CNA/C/graphics.h</code></a>, the identity table in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiCoreExt.cpp"><code>modules/c-api/src/CnaCApiCoreExt.cpp</code></a>, and the canonical table in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/check_renderer_identities.py"><code>scripts/check_renderer_identities.py</code></a>, which also checks CNA's own documents that state a count.</li>
+<li>Add the <code>CNA_RENDERER_&lt;X&gt;</code> option and an arm in <code>cna_configure_renderer_identity()</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>cmake/RendererSelection.cmake</code></a>): <code>RENDERER_DIR</code>, <code>RENDERER_TARGET</code> matching the directory-derived name, identity defines appended to <code>_cna_identity_defines</code> (never <code>add_compile_definitions()</code> in the arm), host gates and dependencies. Add a rule to <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererCombinations.cmake"><code>cmake/RendererCombinations.cmake</code></a> only for a demonstrated conflict, and keep <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/check_renderer_combinations.py"><code>scripts/check_renderer_combinations.py</code></a> in step.</li>
+<li>Add the row to <code>_cna_renderer_identity_map</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererRegistry.cmake"><code>cmake/RendererRegistry.cmake</code></a>. If several identities share a family, give each its own accessor and let <code>modules/renderers/CMakeLists.txt</code> enter the family once.</li>
+<li>Create <code>modules/renderers/&lt;family&gt;/CMakeLists.txt</code> calling <code>cna_add_renderer()</code>, and a <code>src/&lt;Family&gt;RendererDescriptor.cpp</code> whose namespace line is exactly <code>namespace CNA::Internal::Renderers::&lt;Namespace&gt;</code> (the descriptor gate matches that line), declaring the family's own <code>CreateGraphicsRenderer</code>.</li>
+<li>Make the descriptor truthful: window kind, video and service needs, GL framebuffer request, availability and adapter hooks. Verify that a constructor failure releases everything it created &mdash; <code>resolveRenderer()</code> will try the next candidate on the same device.</li>
+<li>Configure a single-renderer build first, then a multi-renderer set with a different default; inspect <code>generated/CnaRendererRegistry.generated.cpp</code> and the final link line.</li>
+<li>Run <code>RendererIdentityRegistry</code>, <code>RuntimeRendererDiscipline</code>, <code>RendererCombinationRegistry</code>, <code>RendererTargetDiscipline</code>, the <code>CnaRendererDefaultSelection_*</code> cases, the registry, selection and fallback unit tests, then the family's focused tests and the host CI that owns it.</li>
+</ol>
+
+<h2 id="tests">What tests establish</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Test</th><th scope="col">What it pins</th></tr></thead>
+<tbody>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/CNA/Internal/Renderers/Common/GraphicsRendererRegistryTests.cpp"><code>GraphicsRendererRegistryTests.cpp</code></a></td><td>Non-empty table and <code>Count()</code>, default first, one descriptor per identity, each descriptor names its own identity and carries the required hooks, window implies video, lookup by identity and case-insensitive name, null for absent identities, selection layer sees exactly the registry.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/CNA/GraphicsRendererSelectionTests.cpp"><code>GraphicsRendererSelectionTests.cpp</code></a></td><td>Available set equals the registry, default is the build's renderer, <code>GetSelected()</code> does not latch, explicit preference accepted (case-insensitive names), unknown and not-compiled-in refusal with the available list, latch on device construction, post-latch refusal, <code>GetActive()</code> before creation throws, reconstruction and a second device keep the selection, fallback off by default, chain and automatic-fallback behaviour, attempt order.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/CNA/GraphicsRendererFallbackTests.cpp"><code>GraphicsRendererFallbackTests.cpp</code></a></td><td>Single attempt without fallback, empty history on first-time success, real substitution with a recorded rejection, substitution still latches, exhausted chain names every attempt, failed resolution does not latch, recovery after failure works, reconstruction keeps the substituted renderer, chain order without duplicates.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/ModuleProbes.cmake"><code>ModuleProbes.cmake</code></a> script tests</td><td><code>RendererIdentityRegistry</code>, <code>RuntimeRendererDiscipline</code>, <code>RendererCombinationRegistry</code>, <code>RendererTargetDiscipline</code> (Python, registered only when an interpreter is found); <code>CnaRendererDefaultSelection_{SingleRenderer,DefaultInsideTheSet,DefaultIsListedFirst,DefaultOutsideTheSet}</code> run <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/RendererDefaultCase.cmake"><code>RendererDefaultCase.cmake</code></a> in <code>cmake -P</code> mode; <code>CnaRendererRetired_*</code> cases refuse every retired selector on every route.</td></tr>
+</tbody></table></div>
+<p>The unit tests exercise the explicit-preference half of the precedence. None of the three files sets <code>CNA_GRAPHICS_RENDERER</code> in the process environment; that route is used, rather than asserted, by registrations such as <code>X11_House3D_SmokeTest_&lt;RENDERER&gt;</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/CMakeLists.txt"><code>modules/graphics/examples/CMakeLists.txt</code></a>, which select each compiled-in renderer through the test environment on the X11 platform. None of these tests proves a new backend's draw, synchronisation or presentation behaviour; that needs the family's focused and conformance tests on a host that has the API. They are listed here as present in the source, not as executed.</p>
+
+<h2 id="reading">Source reading order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererIdentities.cmake"><code>RendererIdentities.cmake</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererIdentityDefault.cmake"><code>RendererIdentityDefault.cmake</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererDefaultSelection.cmake"><code>RendererDefaultSelection.cmake</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>RendererSelection.cmake</code></a>: validation, the set and its default, then the identity-to-family macro and its host gates.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererCombinations.cmake"><code>RendererCombinations.cmake</code></a>: the three demonstrated conflicts and how their reasons are worded.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/CMakeLists.txt"><code>modules/renderers/CMakeLists.txt</code></a>: target naming, common setup and reverse edges, one entry per family, and where the descriptor gate is called.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererRegistry.cmake"><code>RendererRegistry.cmake</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/templates/CnaRendererRegistry.generated.cpp.in"><code>the registry template</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererDescriptorGate.cmake"><code>RendererDescriptorGate.cmake</code></a>: how CMake turns the compiled set into runtime evidence and keeps unselected descriptors compiling.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Renderers/Common/GraphicsRendererDescriptor.hpp"><code>GraphicsRendererDescriptor.hpp</code></a>, then one small descriptor such as <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/stub/src/StubRendererDescriptor.cpp"><code>StubRendererDescriptor.cpp</code></a> and the five-identity <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/easygl/src/EasyGLRendererDescriptor.cpp"><code>EasyGLRendererDescriptor.cpp</code></a>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/src/GraphicsRendererSelection.cpp"><code>GraphicsRendererSelection.cpp</code></a>: precedence, refusal, automatic ordering and the one-way latch.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a>: <code>RequiredRendererForNewDevice</code>, <code>resolveRenderer</code>, <code>createOrAttachWindow</code>, <code>createRenderer</code>. Continue with <a href="device.html">GraphicsDevice internals</a>.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/runtime-renderer-selection.html">Runtime renderer selection</a> &middot; <a href="../../../docs/rendering-backends.html#runtime-selection">Renderers: multi-renderer builds</a> &middot; <a href="../../../docs/building.html#renderer-selection">Building: renderer selection</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../../architecture.html#renderer-registry">Renderer registry, descriptors and selection</a> &middot; <a href="../../architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="device.html">GraphicsDevice internals</a> &middot; <a href="backends.html">Graphics backends (family map)</a> &middot; <a href="../modules/core.html">Core module internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/fix-a-renderer-bug.html">Fix a renderer bug</a> &middot; <a href="../../handbook/change-build-configuration.html">Change build configuration</a> &middot; <a href="../../build/architecture.html">CMake architecture</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/selection-axes.html#renderers">Selection axes: renderer identities</a> &middot; <a href="../../reference/cmake-options.html">CMake option index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-next" href="device.html" rel="next"><span>Next</span>GraphicsDevice internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

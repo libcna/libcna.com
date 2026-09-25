@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Headless renderer internals - CNA Development</title>
+  <meta name="description" content="How the HEADLESS renderer validates, counts and traces graphics calls without pixels: modes, resource registry, frame statistics, deliberate readback refusals, and what a passing HEADLESS test does and does not prove.">
+  <meta name="keywords" content="headless renderer, cna_headless_mode, headlessvalidationexception, assertnoleaks, resource registry, trace log, comparetracelogs, usenulldevice, readback refusal, headlessext, getlastframestatistics">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/graphics/headless.html">
+  <meta property="og:title" content="Headless renderer internals - CNA Development">
+  <meta property="og:description" content="How the HEADLESS renderer validates, counts and traces graphics calls without pixels: modes, resource registry, frame statistics, deliberate readback refusals, and what a passing HEADLESS test does and does not prove.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/graphics/headless.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Headless renderer internals","description":"How the HEADLESS renderer validates, counts and traces graphics calls without pixels: modes, resource registry, frame statistics, deliberate readback refusals, and what a passing HEADLESS test does and does not prove.","url":"https://libcna.com/development/internals/graphics/headless.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="selection.html" class="docs-nav-link is-group-active">Graphics internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="device.html" class="docs-nav-link">GraphicsDevice &amp; contract</a></li>
+        <li><a href="draw-call.html" class="docs-nav-link">Indexed draw trace</a></li>
+        <li><a href="resources.html" class="docs-nav-link">Textures &amp; render targets</a></li>
+        <li><a href="backends.html" class="docs-nav-link">Renderer family map</a></li>
+        <li><a href="easygl.html" class="docs-nav-link">EasyGL</a></li>
+        <li><a href="vulkan.html" class="docs-nav-link">Vulkan</a></li>
+        <li><a href="opengl4.html" class="docs-nav-link">OpenGL4</a></li>
+        <li><a href="sdl-gpu.html" class="docs-nav-link">SDL_gpu</a></li>
+        <li><a href="software.html" class="docs-nav-link">Software</a></li>
+        <li><a href="headless.html" class="docs-nav-link active" aria-current="page">Headless</a></li>
+        <li><a href="stub.html" class="docs-nav-link">Stub</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="selection.html">Graphics</a></li>
+        <li aria-current="page">Headless</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Headless renderer internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#axes">Three different meanings of &ldquo;headless&rdquo;</a></li>
+          <li><a href="#modes">Strictness, diagnostics and their limits</a></li>
+          <li><a href="#resources">Resource and draw path</a></li>
+          <li><a href="#testing">What a passing test proves</a></li>
+          <li><a href="#change">Human change procedure and source route</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Graphics internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Read from source, test sources and CMake registrations at the TARGET snapshot; no test was executed. Not every shared fixture branch and no concurrent use of the modes were audited; HEADLESS is a no-pixel oracle by design.</p></div>
+
+<p class="lede">The <code>HEADLESS</code> graphics identity runs CNA's real public <code>Game</code> and <code>GraphicsDevice</code> paths without a native window or GPU. Its private renderer in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless"><code>modules/renderers/headless</code></a> checks arguments and state, records resource lifetimes and calls, and deliberately produces no pixels. A passing HEADLESS test can establish control flow, lifetime bookkeeping and rejection behaviour; it cannot establish shader output, blending, rasterisation, swapchain or native-driver behaviour. This page is for the maintainer who uses it as a state and lifetime oracle, or who has to change it without turning it into an image oracle it is not.</p>
+
+<h2 id="axes">Three different meanings of &ldquo;headless&rdquo;</h2>
+<p>The word names three separate mechanisms, and the platform-versus-renderer distinction is the one that is easiest to blur, because <code>HEADLESS</code> is a value of <em>both</em> <code>CNA_PLATFORM</code> and <code>CNA_GRAPHICS_RENDERER</code>:</p>
+<ul>
+<li><strong>The HEADLESS platform</strong> (<code>CNA_PLATFORM=HEADLESS</code>) implements platform services with an in-memory window and event model; see <a href="../platforms/headless.html">headless platform internals</a>, which carries the matching three-way table. It says nothing about drawing.</li>
+<li><strong>The HEADLESS renderer</strong> (<code>CNA_GRAPHICS_RENDERER=HEADLESS</code>, this page) is a separate <code>IGraphicsRenderer</code> implementation. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/src/HeadlessRendererDescriptor.cpp"><code>HeadlessRendererDescriptor.cpp</code></a> declares <code>RendererWindowKind::None</code>, <code>needsWindow=false</code>, <code>needsVideoSubsystem=false</code> and <code>AlwaysAvailable</code>, and leaves <code>needsSurfacePresenter</code>, <code>needsGlContext</code> and <code>needsVulkanSurface</code> at their <code>false</code> defaults, so <code>GraphicsDevice::createOrAttachWindow</code> resets the platform window and returns before it asks the platform for anything: not even a TERMINAL platform with surface presentation gives this renderer a presenter. The factory then creates <code>HeadlessRenderer</code> from the virtual dimensions. <code>GraphicsAdapter::UseNullDevice</code> requires exactly this renderer (<code>GraphicsAdapter::GetRequiredRendererEXT</code> maps the null device type to Headless and the reference type to Software), and <code>GraphicsDevice</code> refuses the device when the renderer is not compiled in or the selection is already latched to another (<a href="../../../docs/runtime-renderer-selection.html#device-flags">device flags</a>).</li>
+<li><strong>A windowless device mode</strong> of other renderers: <code>PresentationParameters::HeadlessEXT</code>, or the <code>CNA_FORCE_HEADLESS_DEVICE_EXT</code> renderer list, asks a renderer that normally wants a window (SDL_GPU, Direct3D 12) to render into its own off-screen back buffer. That mode renders real pixels and is unrelated to this renderer; a renderer that cannot run without a swap chain refuses by name from its own constructor. See <a href="sdl-gpu.html#construction">SDL_gpu setup</a>.</li>
+</ul>
+<p>Platform and renderer are independent build axes: selecting one does not select the other, and nothing at configure time pairs them: a context-backed renderer handed the HEADLESS platform is refused at run time, as the platform page describes. <a href="stub.html">The STUB renderer</a> has the same descriptor properties as HEADLESS but intentionally almost no validation or bookkeeping. Follow <a href="selection.html#descriptor">the descriptor fields</a> and <a href="device.html#construct">GraphicsDevice construction</a> before assuming an enum alone explains the running implementation.</p>
+<pre class="diagram">Game / GraphicsDevice public checks and state
+  -> IGraphicsRenderer descriptor: no native window / video requirement
+  -> HeadlessRenderer: validate + record, never rasterise
+       -> shared HeadlessSharedState (shared_ptr)
+          -> mode, resource registry, statistics, optional trace log, debug-label stack
+       -> per-resource Headless*Renderer: shadow data or state only
+  -> no GPU, swapchain, native surface or presenter</pre>
+<p>Two build facts follow from the design. The target is a plain <code>cna_add_renderer()</code> with no native SDK (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/CMakeLists.txt"><code>the family CMakeLists.txt</code></a>). And <code>HEADLESS</code> is the default renderer of the <code>multi-renderer</code> configure preset in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakePresets.json"><code>CMakePresets.json</code></a> (<code>HEADLESS;SOFTWARE;STUB</code>, chosen at run time through <code>CNA::GraphicsRendererSelection</code>), which is the preset in which HEADLESS shares one binary with SOFTWARE and STUB and the private tests below are registered next to them.</p>
+
+<h2 id="modes">Strictness, diagnostics and their limits</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/include/CNA/Internal/Renderers/Headless/HeadlessRenderer.hpp"><code>HeadlessRenderer.hpp</code></a> defines the dial. Each <code>HeadlessRenderer</code> constructs one <code>HeadlessSharedState</code> and reads <code>CNA_HEADLESS_MODE</code> through <code>ParseHeadlessModeFromEnvironment</code>: <code>Fast</code>, <code>Validation</code> or <code>Trace</code>, case-insensitive; unset or unknown means <code>Validation</code>. <code>SetMode</code> changes the shared mode for every subsequent call (the enum comment says &ldquo;before <code>Game::Run()</code>&rdquo;, the method comment &ldquo;before or during a run&rdquo;; the code simply stores the value).</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Mode</th><th scope="col">Argument checks (<code>Require</code>)</th><th scope="col">Extra recording</th></tr></thead>
+<tbody>
+<tr><td><code>Fast</code></td><td>skipped</td><td>counters only</td></tr>
+<tr><td><code>Validation</code> (default)</td><td>throw <code>HeadlessValidationException</code> naming the violated rule</td><td>counters</td></tr>
+<tr><td><code>Trace</code></td><td>as Validation</td><td>structured call log (<code>HeadlessTraceEntry</code>: call index, frame index, method, argument summary) and creation-site labels from <code>PushDebugLabel</code>/<code>PopDebugLabel</code></td></tr>
+</tbody></table></div>
+<p>The dial gates only the <code>Require</code> helper. Some refusals are plain throws and hold in every mode: mixing a cube face into a multi-target <code>SetRenderTargets</code> throws <code>std::runtime_error</code>, and <code>ReadBackbuffer</code> always throws <code>System::NotSupportedException</code>. No mode changes the fundamental absence of rasterisation, and the public neutral layer still performs its own checks regardless of this private dial. What the checks cover in the validating modes:</p>
+<ul>
+<li>Buffers: a vertex or index count above the declared capacity, a non-positive stride, and (for index buffers) uploading 16-bit data into a 32-bit buffer or the reverse.</li>
+<li>State: a negative scissor or viewport size or origin, a rectangle that exceeds the size of the currently bound target (the bound render target's real size, otherwise the virtual dimensions), <code>minDepth</code> above <code>maxDepth</code>, and a sampler slot outside 0 to 15.</li>
+<li>Draws: <code>primitiveCount</code> above zero and no more vertices or indices than the bound buffers hold; for the extended draw calls also <code>TextureEnabled</code> without a first texture (except for stock alpha-test, skinned and PBR draws, which may legitimately carry none), <code>DualTexture</code> without a second texture, <code>EnvMapping</code> without an environment map, and a skinned draw with no bones; an instanced draw needs <code>instanceCount</code> above zero.</li>
+<li>Other objects: a <code>SpriteBatch</code> <code>Begin</code> without a matching <code>End</code> (and the reverse), a cube face outside 0 to 5, and an effect compile with both source strings empty. <code>SpriteBatch::Draw</code> itself does not check that the batch was begun.</li>
+</ul>
+<h3 id="registry">The resource registry and statistics</h3>
+<p><code>HeadlessResourceRegistry</code> gives each resource renderer a monotonic debug id: constructors register, destructors unregister, and <code>AliveResources()</code> and <code>AssertNoLeaks()</code> (which throws <code>HeadlessValidationException</code> listing every live record) expose the set. The type names it records are <code>VertexBuffer</code>, <code>IndexBuffer</code>, <code>Texture2D</code>, <code>RenderTarget2D</code>, <code>RenderTargetCube</code>, <code>TextureCube</code>, <code>Texture3D</code>, <code>Effect</code>, <code>SpriteBatch</code> and <code>OcclusionQuery</code>; each has a matching <code>...Created</code> counter in <code>HeadlessStatistics</code>, next to the draw, primitive, clear and present counters and the blend, depth-stencil, rasteriser, sampler, viewport and scissor change counters. The <code>shared_ptr&lt;HeadlessSharedState&gt;</code> lets a resource renderer keep its diagnostic state independently of the parent renderer; it does not make the graphics API thread-safe. Only the registry map has a mutex; statistics and the trace log do not.</p>
+<p>The smoke test, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/examples/headless_smoke_test.cpp"><code>headless_smoke_test.cpp</code></a>, is the worked example. It runs a real <code>Game</code> on a 64&times;64 back buffer and, on the third frame, asserts (Check C) exactly six draw calls (three frames of one <code>DrawPrimitives</code> plus one <code>SpriteBatch</code> draw), three clears, <code>presentCount</code> of two (frame three's own automatic <code>EndDraw</code> present has not happened yet inside its <code>Draw</code>) and three vertex buffers created. It then takes a baseline alive count, creates an extra <code>VertexBuffer</code>, checks that <code>AssertNoLeaks()</code> throws, disposes it and compares the alive count with the baseline, not with zero, because long-lived resources legitimately exist during a frame. Finally it shows the dial changing behaviour: an indexed draw needing 30 indices from a 3-index buffer throws in <code>Validation</code> and is accepted in <code>Fast</code>. For a teardown leak, assert only after normal owner cleanup; otherwise the diagnostic reports expected live resources.</p>
+<p><code>Clear</code> updates the last clear colour and a counter (<code>ClearDepth</code>, <code>ClearStencil</code> and their combinations count and trace but keep no colour). <code>Present</code>, and <code>PresentRegionEXT</code>, which HEADLESS accepts unconditionally because there is no frame to show part of, increment the present counter, copy the cumulative statistics into <code>statsAtLastPresent</code>, advance the frame index and trace; the region variant also records the clipped source and destination rectangles and any override window. <code>GetLastFrameStatistics()</code> subtracts that snapshot from the current cumulative counters, so it measures work since the last <code>Present</code> (the frame in progress), not a frozen report of the last finished frame; <code>Headless_CoverageGaps</code> checks zero at the start of a frame and exactly two draw calls later in the same frame. The header's own comment describes it as the statistics &ldquo;for the frame ending at the most recent <code>Present()</code>&rdquo;, which the code and that test contradict; trust the code. An instanced draw counts <code>instanceCount</code> draw calls but its <code>primitiveCount</code> only once. <code>CompareTraceLogs</code> compares frame index, method and argument summary (not the call index) and reports the first diverging position, or the shorter log's length when one is a strict prefix; <code>FormatTraceLogDiff</code> renders it and <code>FormatTraceLog</code> / <code>DumpTraceLog</code> print one <code>[frame N #index] method: args</code> line per call. It detects deterministic call-sequence drift; it cannot tell whether two backends shaded the same fragment. The user-facing workflow is in <a href="../../../docs/tutorials/107-cpu-renderers.html#trace-diff">Tutorial 107</a>.</p>
+
+<h2 id="resources">Resource and draw path</h2>
+<p>In <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/src/HeadlessRenderer.cpp"><code>HeadlessRenderer.cpp</code></a> the vertex and index implementations keep byte shadows and counts (<code>ShadowData()</code>), and uploads validate capacity and element type in the validating modes. The 2D texture keeps the uploaded RGBA bytes (<code>Pixels()</code>) for level 0, so a test can assert upload state; <code>UpdatePixelsLevel</code> only validates and traces. Cube and 3D texture writes validate and trace, then return false rather than claim stored content, and the public <code>TextureCube::SetData</code> turns that false into a <code>System::NotSupportedException</code> (&ldquo;did not store the complete requested cube face region&rdquo;), so a content path that uploads a cube on this renderer refuses deterministically instead of silently discarding data. <code>Texture3D</code> is reported unsupported so the public constructor fails cleanly. Render-target objects track dimensions, binding and lifetime, but there is no rendered colour to read: <code>HeadlessRenderTargetRenderer::GetData</code>, the cube <code>GetData</code> and the volume <code>GetData</code> all return false (so the shared layer raises <code>NotSupportedException</code> where it has no CPU shadow to answer from, leaving the caller's destination untouched), and <code>ReadBackbuffer</code> throws <code>System::NotSupportedException</code> after <code>GraphicsDevice::GetBackBufferData</code> has finished its own argument validation (null destination, rectangle bounds, element count, format) and before any byte of the caller's buffer is written. These refusals are deliberate: returning zeros or the last clear colour would fabricate an image, which is what the earlier implementation did. A plain <code>Texture2D::GetData</code> is different: with no renderer readback it is answered from the public layer's own CPU shadow, which is why HEADLESS is still useful for texture upload tests.</p>
+<p><code>SetRenderTargets</code> unbinds the previous set, binds 2D targets as a set and throws when a cube face is mixed with other targets. <code>GetViewportSize</code> uses the first bound target's dimensions, otherwise the virtual dimensions, falling back to 1024&times;768. The binding path checks some state transitions, but cannot validate attachment layout, MSAA resolve or GPU barriers. Draw methods validate as listed above, then increment counters and optionally trace; they never execute vertex or fragment programs, and the effect renderer accepts any non-empty source without compiling it (<code>IsValid()</code> becomes true, <code>GetCompileError()</code> is empty) while recording each uniform's last value in <code>UniformValues()</code> so a test can assert &ldquo;the game set this uniform&rdquo;. <code>SpriteBatch</code> draws are recorded in <code>LastBatch()</code> until the next <code>Begin</code>. An <code>OcclusionQuery</code> always reports one visible pixel, a conservative control-flow answer rather than measured coverage. <code>SupportsCapability</code> answers false for <code>Texture3D</code>, <code>AdditiveBlending</code> and <code>MultiStreamVertexInput</code> and true for every other member, <code>ThreeD</code> included; that simulates API reachability, not hardware capability (the user-level table is in <a href="../../../docs/rendering-backends.html#capability-matrix">the capability matrix</a>). Read the exact branch before using any capability as a test gate.</p>
+
+<h2 id="testing">What a passing test proves</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/examples/CMakeLists.txt"><code>examples/CMakeLists.txt</code></a> registers tests only when <code>CNA_BUILD_TESTS</code> is on and <code>HEADLESS</code> is the build's default renderer: the guard compares <code>CNA_GRAPHICS_RENDERER</code> with <code>_cna_default_renderer_identity</code> because the family loop in <code>modules/renderers/CMakeLists.txt</code> re-points <code>CNA_GRAPHICS_RENDERER</code> while entering each family, and a multi-renderer build with HEADLESS as a mere member once produced targets that could not even find this renderer's private header. The file registers 49 <code>Headless_*</code> tests: seven private ones and 42 shared graphics-contract fixtures. The executables link SDL3 and define <code>CNA_HEADLESS_TEST_HAS_SDL</code> only where a target exists, and the smoke test's SDL check (that <code>SDL_INIT_VIDEO</code> was never initialised) exists only under that definition, which is why it expects 10 checks with SDL and 9 without.</p>
+<ul>
+<li>Private tests: <code>Headless_Smoke</code>, <code>Headless_ResourceRenderers</code>, <code>Headless_ValidationExtras</code>, <code>Headless_CoverageGaps</code>, <code>Headless_Effects</code>, <code>Headless_ModeDial</code> and <code>Headless_TraceDiff</code>. Between them they cover: the per-resource renderers (cube, 3D, render-target and effect creation, the exact creation counters, a rejected <code>Texture3D</code>, the refused cube upload, a viewport that follows the bound target); the mode dial gating each rule (vertex and index capacity, a dual-texture draw without its second texture, a negative scissor origin, a sampler slot of 16) in Validation versus Fast; viewport bounds against the bound target's real size; debug-label creation sites appearing in a leak report; trace coverage of the state-change and <code>Clear</code> variants; <code>GetLastFrameStatistics()</code>'s diff arithmetic; the <code>CNA_HEADLESS_MODE</code> parsing cases (Fast, mixed-case Trace and Validation, an unrecognised value, unset); and end-to-end draws of the stock effects and a procedural <code>Model</code> (dual-texture and environment-map effects must have their extra texture, alpha-test and skinned effects need none).</li>
+<li>Shared graphics-contract fixtures registered as <code>Headless_*</code> (sampler contracts, render-target producer/consumer and lifetime, winding, <code>GetData</code> contracts, ordered clear, deferred viewport and scissor, back-buffer readback). For several, the CMake file states that the pixel oracle is a declared boundary on this renderer: the test must observe an honest readback refusal or exercise the shared validation route, not the colour a real backend would produce.</li>
+<li>Four SDL-harness controls (<code>Headless_MsaaDepthContract</code>, <code>Headless_MsaaFirstReadback</code>, <code>Headless_MsaaMipReadback</code>, <code>Headless_InvalidMipLevel</code>) are skipped, with a status message, when the configuration has no SDL3 target. <code>Headless_XnaPixelCenter</code> is registered with <code>SDL_VIDEODRIVER=x11</code> and <code>DISPLAY</code> in its environment, an exception to the file header's statement that this renderer's tests set neither; the file gives no reason, so what that fixture needs from a display was not established.</li>
+</ul>
+<p>Inspect the fixture branch before citing a HEADLESS pass as cross-renderer parity, and read the configure output and <code>ctest -N</code>. For a resource-misuse investigation start with <code>Headless_ResourceRenderers</code>, <code>Headless_ValidationExtras</code> or <code>Headless_Smoke</code>, select Validation or Trace, and call <code>AssertNoLeaks</code> only at a known-clean point. For draw-order drift compare Trace logs of the same deterministic workload. For a pixel mismatch move to <a href="software.html#tests">Software</a> for CPU pixels and to a real GPU renderer for API and driver behaviour. For presentation or resize on a real host, a HEADLESS pass says nothing about native surface integration. The automatic multi-renderer workflow (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/.github/workflows/multi-renderer-ci.yml"><code>multi-renderer-ci.yml</code></a>) configures the three-renderer set with tests on and builds <code>CnaTests</code>, the renderer-selection demo and the descriptor gate; the family example executables above are not among the targets it names, so its result is not evidence for the <code>Headless_*</code> registrations. <a href="../../takeover/validation.html">What to test after changing X</a> makes the evidence levels explicit; no test was executed for this page.</p>
+
+<h2 id="change">Human change procedure and source route</h2>
+<ol class="source-list">
+<li>Read <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/src/HeadlessRendererDescriptor.cpp"><code>the descriptor</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/CMakeLists.txt"><code>the target</code></a> (<code>cna_add_renderer()</code>, no native SDK): the no-window promise and the configuration.</li>
+<li>Read <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/include/CNA/Internal/Renderers/Headless/HeadlessRenderer.hpp"><code>HeadlessRenderer.hpp</code></a> from <code>HeadlessSharedState</code> through the affected resource type: which state is stored and which operations are intentionally unreal.</li>
+<li>Follow constructors and destructors, <code>Require</code>, draw/bind/<code>Present</code> and <code>AssertNoLeaks</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/src/HeadlessRenderer.cpp"><code>HeadlessRenderer.cpp</code></a>. Write down the expected change to registry, counters, trace and error behaviour before editing.</li>
+<li>Read <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/examples/headless_smoke_test.cpp"><code>headless_smoke_test.cpp</code></a> and the focused resource, mode or trace test, confirm the registered names in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/examples/CMakeLists.txt"><code>examples/CMakeLists.txt</code></a>, and add an assertion that fails before the intended change.</li>
+<li>If the change began in <code>GraphicsDevice</code> or <code>IGraphicsRenderer</code>, run the neutral graphics tests plus another physical renderer: HEADLESS can reveal validation and lifetime mistakes but cannot certify native translation or pixels.</li>
+</ol>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p>Do not "fix" a failing pixel fixture by inventing readback values in this backend. A renderer with no rasterisation must keep refusing data it cannot produce. Some source comments still describe old design plans or contradict the code (the statistics comment above, an older <code>SetMode</code> note); the current code and tests, not plan prose, establish the contract described here.</p></div>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/rendering-backends.html#cpu-renderers">CPU and no-GPU renderers</a> &middot; <a href="../../../docs/tutorials/107-cpu-renderers.html#headless">Tutorial 107: HEADLESS</a> &middot; <a href="../../../docs/tutorials/107-cpu-renderers.html#trace-diff">Tutorial 107: diffing two runs</a> &middot; <a href="../../../docs/runtime-renderer-selection.html#device-flags">Device flags (UseNullDevice)</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../platforms/headless.html">HEADLESS platform (a different axis)</a> &middot; <a href="stub.html">STUB renderer</a> &middot; <a href="software.html">Software renderer (real CPU pixels)</a> &middot; <a href="selection.html">Renderer selection internals</a> &middot; <a href="device.html">GraphicsDevice internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/add-a-regression-test.html">Add a regression test</a> &middot; <a href="../../handbook/debug-shutdown-and-lifetime.html">Debug shutdown and lifetime</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="software.html" rel="prev"><span>Previous</span>Software renderer internals</a><a class="dev-pager-next" href="stub.html" rel="next"><span>Next</span>Stub renderer internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

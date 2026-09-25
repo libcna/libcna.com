@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Indexed draw trace - CNA Development</title>
+  <meta name="description" content="Function-level trace of GraphicsDevice::DrawIndexedPrimitives: shared validation and offset folding, then Vulkan&#x27;s deferred Pending3DDraw replay and the Software renderer&#x27;s immediate CPU rasterisation.">
+  <meta name="keywords" content="drawindexedprimitives, gpudrawparams, drawindexedprimitivesex, pending3ddraw, submitframe, vertexoffset, basevertex, multi-stream, vulkan, software renderer, deferred rendering">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/graphics/draw-call.html">
+  <meta property="og:title" content="Indexed draw trace - CNA Development">
+  <meta property="og:description" content="Function-level trace of GraphicsDevice::DrawIndexedPrimitives: shared validation and offset folding, then Vulkan&#x27;s deferred Pending3DDraw replay and the Software renderer&#x27;s immediate CPU rasterisation.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/graphics/draw-call.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Indexed draw trace","description":"Function-level trace of GraphicsDevice::DrawIndexedPrimitives: shared validation and offset folding, then Vulkan's deferred Pending3DDraw replay and the Software renderer's immediate CPU rasterisation.","url":"https://libcna.com/development/internals/graphics/draw-call.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="selection.html" class="docs-nav-link is-group-active">Graphics internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="device.html" class="docs-nav-link">GraphicsDevice &amp; contract</a></li>
+        <li><a href="draw-call.html" class="docs-nav-link active" aria-current="page">Indexed draw trace</a></li>
+        <li><a href="resources.html" class="docs-nav-link">Textures &amp; render targets</a></li>
+        <li><a href="backends.html" class="docs-nav-link">Renderer family map</a></li>
+        <li><a href="easygl.html" class="docs-nav-link">EasyGL</a></li>
+        <li><a href="vulkan.html" class="docs-nav-link">Vulkan</a></li>
+        <li><a href="opengl4.html" class="docs-nav-link">OpenGL4</a></li>
+        <li><a href="sdl-gpu.html" class="docs-nav-link">SDL_gpu</a></li>
+        <li><a href="software.html" class="docs-nav-link">Software</a></li>
+        <li><a href="headless.html" class="docs-nav-link">Headless</a></li>
+        <li><a href="stub.html" class="docs-nav-link">Stub</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="selection.html">Graphics</a></li>
+        <li aria-current="page">Indexed draw trace</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Indexed draw trace</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#path">Call and submission paths</a></li>
+          <li><a href="#public">Step 1: the neutral public method</a></li>
+          <li><a href="#vulkan">Step 2A: Vulkan snapshots, then replays</a></li>
+          <li><a href="#software">Step 2B: Software draws now</a></li>
+          <li><a href="#other-backends">Other families</a></li>
+          <li><a href="#failure">Where failures appear</a></li>
+          <li><a href="#tests">Safe change path and evidence</a></li>
+          <li><a href="#reading">Read in execution order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Graphics internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The Vulkan and Software paths were re-read at this snapshot; the listed tests exist but none was run for this page.</p></div>
+
+<p class="lede">The public call is the same on every renderer; the GPU boundary is not. This trace follows <code>GraphicsDevice::DrawIndexedPrimitives</code> through its shared validation into two contrasting families: Vulkan, which snapshots the draw and replays it at <code>Present</code>, and Software, which rasterises into a CPU framebuffer before the call returns. A maintainer who knows where the shared layer ends can tell a bug in the neutral contract from a bug in one translation layer.</p>
+
+<h2 id="path">Call and submission paths</h2>
+<pre class="diagram">Game::Draw  (an effect pass applied, vertex and index buffers bound)
+  → GraphicsDevice::DrawIndexedPrimitives(type, baseVertex, minVertexIndex, numVertices,
+                                          startIndex, primitiveCount)
+      → public validation, effect snapshot into GpuDrawParams, offset folding, stream table
+      → applySamplerStatesToRenderer()  → validateDrawState(), rasterizer + sampler state
+      → IGraphicsRenderer::DrawIndexedPrimitivesEx(vb, ib, world, view, projection,
+                                                   type, primitiveCount, params)
+          ├─ VulkanRenderer: copy bytes + state into a Pending3DDraw → pending3D_
+          │     … GraphicsDevice::Present → VulkanRenderer::Present → SubmitFrame(false)
+          │       → fence wait → retire → vkAcquireNextImageKHR → RecordCommandBuffer
+          │       → vkQueueSubmit → vkQueuePresentKHR
+          └─ SoftwareRenderer: DrawIndexedPrimitivesInternal → decode indices → transform,
+                clip, rasterise into CurrentFramebuffer()
+                … GraphicsDevice::Present → SoftwareRenderer::Present
+                  → no-op off-screen, or an RGBA8 frame to the platform surface presenter
+      → CNA_RECORD_GRAPHICS_DRAW (diagnostic counter, only after the renderer returns)</pre>
+<p>This split is a lifetime rule. A family that defers work must not keep unprotected pointers into caller-owned mutable vertex, index or effect state, because the game can change or destroy them before submission. A family that rasterises immediately still needs stable state for the duration of the call, but its submission boundary is the call itself.</p>
+
+<h2 id="public">Step 1: the neutral public method</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice::DrawIndexedPrimitives</code></a> is the only shared validation on this route. In order:</p>
+<ol>
+<li><code>ThrowIfDisposed()</code>; return silently if there is no renderer; <code>renderer_-&gt;Ensure3DSupported("GraphicsDevice::DrawIndexedPrimitives")</code>, which a 2D-only family uses to throw or, with <code>WarnAndStub</code>, to warn.</li>
+<li><code>numVertices</code> and <code>primitiveCount</code> must be positive; <code>ValidateProfilePrimitiveCount()</code> applies the profile's primitive limit; <code>CheckedPrimitiveElementCount()</code> derives the consumed index count from the topology.</li>
+<li>No applied effect, no index buffer or no vertex buffer is an <code>InvalidOperationException</code>; a bound but disposed buffer is an <code>ObjectDisposedException</code>.</li>
+<li><code>ExtractMatrices()</code> reads world, view and projection from the applied effect; <code>Effect::FillGpuDrawParams()</code> captures the effect's parameters (textures, lighting, fog, alpha test, skinning, PBR, a compiled-effect runtime or custom-shader request) into <code>GpuDrawParams</code>.</li>
+<li>Offsets: <code>startIndex</code> is copied unchanged; <code>params.baseVertex</code> is <code>baseVertex</code> plus <code>FoldedVertexStreamOffset()</code>, added with a saturating helper so the fold itself cannot overflow.</li>
+<li><code>FillVertexStreamBindings()</code> describes every bound stream (see below).</li>
+<li>Range checks, only when there is no stream table (the legacy empty-declaration case) or the renderer answers true to <code>RequiresManagedBufferedDrawRangeValidationEXT()</code>: non-negative <code>startIndex</code> and <code>minVertexIndex</code>, the consumed indices inside the index buffer, and the declared vertex window inside each shader-consumed stream.</li>
+<li><code>ValidateVertexStreamCapability()</code>: more than one stream of the same input rate needs <code>MultiStreamVertexInput</code> and at most <code>GetMaxVertexStreams()</code> streams; the binding list is never silently truncated.</li>
+<li><code>applySamplerStatesToRenderer()</code>: runs <code>validateDrawState()</code> &mdash; XNA's draw-time profile rules: no filtered sampling of point-filter-only float formats (except inside the CNAEXT engine layer's float-filtering scope, when the renderer can filter them), clamp addressing for non-power-of-two textures under <code>Reach</code>, no blending into non-blendable render-target formats &mdash; then pushes rasterizer state and every sampler slot's filter, address, anisotropy and mip state.</li>
+<li><code>renderer_-&gt;DrawIndexedPrimitivesEx(...)</code>; <code>CNA_RECORD_GRAPHICS_DRAW(true, primitiveCount)</code> runs only if that returns.</li>
+</ol>
+<h3 id="units">Element offsets, not byte offsets</h3>
+<p><code>startIndex</code> is an index-element offset. <code>baseVertex</code> and each <code>VertexBufferBinding.VertexOffset</code> are vertex-element offsets. <code>FoldedVertexStreamOffset()</code> takes the smallest <code>VertexOffset</code> among the bound per-vertex streams and folds it into <code>baseVertex</code> once; each per-vertex stream keeps the remainder as its own <code>vertexOffset</code>, and a per-instance stream keeps its whole offset because <code>baseVertex</code> never advances it. The renderer converts elements to bytes with each stream's own declaration stride. Multiplying by a stride in the neutral layer, or shifting <code>startIndex</code> by a vertex offset, applies the wrong unit &mdash; most visibly with multi-stream geometry.</p>
+<p>Each <code>GpuVertexStreamBinding</code> carries the slot, the stream's renderer buffer, its stride, its instance frequency, its capacity (<code>VertexBuffer::VertexCount</code>, not the length of the last <code>SetData</code>, because XNA lets a game rewrite a prefix of a larger buffer), the element offset, and per-element effective usage indices: a repeated <code>(usage, usageIndex)</code> pair across streams is moved to the next free index of that usage, as FNA3D's drivers do. <code>vertexShaderInputUsed</code> marks streams the stock program actually reads; ranges are validated only for those. A single per-vertex buffer whose declaration is empty (the CNAEXT <code>VertexBuffer(device, count)</code> convenience form) is deliberately left as <code>vertexStreamCount == 0</code>, so the renderer uses its own upload stride.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col"><code>RequiresManagedBufferedDrawRangeValidationEXT()</code></th><th scope="col">Families</th><th scope="col">Consequence</th></tr></thead>
+<tbody>
+<tr><td>false (override)</td><td>EasyGL, OpenGL4, Software</td><td>Ranges are forwarded as XNA forwards them to the native API; the family promises it cannot read outside host memory (GL never reads host memory for them; Software defaults missing records).</td></tr>
+<tr><td>true (the <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp"><code>IGraphicsRenderer</code></a> default)</td><td>every other family, including Vulkan</td><td>The device keeps its compatibility range guard, because these families stage draw input through CPU copies.</td></tr>
+</tbody></table></div>
+<p>This method does not issue a Vulkan command, acquire a swapchain image or know a Direct3D input layout. Those are deliberate abstraction boundaries.</p>
+
+<h2 id="vulkan">Step 2A: Vulkan snapshots, then replays</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/VulkanRenderer.cpp"><code>VulkanRenderer::DrawIndexedPrimitivesEx</code></a> casts to its own vertex and index buffer renderers and computes the index width (2 or 4 bytes), the consumed index count and a pointer to the selected span of the CPU-mapped index data.</p>
+<ul>
+<li><strong>Custom shader route.</strong> If the effect requested a custom <code>ShaderEffect</code> program, the draw goes to <code>QueueCustomEffect3DDrawEXT</code>, which builds its own immutable stream snapshots, and the method returns.</li>
+<li><strong>Multi-stream packing.</strong> With several per-vertex streams, <code>VulkanIndexedStreamWindow</code> finds the vertex window the selected indices reach and <code>PackVulkanStreamsEXT</code> interleaves exactly that window into one record, with a combined declaration and a rebased native base vertex.</li>
+<li><strong>Program family.</strong> Stock program families (alpha test, dual texture, environment map, skinned, PBR and skinned PBR, lit textured/untextured/coloured, the BasicEffect shapes) are chosen from the effect parameters and the vertex declaration, not from the stride alone. A declaration that does not supply every input of the chosen program is refused here (<code>RequireFaithfulDeclarationEXT</code>, or <code>NotSupportedException</code> for a packed multi-stream record) rather than letting pipeline creation fail later at <code>Present</code>. Stride lists for PBR and skinned buffers and the bone-index format check apply only when no complete declaration exists.</li>
+<li><strong>Sources and matrices.</strong> <code>NoteSampledSourcesEXT</code> records the render targets this draw samples, so a mid-frame readback flush can replay their producing passes first. The world-view-projection matrix is <code>world * view * projection * XnaPixelCenterCorrectionEXT(primitive)</code>, the Direct3D 9 pixel-centre convention post-multiplied in row-vector order.</li>
+<li><strong>Compiled effects.</strong> With <code>CNA_VULKAN_COMPILED_EFFECTS</code> the compiled program replaces the stock selection (<code>PrepareCompiledEffectDrawEXT</code>); without it a compiled-effect draw throws <code>NotSupportedException</code> instead of silently using a stock shader.</li>
+</ul>
+<p>The method then fills a <code>Pending3DDraw</code> (declared in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/include/CNA/Internal/Renderers/Vulkan/VulkanRenderer.hpp"><code>VulkanRenderer.hpp</code></a>): the vertex bytes (the whole bound buffer, <code>vertexCount &times; stride</code>, or the packed window), the base vertex, only the selected index bytes, topology, draw count, index type, depth, stencil, blend, cull, wireframe and depth-bias state, the destination render target, the stride, the family flags and push constants, and the vertex layout taken at draw time. <code>PushPending3DDraw()</code> adds what must also be frozen at enqueue time &mdash; the active occlusion query, scissor, viewport, blend factor, the bind-cycle segment the draw belongs to and its position in the frame's command order &mdash; and appends the record to <code>pending3D_</code>. The snapshot exists because buffers, bindings and effect passes may change before the frame is recorded: a new field that affects replay must be captured here; reading a mutable renderer field only in <code>RecordCommandBuffer</code> gives earlier draws the last draw's state.</p>
+<h3 id="vulkan-submit">Present and SubmitFrame</h3>
+<p><code>VulkanRenderer::Present()</code> calls <code>SubmitFrame(false)</code>:</p>
+<ol>
+<li>Wait on the current frame slot's fence (a lost device is detected here, at acquire, at submit and at present by <code>CheckDeviceLostEXT</code>, which raises the device-lost event once and throws).</li>
+<li><code>ProcessRetiredResources(false)</code>: free retired handles and MRT proxies whose generation is more than <code>MaxFramesInFlight</code> (2) frames old.</li>
+<li><code>vkAcquireNextImageKHR</code>; on <code>VK_ERROR_OUT_OF_DATE_KHR</code> recreate the swapchain and return <em>without</em> resetting the fence, so a failed acquire cannot leave the slot's fence unsignalled forever.</li>
+<li>Reset the fence and command buffer, <code>RecordCommandBuffer()</code> replays the pending passes, <code>vkQueueSubmit</code> with the image-available and render-finished semaphores, advance the retirement generation.</li>
+<li><code>vkQueuePresentKHR</code>; out-of-date or suboptimal recreates the swapchain; the frame slot advances modulo <code>MaxFramesInFlight</code>.</li>
+</ol>
+<p>A draw returning to game code is therefore not evidence that the GPU executed it; the queue and fence are the execution boundary. Backbuffer readback takes a separate route: <code>ReadBackbuffer()</code> calls <code>SubmitFrame(true)</code>, which records a copy into a staging buffer, waits for the fence and holds the image; the pixels are read and only then <code>FinishDeferredPresent()</code> presents.</p>
+
+<h2 id="software">Step 2B: Software draws now</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRenderer.cpp"><code>SoftwareRenderer::DrawIndexedPrimitivesEx</code></a> calls <code>DrawIndexedPrimitivesInternal(..., false)</code> (the instanced route calls it once per instance with adjusted per-instance offsets).</p>
+<ol>
+<li>Reject <code>primitiveCount &lt;= 0</code> and any topology other than TriangleList, TriangleStrip, LineList, LineStrip and <code>PointListEXT</code>.</li>
+<li>A compiled-effect draw requires a build with <code>CNA_SOFTWARE_COMPILED_EFFECTS</code> (otherwise <code>NotSupportedException</code>); compiled point lists are not implemented.</li>
+<li>Declared streams are read by semantic. Only a buffer with no declaration falls back to the recognised stride set (16, 20, 24, 32, 48, 52, 56, 60, 68, 76, 80 bytes); any other stride without a declaration throws.</li>
+<li>Strict addressing validation (<code>ValidateIndexedAddressing</code>) runs only for the legacy no-stream-table or empty-declaration shapes, whose fallback would otherwise form raw host pointers. For declared streams the ranges pass through as in XNA, and an index or vertex record outside its buffer is skipped rather than read.</li>
+<li>Snapshot the draw state by value: depth, stencil, blend state and blend factor, the active viewport transform and the clip rectangle (framebuffer &cap; viewport &cap; scissor when enabled).</li>
+<li>For each primitive, decode the index at <code>startIndex + local</code> (16- or 32-bit), add <code>baseVertex</code> once, and resolve each consumed stream at <code>stream.vertexOffset + vertexIndex</code> with that stream's own stride (a per-instance stream at its own offset).</li>
+<li>Transform by <code>world * view * projection</code>, clip to the frustum, fan the clipped polygon, and rasterise into <code>CurrentFramebuffer()</code> &mdash; the bound render target or the backbuffer &mdash; or, for a compiled effect, into every bound MRT framebuffer.</li>
+</ol>
+<p>There is no Vulkan-style <code>Pending3DDraw</code>: when the method returns, the pixels are written. <code>SoftwareRenderer::Present()</code> (in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRenderer2DState.cpp"><code>SoftwareRenderer2DState.cpp</code></a>) is a no-op without a surface presenter; with one (Terminal on a TTY) it resolves MSAA and hands the <em>backbuffer</em> &mdash; never a still-bound render target &mdash; as an RGBA8 frame to the presenter. In the GDI build the same sources are compiled with <code>CNA_SOFTWARE_2D_ONLY</code>, where this method throws <code>NotSupportedException</code>.</p>
+<p>A bug common to both families usually belongs in the public offset or state construction; a bug in only one is more likely declaration interpretation, program mapping, or raster and submission specifics.</p>
+
+<h2 id="other-backends">Other families</h2>
+<p>Every family receives the same call; this page traces only two. Where the other implementations live, for a maintainer who needs to follow the same draw elsewhere:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Family</th><th scope="col"><code>DrawIndexedPrimitivesEx</code></th><th scope="col">Where it is traced</th></tr></thead>
+<tbody>
+<tr><td>EasyGL</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/easygl/src/EasyGLRenderer.cpp"><code>EasyGLRenderer.cpp</code></a></td><td><a href="easygl.html">EasyGL renderer internals</a></td></tr>
+<tr><td>OpenGL4</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/opengl4/src/OpenGL4StockDraw.cpp"><code>OpenGL4StockDraw.cpp</code></a></td><td><a href="opengl4.html">OpenGL4 renderer internals</a></td></tr>
+<tr><td>SDL_gpu</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp"><code>SdlGpuRenderer.cpp</code></a></td><td><a href="sdl-gpu.html">SDL_gpu renderer internals</a></td></tr>
+<tr><td>Headless</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless/src/HeadlessRenderer.cpp"><code>HeadlessRenderer.cpp</code></a>: checks the effect inputs it was given and rasterises nothing</td><td><a href="headless.html">Headless renderer internals</a></td></tr>
+<tr><td>Stub</td><td>no override; the base implementation forwards to <code>DrawIndexedColoredPrimitives</code>, which Stub implements as a no-op</td><td><a href="stub.html">Stub renderer internals</a></td></tr>
+<tr><td>WebGPU, DirectX 9/11/12, FNA3D, Metal, PortableGL</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/webgpu/src/WebGPURenderer.cpp"><code>WebGPURenderer.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/D3D9EffectDraw.cpp"><code>D3D9EffectDraw.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx11/src/DirectX11Renderer.cpp"><code>DirectX11Renderer.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx12/src/DirectX12Renderer.cpp"><code>DirectX12Renderer.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/fna3d/src/Fna3dDraw.cpp"><code>Fna3dDraw.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/metal/src/MetalRenderer.mm"><code>MetalRenderer.mm</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/portablegl/src/PortableGLRenderer.cpp"><code>PortableGLRenderer.cpp</code></a></td><td>Not traced in the Development area yet.</td></tr>
+<tr><td>2D-only families</td><td>HTML DOM and SVG DOM throw in <code>Ensure3DSupported</code>; Direct2D routes it through <code>HandleUnsupported3DCall</code> (throw by default, a warning under <code>WarnAndStub</code>); GDI's <code>DrawIndexedPrimitivesEx</code> throws through <code>ThrowUnsupportedFeature</code>; the others reach the base implementation or their own unsupported-3D handling</td><td><a href="../../../docs/rendering-backends.html#portable-2d">Renderers: 2D-only renderers</a></td></tr>
+</tbody></table></div>
+
+<h2 id="failure">Where failures appear</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Symptom</th><th scope="col">Inspect first</th></tr></thead>
+<tbody>
+<tr><td>Immediate public exception</td><td>Effect and buffer binding, disposed buffers, profile primitive limit, the range checks the renderer asked for, <code>validateDrawState()</code> profile rules, stream capability.</td></tr>
+<tr><td>Wrong geometry on every family</td><td><code>GpuDrawParams</code> construction, element-versus-byte arithmetic, <code>FoldedVertexStreamOffset()</code>, usage-index remapping, matrix extraction.</td></tr>
+<tr><td>Vulkan throws at draw time</td><td>The declaration guard: the chosen stock program needs an input the declaration does not supply.</td></tr>
+<tr><td>Vulkan fails only at <code>Present</code></td><td>Deferred record completeness, <code>RecordCommandBuffer</code>, pipeline or descriptor creation, the submit result, validation-layer output.</td></tr>
+<tr><td>Vulkan shows a later draw's state on earlier draws</td><td>A field read at record time instead of captured in <code>Pending3DDraw</code> or <code>PushPending3DDraw</code>.</td></tr>
+<tr><td>Software differs from Vulkan</td><td>Software's declaration or stride fallback, index decoder, viewport and scissor clip, raster conventions, versus Vulkan's program family and input layout.</td></tr>
+<tr><td>GPU appears to hang</td><td>Fence wait, acquire, queue submit and present; distinguish a stalled GPU from an application loop that never reaches <code>Present</code>.</td></tr>
+</tbody></table></div>
+<p><strong>Historical case (fixed).</strong> An earlier Software renderer read indices from element zero in both indexed raster loops and fetched <code>vbBase + index * stride</code> with no base addend, so <code>startIndex</code> and a positive <code>baseVertex</code> were silently discarded and every draw rendered the buffer prefix, while the GPU families were already correct. The current loop adds both exactly once, and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/examples/software_indexed_addressing_test.cpp"><code>software_indexed_addressing_test.cpp</code></a> (<code>Software_IndexedAddressing</code>) pins the contract: element offsets, a single <code>baseVertex</code> addend, topology-derived counts, and <code>minVertexIndex</code>/<code>numVertices</code> treated as hints only. It is the pattern to expect when one family disagrees: the neutral layer was right and one translation ignored a field.</p>
+
+<h2 id="tests">Safe change path and evidence</h2>
+<p>Write or select a small indexed-draw fixture that fixes geometry, effect, declaration, offsets and expected pixels. Run the neutral tests first, then renderer conformance for the changed family and for an independent one. For Vulkan include a multi-frame case &mdash; a one-frame screenshot will not expose stale deferred state or resource retirement &mdash; and keep validation on: debug builds enable <code>VK_LAYER_KHRONOS_validation</code> when it is installed, and in any configuration that compiles VULKAN, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/TestHelpers.cmake"><code>TestHelpers.cmake</code></a> makes every renderer test fail on a <code>[Vulkan Validation]</code> line (the exemption list is empty). For Software, test both declaration-driven and empty-declaration buffers.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Level</th><th scope="col">Tests present at this snapshot</th></tr></thead>
+<tbody>
+<tr><td>Neutral (<code>CnaGraphicsTests</code>, run against the compiled-in renderer)</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/GraphicsDeviceValidationTests.cpp"><code>GraphicsDeviceValidationTests.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/DrawRouteValidationTests.cpp"><code>DrawRouteValidationTests.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/IndexedDrawDeferredTests.cpp"><code>IndexedDrawDeferredTests.cpp</code></a> (start index, base vertex, 32-bit indices, range hints), <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/OrdinaryDrawBindingOffsetTests.cpp"><code>OrdinaryDrawBindingOffsetTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/OrdinaryDrawMultiStreamTests.cpp"><code>OrdinaryDrawMultiStreamTests.cpp</code></a> (the element-offset and multi-stream contract), <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/GraphicsProfileDrawLimitTests.cpp"><code>GraphicsProfileDrawLimitTests.cpp</code></a></td></tr>
+<tr><td>Vulkan (registered in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/examples/CMakeLists.txt"><code>vulkan/examples</code></a>)</td><td><code>Vulkan_IndexedDrawRange</code>, <code>Vulkan_DrawRangeValidation</code>, <code>Vulkan_DeferredResourceLifetime</code>, <code>Vulkan_DeferredSourceLifetime</code>, <code>Vulkan_Deferred_Scissor</code>, <code>Vulkan_Deferred_Viewport</code>, <code>Vulkan_Swapchain_Sync</code>, <code>Vulkan_SwapchainOutOfDate</code>, <code>Vulkan_SwapchainChurn</code>, <code>Vulkan_DeviceLostContract</code>, <code>Vulkan_RenderTarget_ProducerConsumer_SyncVal</code>; unit tests under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/tests"><code>vulkan/tests</code></a> cover compiled effects</td></tr>
+<tr><td>Software (registered in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/examples/CMakeLists.txt"><code>software/examples</code></a>)</td><td><code>Software_IndexedAddressing</code>, <code>Software_DrawRangeValidation</code>, <code>Software_DrawNoIndexBuffer</code>, <code>Software_VertexDeclaration</code>, <code>Software_PresentLifecycle</code>; unit tests under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/tests"><code>software/tests</code></a> cover presentation and compiled-effect conformance</td></tr>
+</tbody></table></div>
+<p>These are present in the source; none was executed for this page, and which host and CI job runs each is recorded on <a href="../../testing/architecture.html">Test architecture</a> and <a href="../../../docs/verification.html#ci">Verification: CI</a>.</p>
+
+<h2 id="reading">Read in execution order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a>: <code>DrawIndexedPrimitives</code>, <code>FoldedVertexStreamOffset</code>, <code>FillVertexStreamBindings</code>, <code>ValidateVertexStreamRanges</code>, <code>ValidateVertexStreamCapability</code>, <code>applySamplerStatesToRenderer</code> and <code>validateDrawState</code> &mdash; the only shared validation and the exact delegate call.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp"><code>IGraphicsRenderer.hpp</code></a> in the renderer-contract headers (<a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Renderers"><code>CNA/Internal/Renderers</code></a>): <code>GpuVertexStreamBinding</code>, <code>GpuDrawParams</code>, <code>DrawIndexedPrimitivesEx</code> and <code>RequiresManagedBufferedDrawRangeValidationEXT</code> &mdash; what can cross the boundary.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/VulkanRenderer.cpp"><code>VulkanRenderer.cpp</code></a>: <code>DrawIndexedPrimitivesEx</code>, <code>PushPending3DDraw</code>, <code>SubmitFrame</code>, <code>RecordCommandBuffer</code>, <code>ProcessRetiredResources</code> and <code>Present</code>, in that causal order.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRenderer.cpp"><code>SoftwareRenderer.cpp</code></a>: <code>DrawIndexedPrimitivesInternal</code> and its immediate framebuffer writes; then <code>Present</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRenderer2DState.cpp"><code>SoftwareRenderer2DState.cpp</code></a>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/examples/vulkan_deferred_resource_lifetime_test.cpp"><code>vulkan_deferred_resource_lifetime_test.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/examples/software_indexed_addressing_test.cpp"><code>software_indexed_addressing_test.cpp</code></a>: pick the fixture that establishes the semantics you change, not merely a test with &ldquo;draw&rdquo; in its name.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/3d-rendering.html#binding-and-draw-calls">3D rendering: binding and draw calls</a> &middot; <a href="../../../docs/rendering-backends.html#modern-gpu">Renderers: modern GPU APIs</a> &middot; <a href="../../../docs/rendering-backends.html#cpu-renderers">Renderers: CPU renderers</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="device.html">GraphicsDevice internals</a> &middot; <a href="vulkan.html">Vulkan renderer internals</a> &middot; <a href="software.html">Software renderer internals</a> &middot; <a href="../runtime/frame.html">One frame source trace</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/fix-a-renderer-bug.html">Fix a renderer bug</a> &middot; <a href="../../handbook/add-a-regression-test.html">Add a regression test</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a> &middot; <a href="../../../docs/verification.html#renderers">Verification: renderers</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="device.html" rel="prev"><span>Previous</span>GraphicsDevice internals</a><a class="dev-pager-next" href="resources.html" rel="next"><span>Next</span>Textures and render targets</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
