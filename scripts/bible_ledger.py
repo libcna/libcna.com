@@ -53,13 +53,26 @@ def norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
 
 
+BLOCK_TAGS = {"p", "li", "div", "tr", "td", "th", "br", "h1", "h2", "h3", "h4", "h5", "h6", "pre", "table", "section", "ul", "ol", "dt", "dd",
+              "figure", "figcaption", "blockquote", "dl", "thead", "tbody", "nav", "aside", "article", "main", "summary", "details"}
+
+
 class Page(HTMLParser):
+    """Collects ids and the text of <article> (or <main> when a page has no article, e.g. the protected root pages).
+    Inline tags add nothing, block tags add a space, so a token that runs across <code>…</code> before punctuation still matches."""
+
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.ids: set[str] = set()
         self.text: list[str] = []
         self._art = 0
+        self._main = 0
         self._skip = 0
+        self.has_article = False
+
+    @property
+    def _in(self) -> bool:
+        return bool(self._art or (self._main and not self.has_article))
 
     def handle_starttag(self, tag, attrs):
         v = {k: (x or "") for k, x in attrs}
@@ -67,17 +80,26 @@ class Page(HTMLParser):
             self.ids.add(v["id"])
         if tag == "article":
             self._art += 1
+            self.has_article = True
+        if tag == "main":
+            self._main += 1
         if tag in ("script", "style"):
             self._skip += 1
+        if tag in BLOCK_TAGS and self._in:
+            self.text.append(" ")
 
     def handle_endtag(self, tag):
         if tag == "article" and self._art:
             self._art -= 1
+        if tag == "main" and self._main:
+            self._main -= 1
         if tag in ("script", "style") and self._skip:
             self._skip -= 1
+        if tag in BLOCK_TAGS and self._in:
+            self.text.append(" ")
 
     def handle_data(self, data):
-        if self._art and not self._skip:
+        if self._in and not self._skip:
             self.text.append(data)
 
 
@@ -98,7 +120,7 @@ def load_page(rel: str) -> Page | None:
 
 def page_text(rel: str) -> str:
     pg = load_page(rel)
-    return re.sub(r"\s+", " ", " ".join(pg.text)) if pg else ""
+    return re.sub(r"\s+", " ", "".join(pg.text)) if pg else ""
 
 
 def split_dest(d: str) -> tuple[str, str]:
@@ -353,7 +375,7 @@ def dest_summary(rec: dict) -> list[str]:
 
 def page_words(rel: str) -> int:
     pg = load_page(rel)
-    return len(" ".join(pg.text).split()) if pg else 0
+    return len("".join(pg.text).split()) if pg else 0
 
 
 def cmd_render(_: argparse.Namespace) -> int:

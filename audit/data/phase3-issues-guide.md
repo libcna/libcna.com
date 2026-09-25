@@ -45,7 +45,7 @@ refusal is a gap.
 
 ## 3. What to publish for each surviving item (STILL EXISTS / PARTIALLY FIXED)
 
-One JSON object per item in your `issues[]` (see §6). Fields (HTML strings may use the Development page tokens `{{src:modules/x/y.cpp|label}}`, `{{tree:dir|label}}`, `{{page:development/…|label}}`; escape `<`/`&`;
+One JSON object per item in your `issues[]` (see §6). Fields (the HTML fields `expected`, `actual`, `evidence`, `reproduction`, `tests_current`, `regression_test`, `blast_radius`, `workaround` may use the Development page tokens `{{src:modules/x/y.cpp|label}}`, `{{tree:dir|label}}`, `{{page:development/…|label}}`; escape `<`/`&`;
 no inline styles/scripts):
 
 | Field | Content |
@@ -53,15 +53,15 @@ no inline styles/scripts):
 | `cand_ids` | every candidate id this entry resolves (a defect reported three times is one issue) |
 | `id` | for an item with a Bible id keep it (`CNA-BUG-019`). For anything new use a temporary id `NEW-<pkg>-<nn>`; the orchestrator assigns the final stable id at merge |
 | `class` | `bug` \| `functional-gap` \| `platform-limitation` \| `verification-gap` |
-| `title` | precise, one line, names the symbol; describes only the surviving defect |
-| `summary` | one sentence for tables |
+| `title` | plain text (may contain `<T>`; the generator escapes it), precise, one line, names the symbol; describes only the surviving defect |
+| `summary` | plain text, one sentence for tables |
 | `subsystem` | one of: Math & geometry · Core & runtime · Graphics & renderers · Content & XNB/CNB/CNJ · Models & glTF · Input · Audio & media · Storage · Networking & gamer services · Platforms · Build & CI · Testing & evidence · Diagnostics & Inspector · C API & bindings · Documentation & release tooling |
 | `status` | `open` (exactly as first recorded) \| `narrowed` (partially fixed; text describes what survives) |
 | `severity` | `high` \| `medium` \| `low` — your judgement, stated as a starting point for triage; `n/a` for gaps/limitations |
 | `confidence` | `reproduced` (you or CNA's own record executed it) \| `verified-by-reading` (the failure follows mechanically from code you read) \| `strong` \| `probable` |
-| `public_contract` | the affected public API / contract, e.g. `CNA::Plane::Transform(const Plane&, const Matrix&)` |
+| `public_contract` | plain text: the affected public API / contract, e.g. `CNA::Plane::Transform(const Plane&, const Matrix&)` (escaped by the generator) |
 | `expected` / `actual` | HTML paragraphs: the intended behaviour and the behaviour at TARGET |
-| `sources` | list of `{"path": "modules/math/src/Plane.cpp", "note": "Plane::Transform — the aliased Transpose call"}`; paths must exist at TARGET (checked); functions named, no line numbers |
+| `sources` | list of `{"path": "modules/math/src/Plane.cpp", "note": "Plane::Transform — the aliased Transpose call"}` (`note` is plain text); paths must exist at TARGET (checked); functions named, no line numbers |
 | `evidence` | HTML: what was read; what was executed (exact scope) or "not executed"; which documents/tests corroborate; what remains uncertain |
 | `reproduction` | HTML with a `<pre><code class="language-cpp">` focused reproduction, or `null` when none is known (do not invent one) |
 | `tests_current` | HTML: the current tests that touch the area (paths), and what they do *not* cover |

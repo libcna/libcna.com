@@ -351,7 +351,8 @@ def cmd_build(args: argparse.Namespace) -> int:
     src_dir = Path(args.src)
     authored = [p for p in DM.all_pages() if p.get("kind") != "hub"]
     wanted = args.paths or [p["path"] for p in authored if (src_dir / (p["path"][:-5] + ".body.html")).exists()]
-    errors: list[str] = list(DM.problems())
+    # manifest problems only block a build when they concern a page being built (other packages may be mid-edit)
+    errors: list[str] = [e for e in DM.problems() if any(w in e for w in wanted)]
     built = 0
     for page in wanted:
         meta, body = SD.read_src(src_dir, page)

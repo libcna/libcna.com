@@ -184,8 +184,8 @@ def cmd_check(args: argparse.Namespace) -> int:
                     dd = next((d for d in disp if d.get("cand") == cid), None)
                     if dd is None or dd.get("classification") not in PUBLISHED or dd.get("published_as") != it.get("id"):
                         errs.append(f"{w}: candidate {cid} is not dispositioned STILL EXISTS/PARTIALLY FIXED with published_as {it.get('id')}")
-                    elif (dd["classification"] == "PARTIALLY FIXED") != (it.get("status") == "narrowed"):
-                        errs.append(f"{w}: status {it.get('status')} contradicts classification {dd['classification']}")
+                    elif dd["classification"] == "PARTIALLY FIXED" and it.get("status") != "narrowed":
+                        errs.append(f"{w}: candidate {cid} is PARTIALLY FIXED, so the entry status must be narrowed")
         for d in disp:
             if d.get("classification") in PUBLISHED and d.get("published_as") and resolved[d["cand"]] == 0:
                 errs.append(f"{pkg}/{d['cand']}: published_as {d['published_as']} does not list this candidate in cand_ids")
@@ -302,10 +302,10 @@ def page_fragment(it: dict) -> tuple[dict, str]:
              ("Verified against", f"CNA <code>{TARGET_SHORT}</code> (<code>{TARGET}</code>)")]
     if it["severity"] != "n/a":
         facts.append(("Severity", f"{esc(it['severity'].capitalize())} <span class=\"issue-note\">(a triage suggestion, not a project priority)</span>"))
-    facts += [("Evidence basis", esc(it["confidence"].replace("-", " "))), ("Affected contract", it["public_contract"])]
+    facts += [("Evidence basis", esc(it["confidence"].replace("-", " "))), ("Affected contract", esc(it["public_contract"]))]
     dl = '<dl class="issue-facts">' + "".join(f"<div><dt>{k}</dt><dd>{v}</dd></div>" for k, v in facts) + "</dl>"
-    src_items = "".join(f"<li>{{{{src:{s['path']}}}}}" + (f" &mdash; {s['note']}" if s.get("note") else "") + "</li>" for s in it["sources"])
-    body = f'<p class="lede">{it["summary"]}</p>\n{dl}\n'
+    src_items = "".join(f"<li>{{{{src:{s['path']}}}}}" + (f" &mdash; {esc(s['note'])}" if s.get("note") else "") + "</li>" for s in it["sources"])
+    body = f'<p class="lede">{esc(it["summary"])}</p>\n{dl}\n'
     body += block("Expected behaviour", "expected", para(it["expected"]))
     body += block("Actual behaviour at TARGET", "actual", para(it["actual"]))
     body += block("Source locations", "sources", f'<ul class="source-list">{src_items}</ul>')

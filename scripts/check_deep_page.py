@@ -34,6 +34,9 @@ ROOT = CD.ROOT
 BOOK_VOCAB = re.compile(
     r"(\bthe (?:CNA )?Bible\b|\bthis book\b|\bthe book\b|\bChapters? \d+\b|\bCh\. ?\d+\b|\bPart [IVX]+\b|\\S ?\d|§ ?\d|\\(?:cnaclass|texttt|ref|cite)\b|"
     r"bible\.libcna|cnabugs|\bd6e9ff05\b|\blatex/book\b|ch\d\d-[a-z-]+\.tex|\bthe manuscript\b|\bthis edition\b|\bsealed edition\b)", re.I)
+# check_dev_page.DEV_VOCAB minus the false positive on CNA's own file names that end in "coverage.md"
+DEV_VOCAB = re.compile(r"(developer\.libcna\.com|(?<![\w-])COVERAGE\.md|this manual\b|this handbook\b|this website's pin|"
+                       r"Phase 0 overview)", re.I)
 HEADING = re.compile(r"<h([1-6])\b([^>]*)>", re.I)
 
 
@@ -121,7 +124,7 @@ def main() -> int:
             warns.append(f"mentions alpha.1 (must be historical context only): ...{ctx}...")
         for m in CD.FIRST_PERSON.finditer(text):
             errors.append(f"first-person voice: {m.group(0)}")
-        for m in list(CD.DEV_VOCAB.finditer(text)) + list(CD.DEV_STATUS.finditer(text)):
+        for m in list(DEV_VOCAB.finditer(text)) + list(CD.DEV_STATUS.finditer(text)):
             errors.append(f"Developer-site vocabulary left in text: {m.group(0)}")
         for m in BOOK_VOCAB.finditer(text):
             errors.append(f"book vocabulary: {m.group(0)!r} (pages are a knowledge graph, not a converted book)")
