@@ -435,7 +435,30 @@ container-&gt;Dispose();</code></pre>
       </div>
 
 
-    <nav class="docs-pagination" aria-label="Page navigation">
+    <!--p3:begin wp15-storage-container-details-->
+<h2 id="container-details">StorageContainer details that affect save code</h2>
+<p>Three behaviours are easy to miss when XNA save code is ported; each was checked by reading <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/src/StorageContainer.cpp"><code>StorageContainer.cpp</code></a> at this snapshot (not executed). The internals are on <a href="../development/internals/modules/storage.html#authority">the storage internals page</a>.</p>
+<h3 id="reading-a-save-completely">Reading a save back completely</h3>
+<p><code>Stream::Read</code> returns how many bytes it actually copied, which may be fewer than requested. Loop until the expected length is reached or a read returns 0, and treat a short result as a truncated save rather than parsing it:</p>
+<pre><code class="language-cpp">std::unique_ptr&lt;System::IO::Stream&gt; in =
+    container-&gt;OpenFile("savegame.dat", System::IO::FileMode::Open);
+std::vector&lt;SharpRuntime::bytecs&gt; bytes(static_cast&lt;std::size_t&gt;(in-&gt;getLengthProperty()));
+
+SharpRuntime::intcs offset = 0;
+const auto total = static_cast&lt;SharpRuntime::intcs&gt;(bytes.size());
+while (offset &lt; total) {
+    const SharpRuntime::intcs n = in-&gt;Read(bytes.data(), offset, total - offset);
+    if (n == 0) break;          // end of file before the expected length
+    offset += n;
+}
+if (offset != total) { /* reject a truncated save */ }</code></pre>
+<p>Syntax-checked with <code>g++ -fsyntax-only</code> against the snapshot's headers and a sibling sharp-runtime checkout; not run.</p>
+<h3 id="wildcard-patterns">Wildcard patterns, exactly</h3>
+<p><code>GetFileNames(pattern)</code> and <code>GetDirectoryNames(pattern)</code> match each entry name at the container's top level (not recursively) against the whole pattern with CNA's own matcher: <code>*</code> matches any run of bytes, including none; <code>?</code> matches exactly one byte, so a non-ASCII character, which is several UTF-8 bytes, needs several; every other byte, <code>.</code> included, matches only itself, case-sensitively on every host. There are no character classes and no escapes, and an empty pattern throws <code>std::invalid_argument</code>. <code>"slot?.sav"</code> therefore finds <code>slot1.sav</code> but not <code>Slot1.SAV</code> or <code>slot10.sav</code>. The storage tests exercise path containment, not the matcher's edge cases, so test the patterns your game depends on.</p>
+<h3 id="disposal-and-sharing">Disposal and concurrent writers</h3>
+<p><code>Dispose()</code> sets <code>IsDisposed</code> and raises <code>Disposing</code> once, but no file or directory method checks the flag: calls after disposal still reach the filesystem. Treat a disposed container as unusable anyway: no code should depend on calls after disposal working. The <code>FileShare</code> argument of the four-argument <code>OpenFile</code> is accepted and not applied: the stream is opened with path, mode and access only, and there is no cross-process lock, so <code>FileShare::None</code>, <code>Read</code> and <code>ReadWrite</code> behave the same. Do not rely on it to keep two writers apart; serialise saves in the game.</p>
+<!--p3:end wp15-storage-container-details-->
+<nav class="docs-pagination" aria-label="Page navigation">
       <div class="docs-pagination-prev">
     <a href="video-playback.html" class="pagination-link pagination-prev">
       <span class="pagination-direction">← Previous</span>
