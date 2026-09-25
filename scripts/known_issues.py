@@ -227,7 +227,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------------------------------------
 # independent adversarial audit: audit/data/bible/issues/patches-adversarial.json
-#   {"entries":      {"CNA-BUG-nnn": {"set": {"field": value}}},                      field corrections (HTML fields hold HTML)
+#   {"entries":      {"CNA-BUG-nnn": {"set": {"field": value}, "append": {"field": "<p>..</p>"}}},   field corrections (HTML fields hold HTML); set first, then append
 #    "folded":       {"CNA-BUG-226": "CNA-BUG-215"},                                  duplicate folded into its survivor (the survivor keeps its id)
 #    "retired":      {"CNA-BUG-nnn": {"classification": "NOT A BUG|PROVEN FIXED|OBSOLETE|INSUFFICIENT EVIDENCE|DUPLICATE", "evidence": "..."}},
 #    "reclassified": {"CNA-BUG-nnn": {"class": "functional-gap", "set": {...}}},       a new id in the target class is allocated after every existing one
@@ -252,6 +252,8 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
         if not need(iid, "entries"):
             return issues, disp, trail, 1
         by[iid].update(spec.get("set", {}))
+        for fld, add in (spec.get("append") or {}).items():
+            by[iid][fld] = (by[iid].get(fld) or "") + add
     for src, dst in (adv.get("folded") or {}).items():
         if not (need(src, "folded") and need(dst, "folded")):
             return issues, disp, trail, 1
