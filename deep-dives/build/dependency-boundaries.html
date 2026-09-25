@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Module boundaries: cycles, umbrellas and the gates that enforce them - CNA Deep Dives</title>
+  <meta name="description" content="Why CNA keeps three static-archive cycles, what the CNA, CnaExt and BuildConfig compositions carry, what each boundary gate and the fifteen module probes check, when they run and what a violation looks like.">
+  <meta name="keywords" content="module probes, link closure, static archive cycle, umbrella target, source partition, include reachability, ninja, boundary gate, cmake, dependency">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/build/dependency-boundaries.html">
+  <meta property="og:title" content="Module boundaries: cycles, umbrellas and the gates that enforce them - CNA Deep Dives">
+  <meta property="og:description" content="Why CNA keeps three static-archive cycles, what the CNA, CnaExt and BuildConfig compositions carry, what each boundary gate and the fifteen module probes check, when they run and what a violation looks like.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/build/dependency-boundaries.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Module boundaries: cycles, umbrellas and the gates that enforce them","description":"Why CNA keeps three static-archive cycles, what the CNA, CnaExt and BuildConfig compositions carry, what each boundary gate and the fifteen module probes check, when they run and what a violation looks like.","url":"https://libcna.com/deep-dives/build/dependency-boundaries.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Architecture &amp; build <span class="dev-nav-count">5</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="configuring-cna.html" class="docs-nav-link">Build routes and proof</a></li>
+        <li><a href="module-architecture.html" class="docs-nav-link">Module architecture</a></li>
+        <li><a href="dependency-boundaries.html" class="docs-nav-link active" aria-current="page">Boundaries and enforcement</a></li>
+        <li><a href="third-party-dependencies.html" class="docs-nav-link">Third-party dependencies</a></li>
+        <li><a href="tools-and-scripts.html" class="docs-nav-link">Tools and their verdicts</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine <span class="dev-nav-count">11</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../renderers/index.html" class="docs-nav-link">Renderers <span class="dev-nav-count">11</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">3</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Architecture &amp; build</a></li>
+        <li aria-current="page">Boundaries and enforcement</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Module boundaries: cycles, umbrellas and the gates that enforce them</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#goal">What the boundary rules are for</a></li>
+          <li><a href="#cycles">The three declared archive cycles</a></li>
+          <li><a href="#compositions">Compositions: CNA, CnaExt and BuildConfig</a></li>
+          <li><a href="#gates">The gates, boundary by boundary</a></li>
+          <li><a href="#probes">Fifteen module probes and their closure contracts</a></li>
+          <li><a href="#generator">Registered is not executed: the generator caveat</a></li>
+          <li><a href="#source-tools">Include reachability and header self-containment: tools, not gates</a></li>
+          <li><a href="#identity">The identity table: one list in several places</a></li>
+          <li><a href="#change-safely">How to change a boundary safely</a></li>
+          <li><a href="#violations">What a violation looks like</a></li>
+          <li><a href="#evidence">Evidence and limits</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Architecture &amp; build &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Read from the module CMake files, cmake/Tests/ModuleProbes.cmake, scripts/check_module_link_closure.py, the platform contract test, the modularization tools, CMakePresets.json and the workflows; no configure, build or test was run. That no workflow evaluates a closure contract is a reading of the generators and filters.</p></div>
+
+<p class="lede">CNA's modules are held apart by declared CMake edges, a few deliberate static-archive cycles, narrow link aliases and a set of gates that are meant to fail when an edge appears that nobody declared. This page explains why the cycles that exist are kept, what each gate actually checks and when it runs, what a violation looks like, and where the enforcement is weaker than its description suggests. It is for maintainers who move code between modules, add a dependency, or have to decide whether a green build says anything about a boundary. The edge list itself is on <a href="../../development/repository/module-graph.html">Physical module dependency map</a>.</p>
+
+<h2 id="goal">What the boundary rules are for</h2>
+<p>A dependency cycle can be three different things: an architecture defect, a fact about how static archives are resolved, or a faithful expression of the framework's semantics. CNA has all three kinds of pressure, so a graph with every cycle removed is not the goal. The goal is narrower: declare every edge that is really needed, keep public closures no wider than the public headers require, and make accidental edges fail mechanically rather than by review. Each of those three halves has its own mechanism below.</p>
+
+<h2 id="cycles">The three declared archive cycles</h2>
+<p>CNA declares three cycles on both of their members, so that CMake repeats the static archives on the final link line. Each has a concrete runtime reason, stated in the owning CMake files:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Cycle</th><th scope="col">Forward responsibility</th><th scope="col">Reverse responsibility</th><th scope="col">How it is declared</th></tr></thead>
+<tbody>
+<tr><td>graphics and input</td><td><code>GraphicsDevice</code> updates the <code>TouchPanel</code> display metrics and binds <code>Mouse</code> and <code>TextInputEXT</code> to a window</td><td><code>Input::MouseCursor</code> is built from a <code>Texture2D</code></td><td><code>cna_graphics_core</code> links <code>cna_input</code> PRIVATE, <code>cna_input</code> links <code>cna_graphics_core</code> PUBLIC; both set <code>LINK_INTERFACE_MULTIPLICITY 3</code></td></tr>
+<tr><td>audio and media</td><td><code>FrameworkDispatcher::Update()</code>, in the audio module, pumps <code>MediaPlayer</code></td><td>media playback runs through the audio mixer</td><td>audio links media PRIVATE, media links audio PUBLIC; default repetition</td></tr>
+<tr><td>graphics and each compiled renderer family</td><td>the device constructs the selected renderer through a factory whose definition lives in the family archive</td><td>the family implements the graphics-owned contract, and the contract's header-inlined defaults call <code>CNA::Logger::Warn</code> and graphics symbols such as <code>Effect::Apply</code></td><td><code>cna_graphics_core</code> links every target in <code>CNA_RENDERER_TARGETS</code> PRIVATE; each family links <code>cna_graphics_core</code>, <code>cna_core</code> and <code>cna_math</code> PRIVATE</td></tr>
+</tbody>
+</table></div>
+<h3 id="why-kept">Why the first two are kept rather than redesigned</h3>
+<p>Both come from XNA's own ownership. <code>MouseCursor</code> is an input type made from a graphics resource, and the dispatcher is the one place that pumps audio streams, the media player and the touch panel, exactly as FNA's does. Moving <code>MouseCursor</code> or the dispatcher could trade the cycle for a new abstraction, but deleting an edge without relocating the semantic owner only produces unresolved symbols or a missing update path. The dispatcher's placement follows the same reasoning in the other direction: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/audio/CMakeLists.txt"><code>modules/audio/CMakeLists.txt</code></a> records that it lives in <code>audio</code> because audio, media and runtime all call into it, and that assigning it to <code>runtime</code> would create a runtime-to-audio cycle for nothing. The same file also declares the dispatcher's direct edge to <code>cna_input</code> (for the touch-panel pump) instead of letting it resolve through media's private graphics edge: a dependency that only works because another module happens to link something is exactly what the rules are meant to surface.</p>
+<h3 id="renderer-seam">The renderer cycle is a compile-time seam</h3>
+<p>CNA does not load a renderer plug-in after start-up. The families compiled into a build are fixed at configure time, a generated registry lists them, and the device resolves one at run time from that fixed set. The reverse edges are declared for every family, not only for the Direct3D ones that first needed them, because the contract header's inline defaults give every renderer the same dependency on core logging; the first real failure surfaced on a Vulkan harness link after the module split.</p>
+<h3 id="multiplicity">Why the multiplicity is three</h3>
+<p>CMake repeats a declared cycle twice by default, which is enough while the cycle is two archives deep. The Direct3D 11 and 12 families add a third archive, <code>cna_renderer_d3dcommon</code>, that is a PUBLIC dependency of those families and reaches back into the graphics core, so an executable could pull <code>GraphicsDevice.cpp</code> out of the last repetition of the graphics archive with no input archive after it and fail on <code>TouchPanel</code>, <code>Mouse</code> or <code>TextInputEXT</code>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/CMakeLists.txt"><code>modules/graphics/CMakeLists.txt</code></a> records a real failure of this kind in a Direct3D 12 test executable; one more repetition closes it at the cost of a longer link line.</p>
+<h3 id="diagnosing">Diagnosing a static link failure</h3>
+<p>When an executable fails to link, inspect the generated final link line before adding a new PUBLIC dependency. Repeating two intended archives is a different change from making every module link the whole framework umbrella, and removing a reverse edge that looks redundant can pass every object compilation and fail only at the final executable link.</p>
+
+<h2 id="compositions">Compositions: CNA, CnaExt and BuildConfig</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a> defines three compositions that are easy to confuse with modules:</p>
+<ul>
+<li><strong><code>CNA</code></strong> is the historical full-framework <code>INTERFACE</code> target: runtime, the framework modules, both extension modules, diagnostics, platform, the build configuration and the default renderer target. Existing games keep linking it. In the static layout it lists the module archives; with <code>CNA_SHARED_LIBRARY</code> it is re-pointed at <code>libcna.so</code>, and in that mode every compiled-in renderer family is named explicitly because tests call renderer internals and the library must export them. Design, Phone, Inspector, the content pipeline, GamerServices and Net are deliberately outside it.</li>
+<li><strong><code>cna_cnaext</code> / <code>CNA::CnaExt</code></strong> composes <code>cna_graphics_ext</code> with <code>cna_devices_ext</code>. It is neither the <code>CNAEXT</code> declaration marker nor a renderer; it keeps the historical name of the former extension library alive as a composition over the modules that replaced it.</li>
+<li><strong><code>cna_build_config</code> / <code>CNA::BuildConfig</code></strong> carries only public build facts (the C++23 feature and definitions such as the default renderer macro, <code>CNA_CNAEXT</code>, <code>CNA_DEVICES</code>, Draco and video availability, the diagnostics level and <code>SOUND_ENABLED</code>) and, under Emscripten, the exception ABI and stack size. It exports no include directory.</li>
+</ul>
+<p>The last point closes a loophole that the old layout had. When a global include root rode on the common build flags, any module could include any header and the build still succeeded, so undeclared compile dependencies went unnoticed. The media module's CMake file records one that this surfaced: <code>MediaPlayer.cpp</code> compiles the dispatcher header, which reaches into <code>TouchPanel</code>, an input-module include that the global root used to satisfy silently. Today an include works only when the declaring module is actually reachable through declared edges, so the media module states its input edge.</p>
+<h3 id="narrow-aliases">Link the narrowest alias; PUBLIC and PRIVATE mean propagation</h3>
+<p>A subsystem test or a reusable library should link the narrowest alias whose public surface it uses, because that is what makes an undeclared reach visible. A game executable may reasonably use <code>CNA</code>; a math-only helper should link <code>CNA::Math</code>; a content tool should say whether it needs <code>CNA::Content</code>, graphics or the whole runtime.</p>
+<p>PUBLIC and PRIVATE are CMake propagation, not importance. The content module's public headers expose graphics, audio and media types because a type reader constructs <code>Texture2D</code>, <code>SoundEffect</code>, <code>Song</code> and <code>Video</code> objects, so those edges are PUBLIC; its cgltf and stb include roots, the optional zstd library and the optional Draco wrapper are PRIVATE, and at this snapshot it links no SDL at all. The audio module follows the same rule for its backends: the SDL3, SDL2 or <code>dl</code> libraries are linked PRIVATE and only for the selected <code>CNA_AUDIO_PLATFORM</code>, so that a nominally SDL2-only binary cannot keep an SDL3 link through <code>cna_audio</code>. A consumer that compiles only because a private third-party include leaked from its environment has no supported contract.</p>
+
+<h2 id="gates">The gates, boundary by boundary</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Boundary</th><th scope="col">Gate</th><th scope="col">When it runs</th><th scope="col">Blind to</th></tr></thead>
+<tbody>
+<tr><td>Every translation unit has a physical owner</td><td>Source-partition validator in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a></td><td>Every configure; <code>FATAL_ERROR</code></td><td>Headers and C files; nested renderer sources that the non-recursive glob never compiles (see <a href="module-architecture.html#partition-limits">module architecture</a>)</td></tr>
+<tr><td>No global include or source root</td><td>Legacy-root guard, same file</td><td>Every configure; <code>FATAL_ERROR</code></td><td>Include roots added any other way</td></tr>
+<tr><td>Each module's link closure</td><td>Module probes and <code>ModuleLinkClosure_*</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/ModuleProbes.cmake"><code>cmake/Tests/ModuleProbes.cmake</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/check_module_link_closure.py"><code>scripts/check_module_link_closure.py</code></a>)</td><td>CTest, native builds with tests on and Python 3; the closure half needs a Makefiles tree</td><td>Everything outside the regular expressions; skipped under Ninja (below)</td></tr>
+<tr><td>The platform contract is SDL-, Vulkan- and GL-free</td><td><code>ContractIsSdlFreeTests</code>, whose translation unit includes every <code>CNA/Platform</code> header and stops with <code>#error</code> if an SDL, Vulkan or OpenGL sentinel macro is defined; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/platform/check_contract.py"><code>tools/platform/check_contract.py</code></a> keeps its include list complete</td><td>Compile time of the platform tests</td><td>Implementation files (covered by the SDL audits)</td></tr>
+<tr><td>SDL stays inside the platform module</td><td>Platform ratchet, non-production SDL audit, hot-path lint</td><td>Configure, when Python 3 is present (skipped without it)</td><td>Anything when Python is absent</td></tr>
+<tr><td>A Wayland build links neither SDL nor X11</td><td><code>CnaWaylandLinkClosure</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/WaylandLinkClosure.cmake"><code>cmake/Tests/WaylandLinkClosure.cmake</code></a>), reading <code>readelf -d</code> of the built binaries and <code>nm</code> of the platform archive</td><td>CTest in a <code>CNA_PLATFORM=WAYLAND</code> tree</td><td>Other platforms; independent of the generator</td></tr>
+<tr><td>One renderer identity table, no global renderer scalars</td><td><code>RendererIdentityRegistry</code>, <code>RuntimeRendererDiscipline</code>, <code>RendererTargetDiscipline</code>, <code>RendererCombinationRegistry</code>, <code>RendererCurationApiDecisions</code></td><td>CTest (Python), and the registry gates of <code>multi-renderer-ci.yml</code></td><td>Behaviour: they compare sets and source patterns</td></tr>
+<tr><td>Unselected renderer descriptors still compile</td><td>Renderer descriptor gate (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererDescriptorGate.cmake"><code>cmake/RendererDescriptorGate.cmake</code></a>)</td><td>Build, as an object library nothing links</td><td>Native drawing paths</td></tr>
+<tr><td>Lightweight presets stay lightweight</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/build/check_build_performance_policy.py"><code>tools/build/check_build_performance_policy.py</code></a></td><td><code>general-tests-ci.yml</code></td><td>Anything but preset closures and global flags</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="probes">Fifteen module probes and their closure contracts</h2>
+<p>On native test configurations, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/ModuleProbes.cmake"><code>ModuleProbes.cmake</code></a> builds one tiny consumer per composition boundary from <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/tests/modules"><code>tests/modules</code></a>. Each probe links exactly one alias and produces two CTest entries named after the probe: <code>ModuleProbe_probe_&lt;name&gt;</code> builds and runs the consumer, showing that the alias alone is sufficient, and <code>ModuleLinkClosure_probe_&lt;name&gt;</code> inspects the probe's generated link line for forbidden and required inputs. The set is Math, Design, Core, GraphicsCore, Content, Runtime, Input, Audio, Media, Storage, Devices, DevicesExt, GraphicsExt, CnaExt and, with networking enabled, Net: fifteen probes, one more than the fourteen of the original fleet (the Design probe arrived with the Framework.Design module in September 2026). The closure entry is registered only when a Python 3 interpreter is found and the probe has a forbid pattern; the CnaExt probe has none of its own and is checked by a separate composition gate.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Probe alias</th><th scope="col">Forbidden on the link line (Python regular expressions)</th><th scope="col">The contract it encodes</th></tr></thead>
+<tbody>
+<tr><td><code>CNA::Math</code></td><td><code>libcna_(?!math)|libCNA_|libSDL3|libenet|libav|cna_renderer_</code></td><td>nothing but the math archive and sharp-runtime</td></tr>
+<tr><td><code>CNA::Design</code></td><td><code>libcna_(?!design|math)|libCNA_|libSDL3|libenet|libav|cna_renderer_</code></td><td>the tooling layer closes over math only</td></tr>
+<tr><td><code>CNA::Core</code></td><td><code>libcna_(?!core|math)|libCNA_|libenet|libav|cna_renderer_</code></td><td>logging and exceptions only</td></tr>
+<tr><td><code>CNA::GraphicsCore</code></td><td><code>libcna_(content|media|audio|runtime|devices|cnaext|storage)|libCNA_|libenet|libav</code></td><td>may pull math, core, input and the selected renderer; nothing above graphics</td></tr>
+<tr><td><code>CNA::Content</code></td><td><code>libcna_(runtime|devices|cnaext|storage)|libCNA_|libenet</code></td><td>graphics, audio and media by XNA design; no runtime layer</td></tr>
+<tr><td><code>CNA::Runtime</code></td><td><code>libcna_(devices|cnaext|storage)|libCNA_|libenet</code></td><td>the framework below it; never networking, devices or extensions</td></tr>
+<tr><td><code>CNA::Input</code>, <code>CNA::Audio</code>, <code>CNA::Media</code>, <code>CNA::GraphicsExt</code></td><td>each forbids the modules above it and networking</td><td>only the declared cycles reach sideways</td></tr>
+<tr><td><code>CNA::Storage</code></td><td><code>libcna_(?!storage)|libCNA_|libenet|libav|cna_renderer_</code></td><td>no other CNA archive at all, not even core</td></tr>
+<tr><td><code>CNA::Devices</code></td><td><code>libcna_(devices_ext|graphics_ext)|libCNA_|libenet</code></td><td>the XNA device base never depends on an extension</td></tr>
+<tr><td><code>CNA::DevicesExt</code></td><td><code>libcna_devices\.|libcna_graphics_ext|libCNA_|libenet</code></td><td>the extension never depends on the XNA device base</td></tr>
+<tr><td><code>CNA::Net</code></td><td><code>libcna_(devices|graphics_ext)</code>, plus <code>--require libenet</code> in <code>ModuleLinkClosure_NetHasENet</code></td><td>networking closes over the runtime stack and ENet; FFmpeg is allowed because media is in that stack</td></tr>
+<tr><td><code>CNA::CnaExt</code></td><td><code>libCNA_|libenet</code>, with <code>--require</code> of both <code>libcna_graphics_ext</code> and <code>libcna_devices_ext</code> (<code>ModuleLinkClosure_CnaExtComposition</code>)</td><td>the umbrella really composes both extension modules</td></tr>
+</tbody>
+</table></div>
+<h3 id="negative-contracts">Two negative contracts worth reading closely</h3>
+<p>The storage expression uses a negative lookahead, <code>libcna_(?!storage)</code>, so every CNA archive other than <code>libcna_storage</code> fails the gate, including <code>libcna_core</code>. Storage's public headers do name core declarations (<code>PlayerIndex</code>, the <code>CNAEXT</code> marker, the path-containment helpers), and they get them from the header-only <code>CNA::CoreHeaders</code> interface, which widens the include path without widening the binary closure. The probe source throws and catches a storage exception and prints a <code>PlayerIndex</code> value, so it exercises the storage archive and the core headers together.</p>
+<p>The DevicesExt expression escapes the dot after <code>libcna_devices</code>. Unescaped, <code>libcna_devices.</code> would also match <code>libcna_devices_ext.a</code>, the archive under test, and the gate would fail on itself; escaped, it rejects exactly the XNA base archive. That encodes a design rule: project-owned <code>CNA::Devices</code> services must never depend on the XNA-shaped <code>Microsoft::Devices</code> sensor module. Both negative assertions say more than an umbrella consumer could, which would link successfully whatever accidental edges existed. One caution for the DevicesExt probe: with <code>CNA_DEVICES</code> at its default OFF the extension surface compiles to nothing, the probe uses no extension symbol, and only the declared link closure is checked, not that the extension code links.</p>
+<h3 id="probe-gaps">Where a probe is weaker than the architecture</h3>
+<p>The core probe does not forbid <code>libSDL3</code>, and its comment still says SDL3 is an accepted private detail of the core logger. At this snapshot <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/CMakeLists.txt"><code>modules/core/CMakeLists.txt</code></a> states the opposite (the logger has its own sink and no core file includes an SDL header), so if an SDL link crept back into <code>cna_core</code> this probe would not fail. Likewise the probe sources' own comments call their gates <code>ModuleLinkClosure_Storage</code> and similar; the registered names carry the <code>probe_</code> prefix.</p>
+<h3 id="sdk-closures">Configuration-specific closures</h3>
+<p>Two further gates exist only in particular trees. In a single-renderer <code>HEADLESS</code> build, <code>ModuleLinkClosure_NativeSdkFree_*</code> checks the GraphicsCore, Content, GraphicsExt and DevicesExt probes (plus the historically named <code>ModuleLinkClosure_GraphicsNativeSdkFree</code>) against <code>vulkan|libGL|GLES|EGL|d3d|dxgi|ddraw|d2d1|wgpu|webgpu|gdi32|shaderc</code>: renderer-neutral graphics, content and both extension modules must link no native graphics SDK. In a single-renderer <code>VULKAN</code> build, <code>ModuleLinkClosure_VulkanRendererClosure</code> requires <code>vulkan</code> on the GraphicsCore probe and forbids every other family's SDK. Both are deliberately conditioned on <code>NOT CNA_MULTI_RENDERER</code>: "no native SDK" is a true statement about a HEADLESS-only build and a false one about a multi-renderer build that merely defaults to HEADLESS, which legitimately links whatever else it contains. Keying the gate on list membership instead would have made it fail for correct builds.</p>
+<h3 id="host-boundary">A host boundary, not a different graph</h3>
+<p>The probes are not built for Emscripten or Android (their guard is <code>CNA_BUILD_TESTS AND NOT EMSCRIPTEN AND NOT ANDROID</code>). That is a limit of where link lines are inspected, not evidence that the module graph differs there. A platform claim about a boundary should say whether it is source-validated, cross-compiled or link-inspected on that target.</p>
+
+<h2 id="generator">Registered is not executed: the generator caveat</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/check_module_link_closure.py"><code>check_module_link_closure.py</code></a> reads <code>&lt;build&gt;/CMakeFiles/&lt;target&gt;.dir/link.txt</code>. The Makefiles generators write that file; Ninja does not. When the file is missing the script prints <code>SKIP: ... not found (non-Makefiles generator?)</code> and exits 77, and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/ModuleProbes.cmake"><code>ModuleProbes.cmake</code></a> gives every <code>ModuleLinkClosure_*</code> test <code>SKIP_RETURN_CODE 77</code>, so CTest reports it as skipped rather than failed. The <code>ModuleProbe_*</code> half still builds and runs its consumer.</p>
+<p>Where the closure half actually runs follows from the generators in use. The <code>tests</code> preset and every preset that inherits the hidden <code>base-ninja</code> parent (<code>dev</code>, <code>unit</code>, <code>release-*</code>, <code>multi-renderer</code>, <code>cnaext</code>) select Ninja. The <code>devices-*</code>, <code>web</code> and Apple presets name no generator and so get the platform default, Makefiles on Linux and macOS; but the workflow that uses <code>devices-ubsan</code> runs the <code>CnaTests</code> binary with filters rather than CTest, and the macOS lanes run the <code>CnaTests</code> binary or filter CTest by name. The only workflow that runs an unfiltered <code>ctest</code>, <code>general-tests-ci.yml</code>, configures with <code>-G Ninja</code>, where every closure gate reports skipped, and its <code>OPENGLES3</code> configuration registers neither the HEADLESS nor the Vulkan closure. By reading, no workflow evaluates a link-closure contract; they are evaluated in a local Makefiles tree. The checker is also given <code>CMAKE_BINARY_DIR</code> as its build directory, so, by reading, in a tree where CNA is a subproject it would look in the consumer's root and skip there too.</p>
+<p>The Wayland closure is the counter-example worth copying: it reads the dynamic section of the binaries that were actually linked, so it does not depend on which generator wrote the build. A report about a link boundary should keep four states apart:</p>
+<ol>
+<li>the probe source compiled and ran;</li>
+<li>the closure test was registered;</li>
+<li>the closure test inspected a real link line under a generator that writes one;</li>
+<li>a deliberate forbidden-library mutation was shown to fail the gate.</li>
+</ol>
+<p>Only the third and fourth are evidence about the boundary itself. The same separation of presence, execution and oracle engagement runs through <a href="../foundations/compatibility-and-evidence.html">the evidence vector</a>.</p>
+
+<h2 id="source-tools">Include reachability and header self-containment: tools, not gates</h2>
+<p>Two source-oriented checks answer questions that linker probes cannot. Include reachability asks whether every <code>CNA/...</code> and <code>Microsoft/...</code> include in a module resolves through the declared module graph, with renderer-gated includes attributed to the renderer that guards them. Header self-containment asks whether each public header compiles on its own against only its module's declared include closure, instead of relying on include order. They are complementary to the probes: a declaration can be reachable while its implementation archive is absent, and a link can succeed through an overly broad umbrella while a public header still needs an unrelated include first. A healthy boundary needs both compile and link evidence.</p>
+<p>At this snapshot, though, the two scripts that implemented those checks, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modularization/tools/check_include_reachability.py"><code>modularization/tools/check_include_reachability.py</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modularization/tools/check_header_self_containment.py"><code>modularization/tools/check_header_self_containment.py</code></a>, are campaign tools rather than gates. Both hard-code the module graph as it stood in August 2026: fourteen framework modules, without <code>platform</code>, <code>diagnostics</code>, <code>design</code>, <code>phone</code>, <code>inspector</code>, <code>content-pipeline</code>, <code>video-ffmpeg</code> or <code>c-api</code>, and a renderer map that predates the renderer curation. No CMake file, CTest registration, workflow or script refers to either. Their built-in graph cannot reach the platform module from <code>runtime</code>, <code>graphics</code>, <code>input</code> or <code>audio</code>, whose sources include <code>CNA/Platform</code> headers in about twenty files, so by reading a run against this tree would report problems that are artefacts of the stale table rather than boundary violations. Treat them as a record of how the layout was proven, not as current evidence.</p>
+<p>What does run today is narrower. <code>ContractIsSdlFreeTests</code> compiles all platform contract headers together in one translation unit (it proves they bring in no SDL, Vulkan or GL header, not that each is self-contained), and the C ABI's <code>CApiHeaderCompatibility</code> test compiles every public C header on its own in each declared language mode. No current gate compiles each public C++ header of the framework modules in isolation.</p>
+
+<h2 id="identity">The identity table: one list in several places</h2>
+<p>A different invariant is held by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/check_renderer_identities.py"><code>scripts/check_renderer_identities.py</code></a> (the <code>RendererIdentityRegistry</code> test): the CMake list of accepted renderer names, the C++ <code>GraphicsRendererType</code> enumeration, the runtime registry map and the C ABI values must be the same 25-entry set, and it follows each identity through to the descriptor accessor that must return it, because two lists that merely spell a name the same way say nothing about whether a build can instantiate that renderer. It also checks the whole-registry counts stated in a few named documents. It cannot prove behaviour; it prevents an identity from existing on only one side of the configuration-to-runtime boundary. The selection rules it protects are on <a href="../../development/internals/graphics/selection.html">Renderer selection internals</a>.</p>
+
+<h2 id="change-safely">How to change a boundary safely</h2>
+<p>A module move or a new public dependency is complete only when every piece of evidence that encoded the old owner changes with it:</p>
+<ol>
+<li>Move the source or header under its real owner, so the partition validator keeps passing without extending the declared module set.</li>
+<li>Update the module's PUBLIC and PRIVATE edges in its own <code>CMakeLists.txt</code>; declare the edge directly rather than relying on another module's private edge.</li>
+<li>Check include reachability by hand for the files that moved (the scripted checker is stale, see above), and compile any public header you touched on its own.</li>
+<li>Add or narrow a probe in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/tests/modules"><code>tests/modules</code></a> and its forbid or require pattern in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/ModuleProbes.cmake"><code>ModuleProbes.cmake</code></a>; keep the pattern as narrow as the contract.</li>
+<li>Configure a Makefiles tree and run the <code>ModuleLinkClosure_*</code> tests, so that the checker inspects a real link line instead of reporting skipped.</li>
+<li>Demonstrate a negative mutation: add the forbidden edge temporarily and watch the gate fail with <code>FORBIDDEN link inputs</code>.</li>
+<li>Update examples, tests, workflow path filters and source citations that named the old owner (the stale Metal filter on <a href="module-architecture.html#history">module architecture</a> is what happens otherwise).</li>
+</ol>
+<p>An umbrella build going green is the beginning of that argument, not its conclusion. The procedure for option and selector changes is on <a href="../../development/handbook/change-build-configuration.html">I need to change build configuration</a>.</p>
+
+<h2 id="violations">What a violation looks like</h2>
+<ul>
+<li><strong>A file outside every module:</strong> configure stops with <code>CNA: translation unit outside every declared physical module src/tests/examples/benchmarks tree: modules/&lt;path&gt;</code> and suggests adding it to a module or extending the declared set deliberately.</li>
+<li><strong>A revived root tree:</strong> <code>CNA: legacy global 'src/' tree reappeared at the repository root</code>.</li>
+<li><strong>A forbidden archive on a probe's link line:</strong> the closure test fails with <code>FORBIDDEN link inputs for probe_&lt;name&gt; (pattern: ...)</code> followed by the offending tokens; a missing required input reads <code>MISSING required link input for probe_&lt;name&gt;</code>. In a Ninja tree the same test reports skipped instead.</li>
+<li><strong>SDL reaching the platform contract:</strong> the platform test build stops at <code>#error "A CNA/Platform header transitively included SDL. The platform contract must be SDL-free."</code>, with sibling messages for Vulkan and OpenGL.</li>
+<li><strong>A removed archive-cycle edge:</strong> no gate names it; the symptom is an <code>undefined reference</code> at the final link of an executable, often only in one renderer's configuration.</li>
+</ul>
+
+<h2 id="evidence">Evidence and limits</h2>
+<p>Read at <code>009d40f5</code> from <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a>, the module CMake files, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/ModuleProbes.cmake"><code>cmake/Tests/ModuleProbes.cmake</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/check_module_link_closure.py"><code>scripts/check_module_link_closure.py</code></a>, the platform contract test, the two modularization tools, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakePresets.json"><code>CMakePresets.json</code></a> and the workflow files. Nothing was configured, built or run: that no workflow evaluates a closure contract, and that the stale reachability table would report problems, are conclusions from reading the generators, filters and tables, not observed runs.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../architecture.html#decisions">Architecture: key architectural decisions</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/repository/module-graph.html#cycles">Module dependency map: the declared cycles</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/build/architecture.html#configure-gates">CMake architecture: gates that run at configure time</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/handbook/conventions.html#enforced">Conventions: what is enforced</a> &middot; <a href="../../development/handbook/change-build-configuration.html">I need to change build configuration</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html#configuration-tests">Test architecture: configuration and policy tests</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../development/reference/test-targets.html">Test target index</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="module-architecture.html">The physical module architecture</a> &middot; <a href="tools-and-scripts.html">Tests, examples, presets and tools</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="module-architecture.html" rel="prev"><span>Previous</span>The physical module architecture: ownership, targets and composition</a><a class="dev-pager-next" href="third-party-dependencies.html" rel="next"><span>Next</span>Dependency acquisition: submodules, siblings, fetched pins and host packages</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

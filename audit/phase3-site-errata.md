@@ -40,3 +40,5 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 33 | `docs/math-types.html` (Point) | lists `+ - * /` | those operators are not XNA API and carry no CNAEXT marker | WP04 | open |
 | 34 | `docs/spritebatch.html#overview` | SpriteBatch "submits them to the GPU as a single batched draw" | `SpriteBatch.cpp` (`flushBatch`): one renderer call per sprite, then one native draw per texture run on GPU families; one call per sprite on SDL_RENDERER | WP05 | open |
 | 35 | `docs/tutorials/21-spritebatch.html` (flush section) | describes GPU-renderer vertex batching as if every renderer did it | only the GPU families batch per texture run | WP05 | open |
+| 36 | `development/repository/index.html#validators` | include reachability is a check that keeps the module map true | at TARGET the script uses an out-of-date module graph and nothing runs it (WP02) | WP02 | open |
+| 37 | `docs/tutorials/109-metal-macos.html#ci` | the Metal workflow fires on pushes that touch the renderer's files | the path filter lists 3 files that no longer exist and omits the Metal CMake files | WP02 | open |
