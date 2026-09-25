@@ -42,3 +42,5 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 35 | `docs/tutorials/21-spritebatch.html` (flush section) | describes GPU-renderer vertex batching as if every renderer did it | only the GPU families batch per texture run | WP05 | open |
 | 36 | `development/repository/index.html#validators` | include reachability is a check that keeps the module map true | at TARGET the script uses an out-of-date module graph and nothing runs it (WP02) | WP02 | open |
 | 37 | `docs/tutorials/109-metal-macos.html#ci` | the Metal workflow fires on pushes that touch the renderer's files | the path filter lists 3 files that no longer exist and omits the Metal CMake files | WP02 | open |
+| 38 | `docs/input.html#touchpanel` | `TouchCollection.IsReadOnly` is a "known contract bug" | TARGET tests treat it as deliberate FNA parity (WP14) | WP14 | open |
+| 39 | `docs/tutorials/120-xact.html#caveat-reverb` | band-pass filters are implemented | they cannot be reached from parsed XACT content (WP14) | WP14 | open |
