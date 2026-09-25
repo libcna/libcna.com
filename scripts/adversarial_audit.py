@@ -484,14 +484,21 @@ def counts_block() -> str:
     disp = json.loads((ROOT / "audit" / "data" / "bible" / "issues" / "dispositions.json").read_text(encoding="utf-8"))
     trail = disp.get("adversarial_audit", {})
     rev_dir = ROOT / "audit" / "data" / "adversarial" / "issue-reviews"
-    reviewed = 0
-    verdicts: Counter = Counter()
+    latest: dict[str, str] = {}                 # entry id -> its verdict (a later file wins, as in audit_issue_review.reviews)
     if rev_dir.exists():
         for f in sorted(rev_dir.glob("*.jsonl")):
             for line in f.read_text(encoding="utf-8").splitlines():
                 if line.strip():
-                    reviewed += 1
-                    verdicts[json.loads(line)["verdict"]] += 1
+                    rv = json.loads(line)
+                    latest[rv["id"]] = rv["verdict"]
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import known_issues as KI
+    base_built = KI.build_entries(False)
+    base_ids = {i["id"] for i in base_built[0]} if not isinstance(base_built, int) else set()
+    audit_created = set((trail.get("added") or {}).values())          # entries that exist only because the audit added them (reclassified ones were reviewed under their earlier id)
+    verdicts: Counter = Counter(v for k, v in latest.items() if k in base_ids)
+    reviewed = len([k for k in latest if k in base_ids])
+    created_reviewed = len([k for k in latest if k in audit_created])
     dis_dir = ROOT / "audit" / "data" / "adversarial" / "dismissal-reviews"
     dreviewed = 0
     dverdicts: Counter = Counter()
@@ -515,13 +522,17 @@ def counts_block() -> str:
     ftypes: Counter = Counter()
     tot: Counter = Counter()
     seen_units: list[str] = []
+    a_status: Counter = Counter()
+    a_ftypes: Counter = Counter()
+    a_seen: list[str] = []
     if ur_dir.exists():
         for f in sorted(ur_dir.glob("*.json")):
             for u in json.loads(f.read_text(encoding="utf-8")).get("units", []):
-                seen_units.append(u["unit"])
-                status[u["status"]] += 1
+                aux = u["unit"].startswith("aux-")
+                (a_seen if aux else seen_units).append(u["unit"])
+                (a_status if aux else status)[u["status"]] += 1
                 for fd in u.get("findings", []):
-                    ftypes[fd["type"]] += 1
+                    (a_ftypes if aux else ftypes)[fd["type"]] += 1
                 for k, fields in (("residuals", ("reviewed", "lost")), ("dropped", ("reviewed", "false_drop", "restore_issue")), ("corrections", ("verified", "disagree"))):
                     for fld in fields:
                         tot[f"{k}.{fld}"] += (u.get(k) or {}).get(fld, 0)
@@ -558,12 +569,15 @@ def counts_block() -> str:
              f"| Entries with a test touching the area | {c['tests_present']} of {c['total']} |",
              f"| Subsystems | " + " · ".join(f"{k} {v}" for k, v in sorted(sub.items(), key=lambda kv: -kv[1])) + " |",
              f"| Audit operations recorded in `dispositions.json` | folded {len(trail.get('folded', {}))} · retired {len(trail.get('retired', {}))} · reclassified {len(trail.get('reclassified', {}))} · added {len(trail.get('added', {}))} |",
-             f"| Independent issue reviews ingested | {reviewed} of {c['total']} entries; " + (", ".join(f"{k} {v}" for k, v in sorted(verdicts.items())) or "none") + " |",
+             f"| Independent issue reviews ingested | {reviewed} of the {len(base_ids)} Phase-3 entries; " + (", ".join(f"{k} {v}" for k, v in sorted(verdicts.items())) or "none")
+             + f"; entries added by the audit that a separate reviewer then tried to refute: {created_reviewed} of {len(audit_created)} |",
              f"| Independent dismissal reviews ingested | {dreviewed} of 121; " + (", ".join(f"{k} {v}" for k, v in sorted(dverdicts.items())) or "none") + " |",
              f"| Independent site-errata verifications ingested | {ereviewed} of 76 Phase-3 errata; " + (", ".join(f"{k} {v}" for k, v in sorted(everdicts.items())) or "none") + " |",
              f"| Independent Bible-unit reviews ingested | {len(seen_units)} of 98 canonical text units; " + (", ".join(f"{k} {v}" for k, v in sorted(status.items())) or "none")
              + f"; findings {sum(ftypes.values())} (" + (", ".join(f"{k} {v}" for k, v in sorted(ftypes.items())) or "none") + ") |",
-             f"| Unit-review evidence | residual paragraphs/identifiers reviewed {tot['residuals.reviewed']} (lost-useful {tot['residuals.lost']}); dropped dispositions reviewed {tot['dropped.reviewed']} "
+             f"| Independent auxiliary-document reviews ingested | {len(a_seen)} of 21 auxiliary documents; " + (", ".join(f"{k} {v}" for k, v in sorted(a_status.items())) or "none")
+             + f"; findings {sum(a_ftypes.values())} (" + (", ".join(f"{k} {v}" for k, v in sorted(a_ftypes.items())) or "none") + ") |",
+             f"| Unit-review evidence (canonical units and auxiliary documents together) | residual paragraphs/identifiers reviewed {tot['residuals.reviewed']} (lost-useful {tot['residuals.lost']}); dropped dispositions reviewed {tot['dropped.reviewed']} "
              f"(false drops {tot['dropped.false_drop']}, restore-issue {tot['dropped.restore_issue']}); ledger TARGET corrections re-derived {tot['corrections.verified']} (disagreements {tot['corrections.disagree']}) |",
              f"| Unit-review findings and their outcome | {sum(outcome.values())} = " + (" · ".join(f"{k} {v}" for k, v in sorted(outcome.items())) or "none") + " |", "",
              "Per-unit review results (dropped dispositions: reviewed / false drops; ledger TARGET corrections: re-derived / agreeing):", "",
@@ -666,6 +680,13 @@ def cmd_counts(write: bool) -> int:
     if os.environ.get("PHASE3_FINAL") == "1" and "· open " in new.split("Unit-review findings and their outcome", 1)[-1].split("\n", 1)[0]:
         print("ERROR counts: a unit-review finding has neither a recorded page fix nor a recorded outcome (audit/data/adversarial/unit-finding-outcomes.json)")
         return 1
+    if os.environ.get("PHASE3_FINAL") == "1":
+        m = re.search(r"Independent Bible-unit reviews ingested \| (\d+) of 98", new)
+        a = re.search(r"Independent auxiliary-document reviews ingested \| (\d+) of 21", new)
+        r_ = re.search(r"Independent issue reviews ingested \| (\d+) of the (\d+) Phase-3 entries", new)
+        if not (m and int(m.group(1)) == 98 and a and int(a.group(1)) == 21 and r_ and r_.group(1) == r_.group(2)):
+            print("ERROR counts: not every canonical unit (98), auxiliary document (21) and Phase-3 Known Issues entry has an independent review")
+            return 1
     print("counts: ledger block is current")
     return 0
 
