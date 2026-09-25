@@ -2159,6 +2159,222 @@
    ],
    "evidence": "<p>Read at 009d40f5; nothing executed. Reported by the HM2 issue reviewer as a possible missing finding next to CNA-BUG-176 and re-verified by the orchestrator. Distinct from CNA-BUG-135 (the CNAEXT global-pointer trio, where the interface documents the throw) and CNA-BUG-176 (<code>Game::IsMouseVisible</code>).</p>",
    "origin": "new finding at the independent adversarial audit (reported by the HM2 issue reviewer, re-verified by the orchestrator)"
+  },
+  {
+   "cand_ids": [
+    "P2-034"
+   ],
+   "id": "NEW-AUDIT-17",
+   "class": "functional-gap",
+   "subsystem": "Graphics & renderers",
+   "status": "open",
+   "severity": "n/a",
+   "confidence": "verified-by-reading",
+   "tests_present": false,
+   "title": "GraphicsDevice is single-threaded: its resource registry has no lock and only EasyGL and OpenGL4 lease a context, so resource creation from a loading thread is supported only for ContentManager loads on those two",
+   "summary": "GraphicsDevice has no lock: GraphicsResource construction and disposal update its resource registry, and only EasyGL and OpenGL4 return a context lease (taken by frames and ContentManager loads), while XNA 4.0 creates its device D3DCREATE_MULTITHREADED.",
+   "public_contract": "Microsoft::Xna::Framework::Graphics::GraphicsDevice and GraphicsResource: creating or disposing resources from a thread other than the game thread",
+   "expected": "<p>XNA 4.0 creates its <code>Direct3D</code> 9 device with <code>D3DCREATE_MULTITHREADED</code> (decompiled <code>GraphicsDevice.CreateDevice</code> sets creation flags 38, which is 0x26 and includes 0x4), so a loading thread can create textures and buffers while the game thread runs. IGraphicsRenderer.hpp says renderer families that return no lease 'support concurrent resource creation directly or own a different synchronization boundary'.</p>",
+   "actual": "<p><code>GraphicsDevice</code>.cpp contains no mutex. <code>AddResourceReference</code> and <code>RemoveResourceReference</code> push to and swap-pop a plain <code>std::vector</code>, and <code>GraphicsResource</code>'s device constructor and <code>Dispose(bool)</code> call them, outside any renderer call. The context lease is implemented only by <code>EasyGLRenderer</code> and <code>OpenGL4Renderer</code> and is taken by <code>GraphicsDeviceManager::BeginDraw</code>, by <code>ContentReader</code> and by <code>GraphicsDevice</code>'s Clear and Present, not by resource constructors; every other renderer returns no lease. Creating or disposing a resource on a second thread while the game thread creates or disposes another therefore races on the registry, and a background <code>ContentManager</code> load on a renderer without a lease has no CNA-level exclusion against frames (the Vulkan, <code>Direct3D</code>, <code>SDL_GPU</code>, <code>WebGPU</code>, <code>SDL_Renderer</code> and Software sources hold no lock for it). CNA's own Vulkan lease test records the consequence: the renderer 'contains no synchronization at all', and 'A game that drives it from two threads races regardless of the lease'. <code>GraphicsDevice</code>.hpp states no threading rule.</p>",
+   "sources": [
+    {
+     "path": "modules/graphics/src/Xna/GraphicsDevice.cpp",
+     "note": "AddResourceReference, RemoveResourceReference, AcquireRendererThreadContextLease, Clear, Present"
+    },
+    {
+     "path": "modules/graphics/src/Xna/GraphicsResource.cpp",
+     "note": "GraphicsResource constructor and Dispose(bool) registry calls"
+    },
+    {
+     "path": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp",
+     "note": "IRendererThreadContextLease documentation and AcquireThreadContextLeaseEXT default"
+    },
+    {
+     "path": "modules/content/src/Xna/ContentReader.cpp",
+     "note": "ContentReader constructor takes the lease"
+    },
+    {
+     "path": "modules/runtime/src/GraphicsDeviceManager.cpp",
+     "note": "BeginDraw takes the frame lease"
+    },
+    {
+     "path": "modules/renderers/easygl/src/EasyGLRenderer.cpp",
+     "note": "AcquireThreadContextLeaseEXT, the first of two implementers"
+    },
+    {
+     "path": "modules/renderers/opengl4/src/OpenGL4Renderer.cpp",
+     "note": "AcquireThreadContextLeaseEXT, the second implementer"
+    },
+    {
+     "path": "modules/renderers/vulkan/examples/vulkan_thread_context_lease_test.cpp",
+     "note": "header: a null lease is not a thread-safety guarantee, the renderer has no synchronization"
+    }
+   ],
+   "evidence": "<p>Read at 009d40f5; nothing executed. Read <code>GraphicsDevice</code>.cpp and <code>GraphicsResource</code>.cpp for locking and registry use, searched the modules for every acquirer and implementer of the lease and the non-GL renderers for locks (only unrelated debug-queue and shader-session mutexes), read the lease contract in IGraphicsRenderer.hpp, the header of the Vulkan lease test and XNA's decompiled <code>GraphicsDevice.CreateDevice</code> for its creation flags. The race is established by reading and was not reproduced.</p>",
+   "reproduction": null,
+   "tests_current": "<p>The thread-context lease is tested per renderer (EasyGL, OpenGL4, and a null-lease test for Vulkan whose header says the renderer has no synchronization); no test creates or disposes graphics resources from two threads at once.</p>",
+   "regression_test": "<p>Create and dispose textures and buffers from two threads at once on each renderer under ThreadSanitizer; or document that resource creation is game-thread-only and put a lock around <code>GraphicsDevice::AddResourceReference</code> and <code>RemoveResourceReference</code>.</p>",
+   "blast_radius": "<p>Games that create or dispose graphics resources on a loading thread, and background <code>ContentManager</code> loads on renderers that return no context lease. Games that touch graphics only from the game thread are unaffected.</p>",
+   "workaround": "<p>Create and dispose graphics resources on the game thread, or marshal loads to it; background <code>ContentManager</code> loads are covered only on the renderers that lease a context (the EasyGL family and OPENGL4).</p>",
+   "related": {
+    "internals": [
+     [
+      "development/takeover/threading.html#renderer",
+      "Threading: renderer and native context affinity"
+     ]
+    ],
+    "deep": [
+     [
+      "deep-dives/renderers/renderer-contract.html",
+      "Renderer contract"
+     ]
+    ]
+   },
+   "origin": "restored at the independent adversarial audit (dismissed candidate P2-034; re-verified by the orchestrator against TARGET)"
+  },
+  {
+   "cand_ids": [
+    "P2-005"
+   ],
+   "id": "NEW-AUDIT-18",
+   "class": "verification-gap",
+   "subsystem": "Testing & evidence",
+   "status": "open",
+   "severity": "n/a",
+   "confidence": "verified-by-reading",
+   "tests_present": false,
+   "title": "No dedicated test drives the production audio shutdown path (static destruction of the SDL3 device at exit with callbacks in flight): the teardown tests call DestroyMixer, and plan item AUD-15-016 is unchecked",
+   "summary": "DestroyMixer has no production caller, so a game's audio ends through g_audioDevice's static destructor at exit, but the dedicated teardown tests drive DestroyMixer, and plans/plan_audio.md item AUD-15-016 (shutdown with callbacks in flight) is unchecked.",
+   "public_contract": "Shutdown of the SDL3 audio device at process exit (Sdl3AudioDevice::Close from static destruction) with mixer callbacks in flight",
+   "expected": "<p>The shutdown a shipped game performs (returning from main with the SDL3 mixer open and voices playing, so that static destruction closes the device while the mixer thread may still call back, or after a host <code>SDL_Quit</code> that IPlatform.hpp says applications may call) has a test showing no late access to static destruction order, which is the acceptance CNA's own plan sets for AUD-15-016.</p>",
+   "actual": "<p><code>AudioMixer</code>.hpp states that <code>DestroyMixer</code> has no production caller and that native mixer state and the device are reclaimed by the OS at exit; at exit <code>Sdl3AudioDevice::Close</code> runs from the static <code>g_audioDevice</code> destructor. <code>Sdl3AudioDeviceTests</code> pin Close's callback barrier in isolation, but <code>AudioMixerTests</code> and the two <code>mixer_destroy_active</code> harnesses drive <code>DestroyMixer</code>, a route no game takes (both harnesses destroy the mixer before main returns), and <code>audio_no_hardware_harness</code> covers only a failed open. No dedicated test returns from main with a live device and playing voices; the exit path runs only implicitly when a <code>CnaTests</code> process ends. {{src:plans/plan_audio.md|plan_audio.md}} lists 'Test process shutdown with audio callbacks in flight' (AUD-15-016) unchecked, beside the two exit-time crash records AUD-15-021 and AUD-15-022. By reading, Close stops the stream behind SDL's stream lock before destroying it and the callback is shared-owned; the ordering against other statics is not exercised by any dedicated test.</p>",
+   "sources": [
+    {
+     "path": "modules/audio/include/CNA/Internal/Audio/AudioMixer.hpp",
+     "note": "DestroyMixer comment: no production caller, reclaimed at exit"
+    },
+    {
+     "path": "modules/audio/src/Backend/Sdl3Mixer/AudioMixer.cpp",
+     "note": "g_audioDevice static and DestroyMixer"
+    },
+    {
+     "path": "modules/audio/src/Platform/Sdl3/Sdl3AudioDevice.cpp",
+     "note": "Close and StopLocked"
+    },
+    {
+     "path": "modules/audio/tests/CNA/Audio/Platform/Sdl3AudioDeviceTests.cpp",
+     "note": "device-level barrier tests"
+    },
+    {
+     "path": "modules/audio/tests/CNA/Internal/Audio/AudioMixerTests.cpp",
+     "note": "repeated DestroyMixer cycles"
+    },
+    {
+     "path": "tools/audio/mixer_destroy_active_static_voice_harness.cpp",
+     "note": "calls DestroyMixer with a live voice"
+    },
+    {
+     "path": "tools/audio/audio_no_hardware_harness.cpp",
+     "note": "failed-open path only"
+    },
+    {
+     "path": "plans/plan_audio.md",
+     "note": "AUD-15-016 unchecked"
+    }
+   ],
+   "evidence": "<p>Read at 009d40f5; nothing executed. Read the mixer and device sources, the device tests' names, the harness headers, a search of the audio tests for exit, in-flight and static-destruction coverage (none) and the AUD-15 items in {{src:plans/plan_audio.md|plan_audio.md}}, which date from 2026-07-18 and were not updated. The missing test is established by search, not by a run.</p>",
+   "reproduction": null,
+   "tests_current": "<p><code>Sdl3AudioDeviceTests</code> pins the callback barrier of <code>Close</code> in isolation; <code>AudioMixerTests</code> and the two <code>mixer_destroy_active</code> harnesses drive <code>DestroyMixer</code>, which no shipped game calls; <code>audio_no_hardware_harness</code> covers a failed open only.</p>",
+   "regression_test": "<p>A harness that opens the SDL3 mixer, starts voices and returns from <code>main</code> (and one that calls <code>SDL_Quit</code> first) under AddressSanitizer, asserting no late access during static destruction &mdash; the acceptance CNA's plan sets for AUD-15-016.</p>",
+   "blast_radius": "<p>Process exit of games that use the SDL3 mixer while sounds are playing; the failure mode, if any, would be a crash or a sanitizer report at exit rather than a wrong result.</p>",
+   "workaround": "<p>None is needed by reading (<code>Close</code> stops the stream behind SDL's stream lock and the callback is shared-owned); the gap is that no dedicated test shows it.</p>",
+   "related": {
+    "internals": [
+     [
+      "development/takeover/threading.html#audio",
+      "Threading: audio callbacks"
+     ]
+    ],
+    "deep": [
+     [
+      "deep-dives/services/sound-effects-and-streaming.html",
+      "Sound effects and streaming"
+     ]
+    ]
+   },
+   "origin": "restored at the independent adversarial audit (dismissed candidate P2-005; re-verified by the orchestrator against TARGET)"
+  },
+  {
+   "cand_ids": [
+    "P2-211"
+   ],
+   "id": "NEW-AUDIT-19",
+   "class": "verification-gap",
+   "subsystem": "Testing & evidence",
+   "status": "open",
+   "severity": "n/a",
+   "confidence": "verified-by-reading",
+   "tests_present": true,
+   "title": "The VibrateController shutdown-ordering tests never open a haptic device or destroy a Game-owned SDL3 platform after SDL_Quit, and CNA's own plan keeps SDLCORE-011 open for that reason",
+   "summary": "The ordering test spawns a harness that probes the controller and calls SDL_Quit, but no haptic device is opened and the platform is the immortal lazy default, so the SDL_CloseHaptic-after-SDL_Quit path stays reasoned from source only.",
+   "public_contract": "Microsoft::Devices::VibrateController shutdown ordering (DevicesShutdownCoordinator, Sdl3Haptics::CloseAll) relative to SDL_Quit",
+   "expected": "<p>The hazard <code>DevicesShutdownCoordinator</code> exists for, closing a cached SDL haptic handle after the host's <code>SDL_Quit</code> (a use-after-free by CNA's own reading of SDL), is exercised by a test on a sanitizer build, with a device actually opened and with the platform owned the way a game owns it (by Game, destroyed at scope exit).</p>",
+   "actual": "<p>{{src:tools/devices/shutdown_ordering_harness.cpp|shutdown_ordering_harness.cpp}} calls <code>VibrateController::getIsSupportedProperty</code> on the lazily created default platform, optionally <code>Shutdown()</code>, then <code>SDL_Quit()</code>, and returns; <code>DevicesShutdownOrderingTests</code>.cpp asserts only exit code 0, so a sanitizer finding needs an ASan build. Where no haptic device exists (the author's container, per the test's own comment, and any host without haptics) no handle is opened, so <code>Sdl3Haptics::CloseAll</code> never reaches <code>SDL_CloseHaptic</code> in the harness, and the lazy default platform is an immortal holder, so ~<code>Sdl3Platform</code> is never run. The test's own comment says the native haptic-close guard 'remains reasoned-from-source only, not reproduced under a sanitizer build', and {{src:plans/plan_devices.md|plan_devices.md}} still records SDLCORE-011 as OPEN for that reason (it names the removed <code>SdlHapticVibrateBackend</code>; the same <code>SDL_CloseHaptic</code> calls now live in <code>Sdl3Haptics</code>). The spawning test is also excluded on Windows, Emscripten, Android, <code>iOS</code> and SDL2-only builds. A Game-owned SDL3 platform destroyed after a host <code>SDL_Quit</code> runs ~<code>Sdl3Platform</code>, then haptics_.Deactivate(), then <code>SDL_CloseHaptic</code> for each cached handle with no <code>SDL_WasInit</code> check.</p>",
+   "sources": [
+    {
+     "path": "tools/devices/shutdown_ordering_harness.cpp",
+     "note": "main: probes the controller, optional Shutdown, SDL_Quit, return"
+    },
+    {
+     "path": "modules/devices/tests/Microsoft/Devices/Detail/DevicesShutdownOrderingTests.cpp",
+     "note": "exit-code-only assertions and the comment admitting the haptic-close guard is unreproduced"
+    },
+    {
+     "path": "plans/plan_devices.md",
+     "note": "SDLCORE-011 heading and Remaining limitations"
+    },
+    {
+     "path": "modules/platform/src/Sdl3/Sdl3DeviceServices.cpp",
+     "note": "Sdl3Haptics destructor, Deactivate and CloseAll"
+    },
+    {
+     "path": "modules/platform/src/Sdl3/Sdl3Platform.cpp",
+     "note": "~Sdl3Platform calls haptics_.Deactivate()"
+    },
+    {
+     "path": "modules/platform/src/CurrentPlatform.cpp",
+     "note": "LazyDefault is an immortal holder"
+    },
+    {
+     "path": "cmake/UnitTests.cmake",
+     "note": "DevicesShutdownOrderingTests exclusion list"
+    },
+    {
+     "path": "modules/devices/src/Detail/PlatformVibrateBackend.cpp",
+     "note": "ReleaseService identity guard"
+    }
+   ],
+   "evidence": "<p>Read at 009d40f5; nothing executed. Read the harness, both ordering tests with their comments, the coordinator and adapter, the SDL3 haptics service and platform destructor, <code>CurrentPlatform</code>'s lazy holder and the SDLCORE-011 plan section. That a Game-owned platform would run the unguarded close after a host <code>SDL_Quit</code> is a reading of the code; the use-after-free itself is CNA's own source-reading conclusion about SDL and is not reproduced here.</p>",
+   "reproduction": null,
+   "tests_current": "<p><code>DevicesShutdownOrderingTests</code> spawns <code>shutdown_ordering_harness</code> and asserts exit code 0; the harness opens no haptic device and uses the immortal lazy platform, and the test is excluded on Windows, Emscripten, Android, iOS and SDL2-only builds.</p>",
+   "regression_test": "<p>On a host with a haptic device (or a fake SDL haptic layer), open a device through a Game-owned SDL3 platform, call <code>SDL_Quit</code> first and destroy the platform afterwards under AddressSanitizer; close SDLCORE-011 when that passes.</p>",
+   "blast_radius": "<p>Hosts with SDL haptic devices whose application calls <code>SDL_Quit</code> before its Game-owned platform is destroyed; hosts without haptics never reach the close call.</p>",
+   "workaround": "<p>Call <code>VibrateController::Shutdown()</code> before <code>SDL_Quit</code> (a documented obligation with a fallback).</p>",
+   "related": {
+    "internals": [
+     [
+      "development/internals/modules/devices.html",
+      "Devices module internals"
+     ]
+    ],
+    "deep": [
+     [
+      "deep-dives/services/sensors-and-vibration.html",
+      "Sensors and vibration"
+     ]
+    ]
+   },
+   "origin": "restored at the independent adversarial audit (dismissed candidate P2-211; re-verified by the orchestrator against TARGET)"
   }
  ]
 }
