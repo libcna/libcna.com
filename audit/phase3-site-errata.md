@@ -21,3 +21,5 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 14 | `docs/getting-started.html` | calls `Present()` inside `Draw` (double present each frame) and skips base `Update`/`Draw` | fix the sample to the real lifecycle | WP03 | open |
 | 15 | `docs/tutorials/47-*.html` (FPS counter) | FPS counter | counts `Update` calls, so it reports the update rate, not the frame rate | WP03 | open |
 | 16 | `docs/game-loop.html` | the first `Update` has zero elapsed time | true only for a fixed time step | WP03 | open |
+| 17 | `docs/render-targets.html#rendertargetusage` | `PlatformContents` is "equivalent to `DiscardContents`" | `PlatformContents` preserves (`RenderTargetUsagePreservesContentsEXT`); the Discard bind clears to black, depth 1, stencil 0 (`GraphicsDevice::SetRenderTargets`) | WP09 | open |
+| 18 | `docs/tutorials/61-*.html` (Vulkan occlusion queries) | Vulkan uses `VK_QUERY_RESULT_WITH_AVAILABILITY_BIT` | `IsComplete` uses the 64-bit flag and `VK_NOT_READY` | WP09 | open |
