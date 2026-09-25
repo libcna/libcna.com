@@ -151,10 +151,11 @@ def main() -> int:
             it = dict(it)
             it["cand"] = it.pop("id", None) or f"{doc.get('wp', f.stem)}-i???"
             it["source"] = "wp"
+            wp_id = str(doc.get("wp", f.stem))
             reading = (it.get("target_reading") or "").strip().lower()
             ids = set(re.findall(r"CNA-BUG-\d{3}", f"{it.get('bible_ref', '')} {it.get('ref', '')} {it.get('text', '')}"))
             reason = None
-            if it.get("kind") == "not-an-issue":
+            if it.get("kind") == "not-an-issue" and wp_id != "WPB7":  # WPB7 records CNA documentation drift: a defect if it exists at TARGET
                 reason = "chapter package classified it not-an-issue (documentation gap or architecture decision)"
             elif reading.startswith("absent"):
                 reason = "chapter package read it as absent at TARGET (not a current issue; no publication)"
