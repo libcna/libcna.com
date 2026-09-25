@@ -1,0 +1,2681 @@
+{
+ "unit": "aux-audit-graphics-core-effects",
+ "author": "WPB2",
+ "done": true,
+ "target_relevance": "partly-stale",
+ "actions": [
+  "MERGE",
+  "EXPAND",
+  "HISTORY",
+  "SUPERSEDED",
+  "OBSOLETE",
+  "REMOVED FUNCTIONALITY"
+ ],
+ "summary": "Alpha.1-era research audit (CNA 7a64362e, 2026-08-11) of GraphicsDevice, resources, state objects, stock and custom effects, SpriteBatch/SpriteFont, graphics-ext and the renderer interface, plus a critique of CNA's own graphics documents. The graphics and renderer deep dives already carry nearly all current substance, and many audited facts changed at 009d40f5 (state freezing, compiled effects, float sprite destinations, multi-renderer builds, 19 capabilities). Residue added: where GetMaxTextureDimension really comes from, and why RenderPipelineSettings is not a GraphicsDevice member.",
+ "sections": [
+  {
+   "heading": "A. Architecture and build model"
+  },
+  {
+   "heading": "B. GraphicsDevice"
+  },
+  {
+   "heading": "C. Graphics resources"
+  },
+  {
+   "heading": "D. State objects"
+  },
+  {
+   "heading": "E. Stock effects"
+  },
+  {
+   "heading": "F. Custom effects and shaders — the .fx question"
+  },
+  {
+   "heading": "G. SpriteBatch and SpriteFont"
+  },
+  {
+   "heading": "H. modules/graphics-ext (CNAEXT graphics extensions)"
+  },
+  {
+   "heading": "I. Per-renderer divergence"
+  },
+  {
+   "heading": "C1. ★ docs/fx-bytecode-support-plan.md is superseded by the FNA3D lane"
+  },
+  {
+   "heading": "C2. AUDIT.md overclaims where every other doc underclaims"
+  },
+  {
+   "heading": "C3. RenderPipelineSettings documents a GraphicsDevice method that does not exist"
+  },
+  {
+   "heading": "C4. SpriteFont's own header says CNA has no XNB pipeline"
+  },
+  {
+   "heading": "C5. docs/graphicsdevice-fna-audit.md — gaps still real, one deviation row stale, metadata wrong"
+  },
+  {
+   "heading": "C6. The four effect-support.md docs end on stale \"open work\" lists"
+  },
+  {
+   "heading": "C7. docs/depthstencilstate-support.md — three of four \"open\" items closed"
+  },
+  {
+   "heading": "C8. docs/graphics-renderer-feature-matrix.md self-labels \"Master, up-to-date\" but carries dead rows"
+  },
+  {
+   "heading": "C9. plangraphics.md describes an architecture that no longer exists"
+  },
+  {
+   "heading": "C10. knownbugs.md — one live entry already fixed, one with an actively wrong instruction"
+  },
+  {
+   "heading": "C11. docs/graphics-compatibility-report.md — self-disclaimed stale, correctly"
+  },
+  {
+   "heading": "C12. Unnamed support docs — the highest-yield offenders"
+  },
+  {
+   "heading": "C13. \"Bgfx has no readback API\" is a legend repeated across four docs"
+  },
+  {
+   "heading": "C14. planmoderngraphics.md does not exist"
+  },
+  {
+   "heading": "The headline: \"Shaders and the .fx Bytecode Gap\" (ch15, 379 lines) must be rewritten and retitled"
+  },
+  {
+   "heading": "Other chapters needing work"
+  },
+  {
+   "heading": "Two defects worth reporting upstream regardless of the book"
+  },
+  {
+   "heading": "Coverage gap in this audit"
+  }
+ ],
+ "empty_sections": [],
+ "figures": [],
+ "examples": [],
+ "issues": [
+  {
+   "kind": "not-an-issue",
+   "text": "SpriteFont.hpp constructor comment still says \"CNA has no XNB pipeline\" although XNB readers (including SpriteFontContentTypeReader) exist.",
+   "ref": "new (WPB2-i001)",
+   "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/SpriteFont.hpp; modules/content/src/Xnb/SpriteFontContentTypeReader.cpp"
+  },
+  {
+   "kind": "verification-gap",
+   "text": "GetMaxTextureDimension returns the 16384 interface constant on every family except Vulkan, Direct2D and GDI (FNA3D returns it explicitly), and the capability profile marks it known; the header comment claims no renderer overrides it.",
+   "ref": "new (WPB2-i002)",
+   "evidence": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp (GetMaxTextureDimension); modules/graphics/src/Xna/GraphicsDevice.cpp (RendererLimit::MaxTextureDimension)"
+  },
+  {
+   "kind": "not-an-issue",
+   "text": "GpuDrawParams::specularEnabled is read by DIRECTX9 and FNA3D at TARGET; the field comment and the earlier issue candidate that no renderer reads it are stale.",
+   "ref": "WP07-i007 (correction, WPB2-i003)",
+   "evidence": "modules/renderers/directx9/src/D3D9EffectDraw.cpp; D3D9ShaderDispatch.cpp; modules/renderers/fna3d/src/Fna3dDraw.cpp"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "SpriteEffect::OnApply() returns at its first line because MatrixTransform is never added.",
+   "ref": "WP07 (already recorded)",
+   "evidence": "modules/graphics/src/Xna/SpriteEffect.cpp"
+  }
+ ],
+ "concepts": [
+  {
+   "id": "WPB2-gce-001",
+   "section": "A. Architecture and build model",
+   "text": "CNA compiles one renderer per build and CNA_GRAPHICS_RENDERER is a single cache string (46 accepted identities at the audited revision), so a renderer is a compile-time identity rather than a runtime plug-in.",
+   "kind": "architecture",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "docs/building.html#renderer-selection"
+   ],
+   "tokens": [
+    "CNA_GRAPHICS_RENDERERS"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "cmake/RendererIdentities.cmake (CNA_GRAPHICS_RENDERERS loop); modules/graphics/CMakeLists.txt (cna_graphics_core links ${CNA_RENDERER_TARGETS})"
+   },
+   "note": "At 009d40f5 a build may compile several families (CNA_GRAPHICS_RENDERERS) and the device resolves one at run time; 25 public identities. The building guide states the current model."
+  },
+  {
+   "id": "WPB2-gce-002",
+   "section": "A. Architecture and build model",
+   "text": "The 46-versus-47 identity recount (a prose list miscounted, the STRINGS block recounted mechanically, three in-repo sources and an identity-table gate agreeing) is the audit's own counting method for a renderer set that no longer exists.",
+   "kind": "evidence",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "The identity set was curated to 25 public identities over 21 families; the recount concerns the alpha.1-era set and is history. The identity-table gate itself is described on the dependency-boundaries deep dive."
+  },
+  {
+   "id": "WPB2-gce-003",
+   "section": "A. Architecture and build model",
+   "text": "Renderer identities outnumber implementation families because one family carries several identities: the easygl family implements the five GL-profile identities OPENGLES2, OPENGLES3, OPENGL33, WEBGL1 and WEBGL2; CNA::GraphicsRendererType is the C++ half of the registry with PascalCase enumerators (SdlRenderer, OpenGLES2, ...).",
+   "kind": "architecture",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "docs/rendering-backends.html#how-renderers-work"
+   ],
+   "tokens": [
+    "21 implementation families",
+    "GraphicsRendererType"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "cmake/RendererIdentities.cmake; modules/core/include/CNA/GraphicsRendererType.hpp (SdlRenderer, OpenGLES2)"
+   },
+   "note": "Counts corrected: 25 identities over 21 families at 009d40f5 (audit: 46 over 42). The five-GL-identities-in-one-family rule is unchanged."
+  },
+  {
+   "id": "WPB2-gce-004",
+   "section": "A. Architecture and build model",
+   "text": "The graphics core is two CMake targets: cna_graphics_core (the XNA graphics types and internals) and cna_graphics_ext (the CNAEXT graphics module, the former NoXna library renamed in the August 2026 CNAEXT naming normalisation), which links cna_graphics_core.",
+   "kind": "architecture",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/modules/graphics-ext.html#build",
+    "deep-dives/reference/cnaext-catalog.html#three-mechanisms"
+   ],
+   "tokens": [
+    "cna_graphics_core",
+    "cna_graphics_ext"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/CMakeLists.txt; modules/graphics-ext/CMakeLists.txt (cna_add_module cna_graphics_ext)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-005",
+   "section": "A. Architecture and build model",
+   "text": "There is a deliberate static-archive cycle between the graphics core and the renderer family archives: cna_graphics_core links its renderer targets PRIVATE while the families link back to the graphics contract.",
+   "kind": "architecture",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/build/dependency-boundaries.html#renderer-seam"
+   ],
+   "tokens": [
+    "CNA_RENDERER_TARGETS"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/CMakeLists.txt (target_link_libraries(cna_graphics_core PRIVATE ${CNA_RENDERER_TARGETS}))"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-006",
+   "section": "A. Architecture and build model",
+   "text": "CNA vertex types are not blittable: Color implements IPackedVector and vertex types implement IVertexType, both polymorphic C++ bases with a vtable pointer, so plain stream structs in BuiltInVertexStreams.hpp with static_assert-ed sizes and offsets are the single source of truth for GPU bytes and every VertexDeclaration takes stride and offsets from them.",
+   "kind": "porting",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/vertex-streams-and-declarations.html#objects-are-not-layouts"
+   ],
+   "tokens": [
+    "BuiltInVertexStreams.hpp",
+    "blittable"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/CNA/Internal/Graphics/BuiltInVertexStreams.hpp"
+   },
+   "note": "The audit lists seven stream structs; TARGET asserts ten sizes (16 to 80 bytes), as the destination states."
+  },
+  {
+   "id": "WPB2-gce-007",
+   "section": "A. Architecture and build model",
+   "text": "Because Color is not a plain four-byte value, GetBackBufferData cannot write straight into a Color array: it reads bytes and reconstructs each Color; Texture3D colour transfers repack the same way.",
+   "kind": "porting",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/graphicsdevice-contract.html#readback"
+   ],
+   "tokens": [
+    "trivially copyable",
+    "vtable"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (GetBackBufferData overloads and templates)"
+   },
+   "note": "At TARGET GetBackBufferData also has templates for any trivially copyable element type and is HiDef-only; the destination carries the current overload set and the vtable rationale."
+  },
+  {
+   "id": "WPB2-gce-008",
+   "section": "B. GraphicsDevice",
+   "text": "GraphicsDevice derives from System::Object and IDisposable, deletes copy and move, and has two public constructors: a CNAEXT default (Reach, default PresentationParameters) and the XNA-shaped (GraphicsAdapter&, GraphicsProfile, const PresentationParameters&).",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/graphicsdevice-contract.html#constructors"
+   ],
+   "tokens": [
+    "Copy and move are deleted",
+    "GraphicsProfile::Reach"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp (constructors)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-009",
+   "section": "B. GraphicsDevice",
+   "text": "Device construction order at the audited revision: guarded SDL video init, window create/attach, presentation parameters to window, createRenderer, viewport from window, then push the three default state objects (depth-stencil only when the renderer supports depth-stencil), mirroring FNA's constructor.",
+   "kind": "lifecycle",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "development/internals/graphics/device.html#construct"
+   ],
+   "tokens": [
+    "resolveRenderer"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (resolveRenderer, createOrAttachWindow, createRenderer)"
+   },
+   "note": "At TARGET resolveRenderer() walks candidate families (multi-renderer builds) and window/video-subsystem handling moved behind the platform layer; the internals page traces the current order."
+  },
+  {
+   "id": "WPB2-gce-010",
+   "section": "B. GraphicsDevice",
+   "text": "Graphics-owned SDL video subsystem init was skipped for windowless families but Dispose() always called SDL_QuitSubSystem(SDL_INIT_VIDEO), an unbalanced reference release.",
+   "kind": "defect",
+   "disposition": "FIXED BUG",
+   "destinations": [],
+   "tokens": [],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src (no SDL_InitSubSystem/SDL_QuitSubSystem call at 009d40f5); modules/platform/src/Sdl3/Sdl3Platform.cpp (video subsystem owned by the platform layer)"
+   },
+   "note": "Positive evidence: at 009d40f5 no file under modules/graphics/src calls SDL_InitSubSystem or SDL_QuitSubSystem; video-subsystem references are owned by modules/platform (Sdl3Platform.cpp, Sdl2Platform.cpp). Also recorded as FIXED BUG by the GraphicsDevice chapter record."
+  },
+  {
+   "id": "WPB2-gce-011",
+   "section": "B. GraphicsDevice",
+   "text": "Device disposal moves the tracked-resource list out and clears it before disposing each resource, and only then tears down the renderer, so RemoveResourceReference calls made during resource disposal are harmless no-ops (FNA shape).",
+   "kind": "lifecycle",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/device-reset-and-lifetime.html#resource-registry"
+   ],
+   "tokens": [
+    "non-owning vector",
+    "ResourceCreated"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (Dispose, RemoveResourceReference)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-012",
+   "section": "B. GraphicsDevice",
+   "text": "Resource tracking is a plain std::vector<GraphicsResource*> with linear search and unordered swap-with-last removal; registration happens in the GraphicsResource constructor and GetTrackedResourceCount() exposes the size for tests.",
+   "kind": "internals",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/device-reset-and-lifetime.html#resource-registry",
+    "deep-dives/graphics/graphicsdevice-contract.html#extensions"
+   ],
+   "tokens": [
+    "non-owning vector",
+    "GetTrackedResourceCount"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (RemoveResourceReference: \"Unordered removal\"); modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp (resources_, GetTrackedResourceCount)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-013",
+   "section": "B. GraphicsDevice",
+   "text": "GraphicsDevice has six public events (Disposing, DeviceLost, DeviceReset, DeviceResetting, ResourceCreated, ResourceDestroyed); ResourceCreated fires from the base resource constructor.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/device-reset-and-lifetime.html#resource-registry",
+    "deep-dives/graphics/resource-lifetime.html#model"
+   ],
+   "tokens": [
+    "ResourceCreated"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp (events)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-014",
+   "section": "B. GraphicsDevice",
+   "text": "Device loss was real on exactly one renderer: only the Direct3D 9 family invoked the renderer device-event callback, so GraphicsDeviceStatus stayed Normal and DeviceLost was never raised elsewhere.",
+   "kind": "semantics",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/device-reset-and-lifetime.html#status",
+    "deep-dives/graphics/vertex-streams-and-declarations.html#buffers"
+   ],
+   "tokens": [
+    "deviceEventCallback",
+    "DIRECT2D"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (deviceEventCallback installation); renderer families emitting RendererDeviceEvent at 009d40f5"
+   },
+   "note": "At TARGET DIRECTX9, DIRECTX11, DIRECTX12, DIRECT2D and WEBGPU report device events; the destinations state the current set."
+  },
+  {
+   "id": "WPB2-gce-015",
+   "section": "B. GraphicsDevice",
+   "text": "GraphicsDevice::Reset() is not FNA's device recreation: it raises DeviceResetting, normalises formats, stores parameters, resizes the window, forwards virtual resolution, MSAA and swap interval, updates the viewport and raises DeviceReset, without recreating the renderer or GPU resources.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/device-reset-and-lifetime.html#not-a-recreation"
+   ],
+   "tokens": [
+    "RecreateRendererForMultiSampleCount"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (Reset)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-016",
+   "section": "B. GraphicsDevice",
+   "text": "Reset() applies window size and virtual resolution transactionally: on failure it restores presentation parameters, adapter, virtual size and TouchPanel metrics, suppresses a secondary failure during rollback, and rethrows the original exception.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/device-reset-and-lifetime.html#rollback"
+   ],
+   "tokens": [
+    "rethrows the original exception"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (Reset rollback guard)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-017",
+   "section": "B. GraphicsDevice",
+   "text": "Clear has four overloads and Clear(Color) clears target, depth and stencil using the current Viewport.MaxDepth; XNA's Clear(ClearOptions, Vector4, float, int) overload does not exist.",
+   "kind": "api",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/graphicsdevice-contract.html#clear"
+   ],
+   "tokens": [
+    "not the viewport",
+    "Vector4"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp (Clear overloads, including ClearOptions + Vector4)"
+   },
+   "note": "At TARGET the Vector4 overload exists and Clear(Color) uses depth 1.0 independent of Viewport.MaxDepth, clearing only planes that exist."
+  },
+  {
+   "id": "WPB2-gce-018",
+   "section": "B. GraphicsDevice",
+   "text": "Clear silently masks unsupported aspects: DepthBuffer and Stencil are dropped independently when the bound target (or the renderer) lacks that plane, so a depth-only or stencil-only clear on such a target dispatches nothing; out-of-range depth throws before masking; dispatch fans out to seven renderer clear entry points.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/graphicsdevice-contract.html#clear-masking"
+   ],
+   "tokens": [
+    "ClearColorAndStencil"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (Clear masking and dispatch)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-019",
+   "section": "B. GraphicsDevice",
+   "text": "Present() throws InvalidOperationException (\"Cannot present while render targets are bound\"), then presents and re-derives the viewport; XNA's Present(Rectangle?, Rectangle?, IntPtr) overload was absent.",
+   "kind": "api",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/graphicsdevice-contract.html#present"
+   ],
+   "tokens": [
+    "overrideWindowHandle",
+    "Cannot present while render targets are bound"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp (Present(), Present(sourceRectangle, destinationRectangle, overrideWindowHandle))"
+   },
+   "note": "The three-argument Present overload exists at TARGET; the destination describes both."
+  },
+  {
+   "id": "WPB2-gce-020",
+   "section": "B. GraphicsDevice",
+   "text": "GetBackBufferData sizes its source from PresentationParameters rather than the live viewport, bounds-checks a rectangle against the real back buffer before any native copy, validates element size against the back-buffer format, and has an environment-variable trace hook CNA_BACKBUFFER_READ_TRACE.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/renderers/presentation-and-backbuffer-readback.html#readback-public",
+    "development/debugging.html#black"
+   ],
+   "tokens": [
+    "while any render target is bound",
+    "CNA_BACKBUFFER_READ_TRACE"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (GetBackBufferData)"
+   },
+   "note": "TARGET adds refusals (Reach, bound targets) that the destination lists."
+  },
+  {
+   "id": "WPB2-gce-021",
+   "section": "B. GraphicsDevice",
+   "text": "Render-target binding: at most four bindings (MAX_RENDERTARGET_BINDINGS, as FNA); SetRenderTarget(RenderTarget2D*) and SetRenderTarget(RenderTargetCube*, CubeMapFace) are thin wrappers over SetRenderTargets, a consolidation that closed a bypass in which a renderer without target support silently drew to the back buffer; bindings are normalised and validated (null/disposed, array slice, dimensions, applied sample counts, duplicates).",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/render-target-semantics.html#binding",
+    "development/internals/graphics/resources.html#bind"
+   ],
+   "tokens": [
+    "MAX_RENDERTARGET_BINDINGS",
+    "GetMaxRenderTargetsForProfileEXT()"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (SetRenderTargets)"
+   },
+   "note": "The Reach one-target limit is enforced for every renderer at TARGET, not only Direct3D 9."
+  },
+  {
+   "id": "WPB2-gce-022",
+   "section": "B. GraphicsDevice",
+   "text": "Every render-target switch resets Viewport and ScissorRectangle to the first bound target (or the back buffer), as FNA does, and RenderTargetUsage::DiscardContents triggers one clear with independently derived depth/stencil flags.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/renderers/render-targets-clears-and-viewports.html#rebinding"
+   ],
+   "tokens": [
+    "DiscardContents"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (SetRenderTargets viewport/scissor reset, usage clear)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-023",
+   "section": "B. GraphicsDevice",
+   "text": "SetVertexBuffer installs a single binding; SetVertexBuffers caps at 16 bindings and accepted null buffers as unused slots; the Indices property, SetIndexBuffer and Indices() are three names for one index binding.",
+   "kind": "api",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/graphicsdevice-contract.html#bindings"
+   ],
+   "tokens": [
+    "refuses a null entry",
+    "three names for one pointer"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (SetVertexBuffers)"
+   },
+   "note": "At TARGET a null binding is refused (Microsoft XNA behaviour) and a failure keeps the processed prefix."
+  },
+  {
+   "id": "WPB2-gce-024",
+   "section": "B. GraphicsDevice",
+   "text": "Every buffer-backed 3D draw first calls the renderer 3D policy hook, then requires bound buffers and a currently applied Effect (\"no effect has been applied.\").",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/effect-object-model.html#dispose",
+    "deep-dives/graphics/vertex-streams-and-declarations.html#validation-order"
+   ],
+   "tokens": [
+    "no effect has been applied",
+    "Ensure3DSupported"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (DrawPrimitives/DrawIndexedPrimitives: throw System::InvalidOperationException)"
+   },
+   "note": "The audit named the exception type as plain std::runtime_error; at TARGET the draw routes throw System::InvalidOperationException for the missing effect."
+  },
+  {
+   "id": "WPB2-gce-025",
+   "section": "B. GraphicsDevice",
+   "text": "Range validation precedes capability validation on purpose, so an out-of-range draw request reports the same public exception on every renderer; DrawPrimitives and DrawIndexedPrimitives reject ranges that leave the bound buffers.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/vertex-streams-and-declarations.html#validation-order"
+   ],
+   "tokens": [
+    "Range validation precedes capability validation"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (draw range checks)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-026",
+   "section": "B. GraphicsDevice",
+   "text": "Multi-stream vertex input is a gated capability: ValidateVertexStreamCapability throws NotSupportedException naming MultiStreamVertexInput for more than one per-vertex or per-instance stream or more streams than the renderer ceiling; the classic one-stream and one-plus-one-instance shapes never reach the check.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/vertex-streams-and-declarations.html#multi-stream-gate"
+   ],
+   "tokens": [
+    "ValidateVertexStreamCapability"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (ValidateVertexStreamCapability)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-027",
+   "section": "B. GraphicsDevice",
+   "text": "The VertexBufferBinding.VertexOffset fold: the smallest per-vertex offset is folded into vertexStart/baseVertex (multiplied by each stream's stride exactly once) and each stream carries the non-negative remainder; with one stream this is byte-identical to the older behaviour.",
+   "kind": "algorithm",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/vertex-streams-and-declarations.html#minimum-offset-fold"
+   ],
+   "tokens": [
+    "VertexOffset",
+    "baseVertex"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (offset fold)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-028",
+   "section": "B. GraphicsDevice",
+   "text": "OcclusionQuery was a thin forward that silently degraded (IsComplete false and PixelCount 0 forever) on a renderer without queries, disposed its native query before the base marked it disposed, and on OpenGL ES 3.0 reported PixelCount as 0 or 1 rather than a count.",
+   "kind": "semantics",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/renderers/renderer-contract.html#null-factories",
+    "deep-dives/renderers/easygl-state-and-resource-semantics.html#occlusion"
+   ],
+   "tokens": [
+    "there is no inert query object any more",
+    "GL_ANY_SAMPLES_PASSED"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/OcclusionQuery.cpp; modules/graphics/include/Microsoft/Xna/Framework/Graphics/OcclusionQuery.hpp (isPixelCountPreciseEXT)"
+   },
+   "note": "At TARGET construction throws NotSupportedException instead of degrading; the boolean ES 3.0/WebGL 2 count is kept and is queryable via OcclusionQuery::isPixelCountPreciseEXT()."
+  },
+  {
+   "id": "WPB2-gce-029",
+   "section": "B. GraphicsDevice",
+   "text": "GraphicsDevice.Textures[] and VertexTextures[] are bookkeeping: no generic path uploads a slot's texture to the GPU; stock effects deliver textures through FillGpuDrawParams and ShaderEffect through its own SetTexture, while TextureCollection still enforces range, disposed and bound-render-target invariants.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/graphicsdevice-contract.html#texture-slots"
+   ],
+   "tokens": [
+    "TextureCollection",
+    "FillGpuDrawParams"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (textures_ usage); modules/graphics/src/Xna/TextureCollection.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-030",
+   "section": "B. GraphicsDevice",
+   "text": "TextureCollection uses a call-operator setter (textures(slot, texture)) instead of XNA's indexer assignment; there are 16 texture and 16 sampler slots, and every pixel sampler slot starts as SamplerState::LinearWrap.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/graphicsdevice-contract.html#texture-slots",
+    "deep-dives/graphics/state-objects.html#sampler"
+   ],
+   "tokens": [
+    "TextureCollection",
+    "each initialised to LinearWrap"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/TextureCollection.hpp; SamplerStateCollection.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-031",
+   "section": "B. GraphicsDevice",
+   "text": "Three device-state properties were dead: GraphicsDevice.MultiSampleMask was a field write with no renderer call, RasterizerState.MultiSampleAntiAlias never reached a renderer, and SamplerState.AddressW was never forwarded.",
+   "kind": "defect",
+   "disposition": "FIXED BUG",
+   "destinations": [],
+   "tokens": [],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (setMultiSampleMaskProperty, SOFTWARE-166; rasterizer submission passes getMultiSampleAntiAliasProperty); modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp (SetSamplerState with addressW, SetSamplerAddressW)"
+   },
+   "note": "Positive evidence at 009d40f5: setMultiSampleMaskProperty re-applies the blend write state with the new coverage mask; the rasterizer route forwards MultiSampleAntiAlias (ApplyRasterizerMultiSampleState); sampler submission includes AddressW. Current behaviour is on deep-dives/graphics/state-objects.html#submission."
+  },
+  {
+   "id": "WPB2-gce-032",
+   "section": "B. GraphicsDevice",
+   "text": "Device state setters commit the public cache only after the native call succeeds, so a rejected renderer update never leaves CNA claiming state that was not installed.",
+   "kind": "invariant",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/graphicsdevice-contract.html#state-objects",
+    "development/internals/graphics/resources.html#bind"
+   ],
+   "tokens": [
+    "bound for use",
+    "before touching public state"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (state setters)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-033",
+   "section": "B. GraphicsDevice",
+   "text": "CNAEXT device members beyond XNA include PrimitiveVerts, resource-reference hooks, GetTrackedResourceCount, depth/blend toggles, SetGraphicsProfileEXT, SetContextRecoveryEnabled, SetStringMarkerEXT, GetRenderer, renderer identity queries, SupportsCapability, GetMaxTextureDimension, the unsupported-3D policy and RecreateRendererForMultiSampleCount; SetStringMarkerEXT was real only on Vulkan.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/graphicsdevice-contract.html#extensions"
+   ],
+   "tokens": [
+    "SetStringMarkerEXT",
+    "GetTrackedResourceCount",
+    "RecreateRendererForMultiSampleCount"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp (CNAEXT members)"
+   },
+   "note": "At TARGET string markers are real on several families (and throw on DIRECTX9), and the identity queries are no longer constexpr; the destination has the current list."
+  },
+  {
+   "id": "WPB2-gce-034",
+   "section": "C. Graphics resources",
+   "text": "Copying a GraphicsResource carries identity (device, name, tag) but resets lifecycle (undisposed, no Disposing handlers), and a copy is never registered with the device, so device disposal never reaches it.",
+   "kind": "lifecycle",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/resource-lifetime.html#registration"
+   ],
+   "tokens": [
+    "Copies of a resource are not registered"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsResource.cpp (copy constructor)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-035",
+   "section": "C. Graphics resources",
+   "text": "Copy/move semantics differ by resource type: Texture2D is freely copyable (copies share a shared_ptr<ITextureRenderer>, which lets SpriteFont hold one by value and FromStream return by value) while buffers, render targets, effects and the device are not copyable.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/texture-data-transfer.html#texture2d-shape",
+    "deep-dives/graphics/resource-lifetime.html#model"
+   ],
+   "tokens": [
+    "shared_ptr<ITextureRenderer>"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-036",
+   "section": "C. Graphics resources",
+   "text": "Texture2D keeps a CPU pixel shadow for context-loss recovery; it is freed when recovery is disabled through GraphicsDevice::SetContextRecoveryEnabled (saving about one copy of texture memory per texture).",
+   "kind": "internals",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/texture-data-transfer.html#cpu-shadow"
+   ],
+   "tokens": [
+    "MaybeFreeCpuPixels"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/Texture2D.cpp (MaybeFreeCpuPixels)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-037",
+   "section": "C. Graphics resources",
+   "text": "Texture2D::gpuOnlyContent_ marks a render target whose pixels exist only on the GPU, so an empty shadow means \"ask the renderer\"; ReconstructFromCache clears the flag because a cache hit is ordinary content.",
+   "kind": "internals",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/resources.html#target-create",
+    "deep-dives/graphics/texture-data-transfer.html#texture2d-shape"
+   ],
+   "tokens": [
+    "gpuOnlyContent_",
+    "ReconstructFromCache"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-038",
+   "section": "C. Graphics resources",
+   "text": "A partial level-0 SetData on a texture whose CPU shadow was freed throws instead of corrupting pixels outside the rectangle.",
+   "kind": "semantics",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/texture-data-transfer.html#cpu-shadow"
+   ],
+   "tokens": [
+    "seeds a temporary full-level buffer"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/Texture2D.cpp (partial SetData)"
+   },
+   "note": "At TARGET a render target's partial SetData seeds a full-level buffer from renderer readback and throws NotSupportedException only when the family cannot read back."
+  },
+  {
+   "id": "WPB2-gce-039",
+   "section": "C. Graphics resources",
+   "text": "SurfaceFormat has 27 values: XNA's 20 plus seven CNAEXT values (ColorBgraEXT, ColorSrgbEXT, Dxt5SrgbEXT, Bc7EXT, Bc7SrgbEXT, ByteEXT, UShortEXT).",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/surface-formats.html#four-claims"
+   ],
+   "tokens": [
+    "27-value SurfaceFormat enum",
+    "UShortEXT"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/SurfaceFormat.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-040",
+   "section": "C. Graphics resources",
+   "text": "The SurfaceFormat enum was almost decorative: Texture::ValidateFormat accepted only Color and threw for every other format on all but one renderer, and Texture3D/TextureCube accepted Color only everywhere.",
+   "kind": "semantics",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/surface-formats.html#renderer-verdict"
+   ],
+   "tokens": [
+    "Texture::ValidateFormat"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/Texture.cpp; Texture2D.cpp (ValidateTexture2DFormatEXT)"
+   },
+   "note": "At TARGET each renderer returns a three-way verdict; ValidateFormat (Color only) remains only as the Defer fallback. The single renderer that had a wide allow-list at the audited revision belongs to a retired family."
+  },
+  {
+   "id": "WPB2-gce-041",
+   "section": "C. Graphics resources",
+   "text": "Block-compressed textures (DXT, BC7) were always decompressed to RGBA8 on the CPU at load time (DxtUtil/Bc7Util) and never uploaded compressed.",
+   "kind": "semantics",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/surface-formats.html#compressed"
+   ],
+   "tokens": [
+    "DxtUtil"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src (DxtUtil, Bc7Util); content Texture2D reader"
+   },
+   "note": "At TARGET content is either decoded or kept as native blocks depending on the family's format verdict; the destination explains both."
+  },
+  {
+   "id": "WPB2-gce-042",
+   "section": "C. Graphics resources",
+   "text": "Format metadata helpers: GetBlockSizeSquaredEXT (16 for block formats, 1 otherwise), GetFormatSizeEXT (8 for Dxt1, 16 for other block formats and Vector4, else 1/2/4/8), GetPixelStoreAlignment = min(8, format size) and ValidateGetDataFormat (element size must divide the format size).",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/surface-formats.html#helpers"
+   ],
+   "tokens": [
+    "GetBlockSizeSquaredEXT",
+    "GetPixelStoreAlignment",
+    "ValidateGetDataFormat"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/Texture.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-043",
+   "section": "C. Graphics resources",
+   "text": "Level allocation is ceil(w/4) x ceil(h/4) x block size for compressed formats and w x h x texel size otherwise; mip chains come from CalculateMipLevels (halving to 1x1).",
+   "kind": "algorithm",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/surface-formats.html#helpers",
+    "deep-dives/graphics/surface-formats.html#texture2d-admission"
+   ],
+   "tokens": [
+    "CalculateMipLevels"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/Texture2D.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-044",
+   "section": "C. Graphics resources",
+   "text": "Texture2D SetData/GetData form a large typed overload family (Color, twelve PackedVector types, float, Vector2, Vector4, bytes, ushorts) with short and (level, rect, start, count) forms, each validating the texture format.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/texture-data-transfer.html#typed-overloads"
+   ],
+   "tokens": [
+    "constrained template"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
+   },
+   "note": "TARGET adds a requires-constrained template for trivially copyable T."
+  },
+  {
+   "id": "WPB2-gce-045",
+   "section": "C. Graphics resources",
+   "text": "Compressed texture transfer has no CPU mirror: SetCompressedDataBytes reads back, patches and re-uploads; rectangles are texel-space, block-aligned or reaching the level edge, and element counts are exact padded block byte counts.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/texture-data-transfer.html#compressed-transfer"
+   ],
+   "tokens": [
+    "SetCompressedDataBytes"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/Texture2D.cpp (SetCompressedDataBytes)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-046",
+   "section": "C. Graphics resources",
+   "text": "Texture creation is gated by three checks in order: profile size ceiling, the renderer maximum dimension (GetMaxTextureDimension) and format; the profile ceiling was described as a Direct3D 9-only check.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/surface-formats.html#texture2d-admission"
+   ],
+   "tokens": [
+    "ValidateTextureDimensionEXT"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/Texture2D.cpp (ValidateTextureSizeForProfileEXT, ValidateTextureDimensionEXT)"
+   },
+   "note": "At TARGET the profile ceiling is the shared GetMaxTextureSizeForProfileEXT default for every family and a creation-shape check follows; where the renderer maximum comes from is the numeric-defaults concept of section I (expansion wpb2-renderer-texture-maximum)."
+  },
+  {
+   "id": "WPB2-gce-047",
+   "section": "C. Graphics resources",
+   "text": "Texture2D CNAEXT extras: FromStream with fit/zoom, SaveAsPng/SaveAsJpeg, SetDataRGBA, CreateFromPixels, test factories, ReconstructFromCache and renderer/shadow accessors (GetRenderer, GetCpuPixelsWeak, HasRenderer).",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/texture-data-transfer.html#texture2d-shape"
+   ],
+   "tokens": [
+    "GetCpuPixelsWeak()"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/Texture2D.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-048",
+   "section": "C. Graphics resources",
+   "text": "Texture3D refuses construction with NotSupportedException when the renderer reports no Texture3D capability, checked before any renderer call; previously a null renderer made its transfers silent no-ops.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/surface-formats.html#cube-volume-rules"
+   ],
+   "tokens": [
+    "SupportsCapability(GraphicsCapability::Texture3D)"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/Texture3D.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-049",
+   "section": "C. Graphics resources",
+   "text": "TextureCube exposes Size, face-indexed SetData/GetData and a CNAEXT DDSFromStreamEXT; Texture3D exposes width/height/depth and Color transfers; both derive from Texture.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/texture-data-transfer.html#cube-and-volume"
+   ],
+   "tokens": [
+    "DDSFromStreamEXT",
+    "derive from Texture at this snapshot"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/TextureCube.hpp; Texture3D.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-050",
+   "section": "C. Graphics resources",
+   "text": "RenderTarget2D construction succeeds on a renderer without target storage (null-object convention) and each storage-needing operation throws at its point of use; multisample counts round down to a power of two with 1 becoming 0 (ClosestMSAAPower, as FNA).",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/render-target-semantics.html#rt2d"
+   ],
+   "tokens": [
+    "ClosestMSAAPower"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/RenderTarget2D.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-051",
+   "section": "C. Graphics resources",
+   "text": "Render targets report the applied, device-clamped multisample count read back from the renderer after construction (as FNA reads FNA3D_GetMaxMultiSampleCount), and RenderTargetCube shares one GPU image between sampling and rendering.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/render-target-semantics.html#rt2d"
+   ],
+   "tokens": [
+    "device-clamped count"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/RenderTarget2D.cpp (multiSampleCount_ = rtRenderer_->GetMultiSampleCount())"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-052",
+   "section": "C. Graphics resources",
+   "text": "Disposing a render target that is still bound throws InvalidOperationException (RenderTarget2D and RenderTargetCube).",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/render-target-semantics.html#disposal"
+   ],
+   "tokens": [
+    "Disposing target that is still bound"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/RenderTarget2D.cpp; RenderTargetCube.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-053",
+   "section": "C. Graphics resources",
+   "text": "IsContentLost returned a hard-coded false on render targets and dynamic buffers and ContentLost was never raised.",
+   "kind": "semantics",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/render-target-semantics.html#content-lost",
+    "deep-dives/graphics/vertex-and-index-buffers.html#dynamic"
+   ],
+   "tokens": [
+    "NotifyContentLostEXT"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/RenderTarget2D.cpp (NotifyContentLostEXT)"
+   },
+   "note": "At TARGET it is a real flag set on a renderer-reported reset and cleared by the next bind or upload."
+  },
+  {
+   "id": "WPB2-gce-054",
+   "section": "C. Graphics resources",
+   "text": "DynamicVertexBuffer/DynamicIndexBuffer add only the content-lost surface and SetDataOptions overloads, and their destination write always starts at the buffer beginning (startIndex selects only the source), unlike XNA's offsetInBytes.",
+   "kind": "compatibility",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/vertex-and-index-buffers.html#dynamic"
+   ],
+   "tokens": [
+    "offsetInBytes"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/DynamicVertexBuffer.hpp"
+   },
+   "note": "At TARGET the XNA offsetInBytes overloads exist; only the option overloads without an offset write from the start."
+  },
+  {
+   "id": "WPB2-gce-055",
+   "section": "C. Graphics resources",
+   "text": "VertexBuffer typed transfer covers the built-in vertex types plus CNAEXT skinned/tangent types and SetDataRaw; IndexBuffer covers 16- and 32-bit indices.",
+   "kind": "api",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/vertex-and-index-buffers.html#types"
+   ],
+   "tokens": [
+    "SetDataRawAtEXT",
+    "VertexPositionNormalTangentTextureSkinned"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/VertexBuffer.hpp"
+   },
+   "note": "TARGET adds a template for any vertex type, XNA offset overloads and SetDataRawAtEXT."
+  },
+  {
+   "id": "WPB2-gce-056",
+   "section": "C. Graphics resources",
+   "text": "VertexDeclaration is immutable after construction with a stride auto-computed as max(offset + format size) or given explicitly, and VertexElement::GetHashCode returned 0 (as FNA's TODO).",
+   "kind": "api",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/vertex-streams-and-declarations.html#declaration-rules",
+    "deep-dives/graphics/vertex-streams-and-declarations.html#element-hash"
+   ],
+   "tokens": [
+    "immutable after construction",
+    "GetHashCode()"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/VertexElement.cpp (GetHashCode)"
+   },
+   "note": "At TARGET GetHashCode hashes the four fields XNA-style (weak XOR), no longer a constant 0."
+  },
+  {
+   "id": "WPB2-gce-057",
+   "section": "C. Graphics resources",
+   "text": "Nothing in CNA premultiplied alpha at the audited revision, while SpriteBatch.Begin() defaults to the premultiplied AlphaBlend equation, so CNA content and XNA content paired differently out of the box.",
+   "kind": "compatibility",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/state-objects.html#blend"
+   ],
+   "tokens": [
+    "PremultiplyAlpha"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "cna-content texture processor (PremultiplyAlpha default)"
+   },
+   "note": "At TARGET built content is premultiplied by cna-content by default (pairs with AlphaBlend) and loose runtime images stay straight alpha."
+  },
+  {
+   "id": "WPB2-gce-058",
+   "section": "D. State objects",
+   "text": "State objects had no freeze and no device binding: every setter was an unconditional field write with no \"cannot modify a bound state\" exception.",
+   "kind": "semantics",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/state-objects.html#freeze"
+   ],
+   "tokens": [
+    "a dirty state is re-applied"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/BlendState.cpp (state_->isBound)"
+   },
+   "note": "At TARGET assignment binds and freezes the state (setters throw InvalidOperationException), as in XNA."
+  },
+  {
+   "id": "WPB2-gce-059",
+   "section": "D. State objects",
+   "text": "GraphicsDevice stored state objects by value, so mutating the assigned object afterwards had no effect on the device (the opposite of XNA reference semantics).",
+   "kind": "porting",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/state-objects.html#identity"
+   ],
+   "tokens": [
+    "ShareResourceIdentityWith"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/BlendState.cpp (shared State payload, ShareResourceIdentityWith)"
+   },
+   "note": "At TARGET state objects share a payload; copy construction creates a mutable variation and copy assignment an alias."
+  },
+  {
+   "id": "WPB2-gce-060",
+   "section": "D. State objects",
+   "text": "Built-in presets: BlendState Additive/AlphaBlend/NonPremultiplied/Opaque with XNA factors, DepthStencilState Default/DepthRead/None, RasterizerState CullClockwise/CullCounterClockwise/CullNone and six SamplerState presets.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/state-objects.html#blend"
+   ],
+   "tokens": [
+    "Additive (SourceAlpha, SourceAlpha, One, One)"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/BlendState.cpp; DepthStencilState.cpp; RasterizerState.cpp; SamplerState.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-061",
+   "section": "D. State objects",
+   "text": "Default-constructed state values follow XNA: opaque blend with all channels written and mask -1; depth test/write on with LessEqual and stencil off; counter-clockwise culling, solid fill; wrap/linear sampling.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/state-objects.html#depth-stencil",
+    "deep-dives/graphics/state-objects.html#rasterizer"
+   ],
+   "tokens": [
+    "LessEqual",
+    "CullCounterClockwiseFace"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/*State.cpp (default constructors)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-062",
+   "section": "D. State objects",
+   "text": "BlendState constructed its blend factor in place rather than from Color::White to avoid a static-initialisation-order hazard among the namespace-scope presets.",
+   "kind": "porting",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "At 009d40f5 BlendState keeps its fields in a shared State payload and the presets are built from names and Blend values; the in-place Color::White workaround and its comment are gone. The general static-initialisation lesson is covered for math constants elsewhere."
+  },
+  {
+   "id": "WPB2-gce-063",
+   "section": "D. State objects",
+   "text": "State application is complete per call: ApplyBlendState carries factor/function ordinals plus per-target write masks and the coverage mask, ApplyDepthStencilState all sixteen fields including two-sided stencil, ApplyRasterizerState five values; samplers are applied for all sixteen slots before each draw.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/state-objects.html#submission"
+   ],
+   "tokens": [
+    "ApplyDepthStencilState with all sixteen fields",
+    "for all sixteen slots"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (state submission)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-064",
+   "section": "E. Stock effects",
+   "text": "All five XNA stock effects plus SpriteEffect are implemented with real OnApply, Clone and FillGpuDrawParams.",
+   "kind": "status",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "docs/effects.html#stock-effects-at-a-glance"
+   ],
+   "tokens": [
+    "SpriteEffect"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/*Effect.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-065",
+   "section": "E. Stock effects",
+   "text": "CNAEXT effects beyond XNA (PbrEffect and SkinnedPbrEffect metallic-roughness, ColorMatrixEffect CPU colour transform for 2D renderers, ShaderEffect) live beside the stock effects, and a renderer without PBR shaders accepts a bound PbrEffect but renders an unlit fallback.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/reference/cnaext-catalog.html#graphics",
+    "docs/effects.html#stock-effects-at-a-glance"
+   ],
+   "tokens": [
+    "PBR support is renderer-qualified",
+    "ColorMatrixEffect"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/PbrEffect.hpp"
+   },
+   "note": "The audited fallback list named retired families; not carried over."
+  },
+  {
+   "id": "WPB2-gce-066",
+   "section": "E. Stock effects",
+   "text": "The effect-to-renderer contract is one closed struct, GpuDrawParams, filled by the virtual FillGpuDrawParams before every draw; adding a uniform means editing the struct and every renderer that should honour it.",
+   "kind": "architecture",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/effect-object-model.html#draw-packet"
+   ],
+   "tokens": [
+    "GpuDrawParams"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp (GpuDrawParams)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-067",
+   "section": "E. Stock effects",
+   "text": "EffectParameter was a CPU-side value bag that no renderer read: setting a stock effect parameter by name did not change what was drawn.",
+   "kind": "semantics",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/effect-object-model.html#one-way",
+    "deep-dives/graphics/compiled-effects-semantics.html#admission"
+   ],
+   "tokens": [
+    "ApplyPopulatesDerivedParameterValues",
+    "EffectReader"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/EffectParameter.cpp; compiled-effect runtime"
+   },
+   "note": "At TARGET stock effects flow properties to fields to the draw packet (parameters are derived outputs), while compiled effects read their reflected parameters; the destinations explain both directions."
+  },
+  {
+   "id": "WPB2-gce-068",
+   "section": "E. Stock effects",
+   "text": "Stock-effect parameter collections were populated inconsistently and BasicEffect had none, so Parameters[\"DiffuseColor\"] returned nullptr.",
+   "kind": "compatibility",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/effect-object-model.html#stock-parameters"
+   ],
+   "tokens": [
+    "in alpha.1 it had no parameters at all"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/BasicEffect.cpp (AddParam calls)"
+   },
+   "note": "At TARGET BasicEffect exposes XNA's parameter graph; the other stock effects keep hand-built lists."
+  },
+  {
+   "id": "WPB2-gce-069",
+   "section": "E. Stock effects",
+   "text": "SpriteEffect::OnApply() is a permanent no-op because no parameter named MatrixTransform is ever added, so the sprite transform comes from each renderer's SpriteBatch path and the defect is invisible in ordinary drawing.",
+   "kind": "defect",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/effect-object-model.html#stock-parameters"
+   ],
+   "tokens": [
+    "MatrixTransform"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/SpriteEffect.cpp (CacheEffectParameters, OnApply)"
+   },
+   "note": "Still present at 009d40f5; already an issue candidate from the stock-effects record (WP07)."
+  },
+  {
+   "id": "WPB2-gce-070",
+   "section": "E. Stock effects",
+   "text": "Every Effect has exactly one technique named \"Default\" with one pass named \"P0\", so the XNA per-pass loop works and iterates once but names are synthetic, not taken from .fx files.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/effect-object-model.html#three-forms"
+   ],
+   "tokens": [
+    "P0"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/EffectTechnique.cpp; Effect.cpp"
+   },
+   "note": "At TARGET BasicEffect exposes XNA's technique name and compiled effects carry their real technique graph, as the destination explains."
+  },
+  {
+   "id": "WPB2-gce-071",
+   "section": "E. Stock effects",
+   "text": "EffectPass::Apply() checks membership of the current technique through a stable 64-bit technique identity token rather than a pointer, throwing \"Applied a pass not in the current technique!\" as FNA does.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/effect-object-model.html#current-technique"
+   ],
+   "tokens": [
+    "identity token"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/EffectPass.cpp; EffectTechnique.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-072",
+   "section": "E. Stock effects",
+   "text": "Effect::Apply() is a CNAEXT member (FNA exposes only EffectPass.Apply()); it rejects a disposed effect, calls OnApply() and makes the effect current on the device.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/effect-object-model.html#effect-apply"
+   ],
+   "tokens": [
+    "Effect::Apply()"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/Effect.cpp (Apply)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-073",
+   "section": "E. Stock effects",
+   "text": "Effect::Clone() returns an owning raw pointer (a documented CNAEXT deviation, C++ has no collector); stock effects clone through a private copy constructor that rebuilds the parameter graph, and ShaderEffect recompiles from its source strings.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/effect-object-model.html#clone"
+   ],
+   "tokens": [
+    "CNAEXT deviation"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/Effect.hpp (Clone)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-074",
+   "section": "E. Stock effects",
+   "text": "BasicEffect keeps World, View, Projection and VertexColorEnabled as public fields and did all its work in FillGpuDrawParams, while the other stock effects use FNA-style dirty flags.",
+   "kind": "api",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/effect-object-model.html#one-way",
+    "deep-dives/graphics/stock-effects-semantics.html#alphatesteffect"
+   ],
+   "tokens": [
+    "ApplyPopulatesDerivedParameterValues",
+    "dirty flags"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/BasicEffect.hpp (public fields); BasicEffect.cpp (OnApply)"
+   },
+   "note": "The public fields remain; at TARGET BasicEffect::OnApply() also derives XNA's parameter values."
+  },
+  {
+   "id": "WPB2-gce-075",
+   "section": "E. Stock effects",
+   "text": "BasicEffect reproduces FNA formulas: emissive baked into diffuse with lighting off and added with lighting on, disabled lights zeroed at submission, fog vector from World*View with FogStart == FogEnd mapped to {0,0,0,1}, EnableDefaultLighting with FNA constants.",
+   "kind": "algorithm",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/stock-effects-semantics.html#basic-formulas"
+   ],
+   "tokens": [
+    "SetMaterialColor"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/BasicEffect.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-076",
+   "section": "E. Stock effects",
+   "text": "SkinnedEffect::MaxBones is 72, matching the draw packet's bone palette, with SetBoneTransforms/GetBoneTransforms and WeightsPerVertex 1, 2 or 4; EnvironmentMapEffect exposes EnvironmentMap, EnvironmentMapAmount, EnvironmentMapSpecular and FresnelFactor plus owned-texture helpers.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/stock-effects-semantics.html#skinnedeffect",
+    "deep-dives/graphics/stock-effects-semantics.html#environmentmapeffect"
+   ],
+   "tokens": [
+    "MaxBones",
+    "EnvironmentMapAmount",
+    "FresnelFactor"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/SkinnedEffect.hpp; EnvironmentMapEffect.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-077",
+   "section": "E. Stock effects",
+   "text": "GpuDrawParams::specularEnabled is filled by EnvironmentMapEffect but read by no renderer (per its own comment); it exists so a renderer can tell disabled specular from black specular.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#effect-reach"
+   ],
+   "tokens": [
+    "specularEnabled"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx9/src/D3D9EffectDraw.cpp and D3D9ShaderDispatch.cpp (shader index +4 when specularEnabled); modules/renderers/fna3d/src/Fna3dDraw.cpp (params.specularEnabled)"
+   },
+   "note": "At 009d40f5 DIRECTX9 and FNA3D read the field; the header comment \"No renderer currently reads this field\" is stale. deep-dives/graphics/effect-object-model.html#draw-packet repeats the stale comment and is reported to the orchestrator as a site error."
+  },
+  {
+   "id": "WPB2-gce-078",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "The compiled-.fx constructor Effect(GraphicsDevice&, bytes) threw NotImplementedException unconditionally, the only such throw in the graphics module.",
+   "kind": "status",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/compiled-effects-semantics.html#admission"
+   ],
+   "tokens": [
+    "CompiledEffects"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/Effect.cpp (Effect(GraphicsDevice&, const std::vector<bytecs>&))"
+   },
+   "note": "At TARGET the constructor validates an Effect Framework binary and creates a runtime where the family reports CompiledEffects (FNA3D always; nine default-OFF options elsewhere)."
+  },
+  {
+   "id": "WPB2-gce-079",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "The content layer registered readers for the five stock effects while the general EffectReader was a known-unsupported reader that threw ContentLoadException by name.",
+   "kind": "status",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/compiled-effects-semantics.html#admission",
+    "deep-dives/graphics/stock-effects-semantics.html#semantic-reimplementation"
+   ],
+   "tokens": [
+    "EffectReader",
+    "BasicEffectReader"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/content/src/Xnb (EffectReader route)"
+   },
+   "note": "At TARGET the general EffectReader shares the compiled-effect admission route; stock readers need no compiled-effect capability."
+  },
+  {
+   "id": "WPB2-gce-080",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "Genuine XNA stock-effect bytecode (six .fxb blobs vendored from FNA) is embedded at build time and executed on the FNA3D renderer through FNA3D_CreateEffect and MojoShader, with parameters set by name and techniques applied natively.",
+   "kind": "architecture",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/shader-routes-four-answers.html#route-three"
+   ],
+   "tokens": [
+    "embed_effects.py",
+    "FNA3D_CreateEffect"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/fna3d/effects/; modules/renderers/fna3d/src/Fna3dStockEffects.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-081",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "MojoShader is a pinned build dependency through FNA3D: cmake/ThirdPartyFNA3D.cmake fetches FNA3D at a pinned tag with submodules and fails without MojoShader/mojoshader.h, exporting the MojoShader include root and effect-support defines.",
+   "kind": "build",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/compiled-effects-semantics.html#preflight",
+    "deep-dives/graphics/shader-routes-four-answers.html#route-three"
+   ],
+   "tokens": [
+    "MojoShader"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "cmake/ThirdPartyFNA3D.cmake (CNA_FNA3D_GIT_TAG, mojoshader.h check)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-082",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "FNA3D cannot compile shader source (its only shader entry point is FNA3D_CreateEffect), so its CreateEffectRenderer returns null and CustomEffects is false; it reported Instancing false because no stock effect declares per-instance input; the .fxb blobs are not rebuildable in-repo because they need the legacy fxc.",
+   "kind": "semantics",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/shader-routes-four-answers.html#route-three",
+    "docs/tutorials/108-fna3d.html#instancing"
+   ],
+   "tokens": [
+    "CustomEffects",
+    "FNA3D_SupportsHardwareInstancing"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/fna3d/src/Fna3dRenderer.cpp (SupportsCapability)"
+   },
+   "note": "At TARGET FNA3D answers Instancing from FNA3D_SupportsHardwareInstancing() for the live device (unusable with the stock effects); CustomEffects stays false."
+  },
+  {
+   "id": "WPB2-gce-083",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "The Direct3D 9 family vendors Microsoft's XNA stock-effect .fx sources, compiles the entry points it parses from them with the real d3dcompiler_47 under Wine, and records 61 of 66 shaders matching Microsoft's shipped instruction streams, the five misses attributed to D3DCompiler_43 versus d3dcompiler_47.",
+   "kind": "evidence",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/shader-routes-four-answers.html#route-two"
+   ],
+   "tokens": [
+    "61 of 66",
+    "compare_against_fxb",
+    "D3DCompiler_43"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/shaders/xna/; compare_against_fxb.py; compile_shaders_sm2.py"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-084",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "ShaderEffect is the source-string custom-shader route: construction never throws (IsEffectValid() is the signal), parameters go through typed setters and SetTexture overloads, it implements IEffectMatrices, and FillGpuDrawParams passes only the custom effect renderer.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/shader-routes-four-answers.html#construction"
+   ],
+   "tokens": [
+    "HasRenderer()",
+    "GetCompileErrorEXT()"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/ShaderEffect.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-085",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "Per-renderer ShaderEffect dialects of the audited revision: raw GLSL on the GL families, GLSL to SPIR-V through libshaderc on SDL_GPU, runtime D3DCompile HLSL on Direct3D 11/12 (a fixed 32-byte SpriteBatch layout) and Direct3D 9, pre-compiled SPIR-V bytes on Vulkan, and deliberate rejections elsewhere.",
+   "kind": "compatibility",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "docs/tutorials/52-custom-shaders.html#renderers-and-languages"
+   ],
+   "tokens": [
+    "because it takes SPIR-V rather than source text",
+    "DIRECTX9 compiles your HLSL"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp (CreateEffectRenderer); per-family CreateEffectRenderer overrides"
+   },
+   "note": "The current family-by-family language table (including WebGPU WGSL) is on the custom-shaders tutorial; the Vulkan SPIR-V-not-GLSL trap is stated there."
+  },
+  {
+   "id": "WPB2-gce-086",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "Many audited ShaderEffect dialect entries (marker-gated, pre-compiled-binary-only, always-throwing or never-overriding families) describe renderer families that no longer exist.",
+   "kind": "history",
+   "disposition": "REMOVED FUNCTIONALITY",
+   "destinations": [],
+   "tokens": [],
+   "note": "The families concerned were retired before 009d40f5; their names are not carried over. The current families are covered by the concept above."
+  },
+  {
+   "id": "WPB2-gce-087",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "Shader bytecode is generated offline and checked in as headers; no CMake target runs a shader generator, so an ordinary build needs no shader toolchain and no network.",
+   "kind": "build",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/repository/source-ownership.html#generated",
+    "deep-dives/graphics/shader-routes-four-answers.html#route-two"
+   ],
+   "tokens": [
+    "hlsl_shaders.hpp",
+    "no CMake target runs it"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/common/d3d/src/shaders/compile_shaders_hlsl.py; modules/renderers/directx9/src/shaders/compile_shaders_sm2.py"
+   },
+   "note": "Per-header byte sizes and per-family source counts in the audit covered retired families and are not carried over."
+  },
+  {
+   "id": "WPB2-gce-088",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "Two different shader proofs: verify_d3d_shaders_reproducible.sh regenerates the D3D bytecode under Wine and requires a byte-identical result, while verify_hlsl_shaders_native_msvc.py only proves that real Windows tools still accept the HLSL, deliberately without byte comparison.",
+   "kind": "evidence",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/repository/source-ownership.html#generated",
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#native-windows"
+   ],
+   "tokens": [
+    "verify_d3d_shaders_reproducible",
+    "verify_hlsl_shaders_native_msvc"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "scripts/verify_d3d_shaders_reproducible.sh; scripts/verify_hlsl_shaders_native_msvc.py"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-089",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "scripts/verify_hlsl_shaders_native_msvc.py pointed at a top-level src/ tree that no longer existed, so it failed on import rather than on a shader regression.",
+   "kind": "defect",
+   "disposition": "FIXED BUG",
+   "destinations": [],
+   "tokens": [],
+   "target": {
+    "result": "corrected",
+    "evidence": "scripts/verify_hlsl_shaders_native_msvc.py (SHADERS_DIR = modules/renderers/common/d3d/src/shaders); modules/renderers/common/d3d/src/shaders/compile_shaders_hlsl.py"
+   },
+   "note": "Positive evidence at 009d40f5: SHADERS_DIR points at modules/renderers/common/d3d/src/shaders, which contains compile_shaders_hlsl.py; not executed."
+  },
+  {
+   "id": "WPB2-gce-090",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "Two renderers reported CustomEffects true by inheriting the permissive base default while unable to honour it (one had no CreateEffectRenderer at all).",
+   "kind": "defect",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/capability-model-and-evidence.html#mismatches"
+   ],
+   "tokens": [
+    "DIRECTX9 inherits CustomEffects true"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/webgpu/src/WebGPURenderer.cpp (CreateEffectRenderer, WGSL)"
+   },
+   "note": "At TARGET WebGPU implements a WGSL CreateEffectRenderer and the other audited family is retired; the remaining report/path mismatches are listed on the destination."
+  },
+  {
+   "id": "WPB2-gce-091",
+   "section": "F. Custom effects and shaders — the .fx question",
+   "text": "A 2026 plan for compiled .fx support (vendor MojoShader, parse effects, per-renderer translation, reflection into Effect) was a planning document; it correctly noted that MojoShader has no SPIR-V output profile.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Superseded by the implemented compiled-effect route at 009d40f5 (see deep-dives/graphics/compiled-effects-semantics.html). The plan document itself is history."
+  },
+  {
+   "id": "WPB2-gce-092",
+   "section": "G. SpriteBatch and SpriteFont",
+   "text": "SpriteBatch is implemented once in the graphics core (queueing, sorting, string layout, validation) and lowered to a per-renderer ISpriteBatchRenderer that only rasterises; the renderer is called once per sprite.",
+   "kind": "architecture",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/spritebatch-sorting-and-batching.html#flow"
+   ],
+   "tokens": [
+    "ISpriteBatchRenderer::Draw",
+    "is not one GPU draw"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/SpriteBatch.cpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-093",
+   "section": "G. SpriteBatch and SpriteFont",
+   "text": "Begin overloads funnel into one; each Begin re-applies blend, depth-stencil (default None), rasterizer (default CullCounterClockwise) and sampler (default LinearClamp) through the device properties rather than inheriting a previous batch's state.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/spritebatch-semantics.html#state-timing"
+   ],
+   "tokens": [
+    "DeferredBeginAppliesRenderStatesOnlyWhenEndFlushes"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/SpriteBatch.cpp (Begin, End)"
+   },
+   "note": "At TARGET deferred and sorted modes apply the states in End immediately before the flush, as XNA does."
+  },
+  {
+   "id": "WPB2-gce-094",
+   "section": "G. SpriteBatch and SpriteFont",
+   "text": "Begin is exception-transactional: if renderer setup rejects an effect or sampler, the batch clears its custom effect and queue and is left not begun, so the caller can catch the exception and begin a valid batch.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/spritebatch-semantics.html#errors"
+   ],
+   "tokens": [
+    "rejects the setup in Begin"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/SpriteBatch.cpp (Begin catch block)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-095",
+   "section": "G. SpriteBatch and SpriteFont",
+   "text": "Begin's depthStencilState and rasterizerState arguments were once discarded, so sprites inherited the game's last 3D state and scissor/cull/fill passed to Begin never reached the device.",
+   "kind": "defect",
+   "disposition": "FIXED BUG",
+   "destinations": [],
+   "tokens": [],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp (depthStencilState_, rasterizerState_ members); spritebatch_begin_rasterizerstate_scissor_test.cpp"
+   },
+   "note": "Positive evidence at 009d40f5: SpriteBatch stores and applies both states; the scissor conformance scene is described on deep-dives/graphics/spritebatch-semantics.html#rasterizer-scissor."
+  },
+  {
+   "id": "WPB2-gce-096",
+   "section": "G. SpriteBatch and SpriteFont",
+   "text": "End flushes non-Immediate batches and does not restore the device state that Begin changed, matching XNA.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/spritebatch-semantics.html#states-left-behind"
+   ],
+   "tokens": [
+    "restores nothing"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/SpriteBatch.cpp (End)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-097",
+   "section": "G. SpriteBatch and SpriteFont",
+   "text": "SpriteSortMode handling: Immediate bypasses the queue, BackToFront/FrontToBack used std::stable_sort on layer depth and Texture a stable sort on the Texture2D pointer, making group order allocation-dependent.",
+   "kind": "algorithm",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/spritebatch-sorting-and-batching.html#sort-modes",
+    "deep-dives/graphics/spritebatch-sorting-and-batching.html#xna-sort"
+   ],
+   "tokens": [
+    "stable_sort",
+    "descending address order"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/SpriteBatch.cpp (XnaArraySort)"
+   },
+   "note": "At TARGET CNA reproduces XNA's unstable quicksort (equal keys reverse) and Texture mode sorts on the shared renderer object's address in descending order."
+  },
+  {
+   "id": "WPB2-gce-098",
+   "section": "G. SpriteBatch and SpriteFont",
+   "text": "Sprite destinations were integer rectangles: Draw truncated fractional positions and scaled sizes while DrawString rounded, so text and sprites used different positioning rules and sub-pixel motion was lost.",
+   "kind": "compatibility",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/spritebatch-semantics.html#subpixel"
+   ],
+   "tokens": [
+    "spritebatch_subpixel_contract_test.cpp"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/SpriteBatch.hpp (SpriteInfo destX/destY/destWidth/destHeight floats)"
+   },
+   "note": "At TARGET the queue keeps float destinations; three families render them sub-pixel and the rest quantise, as the destination explains."
+  },
+  {
+   "id": "WPB2-gce-099",
+   "section": "G. SpriteBatch and SpriteFont",
+   "text": "SpriteBatch argument errors: non-finite floats and out-of-Int32 destinations threw ArgumentOutOfRangeException, Draw before Begin threw std::runtime_error, and a disposed texture throws ObjectDisposedException as hardening beyond FNA.",
+   "kind": "semantics",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/spritebatch-semantics.html#subpixel",
+    "deep-dives/graphics/spritebatch-semantics.html#errors",
+    "deep-dives/graphics/spritebatch-semantics.html#textures"
+   ],
+   "tokens": [
+    "Non-finite and very large values are carried through",
+    "OrderingErrorsUseXnaInvalidOperationException",
+    "hardening beyond FNA"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/SpriteBatch.cpp"
+   },
+   "note": "At TARGET non-finite values are carried through and ordering errors throw System::InvalidOperationException; the disposed-texture guard remains."
+  },
+  {
+   "id": "WPB2-gce-100",
+   "section": "G. SpriteBatch and SpriteFont",
+   "text": "SpriteEffects is a composable flags enum with bitwise operators, and DrawString masks effects & 0x03 and indexes four-entry axis tables (an earlier three-entry table read out of bounds for the combined flip).",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/spritefont-text-layout.html#flips-rotation"
+   ],
+   "tokens": [
+    "four-entry direction tables"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/SpriteBatch.cpp (DrawString axis tables)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-101",
+   "section": "G. SpriteBatch and SpriteFont",
+   "text": "DrawString mirrors the character sequence (measuring the whole string and shifting the origin on a flip), decodes UTF-8 per code point, skips \\r, advances lines by LineSpacing, applies kerning per glyph and falls back to DefaultCharacter or throws for a missing glyph.",
+   "kind": "algorithm",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/spritefont-text-layout.html#flips-rotation",
+    "deep-dives/graphics/spritefont-text-layout.html#encoding",
+    "deep-dives/graphics/spritefont-text-layout.html#advance"
+   ],
+   "tokens": [
+    "measures the whole string",
+    "DecodeUtf8CodePoint",
+    "FirstGlyphOfALineClampsANegativeLeftSideBearingToZero"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/src/Xna/SpriteBatch.cpp (DrawString); SpriteFont.cpp"
+   },
+   "note": "The first glyph of a line uses max(left bearing, 0) at TARGET (measured against XNA 4.0), not abs() as the audit and FNA state."
+  },
+  {
+   "id": "WPB2-gce-102",
+   "section": "G. SpriteBatch and SpriteFont",
+   "text": "SpriteFont is not a GraphicsResource: it holds its atlas Texture2D by value plus glyph, cropping, kerning, character data, optional default character, line spacing and spacing, and its XNA-internal constructor is public for content readers.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/spritefont-text-layout.html#data-model"
+   ],
+   "tokens": [
+    "is not a GraphicsResource"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/SpriteFont.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-103",
+   "section": "G. SpriteBatch and SpriteFont",
+   "text": "SpriteBatch::DrawMeshEXT was a CNAEXT triangle-list 2D mesh draw requiring Immediate mode and implemented by a single renderer family.",
+   "kind": "api",
+   "disposition": "REMOVED FUNCTIONALITY",
+   "destinations": [],
+   "tokens": [],
+   "note": "DrawMeshEXT does not exist in modules/graphics/include at 009d40f5; its only implementing family was retired."
+  },
+  {
+   "id": "WPB2-gce-104",
+   "section": "H. modules/graphics-ext (CNAEXT graphics extensions)",
+   "text": "Everything in the graphics-ext module is guarded by the CNA_CNAEXT feature (renamed from NOXNA in the August 2026 normalisation) and compiles away when it is off.",
+   "kind": "build",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/reference/cnaext-catalog.html#three-mechanisms",
+    "development/internals/modules/graphics-ext.html#build"
+   ],
+   "tokens": [
+    "CNA_CNAEXT"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics-ext/CMakeLists.txt; modules/CMakeLists.txt"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-105",
+   "section": "H. modules/graphics-ext (CNAEXT graphics extensions)",
+   "text": "CRTEffect (a ShaderEffect with scanlines, an RGB sub-pixel mask, barrel curvature and vignette) needs a single full-screen source: curvature and vignette are computed from the drawn quad's texture coordinate, so a multi-sprite batch gets a curved screen per sprite; scanlines and the mask use screen pixels.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "docs/tutorials/116-post-process-effects.html#shader-effects"
+   ],
+   "tokens": [
+    "needs a single full-screen source",
+    "curvature"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics-ext/include/CNA/Graphics/CRTEffect.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-106",
+   "section": "H. modules/graphics-ext (CNAEXT graphics extensions)",
+   "text": "DepthEffect reduces colour depth (RGB565, RGB332, 4/2/1-bit grey, 216-colour and 16-colour palettes) with optional Bayer ordered dithering; error-diffusion dithering is not offered because it is sequential and does not fit a single-pass fragment shader.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "docs/tutorials/116-post-process-effects.html#shader-effects"
+   ],
+   "tokens": [
+    "DitherMode",
+    "Floyd"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics-ext/include/CNA/Graphics/DitherMode.hpp; DepthEffect.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-107",
+   "section": "H. modules/graphics-ext (CNAEXT graphics extensions)",
+   "text": "AsciiPostProcessEffect is a renderer-neutral glyph-grid quantiser that replaced an earlier renderer-level implementation; it reads finished pixels back through Texture2D::GetData() and redraws through SpriteBatch (a GPU-to-CPU readback per call) and is not a terminal renderer.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "docs/tutorials/116-post-process-effects.html#ascii"
+   ],
+   "tokens": [
+    "Texture2D::GetData()",
+    "never downcasts"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics-ext/include/CNA/Graphics/AsciiPostProcessEffect.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-108",
+   "section": "H. modules/graphics-ext (CNAEXT graphics extensions)",
+   "text": "PbrMaterial is a glTF metallic-roughness settings bag with non-owning texture slots and scalar parameters; rendering needs a matching PbrEffect.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "docs/cnaext-engine.html#contents"
+   ],
+   "tokens": [
+    "PbrMaterial"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics-ext/include/CNA/Graphics/PbrMaterial.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-109",
+   "section": "H. modules/graphics-ext (CNAEXT graphics extensions)",
+   "text": "RenderPipelineSettings was an inert settings bag referenced by nothing outside its module.",
+   "kind": "status",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "docs/cnaext-engine.html#contents",
+    "development/internals/modules/graphics-ext.html#settings-home"
+   ],
+   "tokens": [
+    "RenderPipelineSettings",
+    "RenderPipeline::getSettings()"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics-ext/include/CNA/Graphics/RenderPipeline.hpp (getSettings); PostProcessContext.hpp (settings)"
+   },
+   "note": "At TARGET a RenderPipeline owns it and passes read it through PostProcessContext::settings."
+  },
+  {
+   "id": "WPB2-gce-110",
+   "section": "H. modules/graphics-ext (CNAEXT graphics extensions)",
+   "text": "The ASCII glyph-atlas and quantiser helpers are internal headers under include/CNA/Internal/Graphics/Ascii/, migrated from the earlier renderer-level implementation.",
+   "kind": "internals",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/modules/graphics-ext.html#build"
+   ],
+   "tokens": [
+    "two internal ASCII helper headers"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics-ext/include/CNA/Internal/Graphics/Ascii/AsciiFontAtlas.hpp; AsciiQuantizer.hpp"
+   },
+   "note": "The audit's test counts for this family are superseded by the internals page's per-family census."
+  },
+  {
+   "id": "WPB2-gce-111",
+   "section": "H. modules/graphics-ext (CNAEXT graphics extensions)",
+   "text": "graphics-ext added no GraphicsDevice extension, no resource type and no renderer entry point; it was built only on the public graphics API.",
+   "kind": "architecture",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "development/internals/modules/graphics-ext.html#build"
+   ],
+   "tokens": [
+    "RenderPipeline"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics-ext (RenderPipeline, passes, shader packages, compute resources)"
+   },
+   "note": "At TARGET the module is the CNAEXT engine layer (pipeline, passes, shader packages, compute); the internals page traces its boundary."
+  },
+  {
+   "id": "WPB2-gce-112",
+   "section": "I. Per-renderer divergence",
+   "text": "IGraphicsRenderer.hpp is by far the largest graphics header and is the whole renderer contract (lifecycle, clears, draws, resources, state, sprite batch, effects, queries, capabilities).",
+   "kind": "architecture",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/renderers/renderer-contract.html#interfaces"
+   ],
+   "tokens": [
+    "IGraphicsRenderer.hpp"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp"
+   },
+   "note": "Line counts in the audit are alpha.1-era and not carried over."
+  },
+  {
+   "id": "WPB2-gce-113",
+   "section": "I. Per-renderer divergence",
+   "text": "GraphicsCapability had 12 members, each tied to an observed gap, with precise semantics (Texture3D describes storage only; StencilBuffer separate from DepthStencilBuffer; AdditiveBlending for engines that silently degrade).",
+   "kind": "api",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/capability-model-and-evidence.html#questions"
+   ],
+   "tokens": [
+    "Nineteen contract questions"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/CNA/GraphicsCapability.hpp"
+   },
+   "note": "GraphicsCapability has 19 members at TARGET, plus the RendererCapabilityProfile."
+  },
+  {
+   "id": "WPB2-gce-114",
+   "section": "I. Per-renderer divergence",
+   "text": "The renderer-level SupportsCapability default is permissive (true except MultiStreamVertexInput false and StencilBuffer delegated), an opt-out design in which a renderer that forgets an override over-claims.",
+   "kind": "architecture",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/capability-model-and-evidence.html#renderer-default",
+    "docs/tutorials/101-renderer-capabilities.html#fails-open"
+   ],
+   "tokens": [
+    "permissive",
+    "DIRECTX9"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp (SupportsCapability default)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-115",
+   "section": "I. Per-renderer divergence",
+   "text": "The unsupported-3D policy is a runtime, per-device setting {Throw, WarnAndStub} (default Throw, no environment variable); WarnAndStub logs once per method name and substitutes no-ops or null-object resources, changing the policy clears the warn-once history, and it never suppresses argument, disposal or driver errors.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/capability-model-and-evidence.html#unsupported-3d"
+   ],
+   "tokens": [
+    "WarnAndStub",
+    "clears the warn-once history"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/CNA/Unsupported3DGraphicsCallBehavior.hpp; modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp (HandleUnsupported3DCall)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-116",
+   "section": "I. Per-renderer divergence",
+   "text": "Ensure3DSupported(operation) has an empty default and is overridden by deliberately 2D-only renderers as the earliest refusal point; six families overrode it at the audited revision.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/capability-model-and-evidence.html#unsupported-3d"
+   ],
+   "tokens": [
+    "Ensure3DSupported()"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp (Ensure3DSupported)"
+   },
+   "note": "At TARGET only DIRECT2D, HTML_DOM and SVG_DOM override it; the other audited overriders are retired families."
+  },
+  {
+   "id": "WPB2-gce-117",
+   "section": "I. Per-renderer divergence",
+   "text": "Thirteen renderer families had explicit ThreeD arms in their SupportsCapability switches, most of them families that were later retired.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "The per-family list is alpha.1-era and mostly concerns retired families; current per-identity 3D answers are on docs/rendering-backends.html and the capability deep dive."
+  },
+  {
+   "id": "WPB2-gce-118",
+   "section": "I. Per-renderer divergence",
+   "text": "The renderer interface defaults fail in three different ways: DrawPrimitivesEx/DrawIndexedPrimitivesEx silently discard the draw packet and fall back to coloured primitives, DrawInstancedPrimitivesEx and ReadBackbuffer throw, and several state hooks are silent no-ops.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/capability-model-and-evidence.html#default-shapes",
+    "deep-dives/renderers/renderer-contract.html#default-kinds"
+   ],
+   "tokens": [
+    "Effect-discarding fallback",
+    "DrawColoredPrimitives",
+    "ReadBackbuffer"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp (default bodies)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-119",
+   "section": "I. Per-renderer divergence",
+   "text": "Numeric capability defaults: GetMaxVertexStreams() returns 16 and GetMaxTextureDimension() returns 16384, the guaranteed ceiling of Direct3D 11/12 feature level 11_0; only a few families override the texture maximum, so on the rest the reported value is the constant rather than a device query.",
+   "kind": "semantics",
+   "disposition": "EXPANDED",
+   "destinations": [
+    "deep-dives/graphics/surface-formats.html#renderer-maximum"
+   ],
+   "tokens": [
+    "REQ_TEXTURE2D_U_OR_V_DIMENSION",
+    "maxImageDimension2D",
+    "GetMaximumBitmapSize()",
+    "RendererLimit::MaxTextureDimension"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp (GetMaxTextureDimension); modules/renderers/{vulkan,direct2d,gdi,fna3d}/ overrides; modules/graphics/src/Xna/GraphicsDevice.cpp (RendererLimit::MaxTextureDimension)"
+   },
+   "note": "Expansion wpb2-renderer-texture-maximum. The audit's \"D3D9-only profile ceiling\" is corrected (shared default for every family)."
+  },
+  {
+   "id": "WPB2-gce-120",
+   "section": "I. Per-renderer divergence",
+   "text": "NotYetImplemented.hpp throws a runtime_error naming an unimplemented capability and renderer, distinct from HandleUnsupported3DCall for permanently unsupported 2D-only cases; NoOp3DResources.hpp supplies the null-object resources WarnAndStub substitutes.",
+   "kind": "internals",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/backends.html#state",
+    "deep-dives/graphics/capability-model-and-evidence.html#unsupported-3d"
+   ],
+   "tokens": [
+    "NotYetImplemented",
+    "null-object"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/CNA/Internal/Renderers/Common/NotYetImplemented.hpp; NoOp3DResources.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-121",
+   "section": "I. Per-renderer divergence",
+   "text": "Three \"SDL dependency should be abstracted later\" TODO markers survived in the renderer interface, which was not yet windowing-system-neutral.",
+   "kind": "status",
+   "disposition": "OBSOLETE",
+   "destinations": [],
+   "tokens": [],
+   "note": "No such marker exists in modules/graphics/include at 009d40f5; window and video concerns moved behind the platform contract (native X11/Wayland/Win32 builds use no SDL)."
+  },
+  {
+   "id": "WPB2-gce-122",
+   "section": "I. Per-renderer divergence",
+   "text": "API inventory: DrawUserPrimitives had ten and DrawUserIndexedPrimitives fifteen overloads (raw pointer, typed, with and without VertexDeclaration, 16- and 32-bit indices); typed-plus-declaration overloads pack objects into GPU stream bytes.",
+   "kind": "api",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/graphicsdevice-contract.html#user-primitives"
+   ],
+   "tokens": [
+    "DrawUserIndexedPrimitives",
+    "VertexDeclaration"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp (DrawUserPrimitives, DrawUserIndexedPrimitives)"
+   },
+   "note": "The overload set changed after the audit; the destination describes the current families of overloads rather than a count."
+  },
+  {
+   "id": "WPB2-gce-123",
+   "section": "I. Per-renderer divergence",
+   "text": "API inventory: effect collections (techniques, passes, parameters, annotations) hold their elements behind std::unique_ptr so pointers obtained earlier survive a later Add; subscripts return nullptr on a miss.",
+   "kind": "api",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/effect-object-model.html#three-forms"
+   ],
+   "tokens": [
+    "keep their elements behind"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/EffectParameterCollection.hpp"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-124",
+   "section": "I. Per-renderer divergence",
+   "text": "API inventory: the graphics-ext public types of the audited revision (CRTEffect, DepthEffect, AsciiPostProcessEffect, PbrMaterial, RenderPipelineSettings and their enums).",
+   "kind": "api",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "development/reference/public-headers.html#module-graphics-ext"
+   ],
+   "tokens": [
+    "DitherMode",
+    "DepthEffect"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics-ext/include/CNA/Graphics/"
+   },
+   "note": "At TARGET the module has 98 public headers; the generated header list is the current inventory."
+  },
+  {
+   "id": "WPB2-gce-125",
+   "section": "C1. ★ docs/fx-bytecode-support-plan.md is superseded by the FNA3D lane",
+   "text": "A planning document for compiled .fx support assumed MojoShader was not wired into any CMake target, while the FNA3D lane already fetched and linked it and executed real .fxb blobs; the document's conclusion (the public bytecode constructor throws) was then still correct.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Doc-versus-code critique of a CNA planning document at the audited revision; both halves are now superseded by the compiled-effect route (deep-dives/graphics/compiled-effects-semantics.html)."
+  },
+  {
+   "id": "WPB2-gce-126",
+   "section": "C2. AUDIT.md overclaims where every other doc underclaims",
+   "text": "CNA's own top-level audit marked four stock effects as stub behaviour, claimed Texture3D/TextureCube did not derive from Texture, denied any SetTexture path, and carried stale test counts and a 100-row inventory missing the PBR, colour-matrix, animation, morph and tangent-vertex types.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Critique of an alpha.1-era CNA document; every technical point is covered by current statements (stock effects implemented; Texture3D/TextureCube derive from Texture per deep-dives/graphics/texture-data-transfer.html#cube-and-volume)."
+  },
+  {
+   "id": "WPB2-gce-127",
+   "section": "C2. AUDIT.md overclaims where every other doc underclaims",
+   "text": "Two of the refuted audit claims concerned texture readback and sampler setters on a renderer family that has since been retired.",
+   "kind": "history",
+   "disposition": "REMOVED FUNCTIONALITY",
+   "destinations": [],
+   "tokens": [],
+   "note": "The family concerned is retired at 009d40f5; nothing to carry over."
+  },
+  {
+   "id": "WPB2-gce-128",
+   "section": "C3. RenderPipelineSettings documents a GraphicsDevice method that does not exist",
+   "text": "RenderPipelineSettings' header told readers to construct it via GraphicsDevice::GetRenderPipelineSettings(), a method that never existed.",
+   "kind": "defect",
+   "disposition": "EXPANDED",
+   "destinations": [
+    "development/internals/modules/graphics-ext.html#settings-home"
+   ],
+   "tokens": [
+    "GetRenderPipelineSettings()",
+    "compile option"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics-ext/include/CNA/Graphics/RenderPipelineSettings.hpp; RenderPipeline.hpp (getSettings comment)"
+   },
+   "note": "Expansion wpb2-pipeline-settings-home: at TARGET the comment is corrected and the reason (an XNA type must not gain a member whose type exists only under a compile option) is recorded."
+  },
+  {
+   "id": "WPB2-gce-129",
+   "section": "C4. SpriteFont's own header says CNA has no XNB pipeline",
+   "text": "SpriteFont.hpp documents its public constructor with \"CNA has no XNB pipeline\", although CNA has XNB readers including the SpriteFont reader; an older coverage document made the same claim.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "The source comment is still present at 009d40f5 (SpriteFont.hpp) and is recorded as a not-an-issue documentation candidate WPB2-i001; CNA's XNB readers are documented on deep-dives/content/xnb-type-readers.html."
+  },
+  {
+   "id": "WPB2-gce-130",
+   "section": "C5. docs/graphicsdevice-fna-audit.md — gaps still real, one deviation row stale, metadata wrong",
+   "text": "An FNA-comparison audit of GraphicsDevice listed missing members (the three-argument Present, the Vector4 Clear, the allocation-free render-target getter, VertexDeclaration user-draw variants) and cited a moved header path and line count.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "At 009d40f5 the Present and Vector4 Clear overloads and the declaration user-draw overloads exist; only the allocation-free getter is still absent, which deep-dives/graphics/graphicsdevice-contract.html#bindings states (\"there is no allocation-free variant\")."
+  },
+  {
+   "id": "WPB2-gce-131",
+   "section": "C6. The four effect-support.md docs end on stale \"open work\" lists",
+   "text": "The per-effect support documents ended on open-work lists whose items (vertex colour on stock-effect variants, dual-texture and environment-map fixes, skinned specular) were already fixed, with inter-document contradictions.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Doc-freshness critique; the affected fixes concern GL, Vulkan and retired families at the audited revision. Current stock-effect semantics are on deep-dives/graphics/stock-effects-semantics.html."
+  },
+  {
+   "id": "WPB2-gce-132",
+   "section": "C7. docs/depthstencilstate-support.md — three of four \"open\" items closed",
+   "text": "A depth-stencil support document still listed stencil clears, rasterizer preset names and a renderer reference-stencil hook as open although they were implemented; it also said EasyGL had no SetReferenceStencil override.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "At 009d40f5 EasyGL overrides SetReferenceStencil (EasyGLRenderer.cpp), as deep-dives/renderers/easygl-state-and-resource-semantics.html#stencil describes; the doc critique is history."
+  },
+  {
+   "id": "WPB2-gce-133",
+   "section": "C8. docs/graphics-renderer-feature-matrix.md self-labels \"Master, up-to-date\" but carries dead rows",
+   "text": "CNA's renderer feature matrix labelled itself the up-to-date master while carrying refuted rows, no FNA3D column and four of the then 42 families.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Doc-freshness critique of an alpha.1-era CNA document; the current per-identity matrix is on docs/rendering-backends.html."
+  },
+  {
+   "id": "WPB2-gce-134",
+   "section": "C9. plangraphics.md describes an architecture that no longer exists",
+   "text": "The graphics plan still described IGraphicsBackend and *Backend classes renamed to IGraphicsRenderer/*Renderer, a four-backend scope and done tasks as open; its stencil-clear item was only half fixed (a depth- or stencil-only clear on an unsupporting target becomes a silent no-op).",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Plan-document critique. The still-current half (silent no-op masking) is the Clear-masking concept of section B, preserved on deep-dives/graphics/graphicsdevice-contract.html#clear-masking."
+  },
+  {
+   "id": "WPB2-gce-135",
+   "section": "C10. knownbugs.md — one live entry already fixed, one with an actively wrong instruction",
+   "text": "The known-bugs file still listed a fixed multi-Begin/End SpriteBatch defect on Vulkan without a FIXED marker and carried a do-not-register instruction for a test of a since-retired family.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "The Vulkan multi-Begin/End regression test exists at 009d40f5 (modules/renderers/vulkan/examples/vulkan_spritebatch_multi_begin_end_test.cpp); the other entries concern a retired family."
+  },
+  {
+   "id": "WPB2-gce-136",
+   "section": "C11. docs/graphics-compatibility-report.md — self-disclaimed stale, correctly",
+   "text": "A graphics compatibility report disclaimed its own percentages and bug counts as stale, and all five of its confirmed bugs verified as fixed.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Self-disclaimed stale CNA report; no current fact to carry."
+  },
+  {
+   "id": "WPB2-gce-137",
+   "section": "C12. Unnamed support docs — the highest-yield offenders",
+   "text": "Several support documents rested on false premises: RenderTargetCube not deriving from Texture, TextureCube DDS loading as a blank stub, renderers choosing layout from stride only, SpriteEffects lacking bitwise operators, no resource list on GraphicsDevice.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Doc critique. The current facts are on the site: SetVertexDeclaration is pure virtual (deep-dives/graphics/vertex-streams-and-declarations.html#declaration-to-renderer), DDSFromStreamEXT parses DDS (texture-data-transfer), SpriteEffects flags (spritefont-text-layout), the resource registry (device-reset-and-lifetime)."
+  },
+  {
+   "id": "WPB2-gce-138",
+   "section": "C12. Unnamed support docs — the highest-yield offenders",
+   "text": "IVertexBufferRenderer::SetVertexDeclaration is a mandatory pure-virtual renderer entry point, so every family receives the declaration rather than inferring layout from the byte stride.",
+   "kind": "architecture",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/vertex-streams-and-declarations.html#declaration-to-renderer"
+   ],
+   "tokens": [
+    "pure virtual"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp (SetVertexDeclaration)"
+   },
+   "note": ""
+  },
+  {
+   "id": "WPB2-gce-139",
+   "section": "C12. Unnamed support docs — the highest-yield offenders",
+   "text": "FNA's internal GraphicsDeviceResetting notification of resources has no CNA counterpart; CNA's Reset keeps renderer objects and resources in place.",
+   "kind": "compatibility",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/device-reset-and-lifetime.html#not-a-recreation"
+   ],
+   "tokens": [
+    "RecreateRendererForMultiSampleCount"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics (no GraphicsDeviceResetting symbol at 009d40f5); modules/graphics/src/Xna/GraphicsDevice.cpp (Reset)"
+   },
+   "note": "The destination explains that Reset reconfigures the existing renderer so resources survive, which is why no per-resource reset hook is needed."
+  },
+  {
+   "id": "WPB2-gce-140",
+   "section": "C13. \"Bgfx has no readback API\" is a legend repeated across four docs",
+   "text": "A claim that one renderer family had no readback API was repeated across four CNA documents although that family did read back.",
+   "kind": "history",
+   "disposition": "REMOVED FUNCTIONALITY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Concerns a family retired before 009d40f5."
+  },
+  {
+   "id": "WPB2-gce-141",
+   "section": "C14. planmoderngraphics.md does not exist",
+   "text": "A plan document cited by other material never existed in the repository history.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Repository-archaeology note with no technical content."
+  },
+  {
+   "id": "WPB2-gce-142",
+   "section": "C14. planmoderngraphics.md does not exist",
+   "text": "Documentation freshness verdicts per CNA graphics document at the audited revision (very stale, stale, accurate), with the rule of thumb to trust normative contract documents and source comments over status documents.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Dated verdicts about alpha.1-era CNA documents; the site's pages are verified at 009d40f5 instead."
+  },
+  {
+   "id": "WPB2-gce-143",
+   "section": "The headline: \"Shaders and the .fx Bytecode Gap\" (ch15, 379 lines) must be rewritten and retitled",
+   "text": "Book-planning recommendation to retitle and restructure the shader chapter around four strands (reimplemented stock semantics, recompiled Microsoft sources, executed Microsoft bytecode, ShaderEffect).",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Manuscript planning. The four-route structure now exists as deep-dives/graphics/shader-routes-four-answers.html."
+  },
+  {
+   "id": "WPB2-gce-144",
+   "section": "The headline: \"Shaders and the .fx Bytecode Gap\" (ch15, 379 lines) must be rewritten and retitled",
+   "text": "The deeper gap for compiled effects was parameter plumbing, not parsing: even a perfect bytecode parser needed somewhere to put reflected parameters, because the renderer contract carried only the closed stock-effect struct.",
+   "kind": "architecture",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/compiled-effects-semantics.html#admission",
+    "deep-dives/graphics/effect-object-model.html#draw-packet"
+   ],
+   "tokens": [
+    "CompiledEffects",
+    "GpuDrawParams"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "compiled-effect runtime (reflection and per-family runtimes) at 009d40f5"
+   },
+   "note": "At TARGET compiled effects carry reflected parameters to per-family runtimes; the stock-effect packet remains the closed struct."
+  },
+  {
+   "id": "WPB2-gce-145",
+   "section": "Other chapters needing work",
+   "text": "Per-chapter revision lists for the book (device, sprite batch, textures, stock effects, state objects, models and the renderer part).",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Manuscript planning; the technical items are recorded as separate concepts above."
+  },
+  {
+   "id": "WPB2-gce-146",
+   "section": "Other chapters needing work",
+   "text": "Two topics without a home were proposed: the non-blittable vertex-stream layer and the capability/policy system.",
+   "kind": "architecture",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "deep-dives/graphics/vertex-streams-and-declarations.html#objects-are-not-layouts",
+    "deep-dives/graphics/capability-model-and-evidence.html#unsupported-3d"
+   ],
+   "tokens": [
+    "blittable",
+    "WarnAndStub"
+   ],
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/CNA/Internal/Graphics/BuiltInVertexStreams.hpp; modules/graphics/include/CNA/Unsupported3DGraphicsCallBehavior.hpp"
+   },
+   "note": "Both now have deep-dive pages."
+  },
+  {
+   "id": "WPB2-gce-147",
+   "section": "Two defects worth reporting upstream regardless of the book",
+   "text": "Upstream defect list: SpriteEffect::OnApply unreachable past its first line, two renderers over-claiming CustomEffects, and a verification script pointing at a removed src/ tree.",
+   "kind": "defect",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "At 009d40f5 the SpriteEffect defect remains (issue candidate from WP07), the CustomEffects over-claim and the script path are fixed (concepts on WebGPU WGSL and the script path above)."
+  },
+  {
+   "id": "WPB2-gce-148",
+   "section": "Coverage gap in this audit",
+   "text": "The audit could not build a per-renderer draw-path matrix and warned that a renderer without effect-aware draws silently renders untextured, unlit approximations.",
+   "kind": "evidence",
+   "disposition": "SUPERSEDED",
+   "destinations": [
+    "deep-dives/graphics/capability-model-and-evidence.html#default-shapes"
+   ],
+   "tokens": [
+    "every 3D-capable family overrides both"
+   ],
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp (DrawPrimitivesEx defaults); per-family overrides at 009d40f5"
+   },
+   "note": "At TARGET every 3D-capable family overrides both effect-aware draws; the fallback is reached only by STUB."
+  }
+ ]
+}
