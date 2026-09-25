@@ -34,3 +34,7 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 27 | `docs/tutorials/111-cnj-pipeline.html#sourcefile` | example `"sourceFile": "Textures/hero.png"` inside `Textures/hero.cnj` | `sourceFile` resolves from the `.cnj`'s own folder (`CnjSourceFile.hpp` `ResolveCnjSourceFileSafely`) | WP12 | open |
 | 28 | `docs/content-manager.html#json-descriptor-formats` | Effect `vertex`/`fragment` are "relative to the descriptor" | they are content-root-relative (`ContentManager.cpp` `ReadCustomGlslEffect` → `ResolveRootRelativeSidecarPath`) | WP12 | open |
 | 29 | `docs/tutorials/147-xnb-interop.html#container` | both decoders are "bounds-checked against the declared size" | LZX is compared with the declared size only at the end (`XnbDecompression.cpp`) | WP12 | open |
+| 30 | `docs/tutorials/44-bounding-volumes.html` | `BoundingFrustum.Intersects(Ray)` is partial "exactly as in XNA" | XNA 4.0 implements it fully (XNA IL); CNA throws only for an origin exactly on a plane | WP04 | open |
+| 31 | `docs/math-types.html#core-types` (Rectangle row) | `Contains(x, y)` has "integer and float overloads" | no float overload exists (`Rectangle.hpp`) | WP04 | open |
+| 32 | `docs/math-types.html` (MathHelper) | "Mirrors … exactly"; `WithinEpsilon`, `MachineEpsilonFloat` … are "the remaining XNA constants" | those, plus `Clamp(int)` and `ClosestMSAAPower`, are FNA-internal helpers, not XNA API | WP04 | open |
+| 33 | `docs/math-types.html` (Point) | lists `+ - * /` | those operators are not XNA API and carry no CNAEXT marker | WP04 | open |
