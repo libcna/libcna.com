@@ -3,7 +3,8 @@
 
     adversarial_audit.py graph      # re-derive the Bible LaTeX inclusion graph from main.tex and compare it with audit/data/bible/units.json
     adversarial_audit.py anchors    # ledger destinations: page + fragment exist, tokens occur at page level (error) and inside the cited anchor section (counted)
-    adversarial_audit.py all        # both (what scripts/validate_all.sh runs)
+    adversarial_audit.py issues     # data/known-issues.json <-> detail pages <-> hubs: counts, orphans, facts, evidence flags, unreviewed duplicate candidates
+    adversarial_audit.py all        # graph + anchors + issues (what scripts/validate_all.sh runs)
 
 The Bible repository (default ../bible.libcna.com, override with BIBLE_REPO) is read-only; when it is absent `graph` is skipped, like the other Bible-dependent gates.
 """
@@ -24,6 +25,7 @@ ROOT = Path(__file__).resolve().parent.parent
 BIBLE = Path(os.environ.get("BIBLE_REPO", ROOT.parent / "bible.libcna.com"))
 BOOK = BIBLE / "latex" / "book"
 UNITS = ROOT / "audit" / "data" / "bible" / "units.json"
+SOURCE_GRAPH = ROOT / "audit" / "data" / "adversarial" / "source-graph.json"
 RECORDS = ROOT / "audit" / "data" / "bible" / "records"
 
 # ---------------------------------------------------------------------------------------------
@@ -103,9 +105,27 @@ def cmd_graph() -> int:
         errs.append(f"units.json lists files that main.tex does not reach: {sorted(theirs - mine)[:5]}")
     if mine - theirs - structural:
         errs.append(f"main.tex reaches files that units.json lacks: {sorted(mine - theirs - structural)}")
+    # every other Bible document must be an auxiliary unit or carry an explicit non-canonical disposition
+    import fnmatch
+    aux = {a["path"] for a in json.loads(UNITS.read_text(encoding="utf-8"))["aux"]}
+    dispositioned = [d["path"] for d in json.loads(SOURCE_GRAPH.read_text(encoding="utf-8"))["non_canonical"]] if SOURCE_GRAPH.exists() else []
+    stray = []
+    for p in sorted(list(BIBLE.glob("*")) + list((BIBLE / "audit").glob("*")) + list((BIBLE / "latex").glob("*")) + list((BIBLE / "latex" / "book").glob("*"))):
+        rel = p.relative_to(BIBLE).as_posix()
+        if p.is_dir() and rel not in ("audit", "latex", "docs", "tools", "build"):
+            continue
+        if p.is_dir() or rel.startswith(".") or rel in aux or rel in mine or ("latex/book/" + Path(rel).name) in mine:
+            continue
+        if rel in ("latex/common", "latex/book/chapters", "latex/book/figures", "latex/book/front", "latex/book/images", "latex/book/common"):
+            continue
+        if not any(fnmatch.fnmatch(rel, d) or rel == d for d in dispositioned):
+            stray.append(rel)
+    for rel in stray:
+        errs.append(f"Bible file is neither an audited unit nor dispositioned as non-canonical: {rel} (add it to audit/data/adversarial/source-graph.json with a reason)")
     for e in errs:
         print("ERROR", e)
-    print(f"graph: {len(mine)} reachable TeX files = {len(mine & theirs)} units + {len(mine & structural)} structural (main.tex, preamble); errors {len(errs)}")
+    print(f"graph: {len(mine)} reachable TeX files = {len(mine & theirs)} units + {len(mine & structural)} structural (main.tex, preamble); "
+          f"{len(aux)} aux units; {len(dispositioned)} dispositioned non-canonical entries; errors {len(errs)}")
     return 1 if errs else 0
 
 
@@ -266,6 +286,114 @@ def cmd_anchors(strict: bool = False) -> int:
           f"tokens on the page but outside the cited anchor: {len(anchor_only)}; errors {len(errs) + (len(anchor_only) if strict else 0)}")
     return 1 if errs or (strict and anchor_only) else 0
 
+# ---------------------------------------------------------------------------------------------
+# issues: the canonical JSON, the generated pages and the hubs must agree; summary numbers are derived, never typed
+# ---------------------------------------------------------------------------------------------
+PUBLIC = ROOT / "data" / "known-issues.json"
+DUP_REVIEW = ROOT / "audit" / "data" / "adversarial" / "duplicate-review.json"
+_LABEL = {"bug": "Bug", "functional-gap": "Functional gap", "platform-limitation": "Platform limitation", "verification-gap": "Verification gap"}
+_GROUP = {"bug": "bugs", "functional-gap": "gaps", "platform-limitation": "limitations", "verification-gap": "verification-gaps"}
+
+
+def issue_counts(issues: list[dict]) -> dict:
+    """Every published quantity, recomputed from the entries."""
+    sev = Counter(i["severity"] for i in issues if i["class"] == "bug")
+    return {"total": len(issues), "by_class": dict(Counter(i["class"] for i in issues)), "bug_severity": {k: sev.get(k, 0) for k in ("high", "medium", "low")},
+            "status": dict(Counter(i["status"] for i in issues)), "tests_present": sum(1 for i in issues if i.get("tests_present"))}
+
+
+def _facts(page_html: str) -> dict[str, str]:
+    m = re.search(r'<dl class="issue-facts">(.*?)</dl>', page_html, re.S)
+    out = {}
+    for k, v in re.findall(r"<div><dt>(.*?)</dt><dd>(.*?)</dd></div>", m.group(1) if m else "", re.S):
+        out[k] = html.unescape(re.sub(r"<[^>]+>", "", v)).strip()
+    return out
+
+
+def _similarity_pairs(issues: list[dict]) -> list[tuple[float, str, str]]:
+    """TF-IDF cosine over title + summary + contract, restricted to entries sharing a source path; the generator never sees this, a future duplicate would."""
+    import math
+    stop = set("the a an of to in on for and or is are was be by with as at it its this that from not no does do when which than then into if can may must should would could has have had but only also any all each".split())
+    docs = {i["id"]: [w for w in re.findall(r"[a-z_][a-z0-9_:]{2,}", (i["title"] + " " + i["summary"] + " " + i["public_contract"]).lower()) if w not in stop] for i in issues}
+    df = Counter(w for d in docs.values() for w in set(d))
+    n = len(docs)
+    vec = {k: {w: (1 + math.log(c)) * math.log(n / df[w]) for w, c in Counter(d).items()} for k, d in docs.items()}
+    norm = {k: math.sqrt(sum(x * x for x in v.values())) or 1.0 for k, v in vec.items()}
+    srcs = {i["id"]: set(i["sources"]) for i in issues}
+    out = []
+    ids = sorted(docs)
+    for a_i, a in enumerate(ids):
+        for b in ids[a_i + 1:]:
+            if not srcs[a] & srcs[b]:
+                continue
+            c = sum(x * vec[b].get(w, 0) for w, x in vec[a].items()) / (norm[a] * norm[b])
+            if c >= 0.5:
+                out.append((round(c, 2), a, b))
+    return sorted(out, reverse=True)
+
+
+def cmd_issues() -> int:
+    errs: list[str] = []
+    pub = json.loads(PUBLIC.read_text(encoding="utf-8"))
+    issues = pub["issues"]
+    cnt = issue_counts(issues)
+    if pub.get("counts") != cnt["by_class"]:
+        errs.append(f"index counts {pub.get('counts')} != recomputed {cnt['by_class']}")
+    ids = Counter(i["id"] for i in issues)
+    errs += [f"duplicate id {k}" for k, m in ids.items() if m > 1]
+    on_disk = {p.relative_to(ROOT).as_posix() for g in _GROUP.values() for p in (ROOT / "known-issues" / g).glob("*.html") if p.name != "index.html"}
+    want = {i["detail"] for i in issues}
+    errs += [f"missing detail page {p}" for p in sorted(want - on_disk)]
+    errs += [f"orphan detail page (no JSON entry) {p}" for p in sorted(on_disk - want)]
+    for i in issues:
+        pg = ROOT / i["detail"]
+        if not pg.is_file():
+            continue
+        f = _facts(pg.read_text(encoding="utf-8"))
+        if f.get("Identifier") != i["id"]:
+            errs.append(f"{i['id']}: page identifier {f.get('Identifier')!r}")
+        if f.get("Category") != _LABEL[i["class"]]:
+            errs.append(f"{i['id']}: page category {f.get('Category')!r} != {_LABEL[i['class']]!r}")
+        if not f.get("Status", "").lower().startswith(i["status"]):
+            errs.append(f"{i['id']}: page status {f.get('Status')!r} != {i['status']}")
+        want_sev = i["severity"].capitalize() if i["severity"] != "n/a" else None
+        got_sev = f.get("Severity", "").split(" ")[0] or None
+        if want_sev != got_sev:
+            errs.append(f"{i['id']}: page severity {got_sev!r} != {want_sev!r}")
+        want_tests = "Yes" if i.get("tests_present") else "None"
+        if not f.get("Tests touching this area", "").startswith(want_tests):
+            errs.append(f"{i['id']}: page test flag {f.get('Tests touching this area')!r} != {want_tests}")
+        body = pg.read_text(encoding="utf-8")
+        if ("tests exist" in body) != bool(i.get("tests_present")):
+            errs.append(f"{i['id']}: the evidence callout says {'tests exist' if 'tests exist' in body else 'no tests'} but tests_present is {i.get('tests_present')}")
+        if i["confidence"] == "verified-by-reading" and re.search(r"Reproduced: executed", body):
+            errs.append(f"{i['id']}: source-verified entry shows an executed-evidence label")
+    for cls, g in _GROUP.items():
+        hub = (ROOT / "known-issues" / g / "index.html").read_text(encoding="utf-8")
+        listed = re.findall(r'<td><a href="[^"]+"><code>(CNA-[A-Z]+-\d{3})</code></a></td>', hub)
+        want_ids = sorted(i["id"] for i in issues if i["class"] == cls)
+        if sorted(listed) != want_ids:
+            errs.append(f"hub {g}: lists {len(listed)} entries, JSON has {len(want_ids)} (or the ids differ)")
+        m = re.search(r'<h2 id="entries">(\d+) entries</h2>', hub)
+        if want_ids and (not m or int(m.group(1)) != len(want_ids)):
+            errs.append(f"hub {g}: heading says {m.group(1) if m else '?'} entries, JSON has {len(want_ids)}")
+    ov = (ROOT / "known-issues" / "index.html").read_text(encoding="utf-8")
+    for cls, label in _LABEL.items():
+        m = re.search(r'<a href="[^"]*/index.html">' + re.escape(label) + r"</a></td><td>(\d+)</td>", ov)
+        if not m or int(m.group(1)) != cnt["by_class"].get(cls, 0):
+            errs.append(f"overview: {label} count {m.group(1) if m else '?'} != {cnt['by_class'].get(cls, 0)}")
+    reviewed = set()
+    if DUP_REVIEW.exists():
+        for rec in json.loads(DUP_REVIEW.read_text(encoding="utf-8")).get("pairs", []):
+            reviewed.add(tuple(sorted(rec["ids"])))
+    unreviewed = [(c, a, b) for c, a, b in _similarity_pairs(issues) if (a, b) not in reviewed]
+    for c, a, b in unreviewed:
+        errs.append(f"duplicate candidate not reviewed (cosine {c}, shared source path): {a} ~ {b} - decide it in audit/data/adversarial/duplicate-review.json")
+    for e in errs:
+        print("ERROR", e)
+    print(f"issues: {cnt['total']} entries {cnt['by_class']}, bug severity {cnt['bug_severity']}, status {cnt['status']}, with tests {cnt['tests_present']}; errors {len(errs)}")
+    return 1 if errs else 0
+
 
 def main() -> int:
     ap = argparse.ArgumentParser()
@@ -273,13 +401,16 @@ def main() -> int:
     sub.add_parser("graph")
     a = sub.add_parser("anchors")
     a.add_argument("--strict", action="store_true", help="treat anchor-precision misses as errors")
+    sub.add_parser("issues")
     sub.add_parser("all")
     args = ap.parse_args()
     if args.cmd == "graph":
         return cmd_graph()
     if args.cmd == "anchors":
         return cmd_anchors(args.strict)
-    return cmd_graph() | cmd_anchors()
+    if args.cmd == "issues":
+        return cmd_issues()
+    return cmd_graph() | cmd_anchors() | cmd_issues()
 
 
 if __name__ == "__main__":
