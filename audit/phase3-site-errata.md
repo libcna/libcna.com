@@ -44,3 +44,8 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 37 | `docs/tutorials/109-metal-macos.html#ci` | the Metal workflow fires on pushes that touch the renderer's files | the path filter lists 3 files that no longer exist and omits the Metal CMake files | WP02 | open |
 | 38 | `docs/input.html#touchpanel` | `TouchCollection.IsReadOnly` is a "known contract bug" | TARGET tests treat it as deliberate FNA parity (WP14) | WP14 | open |
 | 39 | `docs/tutorials/120-xact.html#caveat-reverb` | band-pass filters are implemented | they cannot be reached from parsed XACT content (WP14) | WP14 | open |
+| 40 | `docs/model-loading.html#gltf-to-cnj` | sidecars are `.vb.bin` / `.ib.bin` | the tool writes `<name>_meshN_verts.bin` and `_idx.bin` (`gltf_to_cnj.cpp`) | WP13 | open |
+| 41 | `docs/model-loading.html#runtime-gltf` | "The alpha.1 importer validates extensionsRequired" (history framing for current behaviour) | reword as current behaviour | WP13 | open |
+| 42 | `docs/model-loading.html` (skeletal animation table) | `SkinnedModelEXT` is what glTF, `.cnj` and `.cnb` deliver | they put `SkinningData` on `Model::Tag` | WP13 | open |
+| 43 | `docs/3d-rendering.html#model-rendering` | feeds `CopyAbsoluteBoneTransformsTo` output to `SkinnedEffect::SetBoneTransforms` | that array is scene-node indexed with no inverse bind; the palette must come from `AnimationPlayer::GetSkinTransforms()` | WP13 | open |
+| 44 | `docs/tutorials/111-cnj-pipeline.html#emitted` | clip `.cnj` files are written for skinned groups only | rigid clips are serialized too | WP13 | open |

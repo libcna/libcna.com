@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Model, ModelMesh and ModelMeshPart: the runtime graph and its draw contract - CNA Deep Dives</title>
+  <meta name="description" content="What Model::Draw and ModelMesh::Draw do, the invariants a loaded graph supplies, what copies share, the five model content routes and the collection rules, at this snapshot.">
+  <meta name="keywords" content="model, modelmesh, modelmeshpart, model draw, bone transforms, model lifetime, content routes, modelbonecollection, cnaext, thread_local">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/models/model-mesh-runtime.html">
+  <meta property="og:title" content="Model, ModelMesh and ModelMeshPart: the runtime graph and its draw contract - CNA Deep Dives">
+  <meta property="og:description" content="What Model::Draw and ModelMesh::Draw do, the invariants a loaded graph supplies, what copies share, the five model content routes and the collection rules, at this snapshot.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/models/model-mesh-runtime.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Model, ModelMesh and ModelMeshPart: the runtime graph and its draw contract","description":"What Model::Draw and ModelMesh::Draw do, the invariants a loaded graph supplies, what copies share, the five model content routes and the collection rules, at this snapshot.","url":"https://libcna.com/deep-dives/models/model-mesh-runtime.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine <span class="dev-nav-count">11</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../renderers/index.html" class="docs-nav-link">Renderers <span class="dev-nav-count">16</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Models, glTF &amp; 3D <span class="dev-nav-count">6</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="model-mesh-runtime.html" class="docs-nav-link active" aria-current="page">Model runtime and draw contract</a></li>
+        <li><a href="gltf-import.html" class="docs-nav-link">glTF import core</a></li>
+        <li><a href="vertex-packing-and-strides.html" class="docs-nav-link">Vertex packing and strides</a></li>
+        <li><a href="skinning-and-animation.html" class="docs-nav-link">Skinning, animation and morphs</a></li>
+        <li><a href="cnj-toolchain.html" class="docs-nav-link">CNJ model toolchain</a></li>
+        <li><a href="gltf-conformance.html" class="docs-nav-link">glTF conformance evidence</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">3</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Models, glTF &amp; 3D</a></li>
+        <li aria-current="page">Model runtime and draw contract</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Model, ModelMesh and ModelMeshPart: the runtime graph and its draw contract</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#hierarchy">The object graph</a></li>
+          <li><a href="#two-ways">Two ways to draw</a></li>
+          <li><a href="#draw-contract">What Model::Draw does, exactly</a></li>
+          <li><a href="#routes">Five content routes that produce a model</a></li>
+          <li><a href="#lifetime">Copies, caching and ownership</a></li>
+          <li><a href="#root-bone">Worked example: naming an arbitrary root bone</a></li>
+          <li><a href="#collections">The four collections are not uniform</a></li>
+          <li><a href="#extensions">CNAEXT state carried by the graph</a></li>
+          <li><a href="#evidence">Evidence and limits of this page</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Models, glTF &amp; 3D &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Checked by reading the TARGET sources and tests at 009d40f5; not built or executed. FNA comparisons are CNA's own source and test comments. Pixel-level draw evidence is the renderer example programs and glTF L7 campaigns, not the CPU unit tests.</p></div>
+
+<p class="lede">A loaded <code>Model</code> looks like an XNA value type, but it is a thin wrapper around a graph of raw pointers whose lifetime is carried by one shared ownership handle. This page states exactly what <code>Model::Draw</code> and <code>ModelMesh::Draw</code> do, which invariants a normal content load supplies and a hand-built graph must supply itself, what a copy shares, how the five model-producing content routes differ in the graph they build, and where the collections deliberately diverge from FNA. It is written for engine code that draws, mutates or constructs models, and for maintainers of the model classes.</p>
+
+<h2 id="hierarchy">The object graph</h2>
+<p>The shape is XNA's: <code>Model</code> holds a <code>ModelBoneCollection</code> and a <code>ModelMeshCollection</code>; each <code>ModelMesh</code> holds a <code>ModelMeshPartCollection</code> and a derived <code>ModelEffectCollection</code>; each <code>ModelMeshPart</code> points at a <code>VertexBuffer</code>, an <code>IndexBuffer</code> and an <code>Effect</code>. The classes live in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/Microsoft/Xna/Framework/Graphics/Model.hpp"><code>Model.hpp</code></a> and its neighbours, implemented under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna"><code>modules/graphics/src/Xna</code></a>. Every link in that graph is a non-owning raw pointer: parts store raw buffer, effect and <code>Tag</code> addresses, meshes store raw part and <code>GraphicsDevice</code> addresses, bones store raw parent and child addresses, and the model's two collections are vectors of raw bone and mesh pointers.</p>
+<p>What keeps a loaded graph alive is a single private member, <code>std::shared_ptr&lt;void&gt; ownedResources_</code>, set through the CNAEXT hook <code>setOwnedResources</code>. Every content reader allocates its bones, meshes, parts, buffers, effects, textures and CNAEXT carriers into one private bundle and hands that bundle to the model before returning it. The distinction that matters at runtime is therefore not "which format did this come from" but "is this a reader-built, internally consistent graph or a hand-built one" — a hand-built graph has no owner at all unless its author installs one (see <a href="#hand-built">Hand-built graphs</a>).</p>
+<p>Several XNA members that FNA reserves for its own internal reader are public in CNA, because CNA's own readers and tests construct graphs through them: the CNAEXT <code>Model</code> constructors, <code>ModelBone(int, std::string)</code> and <code>ModelBone::AddChild</code>, the <code>ModelMesh</code> constructors, the read-write <code>ModelMesh::setBoundingSphereProperty</code> and <code>setParentBoneProperty</code>, and the CNAEXT <code>ModelMeshPart</code> mutators <code>SetVertexBuffer</code>, <code>SetIndexBuffer</code>, <code>SetVertexOffset</code>, <code>SetNumVertices</code>, <code>SetStartIndex</code> and <code>SetPrimitiveCount</code> (the header notes that XNA's own setters are content-pipeline-only). Exposing them turns reader-populated metadata into caller-maintained state, which is exactly where the draw contract below becomes important.</p>
+<p><code>Model::CopyAbsoluteBoneTransformsTo</code>, <code>CopyBoneTransformsFrom</code> and <code>CopyBoneTransformsTo</code> each throw <code>ArgumentOutOfRangeException</code> when the caller's vector is shorter than the bone count, and otherwise loop over <code>Bones.Count</code> rather than over the caller's array. A larger vector is accepted and its extra elements are left untouched; CNA's tests pin this (<code>CopyBoneTransformsToAcceptsALargerDestinationIgnoringExtraElements</code>) and their comments record it as a deliberate deviation from FNA, whose loop bound is the destination array length. For correctly sized callers nothing changes.</p>
+
+<h2 id="two-ways">Two ways to draw</h2>
+<p>The convenience call is correct for any loaded, renderable model with at least a root bone:</p>
+<pre><code class="language-cpp">Model model = getContentProperty().Load&lt;Model&gt;("models/ship");
+model.Draw(world, camera.View(), camera.Projection());</code></pre>
+<p>A multi-bone model (a vehicle with independently animated wheels, an articulated arm) can also be drawn by hand, composing each mesh's own parent-bone absolute transform into world space first. The loop below keeps the matrix set generic through <code>IEffectMatrices</code>, which matters because direct glTF and converted <code>.cnj</code> models carry <code>PbrEffect</code> or <code>SkinnedPbrEffect</code> for ordinary metallic-roughness materials, so a <code>dynamic_cast&lt;BasicEffect*&gt;</code> loop silently skips them:</p>
+<pre><code class="language-cpp">std::vector&lt;Matrix&gt; boneTransforms(model.getBonesProperty().getCountProperty());
+model.CopyAbsoluteBoneTransformsTo(boneTransforms);
+
+for (ModelMesh* mesh : model.getMeshesProperty()) {
+    // Model::Draw treats a null ParentBone as bone 0; a manual loop must choose explicitly.
+    ModelBone* parent = mesh-&gt;getParentBoneProperty();
+    const int boneIndex = parent != nullptr ? parent-&gt;getIndexProperty() : 0;
+    const Matrix meshWorld = boneTransforms[static_cast&lt;std::size_t&gt;(boneIndex)] * world;
+
+    for (Effect* effect : mesh-&gt;getEffectsProperty()) {
+        if (auto* matrices = dynamic_cast&lt;IEffectMatrices*&gt;(effect)) {
+            matrices-&gt;setWorldProperty(meshWorld);
+            matrices-&gt;setViewProperty(view);
+            matrices-&gt;setProjectionProperty(projection);
+        }
+    }
+    mesh-&gt;Draw();   // one indexed draw per positive-count part, per effect pass
+}</code></pre>
+<p>The index selects the mesh's parent-bone absolute transform, not bone 0 and not the model root. This is the pattern for all current Model routes: the XNB reader assigns each mesh its serialized parent, a version-2 <code>.cnj</code> names a <code>parentBone</code>, and direct glTF parents a rigid mesh to the bone of the node that instances it. An earlier loose-JSON route assigned one default bone to every mesh, which welded independently placed parts together; that behaviour is gone. Skinned meshes are the exception: they hang off bone 0 by design and are positioned by their skin palette, not by this loop (see <a href="skinning-and-animation.html#palette">skin palettes</a>).</p>
+
+<h2 id="draw-contract">What Model::Draw does, exactly</h2>
+<p><code>Model::Draw</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/Model.cpp"><code>Model.cpp</code></a>) is a thin convenience path, not a validator or a scene graph. In order, it:</p>
+<ol>
+<li>grows a per-thread scratch vector of matrices (<code>static thread_local std::vector&lt;Matrix&gt; sharedDrawBoneMatrices_</code>) to the bone count if it is shorter — it never shrinks — and fills it with <code>CopyAbsoluteBoneTransformsTo</code>;</li>
+<li>visits every mesh, and for every entry of that mesh's <code>ModelEffectCollection</code> requires <code>IEffectMatrices</code>: an effect that does not implement it makes the call throw <code>System::InvalidOperationException</code> (the XNA exception type, pinned by <code>ModelTest.DrawRejectsAnEffectWithoutIEffectMatricesWithXnaException</code>), rather than being skipped or drawn with another convention;</li>
+<li>writes <code>World = boneAbsolute[parentIndex] * world</code>, then <code>View</code> and <code>Projection</code>, using bone index 0 when the mesh's <code>ParentBone</code> is null;</li>
+<li>calls <code>ModelMesh::Draw()</code>.</li>
+</ol>
+<p>It never installs a skin palette. A skinned effect's <code>SetBoneTransforms</code> is the application's (or an animation helper's) job; <code>Model::Draw</code> only sets the ordinary world, view and projection matrices.</p>
+<p><code>ModelMesh::Draw</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/ModelMesh.cpp"><code>ModelMesh.cpp</code></a>) first calls the renderer's <code>Ensure3DSupported("ModelMesh::Draw")</code> when the mesh has a device — the shared default is a no-op, and among the current identities only the <code>DIRECT2D</code>, <code>HTML_DOM</code> and <code>SVG_DOM</code> renderers override it to refuse at that point; other 2D-only renderers refuse deeper, inside the draw. It then skips any part whose <code>Effect</code> is null or whose <code>PrimitiveCount</code> is not positive, binds the part's vertex and index buffers, and for every pass of the effect's current technique calls <code>Apply()</code> and <code>DrawIndexedPrimitives</code> with the part's own CNAEXT <code>getPrimitiveTypeEXTProperty()</code> topology, its vertex offset, vertex count, start index and primitive count. The topology travels with the part (glTF points and lines are drawn as what they are); every part built by a non-glTF path defaults to <code>TriangleList</code>, so the draw is unchanged for them.</p>
+<p>The null-effect skip is a CNA deviation (CNA's source comments record that FNA skips only the count case and then dereferences the effect). No other field is validated: a positive-count part passes its raw buffers, offsets and counts straight to <code>GraphicsDevice</code>, so a missing buffer or an out-of-range run fails at the device or renderer boundary rather than being skipped. A successfully constructed model is therefore not proof that it is drawable. One more sharp edge: <code>Ensure3DSupported</code> is guarded by a null check on the mesh's device, but the draw calls after it are not, so a positive-count part in a mesh built with a null device dereferences null.</p>
+
+<h3 id="invariants">Three invariants a normal load supplies</h3>
+<p>That compact loop depends on three properties that every reader establishes and that the public hand-build API does not enforce:</p>
+<ul>
+<li><strong>A drawable model needs at least one bone.</strong> Treating a null <code>ParentBone</code> as bone 0 is a C++ safety choice that makes a one-root hand-built model work (FNA dereferences the parent). It does not make a zero-bone model drawable: with an effect present, index 0 is read from a scratch vector the model never grew — an empty vector on a fresh thread, or a stale slot left by an earlier, larger model on the same thread — and <code>operator[]</code> is not bounds-checked. Give every model that can draw a root bone.</li>
+<li><strong>Bones must be stored parent before child.</strong> <code>CopyAbsoluteBoneTransformsTo</code> computes <code>dest[i] = bone.Transform * dest[parentIndex]</code> in a single forward pass. It neither sorts nor detects cycles, duplicate parents or an index that disagrees with the vector position; a child listed before its parent silently composes against an unwritten slot. Every reader emits parent-before-child order; a hand-built graph must do the same.</li>
+<li><strong>The manual loop has no fallback.</strong> A loop that writes <code>mesh-&gt;getParentBoneProperty()-&gt;getIndexProperty()</code> dereferences null for a parentless mesh, which is useful at a call site that wants an invalid attachment to be loud and wrong everywhere else. Current loaders assign a parent to every mesh, with one exception: the XNB reader leaves <code>ParentBone</code> null when the file's serialized parent reference is null.</li>
+</ul>
+
+<h3 id="part-effects">Keeping parts and effects connected</h3>
+<p><code>ModelMesh::Effects</code> is a derived, distinct-effect view of the effects its parts use; it is what <code>Model::Draw</code> configures before <code>ModelMesh::Draw</code> applies each part's technique. The supported way to maintain it is the part setter:</p>
+<pre><code class="language-cpp">part-&gt;setEffectProperty(&amp;basicEffect); // adds basicEffect to the owning mesh's Effects if absent
+// ...
+part-&gt;setEffectProperty(nullptr);      // removes it only if no sibling part still uses it</code></pre>
+<p><code>ModelMeshPart::setEffectProperty</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/ModelMeshPart.cpp"><code>ModelMeshPart.cpp</code></a>) is a no-op for the same pointer; otherwise it scans the sibling parts and removes the old effect only when none still uses it, then adds the new non-null effect only if the collection does not already contain it. Two parts sharing one <code>BasicEffect</code> therefore produce one matrix setup in <code>Model::Draw</code> but two indexed draws. The unit tests in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/ModelMeshPartTests.cpp"><code>ModelMeshPartTests.cpp</code></a> cover exactly the retain-on-shared, release-on-last-user and no-duplicate transitions.</p>
+<p>Order matters for hand-builders: a part only learns its owning mesh when the <code>ModelMesh</code> constructor adopts it, and <code>setEffectProperty</code> on an orphan part just stores the pointer. An effect set before the mesh exists never reaches <code>ModelMesh::Effects</code>, so <code>Model::Draw</code> would never set its matrices. CNA's own glTF and <code>.cnj</code> readers hold each part's effect aside and attach it only after constructing the mesh for that reason; material-variant switching likewise sets the effect last, after the vertex buffer, tag and samplers, so an observer that finds the new effect through <code>Effects</code> sees complete part state.</p>
+<p><code>ModelEffectCollection::Add</code>/<code>Remove</code> and <code>ModelMesh::getEffectsPropertyMutable()</code> are CNAEXT escape hatches that exist to make the readers possible. <code>Add</code> does not deduplicate and <code>Remove</code> removes only the first match; neither repairs a collection a caller has made inconsistent with its parts. A stale extra effect is configured by <code>Model::Draw</code> but never applied by any part, and a duplicate is configured twice. Do not populate <code>Effects</code> directly in game code: set each part's effect, and keep buffers and effects alive for as long as the model uses their raw pointers.</p>
+
+<h3 id="threads">Threads and the scratch buffer</h3>
+<p>The scratch vector is <code>thread_local</code>. FNA shares one static matrix array across every model in the process; CNA's header comment explains that the array is pure scratch — overwritten in full at the top of every <code>Draw</code> and never read afterwards — so one buffer per thread is observably identical for single-threaded code, while a process-wide buffer let two threads resize and rewrite the same vector (a use-after-free, not merely a wrong matrix). <code>ModelTest.ConcurrentDrawsOnDifferentModelsDoNotShareTheBoneScratchBuffer</code> runs four threads drawing 2-bone and 150-bone models 400 times each and checks that every effect received its own thread's transform; its parts have a zero primitive count, so it exercises only the matrix binding, not the device.</p>
+<p>That fixes the scratch race only. The graphics device, effects, buffers and a shared mutable model graph are not made thread-safe: concurrent mutation of bones, parts or effects is ordinary shared-state contention, and renderer resources keep their own thread-affinity rules. Keep a model's update and draw sequence on the thread that owns its graphics device.</p>
+
+<h3 id="draw-evidence">What the tests cover and what they do not</h3>
+<p>The CPU tests in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/ModelTests.cpp"><code>ModelTests.cpp</code></a> (24 cases) cover transform composition order, destination-size checks, the four- and five-argument constructors, the whole-model bounding sphere, the <code>IEffectMatrices</code> refusal and the concurrency case; the part and collection suites cover the bookkeeping. Pixel-level drawing of <code>Model</code> graphs is exercised by EasyGL example programs under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/easygl/examples"><code>the EasyGL examples</code></a> (<code>easygl_model_draw_test</code>, <code>easygl_model_hierarchy_child_mesh_test</code>, <code>easygl_model_two_meshes_effects_test</code> and the loose-model reader readbacks), while <code>sdlrenderer_model_draw_throws_test</code> checks that a fully populated, positive-count model reaches the 2D-only renderer's 3D refusal. Other GPU families draw models only through the glTF L7 campaigns described on <a href="gltf-conformance.html">glTF conformance</a>; there is no renderer-local model hierarchy program for them at this snapshot. No located test deliberately covers a zero-bone draw, invalid parent order or cycles, out-of-range part fields, or a directly desynchronised <code>Effects</code> collection: treat those as construction-time invariants, not as tested recovery paths.</p>
+
+<h2 id="routes">Five content routes that produce a model</h2>
+<p><code>ContentManager::Load&lt;Model&gt;("name")</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/include/Microsoft/Xna/Framework/Content/ContentManager.hpp"><code>ContentManager.hpp</code></a>) resolves, after the per-manager cache: <code>name.xnb</code>, then <code>name.cnb</code>, then — only when the name itself ends in <code>.cnb</code> — that literal file, then the literal <code>name</code>, then <code>name.cnj</code>, then <code>name.gltf</code> and <code>name.glb</code>. An <code>.xnb</code> sibling therefore hides everything, a <code>.cnb</code> hides the loose sources it was compiled from, and a same-named <code>.cnj</code> hides a <code>.gltf</code>/<code>.glb</code>; passing an existing literal <code>name.gltf</code> reaches that file before the extensionless <code>.cnj</code> probe. The full ladder is on <a href="../../docs/model-loading.html#runtime-gltf">Model Loading</a>. The graphs the routes build differ in ways that are easy to miss:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Route</th><th scope="col">Reader</th><th scope="col">Bones and parents</th><th scope="col">Bounds, Tag and sharing</th></tr></thead>
+<tbody>
+<tr><td><code>.xnb</code> (XNA/MonoGame/FNA or <code>cna-content --format xnb</code>)</td><td><code>ModelReader</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xnb/ModelContentTypeReaders.cpp"><code>ModelContentTypeReaders.cpp</code></a></td><td>The serialized bone hierarchy; each mesh gets its serialized parent (null when the file's reference is null); the model's <code>Root</code> is the serialized root index, passed through the five-argument constructor.</td><td>Serialized <code>BoundingSphere</code>; shared <code>VertexBuffer</code>/<code>IndexBuffer</code>/<code>Effect</code> resources resolved as XNB shared resources; model, mesh and part <code>Tag</code> values are kept when they deserialize as a <code>std::shared_ptr&lt;System::Object&gt;</code> or as a string-keyed dictionary (boxed into <code>CNA::Content::ObjectDictionaryEXT</code>), any other non-null shape is a <code>ContentLoadException</code>.</td></tr>
+<tr><td><code>.cnb</code></td><td>CNB model decoder in <code>ContentManager.cpp</code> (schema 1 from glTF/<code>.cnj</code>, schema 2 for XNB-originated models)</td><td>Rebuilt through the same helpers as the <code>.cnj</code> reader.</td><td>Computed mesh spheres; skeleton, clips, morph data and lights restored; no cameras, material variants or import report. See <a href="../../docs/cnb-format.html">CNB Format</a>.</td></tr>
+<tr><td>self-contained <code>.cnj</code></td><td><code>ModelTypeReader</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xna/ContentManager.cpp"><code>ContentManager.cpp</code></a></td><td>Version 2: the serialized <code>bones</code> array and each mesh's <code>parentBone</code>. Version 1 (or a file without a hierarchy): one <code>Root</code> plus one synthetic child bone per mesh, named after the mesh.</td><td>Mesh spheres computed from the vertex positions; <code>SkinningData</code> or <code>ModelAnimationsEXT</code> on <code>Model::Tag</code>, <code>MorphTargetDataEXT</code> on part tags, mesh <code>Tag</code> null. Stock effects and buffers are created per described part; a named custom effect goes through the manager's cached <code>Load&lt;std::shared_ptr&lt;Effect&gt;&gt;</code>, so repeated names can share one object — this is not XNB's shared-resource graph. <code>sourceFile</code> is rejected.</td></tr>
+<tr><td>direct <code>.gltf</code>/<code>.glb</code></td><td><code>ReadGltfModel</code> in <code>ContentManager.cpp</code></td><td>An identity <code>Root</code> followed by one bone per reachable node of the selected scene, parent before child; a rigid mesh hangs off its instancing node's bone, a skinned mesh off <code>Root</code>.</td><td>Mesh spheres computed from positions (after any default morph weights); every skin in <code>Model::SkinsEXT</code>, the first also on <code>Tag</code>; cameras, material variants and the import report filled. One effect per material, skin and import shape, shared by the primitives that use it. See <a href="gltf-import.html">the glTF import core</a>.</td></tr>
+<tr><td><code>.skinnedmodel.json</code></td><td><code>SkinnedModelTypeReader</code></td><td>Not a <code>Model</code> at all: <code>Load&lt;std::shared_ptr&lt;SkinnedModelEXT&gt;&gt;</code> returns the Avatar-oriented type with its own skeleton arrays.</td><td>Sidecars resolve relative to the manifest's own directory. See <a href="../services/avatars.html#skinned-model">SkinnedModelEXT</a>.</td></tr>
+</tbody>
+</table></div>
+<p>The legacy <code>.skinnedmodel.json</code> route is neither a <code>.cnj</code> alias nor an old name of the current Model descriptor: code loading it opts into a different public type, animation representation and draw path, and its presence is a compatibility route, not evidence that the generic Model reader accepts a fifth spelling. The historical <code>.model.json</code> name survives only in source comments and test-target names; it is not in the Model reader's extension list, which is <code>.cnj</code>, <code>.gltf</code>, <code>.glb</code>.</p>
+
+<h3 id="route-choice">Which route for which job</h3>
+<p>Use <code>.xnb</code> when compiled XNA asset fidelity is the requirement, a <code>.cnb</code> for a compiled CNA asset, <code>.cnj</code> for a reviewable, self-contained description (including converter output with a unit scale or one asset per mesh group), direct glTF/GLB for in-process import of a glTF 2.0 file, and the legacy route only when the application consumes <code>SkinnedModelEXT</code>. The routes are not interchangeable even where tests prove them equivalent for a field: only direct glTF fills cameras, and only direct glTF and <code>.cnj</code> fill the import report and material variants. The CNJ route's own details are on <a href="cnj-toolchain.html">the CNJ model toolchain</a>.</p>
+
+<h2 id="lifetime">Copies, caching and ownership</h2>
+<p><code>Model</code> is copy-constructible with the compiler-generated copy. A copy duplicates the two collection wrappers, the <code>Root</code> and <code>Tag</code> raw pointers, the camera list, the skin list and the import report, and it shares the <code>shared_ptr</code> ownership handle and the material-variant state. Every <code>ModelBone</code>, <code>ModelMesh</code>, <code>ModelMeshPart</code>, buffer and effect below is the same object. A bone-transform, part or effect mutation made through one copy is therefore visible through every copy — shared mutable model state, not a way to pose or re-material one instance independently — and selecting a material variant on one copy switches the shared parts for all of them.</p>
+<p>Two qualifications keep "shared" precise. Reassigning the top-level <code>Tag</code> changes only that wrapper's pointer; another copy still points at the original object. A mesh <code>Tag</code>, a part <code>Tag</code> or any bone, part or effect change is made on the shared graph and is seen everywhere. FNA returns its cached <code>Model</code> class reference, so managed assignment aliases even the top-level wrapper; CNA's value syntax is not a deep-copy promise.</p>
+<p>Each reader fills the ownership handle before returning: the XNB reader's bundle retains bones, meshes, parts, shared buffers, effects and tag objects; the <code>.cnj</code>, <code>.cnb</code> and glTF readers share one <code>ModelResources</code> bundle that also retains decoded textures, skinning data, rigid clips and morph data. That is why a cached or caller-held model can keep raw pointers — and why <code>Model::Tag</code> and part tags stay valid for as long as any copy lives.</p>
+<p>The cache follows from the representation:</p>
+<pre><code class="language-cpp">Model first  = content.Load&lt;Model&gt;("ship");
+Model second = content.Load&lt;Model&gt;("ship"); // another wrapper over the same bones, meshes, buffers
+
+first.CopyBoneTransformsFrom(newPose);       // second observes the same bone transforms
+content.Unload();                            // clears the manager's cache entries only
+// first and second still keep the reader-owned graph alive through their ownership handle</code></pre>
+<p>This behaviour is test-pinned at this snapshot. <code>GltfPerformance.LoadingOneNameTwiceReturnsTheSameInstanceAndAFreshManagerDoesNot</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests/CNA/Internal/GltfImport/GltfPerformanceTests.cpp"><code>GltfPerformanceTests.cpp</code></a>) shows two loads return the same parts and buffers, that an effect mutation through one load is seen through the other, and that a second <code>ContentManager</code> shares nothing; <code>ACopiedModelSharesItsOwnedResourcesAndOutlivesTheOriginal</code> shows a copy shares the vertex buffer and stays valid after the original is destroyed; <code>UnloadThenLoadAgainYieldsAWorkingModel</code> and <code>AThousandLoadUnloadCyclesLeakNothing</code> (a leak check under the sanitizer CI job) cover repeated unload. The XNB suite's <code>LoadingTwiceReusesTheCachedModelLikeAnyOtherAsset</code> pins the same cache identity for compiled models. A caller that needs two independent copies of one asset uses two managers.</p>
+<p><code>ContentManager::Unload()</code> clears the manager's asset map; it does not walk a loaded model or invalidate a caller-held value. A retained model keeps its bundle, but it still relies on the separately unowned <code>GraphicsDevice</code>: drop every model copy before tearing down the device, and do not mistake cache eviction for a safe concurrent reload or a universal resource destructor. The manager-wide cache and disposal rules are on <a href="../../development/internals/content/runtime.html">content runtime internals</a>.</p>
+
+<h3 id="hand-built">Hand-built graphs</h3>
+<p>The CNAEXT constructors <code>Model(GraphicsDevice*, bones, meshes)</code> and <code>Model(GraphicsDevice*, bones, meshes, meshParentBones, rootBoneIndex = 0)</code> store the caller's raw bone and mesh addresses; they allocate nothing and install no ownership bundle. (The model constructors do not even keep the device pointer; meshes do.) The four/five-argument form requires <code>meshParentBones</code> to be empty — every <code>ParentBone</code> stays null, exactly like the three-argument form — or to have one entry per mesh, and throws <code>std::out_of_range("meshParentBones")</code> otherwise. The constructors are extensions precisely because FNA creates these objects inside its readers.</p>
+<p>A hand-built model is drawable only while its whole graph and its device outlive every copy that uses them. Stack-allocated construction is fine for a synchronous test; returning the model after its bones, meshes, parts, buffers, effects or tag objects died leaves dangling pointers. An owner can attach one aggregate lifetime object with <code>setOwnedResources(std::shared_ptr&lt;void&gt;)</code>, mirroring the readers; the hook retains only what the supplied object owns and does not make a raw device pointer, an externally assigned tag or any other unowned address safe.</p>
+
+<h2 id="root-bone">Worked example: naming an arbitrary root bone</h2>
+<p>In XNA and FNA the <code>Model</code> constructor never sets <code>Root</code>: the content reader assigns <code>model.Root = bones[rootBoneIndex]</code> afterwards, and that index may name any bone. CNA's earlier four-argument constructor had no equivalent and always used <code>bones[0]</code> — right for the common case, unable to represent a model whose true root is not first. The fix is a fifth, defaulted parameter, additive so that no existing call changes behaviour:</p>
+<pre><code class="language-cpp">CNAEXT Model(GraphicsDevice* graphicsDevice,
+             std::vector&lt;ModelBone*&gt; bones,
+             std::vector&lt;ModelMesh*&gt; meshes,
+             std::vector&lt;ModelBone*&gt; meshParentBones,
+             std::size_t rootBoneIndex = 0);   // the public equivalent of the reader's Root assignment</code></pre>
+<p>One edge case is easy to get wrong: an empty <code>bones</code> vector must leave <code>Root</code> null whatever index was requested, rather than throwing on the harmless default 0. The constructor body therefore checks emptiness first, matching the three-argument constructor's leniency, and bounds-checks only a genuinely non-empty vector:</p>
+<pre><code class="language-cpp">if (!bones_.bones_.empty())
+{
+    if (rootBoneIndex &gt;= bones_.bones_.size())
+        throw std::out_of_range("rootBoneIndex");
+    root_ = bones_.bones_[rootBoneIndex];
+}
+// bones_ empty: root_ stays nullptr regardless of rootBoneIndex</code></pre>
+<p>The regression tests are worth naming for the technique they show, not just for existing:</p>
+<ul>
+<li><code>FiveArgConstructorDefaultRootBoneIndexMatchesFourArgBehavior</code></li>
+<li><code>FiveArgConstructorHonorsNonZeroRootBoneIndex</code></li>
+<li><code>FiveArgConstructorThrowsWhenRootBoneIndexOutOfRange</code></li>
+<li><code>FiveArgConstructorEmptyBonesLeavesRootNullEvenWithDefaultIndex</code></li>
+</ul>
+<p>The non-zero case builds a three-bone hierarchy, selects index 2 and asserts both equality with the expected bone and inequality with bone 0 — a test that asserted only equality could pass by coincidence if the parameter were ignored. The project's commit record describes a sabotage-and-revert check (the constructor temporarily edited to ignore the index, and exactly the two index-dependent tests failing); that run is historical evidence and was not reproduced here. The lesson stands on its own: a test suite's ability to catch a regression is itself worth verifying.</p>
+<p>At this snapshot the XNB <code>ModelReader</code> uses this constructor to honour the file's serialized root index. The loose routes never need it: direct glTF appends one bone per reachable node beneath a synthetic identity root, a version-2 <code>.cnj</code> serializes and rebuilds the same parent-before-child array, and the version-1 fallback appends one synthetic child per mesh — all three reserve index 0 as the root. A glTF skin's reordered palette hierarchy lives in <code>SkinningData</code>, not in the model-bone index space, so no loose route has an arbitrary root index to carry.</p>
+
+<h2 id="collections">The four collections are not uniform</h2>
+<p>All four collections offer XNA's enumerator (<code>GetEnumerator</code> with <code>Current</code>/<code>MoveNext</code>/<code>Reset</code>) and CNAEXT <code>begin()</code>/<code>end()</code> for range-for, and every integer indexer rejects a negative index and one at or above <code>Count</code> with <code>ArgumentOutOfRangeException</code> rather than exposing raw <code>vector[]</code> behaviour. Beyond that they differ:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Collection</th><th scope="col">Name lookup</th><th scope="col"><code>TryGetValue</code> / <code>Contains</code></th><th scope="col">Notes</th></tr></thead>
+<tbody>
+<tr><td><code>ModelBoneCollection</code></td><td><code>operator[](std::string)</code>; a missing name throws <code>KeyNotFoundException</code></td><td>both</td><td>Populated by <code>Model</code> or by <code>ModelBone::AddChild</code> (a bone's <code>Children</code>).</td></tr>
+<tr><td><code>ModelMeshCollection</code></td><td>same as bones</td><td>both</td><td>An empty name throws <code>ArgumentNullException</code>, as for bones.</td></tr>
+<tr><td><code>ModelMeshPartCollection</code></td><td>none (parts have no name)</td><td>neither</td><td>Checked integer access, <code>Count</code>, iterators.</td></tr>
+<tr><td><code>ModelEffectCollection</code></td><td>none</td><td><code>Contains</code> only</td><td>Its enumerator carries a version stamp: an <code>Add</code>/<code>Remove</code> during enumeration makes <code>MoveNext</code>/<code>Reset</code> throw <code>InvalidOperationException</code>. Mutation is the CNAEXT escape hatch described above.</td></tr>
+</tbody>
+</table></div>
+<p>The empty-name rule is a correction worth stating plainly: <code>TryGetValue</code> on the bone and mesh collections throws <code>ArgumentNullException</code> for an empty string, which is CNA's spelling of FNA's null-or-empty rejection, so an empty name cannot be used as a "not supplied" sentinel and cannot find a deliberately empty-named mesh through that API. It is pinned by <code>EmptyNameThrowsArgumentNull</code> in both collection suites. All name searches are linear and return the first match; neither loaders nor constructors reject duplicate names, so names are handles, not unique identifiers. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/ModelCollectionIndexTests.cpp"><code>ModelCollectionIndexTests.cpp</code></a> checks negative, <code>Count</code> and above-count indices for all four families plus first/last identity; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/ModelCollectionEnumeratorTests.cpp"><code>ModelCollectionEnumeratorTests.cpp</code></a> checks the enumerators, including that a child added after an enumerator was created does not extend its snapshot and that effect-collection mutation invalidates enumeration.</p>
+
+<h2 id="extensions">CNAEXT state carried by the graph</h2>
+<p>Several properties exist because glTF content needed somewhere to live that <code>Tag</code> (one object, already contended by <code>SkinningData</code> and <code>ModelAnimationsEXT</code>) could not provide. They are always compiled and are empty on routes that do not fill them:</p>
+<ul>
+<li><code>getSkinsEXTProperty()</code> — every independently posed skin as a <code>ModelSkinEXT</code> {name, <code>SkinningData*</code>, meshes}; the first skin is also <code>Tag</code>.</li>
+<li><code>getCamerasEXTProperty()</code> — <code>ModelCameraEXT</code> placements (direct glTF only). <code>WorldTransform</code> is a snapshot at import; a camera's live placement is the absolute transform of the bone its <code>SceneNodeIndex</code> names. A glTF perspective camera without <code>zfar</code> gets the free function <code>CreateInfinitePerspectiveFieldOfViewEXT</code>, whose far terms are the limits of XNA's finite builder rather than a large finite distance.</li>
+<li><code>getGltfImportReportEXTProperty()</code> — the structured import report (direct glTF and <code>.cnj</code>).</li>
+<li><code>getBoundingSphereEXTProperty()</code> — one sphere around every mesh at its current parent-bone placement, or <code>std::nullopt</code> for a model without meshes. It is recomputed from the current absolute bone transforms (so rigid animation is reflected), uses a conservative stretch bound that stays correct under the shear a composed hierarchy can create, and for a skinned mesh unions the mesh sphere under every matrix of the current palette on its <code>SkinnedEffect</code>/<code>SkinnedPbrEffect</code>. It is in model-root space, before the caller's <code>world</code>.</li>
+<li><code>getMaterialVariantNamesEXTProperty()</code>, <code>getMaterialVariantEXTProperty()</code>, <code>setMaterialVariantEXTProperty(int)</code> — <code>KHR_materials_variants</code> by source index; <code>-1</code> is the default and is what a freshly loaded model uses. Selection is model-wide, swaps each bound part's complete material-dependent state (vertex buffer, vertex count, tag, samplers, then effect), and a part with no mapping for the selected variant returns to its default. Values below <code>-1</code> or past the name list throw <code>std::out_of_range</code>.</li>
+<li>On <code>ModelMeshPart</code>: <code>getPrimitiveTypeEXTProperty()</code> and per-slot <code>getSamplerStatesEXTProperty()</code> (five core slots) and <code>getSpecularSamplerStatesEXTProperty()</code> (two <code>KHR_materials_specular</code> slots), <code>LinearWrap</code> on every non-glTF route. The sampler setters ignore an out-of-range slot on purpose, so a slot count that grows cannot crash old content.</li>
+</ul>
+
+<h2 id="evidence">Evidence and limits of this page</h2>
+<p>Everything above was checked by reading the TARGET sources and tests named inline at 009d40f5; nothing was built or executed for this page. The test names establish that the tests exist and what they assert, not that they passed on any particular host. The FNA comparisons are CNA's own source and test comments, not a fresh reading of FNA. Related reading: <a href="../../docs/model-loading.html">Model Loading</a> (user guide), <a href="../../docs/tutorials/35-model-loading.html">Tutorial 35</a>, <a href="vertex-packing-and-strides.html">vertex packing</a> and <a href="skinning-and-animation.html">skinning and animation</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/model-loading.html">Model Loading</a> &middot; <a href="../../docs/3d-rendering.html#model-rendering">3D Rendering: model rendering</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/content.html">Content architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/content/runtime.html">Content runtime internals</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/index.html#labels">Test labels</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="gltf-import.html">glTF import core</a> &middot; <a href="skinning-and-animation.html">Skinning, animation and morphs</a> &middot; <a href="../services/avatars.html">Avatars and SkinnedModelEXT</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-next" href="gltf-import.html" rel="next"><span>Next</span>The glTF import core: parser boundary, scene graph and extraction</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

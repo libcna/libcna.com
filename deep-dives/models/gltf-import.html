@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The glTF import core: parser boundary, scene graph and extraction - CNA Deep Dives</title>
+  <meta name="description" content="How CNA&#x27;s shared glTF import core parses, validates, flattens the scene, groups meshes, extracts materials and reports losses, and what its runtime and offline front ends share.">
+  <meta name="keywords" content="gltf, glb, cgltf, import, scene graph, extensionsrequired, extension registry, import report, gltf_to_cnj, materials">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/models/gltf-import.html">
+  <meta property="og:title" content="The glTF import core: parser boundary, scene graph and extraction - CNA Deep Dives">
+  <meta property="og:description" content="How CNA&#x27;s shared glTF import core parses, validates, flattens the scene, groups meshes, extracts materials and reports losses, and what its runtime and offline front ends share.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/models/gltf-import.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"The glTF import core: parser boundary, scene graph and extraction","description":"How CNA's shared glTF import core parses, validates, flattens the scene, groups meshes, extracts materials and reports losses, and what its runtime and offline front ends share.","url":"https://libcna.com/deep-dives/models/gltf-import.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine <span class="dev-nav-count">11</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../renderers/index.html" class="docs-nav-link">Renderers <span class="dev-nav-count">11</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Models, glTF &amp; 3D <span class="dev-nav-count">6</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="model-mesh-runtime.html" class="docs-nav-link">Model runtime and draw contract</a></li>
+        <li><a href="gltf-import.html" class="docs-nav-link active" aria-current="page">glTF import core</a></li>
+        <li><a href="vertex-packing-and-strides.html" class="docs-nav-link">Vertex packing and strides</a></li>
+        <li><a href="skinning-and-animation.html" class="docs-nav-link">Skinning, animation and morphs</a></li>
+        <li><a href="cnj-toolchain.html" class="docs-nav-link">CNJ model toolchain</a></li>
+        <li><a href="gltf-conformance.html" class="docs-nav-link">glTF conformance evidence</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">3</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Models, glTF &amp; 3D</a></li>
+        <li aria-current="page">glTF import core</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>The glTF import core: parser boundary, scene graph and extraction</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#architecture">One core, several front ends</a></li>
+          <li><a href="#parser-boundary">The parser boundary</a></li>
+          <li><a href="#scene-graph">Scene graph first, meshes second</a></li>
+          <li><a href="#groups">Groups are an ownership boundary</a></li>
+          <li><a href="#extraction">What extraction preserves</a></li>
+          <li><a href="#report">The import report</a></li>
+          <li><a href="#failure">Failure and exception boundaries</a></li>
+          <li><a href="#lifetime">What one import allocates, and what it shares</a></li>
+          <li><a href="#evidence">Evidence</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Models, glTF &amp; 3D &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Checked by reading the TARGET import core, ContentManager reader and test suites at 009d40f5; not built or executed. Renderer behaviour for each extension is renderer-qualified and is not proven by the importer tests.</p></div>
+
+<p class="lede">CNA does not hide a small glTF reader inside <code>ContentManager</code>. It has one import library, <code>CNA::Internal::GltfImport</code>, whose parsing and semantic extraction are shared by the runtime <code>.gltf</code>/<code>.glb</code> reader and by the offline glTF-to-CNJ orchestration that the command-line converter, <code>cna-content</code> and <code>cna_tool_gltf_to_cnb</code> all call. This page follows a file through that core: the parser and validation boundary, the scene graph, mesh groups, what extraction preserves, the extension registry, the import report, and the failure and lifetime rules. It is for anyone importing third-party glTF content or maintaining the importer.</p>
+
+<h2 id="architecture">One core, several front ends</h2>
+<p>The core is <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/include/CNA/Internal/GltfImport/GltfImportCore.hpp"><code>GltfImportCore.hpp</code></a> (about 2,200 lines) and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/GltfImport/GltfImportCore.cpp"><code>GltfImportCore.cpp</code></a> (about 5,400 lines) at this snapshot — roughly three times the size it had when the campaign that produced it began. Container parsing and accessor access are delegated to the vendored cgltf 1.15 header. What is shared is interpretation: turning a glTF document into scene-node records, mesh groups, packed vertex bytes, material records, skeletons, clips, cameras, lights and diagnostics. What is not shared is the last step: the runtime front end creates live GPU objects in one <code>Model</code>, while the offline orchestration writes <code>.cnj</code> descriptors and binary sidecars that a later reader recreates.</p>
+<figure class="diagram-figure" role="group" aria-labelledby="fig-gltf-routes-cap">
+<pre class="diagram">
+  .gltf / .glb
+       |
+       v
+  cgltf parse (UTF-8 file callbacks) -> URI containment -> load buffers
+       -> asset.version check -> ValidateGltfEXT
+       |
+       v
+  shared import core  CNA::Internal::GltfImport
+  BuildSceneGraph . CollectMeshGroups . BuildSkeleton . ExtractClips
+  ExtractSceneNodeClips . ExtractMesh . lights . cameras . report
+       |                                  |
+       v                                  v
+  ReadGltfModel (runtime)           ConvertGltfToCnj (compiled into cna_content)
+  every group -> one Model          one .cnj + sidecars per mesh group
+  live buffers, effects, textures        |               |              |
+                                         v               v              v
+                              cna_tool_gltf_to_cnj  cna-content    cna_tool_gltf_to_cnb
+                                  (.cnj files)      (.cnb/.xnb)       (.cnb file)
+
+  parsed  !=  represented  !=  drawn by this renderer  !=  pixel-proven
+</pre>
+<figcaption id="fig-gltf-routes-cap"><strong>Figure.</strong> A glTF or GLB file is parsed by cgltf, checked for URI containment before any external buffer is loaded, version-checked and structurally validated, then interpreted by the shared import core. Two consumers use the core's records: the runtime reader, which assembles every mesh group into one live Model, and the glTF-to-CNJ orchestration, which writes one CNJ descriptor with sidecars per group and is reused by the standalone converter, by cna-content and by cna_tool_gltf_to_cnb. The last line is the reading rule the rest of this page applies: sharing a parser does not make the outputs equivalent, and parsing, representation, renderer support and pixel evidence are separate claims.</figcaption>
+</figure>
+<p>The orchestration lives in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/gltf_to_cnj/gltf_to_cnj.cpp"><code>gltf_to_cnj.cpp</code></a>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/CMakeLists.txt"><code>The content module&#x27;s CMake file</code></a> compiles that file into <code>cna_content</code> with <code>CNA_GLTF_TO_CNJ_NO_MAIN=1</code>, so <code>cna-content</code> (through <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Pipeline/ModelContentPipeline.cpp"><code>ModelContentPipeline.cpp</code></a>) and <code>cna_tool_gltf_to_cnb</code> call the same <code>CNA::Tools::Gltf::ConvertGltfToCnj</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/gltf_to_cnj/GltfToCnjEntry.hpp"><code>GltfToCnjEntry.hpp</code></a>) rather than compiling private interpretations; the standalone <code>cna_tool_gltf_to_cnj</code> compiles it again with its command-line entry point. The runtime reader is <code>ReadGltfModel</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xna/ContentManager.cpp"><code>ContentManager.cpp</code></a>.</p>
+
+<h3 id="build-invariant">Two build invariants</h3>
+<p><code>GltfImportCore.cpp</code> is the only translation unit that defines <code>CGLTF_IMPLEMENTATION</code>; every other consumer (the header, the converter, <code>ContentManager.cpp</code>) links against it. The same file compiles <code>stb_image</code> and <code>stb_image_write</code> with <code>STB_IMAGE_STATIC</code>/<code>STB_IMAGE_WRITE_STATIC</code>, giving every stb symbol internal linkage, because another translation unit in the tree — the graphics module's image loader — compiles its own vendored stb implementation the same way, and two external copies would collide at link time. Both are build invariants, not decoration. <code>GltfVendoredCgltf.TheVendoredHeaderCarriesNoCnaEdits</code> pins that the vendored cgltf header is unmodified, and <code>EveryKnownCgltfFaultStillHasItsCnaSideAnswer</code> ties each known cgltf weakness to the CNA-side check that answers it.</p>
+
+<h2 id="parser-boundary">The parser boundary</h2>
+<p>JSON <code>.gltf</code> and binary <code>.glb</code> enter through the same <code>cgltf_parse_file</code> call; there is no separate container code. The runtime reader installs CNA's file callbacks first (cgltf's default is a bare <code>fopen</code>, which opens through the ANSI code page on Windows), so the document and every external buffer and image resolve as UTF-8 paths. The steps then run in this order:</p>
+<ol>
+<li><strong>URI containment, before any external file is read.</strong> <code>ResolveExternalUriEXT</code> refuses a drive-absolute name, any URI scheme other than a relative path (checked on the raw URI, so a percent-encoded <code>%68ttp:</code> does not become a scheme), a root-absolute or backslash-rooted path, a lexical escape such as <code>a/../../b</code>, and a path that escapes through a symbolic link (compared after <code>weakly_canonical</code>). Containment is compared component-wise, so <code>/asset-evil</code> never counts as inside <code>/asset</code>. This runs ahead of <code>cgltf_load_buffers</code> because that call resolves external buffer URIs itself and offers no veto hook. The offline orchestration runs the same check while collecting the file's external dependencies for the build manifest.</li>
+<li><strong>Buffers and images.</strong> Embedded buffer views, base64 <code>data:</code> URIs and contained, percent-decoded external files are accepted for both buffers and images. Images are exposed as memory blocks; the runtime reader decodes them through a <code>MemoryStream</code> and <code>Texture2D::FromStream</code> without staging temporary files.</li>
+<li><strong>Version.</strong> If <code>asset.version</code> is present it must equal <code>"2.0"</code>; the check is conditional, so a document without the field passes this step if cgltf accepted the rest. <code>asset.minVersion</code> is not inspected.</li>
+<li><strong>Structural validation</strong> by <code>ValidateGltfEXT</code>, below.</li>
+</ol>
+
+<h3 id="validation">Structural validation, in its deliberate order</h3>
+<p><code>ValidateGltfEXT</code> is materially stronger than syntax parsing, and its order is not cosmetic:</p>
+<ol>
+<li><strong>Alignment first.</strong> Every accessor's base, sparse-index and sparse-value offsets must be multiples of their component size, and a declared <code>byteStride</code> must be a multiple of 4. cgltf reads components through raw typed casts, so a misaligned view is undefined behaviour; it is refused. This check runs <em>before</em> <code>cgltf_validate</code> because the vendored validator itself reads index bytes through such a cast while bounding indices — a container fuzz under UBSan found the misaligned load inside the validator.</li>
+<li><strong>Overflow-safe spans.</strong> Every accessor span (base and both sparse arrays) is recomputed with guarded arithmetic, and a bufferView whose offset plus length overflows is refused. cgltf's own arithmetic wraps silently, so an enormous declared count could otherwise pass its bounds check and later read far past the buffer.</li>
+<li><strong><code>cgltf_validate</code></strong>; any failure is a rejection.</li>
+<li><strong>Accessor bounds cross-check</strong> (<code>CrossCheckAccessorBoundsEXT</code>): float, non-normalized accessors whose decoded values fall outside their own declared <code>min</code>/<code>max</code> by more than a rounding tolerance produce a warning — aimed at decode errors such as all-zero sparse reads, not at last-digit exporter rounding.</li>
+<li><strong><code>EXT_meshopt_compression</code></strong> on any bufferView is refused outright: cgltf parses the metadata but decoding needs a caller hook CNA does not provide, and an accessor over such a view would read undefined bytes.</li>
+<li><strong><code>extensionsRequired</code></strong>: every entry the registry does not claim is refused by name.</li>
+<li><strong><code>extensionsUsed</code></strong>: every entry the registry does not claim produces a warning carrying the registry's own note.</li>
+</ol>
+<p>On the runtime path each rejection becomes a <code>ContentLoadException</code> naming the file; warnings go to the log and into the model's import report. None of this makes CNA a replacement for the independently pinned Khronos glTF Validator. The practical rule: run the Khronos validator on third-party content before shipping it. A successful CNA load proves the code paths it used accepted the file; it does not prove the document is conformant or that every optional extension was honoured.</p>
+
+<h2 id="scene-graph">Scene graph first, meshes second</h2>
+<p><code>BuildSceneGraph</code> selects the document's default scene, falling back to the first scene. A file with no <code>scenes</code> array at all is not treated as empty: the importer walks every root node of the file instead, so its meshes keep the placement the file authored rather than landing at the origin. The walk is iterative (an explicit stack, because a pathological file can nest thousands deep), parent before child, preserving the file's own child order. Index 0 is a synthetic identity node named <code>Root</code>, because a glTF scene may have several roots while a <code>Model</code> has exactly one; each reachable glTF node follows exactly once, at the first path found.</p>
+<p>Each node's local matrix comes from <code>cgltf_node_transform_local</code>, which already applies glTF's "matrix, or else TRS" rule, and is converted to CNA's row-vector convention by copying the affine basis. The world transform is composed as</p>
+<p><code>W(i) = L(i) * W(parent(i))</code> — in row-vector form, the local transform first and then the parent's world.</p>
+<p>No axis or handedness conversion is applied, and that is correct rather than an omission: glTF and the XNA conventions CNA uses are both right-handed with +Y up, −Z forward and a top-left UV origin. The only handedness value imported separately is a tangent's fourth component.</p>
+<p>Each flattened node becomes a <code>ModelBone</code>, index for index after the synthetic root, with the node's local transform. Vertex positions stay in mesh-local space, so one glTF mesh instanced by two nodes becomes two <code>ModelMesh</code> placements with different parent bones rather than one destructively pre-transformed buffer. A rigid mesh is parented to its instancing node's bone. A skinned mesh's node still exists as a bone and keeps its transform, but the mesh is parented to the synthetic root, because the skin's joint matrices already account for the mesh node's coordinate space; applying both would transform it twice (the cancellation itself is described on <a href="skinning-and-animation.html#d8">skinning and animation</a>).</p>
+<p>Nodes unreachable from the selected scene do not enter the graph, and a mesh they instance is not imported. If no reachable node references any mesh, <code>CollectMeshGroups</code> falls back to exposing every mesh of the file, unplaced, at the identity root — useful for incomplete exports, but not the same result as an authored scene.</p>
+
+<h2 id="groups">Groups are an ownership boundary</h2>
+<p><code>CollectMeshGroups</code> partitions the reachable mesh placements into one group per distinct <code>skin</code> plus one group for unskinned placements, in the file's node-array order (the converter's output naming depends on that order). Each placement record carries the source node, the mesh, the flattened scene-node index, the composed world transform, whether it is skinned, and whether its composed transform mirrors (a negative 3×3 determinant).</p>
+<p>The front ends package groups differently. The runtime reader assembles every group into one <code>Model</code>: <code>Model::getSkinsEXTProperty()</code> maps each skin to exactly the meshes its palette drives, and <code>Model::Tag</code> remains a compatibility alias for the first skin. That avoids both the old first-group-only data loss and the equally wrong alternative of posing every mesh with one palette. The runtime effect cache includes the skin in its key, so two skins never share one mutable palette. The offline orchestration writes each group as its own <code>.cnj</code> model: a single group keeps the base name, and with several groups the unskinned group gets <code>_static</code> and each skinned group <code>_&lt;skinName&gt;</code> (or <code>_skinN</code>); two skin names that collide after filename sanitising are refused rather than overwritten. (A source comment above <code>ReadGltfModel</code> still describes the old first-group-only behaviour; the code below it imports every group.)</p>
+
+<h3 id="unit-scale">Unit scale</h3>
+<p>The core's <code>unitScale</code> multiplies translation-bearing quantities only: vertex positions, bind-pose and inverse-bind translations, ancestor terms, animation translation values and their cubic tangents, morph position deltas and camera placements. It never touches rotations or dimensionless scale factors. The runtime reader fixes it at 1.0 (glTF mandates metres); <code>cna_tool_gltf_to_cnj</code> takes an optional positive <code>unitScale</code> argument and <code>cna_tool_gltf_to_cnb</code> a <code>--unit-scale</code> option, while <code>cna-content</code> has no unit-scale setting. Convert offline when a file was not authored in metres.</p>
+
+<h2 id="extraction">What extraction preserves</h2>
+<p><code>ExtractMesh</code> produces an explicit semantic record per primitive before any graphics object exists. Along the way it:</p>
+<ul>
+<li>requires every attribute of the primitive to have the same element count as <code>POSITION</code>, as the glTF specification requires, refusing a mismatch that would otherwise index past a shorter stream;</li>
+<li>decodes positions, normals, tangents, up to two texture-coordinate sets, <code>COLOR_0</code> (VEC3 or VEC4, float or normalized integer), <code>JOINTS_0</code> and <code>WEIGHTS_0</code>, honouring offsets, strides, normalization and sparse overrides — including a sparse accessor with no base buffer view;</li>
+<li>decodes indices with its own bounds-checked reader, synthesises the implicit sequence for a non-indexed primitive, and proves every index is below the vertex count before anything consumes it (details on <a href="vertex-packing-and-strides.html#indices">vertex packing</a>);</li>
+<li>computes flat normals when the file authors none (splitting vertices so each face owns its corners), in which case the specification also requires any authored tangents to be ignored; generates a tangent basis for PBR primitives that lack one;</li>
+<li>renormalises joint weights that do not sum to 1, leaves all-zero weights unweighted rather than binding them to an arbitrary joint, keeps only the first influence set, and reports each of those by count and worst magnitude;</li>
+<li>ignores <code>_*</code> custom attributes by design and drops colour sets past <code>COLOR_0</code> with a report entry, because XNA layouts carry one colour channel;</li>
+<li>imports legacy <code>_TANGENT</code>/<code>_BINORMAL</code> VEC3 pairs as a tangent with a derived handedness.</li>
+</ul>
+
+<h3 id="materials">Materials and the effect a primitive gets</h3>
+<p>The effect is chosen by the material <em>model</em> the file declares, not by which maps it happens to carry. glTF's default material is metallic-roughness, so a primitive with no material, a factor-only material, a normal-map-only material and a vertex-coloured metallic-roughness material all take the PBR route (<code>PbrEffect</code>, or <code>SkinnedPbrEffect</code> for a skinned primitive). Only a material declaring <code>KHR_materials_unlit</code> leaves it: it maps to <code>BasicEffect</code> with lighting disabled and the base colour as diffuse, or — for a skinned primitive — to <code>SkinnedEffect</code> with an all-white ambient and no directional light, since XNA's skinned effect has no lighting switch. The old forensic defect D7 (a factor-only material became an untextured <code>BasicEffect</code> with every property lost) is fixed; the rule and its history are in the import core's comments and the defect ledger.</p>
+<p>The extracted material record carries the base-colour factor and alpha, metallic and roughness, emissive factor and <code>KHR_materials_emissive_strength</code>, IOR and <code>KHR_materials_specular</code> factor and colour, normal scale, occlusion strength, alpha mode and cutoff, double-sidedness, seven texture slots (base colour, normal, metallic-roughness, emissive, occlusion, specular, specular colour), an independent packed-UV selector and <code>KHR_texture_transform</code> per slot, a sampler per slot, and colour-space intent. Rigid and skinned PBR effects receive the same parameter convention. Samplers map onto XNA exactly — all eight min/mag/mip filter combinations have an XNA <code>TextureFilter</code>, and <code>CLAMP_TO_EDGE</code>/<code>MIRRORED_REPEAT</code>/<code>REPEAT</code> become <code>Clamp</code>/<code>Mirror</code>/<code>Wrap</code> — and are stored per part in <code>ModelMeshPart::getSamplerStatesEXTProperty()</code>. PNG and JPEG images import with one level, so a mipmapped <code>minFilter</code> is reported rather than silently served by a generic box-filtered chain that would be wrong for normal and packed-data maps.</p>
+<p>Three narrower routes remain. <code>KHR_materials_pbrSpecularGlossiness</code> is converted (diffuse to base colour, metallic 0, roughness 1 − glossiness) and its specular factor dropped, with a warning when that specular was strong. <code>KHR_materials_transmission</code> is approximated as alpha blending with alpha = 1 − factor, always reported, and not physical. A <code>DualTextureEffect</code> lightmap approximation — base colour plus an occlusion map rewritten for XNA's "0.5 is neutral" convention — is reached only by an unskinned, uncoloured primitive whose material is unlit and carries both maps; an ordinary metallic-roughness material with an occlusion map goes to <code>PbrEffect</code>, which samples a real occlusion map (the remap is described on <a href="cnj-toolchain.html#occlusion">the CNJ toolchain page</a>). A <code>SkinnedEffect</code> part without a base-colour texture is given a 1×1 white texture, because XNA's skinned effect samples an unbound texture as black while glTF defines a missing base-colour texture as white.</p>
+<p>Punctual lights are applied to every non-unlit effect that implements <code>IEffectLights</code>: at most three, each approximated as a directional light (point and spot lights aimed at the scene origin), <code>color × intensity</code> clamped to [0,1], range and cone ignored — every one of those losses counted. A file that declares no light imports correctly and still renders black under <code>PbrEffect</code>'s own defaults until the application sets lighting; the reader logs "zero lights contributed" for exactly that case.</p>
+
+<h3 id="extension-registry">The extension registry is the acceptance authority</h3>
+<p>One source-controlled registry, <code>GltfExtensionRegistryEXT()</code>, holds 21 records, each with a support level, whether the extension is <em>claimed</em>, a note and an owning task. <code>extensionsRequired</code> may only name claimed extensions; the support levels are Implemented, ImplementedWithNamedLimit, Approximated, ParsedButIgnored, Unsupported and NotDesired (a recorded decision not to implement). The claimed and unclaimed lists are on <a href="../../docs/model-loading.html#gltf-extension-registry">Model Loading</a>. CNA's limitations document is generated from the registry and checked against it by <code>GltfLimitationsDoc.ExtensionTableAgreesWithTheRegistry</code>. Representative outcomes:</p>
+<ul>
+<li><code>KHR_texture_transform</code> is independent per map rather than baked into one UV stream.</li>
+<li><code>KHR_materials_specular</code> factors are consumed by every PBR renderer; its two texture maps are sampled by eight renderer families (DirectX 9, 11 and 12, EasyGL, OpenGL 4, SDL_GPU, Vulkan and WebGPU, per <code>SpecularTextureInventoryClassifiesEveryPbrRenderer</code>) and not by <code>METAL</code>, which is factor-only. Required use is still refused. (The registry's own prose lists seven of those eight families; the test is the machine-checked partition.)</li>
+<li><code>KHR_texture_basisu</code> and <code>EXT_texture_webp</code> have no decoder: a PNG/JPEG fallback in the file is used when present, and otherwise the dropped map is named per slot.</li>
+<li>Clearcoat, sheen and volume are ParsedButIgnored for the stock effects; their factor values are nevertheless copied onto the imported material so the engine layer's glTF material bridge can use them (see <a href="../../docs/cnaext-engine.html">CNAEXT engine layer</a>).</li>
+<li><code>KHR_draco_mesh_compression</code> is claimed only in a build with the decoder (<code>CNA_ENABLE_DRACO</code>, on by default and off under Emscripten); with Draco only triangle lists and strips are accepted.</li>
+<li><code>EXT_mesh_gpu_instancing</code> imports each node's single placement and not its per-instance transforms, so a forest renders as one tree; the file-level count is reported.</li>
+</ul>
+<p>Keep four claims separate for every row: parsed, represented on the model, reported in the import report, and drawn by the renderer you ship.</p>
+
+<h2 id="report">The import report</h2>
+<p><code>GltfImportReportEXT</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/Microsoft/Xna/Framework/Graphics/GltfImportReportEXT.hpp"><code>GltfImportReportEXT.hpp</code></a>) is filled by the direct reader and carried through converter-produced <code>.cnj</code>; every other route returns the all-zero default. It holds node, mesh-placement, distinct-mesh, shared-mesh, depth, camera-node, light-node, imported-light, primitive, skin, animation and clip counts, plus an ordered list of <code>GltfImportDiagnosticEXT</code> entries. Each entry has a stable lower-case <code>Code</code>, a <code>Severity</code> (Information or Warning), a <code>Kind</code> (Information, GeneratedData, InvalidSourceData, Approximation, DroppedData, UnsupportedFeature), a subject, an occurrence count, a <code>WorstMagnitude</code> whose unit the code defines, detail names and a human message.</p>
+<p><code>AnythingLost()</code> is true when any warning is present; <code>getDroppedFeatureCountProperty()</code> sums dropped-data and unsupported-feature occurrences and <code>getApproximationCountProperty()</code> sums approximations. Branch on codes such as <code>uv-set-mismatch</code>, <code>rigid-animation-dropped-on-skinned-model</code>, <code>mirrored-winding-unapplied</code>, <code>gpu-instancing-dropped</code>, <code>influence-sets-dropped</code> or <code>transmission-approximated</code>, never on message text or vector position. The third-UV-set case in particular is reported on the runtime path as well as by the converter.</p>
+
+<h2 id="failure">Failure and exception boundaries</h2>
+<p>The core throws <code>std::runtime_error</code> for semantic rejections: an undefined primitive mode, an attribute count mismatch, an out-of-range index, a skin with more than 72 joints, a joint listed twice, an inconsistent joint hierarchy. <code>ReadGltfModel</code> itself converts parse, containment, buffer, version and validation failures into <code>ContentLoadException</code>. For everything else, <code>ContentManager::Load&lt;T&gt;</code> catches any <code>std::exception</code> thrown by a loose-file reader and rethrows it as <code>ContentLoadException("ContentManager: could not load asset '…'", inner)</code>, keeping the original as the inner exception. A caller catching <code>ContentLoadException</code> therefore sees every glTF import failure at this snapshot; earlier revisions let extraction errors escape as bare <code>std::runtime_error</code>, a gap closed on 2026-09-01. The offline converter prints <code>error: …</code> and exits with status 1.</p>
+
+<h2 id="lifetime">What one import allocates, and what it shares</h2>
+<p>On success the runtime reader creates bones, meshes, parts, buffers, effects, textures, skinning data, rigid clips and morph records in one private <code>ModelResources</code> bundle and attaches it with <code>setOwnedResources</code>, so the otherwise raw-pointer model is self-retaining (see <a href="model-mesh-runtime.html#lifetime">model lifetime</a>). Within one import:</p>
+<ul>
+<li>images are decoded once per <code>cgltf_image</code> and shared; the occlusion image rewritten for <code>DualTextureEffect</code> has its own cache, because the same source image may also feed an unmodified <code>PbrEffect</code> occlusion map;</li>
+<li>effects are shared per (source material, skin, import shape, packed UV mapping), so primitives that use one material share one effect — including material-variant overrides — while two skins never share one palette;</li>
+<li>each glTF mesh placement becomes one <code>ModelMesh</code> with one <code>ModelMeshPart</code> per primitive and one bounding sphere, named after the glTF mesh, with the node name appended only when the mesh has several placements (an unnamed mesh falls back to its node's name, then to an index);</li>
+<li>vertex and index buffers are per primitive, and a variant with a different vertex layout gets its own buffer and its own morph carrier.</li>
+</ul>
+<p>Across loads, sharing is the <code>ContentManager</code>'s cache: a second <code>Load</code> of the same name in one manager returns the same graph, and a second manager decodes everything again. Cameras (<code>ModelCameraEXT</code>) are imported by walking the scene graph, so a camera instanced by two nodes is two placements; a perspective camera without <code>zfar</code> receives an infinite projection, an orthographic one a volume of twice its half extents, and an absent aspect ratio is recorded as assumed.</p>
+
+<h2 id="evidence">Evidence</h2>
+<p>Checked by reading the TARGET sources and tests at 009d40f5; not built or executed. The behaviours above are pinned by the suites under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests/CNA/Internal/GltfImport"><code>modules/content/tests/CNA/Internal/GltfImport</code></a> (container validation and robustness, URI containment, extension registry, scene selection, node hierarchy, sampler mapping, unlit material, material variants, cameras, import report and more) and by the direct-load suite <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests/Microsoft/Xna/Framework/Content/RuntimeGltfModelTests.cpp"><code>RuntimeGltfModelTests.cpp</code></a>; how those suites are organised into a ladder, and what the pixel evidence is, is on <a href="gltf-conformance.html">glTF conformance</a>. Users start at <a href="../../docs/model-loading.html#runtime-gltf">Model Loading</a> and <a href="../../docs/tutorials/110-gltf-models.html">Tutorial 110</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/model-loading.html#runtime-gltf">Model Loading: runtime glTF</a> &middot; <a href="../../docs/tutorials/110-gltf-models.html">Tutorial 110: glTF models</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/content.html">Content architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/content/runtime.html#gltf-edge">Content runtime: the glTF build edge</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/index.html#labels">Test labels (gltf-conformance)</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="model-mesh-runtime.html">Model runtime and draw contract</a> &middot; <a href="vertex-packing-and-strides.html">Vertex packing and strides</a> &middot; <a href="gltf-conformance.html">glTF conformance evidence</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="model-mesh-runtime.html" rel="prev"><span>Previous</span>Model, ModelMesh and ModelMeshPart: the runtime graph and its draw contract</a><a class="dev-pager-next" href="vertex-packing-and-strides.html" rel="next"><span>Next</span>Vertex packing: the glTF stride ABI, index widths and topology</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
