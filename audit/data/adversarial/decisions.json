@@ -1602,6 +1602,96 @@
     ]
    },
    "origin": "new finding at the independent adversarial audit (noted by the D4 dismissal reviewer, re-verified by the orchestrator against the decompiled XNA)"
+  },
+  {
+   "cand_ids": [],
+   "class": "bug",
+   "subsystem": "Networking & gamer services",
+   "status": "open",
+   "severity": "medium",
+   "confidence": "verified-by-reading",
+   "tests_present": true,
+   "reproduction": null,
+   "id": "NEW-AUDIT-24",
+   "title": "A join beyond MaxGamers is not refused: the host sends ServerWelcome, AddRemoteGamer throws Session is full!, and the receive path's catch-all drops it, so SessionFull is never raised",
+   "summary": "HandleClientHello sends ServerWelcome and registers wire ids before AddRemoteGamer checks capacity; the receive path swallows the exception, so an over-capacity client stays connected and NetworkSessionJoinError::SessionFull is never produced.",
+   "public_contract": "Microsoft::Xna::Framework::Net::NetworkSession::Join on a full host (ENetBackend HandleClientHello, NetworkSession::AddRemoteGamer, NetworkSessionJoinError::SessionFull)",
+   "expected": "<p>A client that joins a session already holding <code>MaxGamers</code> gamers should be refused with a <code>NetworkSessionJoinException</code> carrying <code>NetworkSessionJoinError::SessionFull</code>, the value the XNA API defines for exactly this case, and the host's roster and the other peers should be left alone.</p>",
+   "actual": "<p>{{src:modules/net/src/Internal/ENetBackend.cpp|HandleClientHello}} rejects only a duplicate handshake and a join in progress that the host forbids. It then creates the joining client's <code>NetworkGamer</code> objects, assigns and registers their wire ids, sends <code>ServerWelcome</code>, and only afterwards calls {{src:modules/net/src/Xna/NetworkSession.cpp|NetworkSession::AddRemoteGamer}}, which throws <code>InvalidOperationException(&ldquo;Session is full!&rdquo;)</code> once <code>allGamers_</code> has reached <code>maxGamers_</code>. The receive path wraps the whole message switch in a catch-all that drops the exception, so a bad packet cannot take down <code>Update()</code>. The over-capacity client therefore has been welcomed and stays connected with its wire ids registered, the gamers beyond the limit are never added to the host's roster or announced to the other peers, and <code>SessionFull</code> is produced nowhere in the module (it appears only in the enum header).</p>",
+   "sources": [
+    {
+     "path": "modules/net/src/Internal/ENetBackend.cpp",
+     "note": "HandleClientHello: no capacity check before ServerWelcome; the receive path's catch-all"
+    },
+    {
+     "path": "modules/net/src/Xna/NetworkSession.cpp",
+     "note": "AddRemoteGamer throws Session is full! after allGamers_ reaches maxGamers_"
+    },
+    {
+     "path": "modules/net/include/Microsoft/Xna/Framework/Net/NetworkSessionJoinError.hpp",
+     "note": "SessionFull is declared and never raised"
+    }
+   ],
+   "evidence": "<p>Read at 009d40f5; nothing was executed. Found by the C10 conservation reviewer (unit ch51) and re-verified by the orchestrator against <code>HandleClientHello</code>, <code>AddRemoteGamer</code> and the receive path's exception handling. XNA's behaviour is taken from the API it defines (<code>NetworkSessionJoinError::SessionFull</code>), not from a decompiled join path.</p>",
+   "tests_current": "<p>The capacity check in <code>AddRemoteGamer</code> is tested at the session level; no test connects an extra client to a full host and observes what the joiner sees.</p>",
+   "regression_test": "<p>Start a host with <code>maxGamers</code> 2, connect a third client and expect its join to fail with <code>SessionFull</code> (or the host to disconnect the peer) instead of a welcomed client that the host never rosters.</p>",
+   "blast_radius": "<p>SystemLink games with a fixed player limit whose lobby can be joined by more clients than the limit: the extra client believes it is in the session while the host ignores it. Sessions that never exceed their limit are unaffected.</p>",
+   "workaround": "<p>None in the library; a game can avoid it by checking the discovered session's open public slots before calling <code>Join</code>.</p>",
+   "related": {
+    "deep": [
+     [
+      "deep-dives/services/network-sessions.html#limits",
+      "Network sessions: limits"
+     ]
+    ],
+    "internals": [
+     [
+      "development/internals/modules/net.html",
+      "Networking internals"
+     ]
+    ]
+   },
+   "origin": "new finding at the independent adversarial audit (reported by the C10 conservation reviewer, unit ch51; re-verified by the orchestrator)"
+  },
+  {
+   "cand_ids": [],
+   "class": "bug",
+   "subsystem": "Networking & gamer services",
+   "status": "open",
+   "severity": "medium",
+   "confidence": "verified-by-reading",
+   "tests_present": true,
+   "reproduction": null,
+   "id": "NEW-AUDIT-25",
+   "title": "A NetworkSession Begin* callback that calls the matching End* frees the action and the closure that is executing, and Begin* returns the freed pointer",
+   "summary": "InvokeActiveActionCallback runs the AsyncCallback inline from Begin*; End* deletes the action, including the std::function that is executing, so captures read after End* and the IAsyncResult* that Begin* then returns point at freed memory.",
+   "public_contract": "Microsoft::Xna::Framework::Net::NetworkSession::BeginCreate/BeginFind/BeginJoin/BeginJoinInvited with a callback that calls the matching End*",
+   "expected": "<p>XNA's asynchronous pattern lets the <code>AsyncCallback</code> call the matching <code>End*</code> method to obtain the result, and the <code>IAsyncResult</code> that <code>Begin*</code> returned stays valid until the game drops it.</p>",
+   "actual": "<p>{{src:modules/net/src/Xna/NetworkSession.cpp|InvokeActiveActionCallback}} calls <code>action->Callback(*action)</code> from inside <code>Begin*</code>, and <code>EndCreate</code>, <code>EndFind</code>, <code>EndJoin</code> and <code>EndJoinInvited</code> start by deleting <code>activeAction_</code>. A callback that calls the matching <code>End*</code> therefore deletes the action and with it the <code>const std::function</code> member that is running the callback: captures read after <code>End*</code> returns live in freed storage. The function also returns the pointer it saved before invoking, so <code>Begin*</code> hands the caller an <code>IAsyncResult*</code> that is already freed, and a later <code>IsCompleted</code> or <code>End*</code> call on it is a use after free. The source comment treats the re-entrant case only as a stale-null problem and fixes that by saving the pointer first.</p>",
+   "sources": [
+    {
+     "path": "modules/net/src/Xna/NetworkSession.cpp",
+     "note": "InvokeActiveActionCallback and the delete activeAction_ at the top of EndCreate, EndFind, EndJoin and EndJoinInvited"
+    }
+   ],
+   "evidence": "<p>Read at 009d40f5; nothing was executed, so the hazard is derived from the code: the undefined behaviour needs a callback that touches its captures or the returned result after calling <code>End*</code>, which is the idiomatic shape of XNA's asynchronous samples. Found by the C10 conservation reviewer (unit ch51) and re-verified by the orchestrator against <code>InvokeActiveActionCallback</code> and <code>EndFind</code>. It is distinct from CNA-GAP-068 (the Begin/End pairs are synchronous by design).</p>",
+   "tests_current": "<p><code>NetworkSessionTests.BeginCreateInvokesCallbackExactlyOnceWithCorrectIdentity</code> pins the inline callback; no test calls <code>End*</code> from inside the callback.</p>",
+   "regression_test": "<p>Call <code>BeginFind</code> with a callback that calls <code>EndFind</code> and then reads a captured variable, under AddressSanitizer, and check the pointer returned by <code>Begin*</code>; the fix is to defer the deletion until the callback has returned.</p>",
+   "blast_radius": "<p>Games that follow XNA's asynchronous pattern and call <code>End*</code> from the callback of a <code>NetworkSession</code> Begin/End pair (create, find, join): a read of a capture after <code>End*</code>, or any use of the returned result, is a use after free. Callbacks whose last action is <code>End*</code> and that keep no result are much less exposed.</p>",
+   "workaround": "<p>Do not call <code>End*</code> from inside the callback: keep the <code>IAsyncResult</code> that the callback receives and call <code>End*</code> from the game loop after <code>Begin*</code> has returned, and do not use the pointer that <code>Begin*</code> returns.</p>",
+   "related": {
+    "deep": [
+     [
+      "deep-dives/services/network-sessions.html#hardening",
+      "Network sessions: hardening"
+     ],
+     [
+      "deep-dives/services/network-sessions.html#async",
+      "Network sessions: one operation, one session, per process"
+     ]
+    ]
+   },
+   "origin": "new finding at the independent adversarial audit (reported by the C10 conservation reviewer, unit ch51; re-verified by the orchestrator)"
   }
  ]
 }
