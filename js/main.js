@@ -194,3 +194,14 @@ document.addEventListener('DOMContentLoaded', function() {
   addHeadingAnchors();
   addCodeLanguageLabels();
 });
+
+/* ---- Development area: start with the local navigation collapsed on narrow screens.
+   It is rendered open so it works without JavaScript. ---- */
+(function () {
+  try {
+    var d = document.querySelector('details.dev-nav');
+    if (d && window.matchMedia && window.matchMedia('(max-width: 900px)').matches) {
+      d.removeAttribute('open');
+    }
+  } catch (e) { /* ignore */ }
+})();
