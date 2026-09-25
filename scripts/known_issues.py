@@ -226,6 +226,95 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------------------------
+# independent adversarial audit: audit/data/bible/issues/patches-adversarial.json
+#   {"entries":      {"CNA-BUG-nnn": {"set": {"field": value}}},                      field corrections (HTML fields hold HTML)
+#    "folded":       {"CNA-BUG-226": "CNA-BUG-215"},                                  duplicate folded into its survivor (the survivor keeps its id)
+#    "retired":      {"CNA-BUG-nnn": {"classification": "NOT A BUG|PROVEN FIXED|OBSOLETE|INSUFFICIENT EVIDENCE|DUPLICATE", "evidence": "..."}},
+#    "reclassified": {"CNA-BUG-nnn": {"class": "functional-gap", "set": {...}}},       a new id in the target class is allocated after every existing one
+#    "added":        [{... a full entry with a temporary id NEW-AUDIT-nn and cand_ids of the restored candidates ...}]}
+# Every operation runs AFTER the stable ids were allocated, so no surviving entry is ever renumbered and a retired id is never reused.
+# ---------------------------------------------------------------------------------------------
+def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, int]) -> tuple[list[dict], list[dict], dict, int]:
+    path = ISS / "patches-adversarial.json"
+    if not path.exists():
+        return issues, disp, {}, 0
+    adv = load(path)
+    trail: dict = {"folded": {}, "retired": {}, "reclassified": {}, "added": {}}
+    by = {i["id"]: i for i in issues}
+
+    def need(iid: str, what: str) -> bool:
+        if iid not in by:
+            print(f"patches-adversarial.json: {what}: unknown entry {iid}")
+            return False
+        return True
+
+    for iid, spec in (adv.get("entries") or {}).items():
+        if not need(iid, "entries"):
+            return issues, disp, trail, 1
+        by[iid].update(spec.get("set", {}))
+    for src, dst in (adv.get("folded") or {}).items():
+        if not (need(src, "folded") and need(dst, "folded")):
+            return issues, disp, trail, 1
+        s_, d_ = by[src], by[dst]
+        d_["cand_ids"] = sorted(set(d_.get("cand_ids") or []) | set(s_.get("cand_ids") or []))
+        d_["origin"] = f"{d_.get('origin', '')}; folded with {src} by the adversarial audit"
+        have = {x["path"] for x in d_["sources"]}
+        d_["sources"] = d_["sources"] + [x for x in s_["sources"] if x["path"] not in have]
+        for d in disp:
+            if d.get("published_as") == src:
+                d["published_as"] = dst
+        trail["folded"][src] = dst
+        del by[src]
+    for iid, spec in (adv.get("retired") or {}).items():
+        if not need(iid, "retired"):
+            return issues, disp, trail, 1
+        if spec["classification"] not in CLASSIFICATIONS - PUBLISHED:
+            print(f"patches-adversarial.json: retired {iid}: classification {spec['classification']!r} is not a non-published one")
+            return issues, disp, trail, 1
+        for d in disp:
+            if d.get("published_as") == iid:
+                d["classification"] = spec["classification"]
+                d["evidence"] = "Retired by the independent adversarial audit: " + spec["evidence"]
+                d["adversarial_retired_entry"] = iid
+                d["published_as"] = None
+        trail["retired"][iid] = {"classification": spec["classification"], "evidence": spec["evidence"]}
+        del by[iid]
+    for iid, spec in sorted((adv.get("reclassified") or {}).items()):
+        if not need(iid, "reclassified"):
+            return issues, disp, trail, 1
+        e = by.pop(iid)
+        cls = spec["class"]
+        counters[cls] += 1
+        new = f"{CLASSES[cls]['prefix']}-{counters[cls]:03d}"
+        e.update(spec.get("set", {}))
+        e["class"], e["id"] = cls, new
+        e["origin"] = f"{e.get('origin', '')}; reclassified from {iid} by the adversarial audit"
+        if cls != "bug":
+            e["severity"] = "n/a"
+        for d in disp:
+            if d.get("published_as") == iid:
+                d["published_as"] = new
+        by[new] = e
+        trail["reclassified"][iid] = new
+    for k, e in enumerate(adv.get("added") or []):
+        e = dict(e)
+        cls = e["class"]
+        counters[cls] += 1
+        new = f"{CLASSES[cls]['prefix']}-{counters[cls]:03d}"
+        tmp = e["id"]
+        e["temp_id"], e["id"] = tmp, new
+        for cid in e.get("cand_ids") or []:
+            for d in disp:
+                if d["cand"] == cid:
+                    d["classification"] = "STILL EXISTS"
+                    d["published_as"] = new
+                    d["evidence"] = "Restored by the independent adversarial audit (earlier dismissal: " + d.get("evidence", "")[:200] + ")"
+        by[new] = e
+        trail["added"][tmp] = new
+    return list(by.values()), disp, {k: v for k, v in trail.items() if v}, 0
+
+
+# ---------------------------------------------------------------------------------------------
 # merge
 # ---------------------------------------------------------------------------------------------
 def cmd_merge(_: argparse.Namespace) -> int:
@@ -332,6 +421,9 @@ def cmd_merge(_: argparse.Namespace) -> int:
                     d["evidence"] = "Refuted by the independent QA review: " + refuted[d["published_as"]]
                     d["qa_refuted_entry"] = d["published_as"]
                     d["published_as"] = None
+    issues, disp, audit_trail, rc = apply_adversarial(issues, disp, counters)
+    if rc:
+        return rc
     ids = Counter(i["id"] for i in issues)
     bad = [k for k, n in ids.items() if n > 1]
     if bad:
@@ -339,7 +431,10 @@ def cmd_merge(_: argparse.Namespace) -> int:
         return 1
     issues.sort(key=lambda i: (list(CLASSES).index(i["class"]), i["id"]))
     SOURCE.write_text(json.dumps({"target": TARGET, "issues": issues}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-    DISPO.write_text(json.dumps({"target": TARGET, "dispositions": disp, "remapped_temp_ids": remap}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    out = {"target": TARGET, "dispositions": disp, "remapped_temp_ids": remap}
+    if audit_trail:
+        out["adversarial_audit"] = audit_trail
+    DISPO.write_text(json.dumps(out, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     print(f"merged {len(issues)} public issue(s) and {len(disp)} disposition(s); temp ids remapped: {remap}")
     return 0
 
@@ -448,6 +543,13 @@ def cmd_build(_: argparse.Namespace) -> int:
         for e in errors[:40]:
             print(" -", e)
         return 1
+    keep = {ROOT / it["detail"] for it in issues}
+    stale = [p for grp in CLASSES.values() for p in sorted((ROOT / "known-issues" / grp["group"]).glob("*.html"))
+             if p.name != "index.html" and p not in keep]
+    for p in stale:
+        p.unlink()
+    if stale:
+        print(f"removed {len(stale)} detail page(s) of entries that no longer exist")
     site_deep.cmd_hubs(argparse.Namespace())
     print(f"built {len(issues)} issue page(s), data/known-issues.json, and the hubs")
     return 0
