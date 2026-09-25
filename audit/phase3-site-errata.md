@@ -51,3 +51,5 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 44 | `docs/tutorials/111-cnj-pipeline.html#emitted` | clip `.cnj` files are written for skinned groups only | rigid clips are serialized too | WP13 | open |
 | 45 | `docs/effects.html#effectparameter` | string `SetValue` throws `InvalidCastException` | only for compiled-effect parameters (`EffectParameter.cpp`) | WP07 | open |
 | 46 | `docs/effects.html#stock-effects-at-a-glance` | the API is unchanged except shadow members | `BasicEffect` also gained XNA's parameter graph, technique name and `VertexColorEnabled` accessors | WP07 | open |
+| 47 | `docs/rendering-backends.html#texture-formats` | DIRECTX9 has a "native D3DFMT mapping" | DIRECTX9 has no `ClassifySurfaceFormatEXT`; public textures are Color-only (`Texture2D.cpp`, `ValidateTexture2DFormatEXT`) | WP10 | open |
+| 48 | `docs/tutorials/103-direct3d-windows.html#d3d12-split` | the routine suite reads render targets directly | at TARGET it runs forced-headless on an implicit back buffer, and 3 fixtures run through Proton | WP10 | open |

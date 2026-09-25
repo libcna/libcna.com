@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DIRECTX9: stock-effect bytecode, device lifecycle and oracle findings - CNA Deep Dives</title>
+  <meta name="description" content="How the XNA-fidelity renderer compiles Microsoft&#x27;s stock effects, enforces GraphicsProfile from D3DCAPS9, recovers lost devices, handles targets and why its sprite projection is what it is.">
+  <meta name="keywords" content="directx9, direct3d 9, stock effects, d3dcaps9, graphicsprofile, device lost, half-pixel offset, layerdepth, xna oracle, stretchrect">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/renderers/direct3d9-xna-fidelity.html">
+  <meta property="og:title" content="DIRECTX9: stock-effect bytecode, device lifecycle and oracle findings - CNA Deep Dives">
+  <meta property="og:description" content="How the XNA-fidelity renderer compiles Microsoft&#x27;s stock effects, enforces GraphicsProfile from D3DCAPS9, recovers lost devices, handles targets and why its sprite projection is what it is.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/renderers/direct3d9-xna-fidelity.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"DIRECTX9: stock-effect bytecode, device lifecycle and oracle findings","description":"How the XNA-fidelity renderer compiles Microsoft's stock effects, enforces GraphicsProfile from D3DCAPS9, recovers lost devices, handles targets and why its sprite projection is what it is.","url":"https://libcna.com/deep-dives/renderers/direct3d9-xna-fidelity.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine <span class="dev-nav-count">17</span></a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Renderers <span class="dev-nav-count">16</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="native-gpu-evidence-tiers.html" class="docs-nav-link">Modern GPU evidence tiers</a></li>
+        <li><a href="vulkan-presentation-and-readback.html" class="docs-nav-link">Vulkan presentation &amp; readback</a></li>
+        <li><a href="vulkan-deferred-state-and-descriptors.html" class="docs-nav-link">Vulkan state, queries &amp; descriptors</a></li>
+        <li><a href="sdl-gpu-pipeline-state-and-draw-order.html" class="docs-nav-link">SDL_GPU pipelines &amp; draw order</a></li>
+        <li><a href="sdl-gpu-resources-and-frame-recovery.html" class="docs-nav-link">SDL_GPU resources &amp; recovery</a></li>
+        <li><a href="webgpu-renderer-semantics.html" class="docs-nav-link">WebGPU semantics</a></li>
+        <li><a href="renderer-contract.html" class="docs-nav-link">The renderer contract</a></li>
+        <li><a href="presentation-and-backbuffer-readback.html" class="docs-nav-link">Presentation &amp; readback contract</a></li>
+        <li><a href="render-targets-clears-and-viewports.html" class="docs-nav-link">Targets, clears &amp; viewports</a></li>
+        <li><a href="easygl-gl-profiles.html" class="docs-nav-link">EasyGL profiles &amp; GL identities</a></li>
+        <li><a href="easygl-state-and-resource-semantics.html" class="docs-nav-link">EasyGL state &amp; resource semantics</a></li>
+        <li><a href="direct3d-evidence-and-wine.html" class="docs-nav-link">Direct3D evidence &amp; Wine</a></li>
+        <li><a href="direct3d9-xna-fidelity.html" class="docs-nav-link active" aria-current="page">DIRECTX9 fidelity</a></li>
+        <li><a href="direct3d-presentation-and-state.html" class="docs-nav-link">Direct3D presentation &amp; state</a></li>
+        <li><a href="direct3d11-and-12-resources.html" class="docs-nav-link">DIRECTX11/12 resources</a></li>
+        <li><a href="direct3d-shadereffect-contract.html" class="docs-nav-link">Direct3D ShaderEffect</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">4</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Renderers</a></li>
+        <li aria-current="page">DIRECTX9 fidelity</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>DIRECTX9: stock-effect bytecode, device lifecycle and oracle findings</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#design">Plain Direct3D 9, its own tables, a compiler-free stock pipeline</a></li>
+          <li><a href="#stock-effects">Microsoft's stock-effect sources, compiled by CNA</a></li>
+          <li><a href="#effect-reach">Which stock-effect variants a draw can reach</a></li>
+          <li><a href="#profile">GraphicsProfile from a real capability structure</a></li>
+          <li><a href="#device-lifecycle">The lost-device lifecycle</a></li>
+          <li><a href="#checked-operations">Checked native operations</a></li>
+          <li><a href="#render-targets">Render targets, textures and formats</a></li>
+          <li><a href="#capabilities">What the capability answers do and do not say</a></li>
+          <li><a href="#sprite-projection">SpriteBatch projection: the half-pixel offset and the zFarPlane sign</a></li>
+          <li><a href="#oracle">The oracle, as far as this renderer is concerned</a></li>
+          <li><a href="#reading">Read in this order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Renderers &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page); oracle-compared (recorded by CNA, not re-run here). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Oracle and bytecode-comparison results are CNA's own dated records (Wine + DXVK, synthesized D3DCAPS9) and were not re-run; nothing was built or executed for this page. Real Windows hardware remains untested by CNA.</p></div>
+
+<p class="lede"><code>DIRECTX9</code> is the renderer whose stated goal is pixel-for-pixel agreement with the real XNA 4.0 runtime rather than feature parity, and it is the only renderer recorded as matching all 39 scenes of CNA's XNA oracle corpus at tolerance 0 (under Wine and DXVK). This page explains the choices behind that: where its stock-effect bytecode comes from and how close it is to Microsoft's, how it enforces <code>GraphicsProfile</code> from a real capability structure, how the lost-device lifecycle and render targets work, and the two sprite-projection details the oracle forced. It also states where the renderer's reach stops. It is for porters who need XNA-exact output and for maintainers who change this family.</p>
+
+<h2 id="design">Plain Direct3D 9, its own tables, a compiler-free stock pipeline</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/DirectX9Renderer.cpp"><code>DirectX9Renderer.cpp</code></a> creates its device with plain <code>Direct3DCreate9</code>, deliberately not <code>Direct3DCreate9Ex</code>, and asks <code>GetDeviceCaps</code> before <code>CreateDevice</code> whether the adapter has hardware transform and lighting, choosing hardware or software vertex processing from the answer rather than assuming it. <code>CreateDevice</code> also creates the implicit swap chain, so there is no separate device and swap-chain lifetime as on the DXGI renderers. Three structural decisions follow from the fidelity goal:</p>
+<ul>
+<li><strong>No shared Direct3D helpers.</strong> <code>D3DFORMAT</code> is a different enum space from <code>DXGI_FORMAT</code> and Direct3D 9 has no state objects, so this family does not use <code>D3DCommon</code>; render state is a sequence of <code>SetRenderState</code> and <code>SetSamplerState</code> calls with nothing to cache.</li>
+<li><strong>The stock pipeline links only <code>d3d9</code>.</strong> The stock shaders are precompiled bytecode embedded in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/shaders/d3d9_shaders.hpp"><code>d3d9_shaders.hpp</code></a>. <code>d3dcompiler</code> is linked only into the isolated <code>cna_renderer_d3d9_effect</code> static library (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/CMakeLists.txt"><code>CMakeLists.txt</code></a>), which holds the runtime <code>ShaderEffect</code> compiler and the constant-table (CTAB) parser it needs.</li>
+<li><strong>Presentation parameters come from the game.</strong> The back-buffer format, depth format, full-screen flag and swap interval arrive through <code>GraphicsRendererCreateArgs</code> and later through <code>UpdatePresentationFormatEXT</code> (see <a href="direct3d-presentation-and-state.html">Direct3D presentation and state</a>), instead of the fixed formats the DXGI renderers use.</li>
+</ul>
+<p>Compiled XNA effects (<code>.fxb</code> Effect Framework binaries) are a separate, opt-in path: <code>CNA_DIRECTX9_COMPILED_EFFECTS=ON</code> builds <code>D3D9CompiledEffect.cpp</code> and makes <code>SupportsCompiledEffects()</code> true; a default configure reports <code>CompiledEffects</code> false. See <a href="../../docs/tutorials/128-compiled-xna-effects.html">Tutorial 128</a>.</p>
+
+<h2 id="stock-effects">Microsoft's stock-effect sources, compiled by CNA</h2>
+<p>The ten files in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/shaders/xna"><code>src/shaders/xna</code></a> are Microsoft's XNA 4.0 stock-effect HLSL (Ms-PL), copied byte for byte from the FNA reference tree; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/verify-d3d9-stock-effects-vendored.sh"><code>verify-d3d9-stock-effects-vendored.sh</code></a> diffs them against that tree and fails on any change. The six compilable <code>.fx</code> files (BasicEffect, AlphaTestEffect, DualTextureEffect, EnvironmentMapEffect, SkinnedEffect, SpriteEffect) declare 66 entry points, and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/shaders/compile_shaders_sm2.py"><code>compile_shaders_sm2.py</code></a> parses them from the files' own <code>compile vs_2_0 …</code> / <code>compile ps_2_0 …</code> statements instead of a hand-typed list, because an earlier hand-typed table had invented wrong names.</p>
+<p>Compilation is an offline step run by hand. It cross-builds a small <code>D3DCompile()</code> tool, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/shaders/fxc_tool.cpp"><code>fxc_tool.cpp</code></a>, and runs it under Wine in a prefix that holds the genuine Microsoft <code>d3dcompiler_47.dll</code> (Wine's built-in replacement emits different bytecode), with exactly one flag, <code>D3DCOMPILE_OPTIMIZATION_LEVEL3</code>. It deliberately bypasses the DXVK wrapper, because compiling never opens a device and the wrapper's DXVK gate would reject the run for an unrelated reason.</p>
+<h3 id="bytecode-parity">How close the bytecode is to Microsoft's</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/shaders/compare_against_fxb.py"><code>compare_against_fxb.py</code></a> compares CNA's compiled shaders with the bytecode Microsoft shipped inside FNA's copies of the original <code>.fxb</code> files. It first strips D3D9 comment tokens, because the constant table and the compiler's creator string live in comment blocks and legitimately differ between compiler versions and source paths; a raw byte comparison would report zero matches even for identical instruction streams. The run recorded on 2026-07-14 matched <strong>61 of 66</strong> instruction streams exactly. The five that differ are all per-pixel-lighting vertex shaders (<code>VSBasicPixelLighting</code>, <code>VSBasicPixelLightingTx</code>, <code>VSSkinnedPixelLightingOneBone</code>, <code>…TwoBones</code>, <code>…FourBones</code>), and the cause is the compiler version (Microsoft used the XNA-era <code>D3DCompiler_43</code>, CNA uses <code>d3dcompiler_47</code>), not a flag: six flag combinations were tried and none matched.</p>
+<p>The project owner's recorded decision is that CNA compiles its own shaders from Microsoft's sources and the <code>.fxb</code> bytes are a verification oracle only, never shipped. That turned the five differing shaders into an obligation to prove equivalence on real XNA output. CNA's plan records four of them proven on 2026-07-16 at 0/65,536 differing pixels (<code>lit_textured_quad_pixellighting</code> and the one-, two- and four-bone <code>skinned_pixellighting</code> scenes), each first shown to be discriminating by a vertex-lit twin that differs from real XNA by 23,409 pixels. The fifth, untextured <code>VSBasicPixelLighting</code>, is recorded as permanently blocked: it takes a 12-byte position-only vertex, a CNA vertex layout that does not exist (see the next section). These are CNA's dated records; nothing was re-run for this page.</p>
+
+<h2 id="effect-reach">Which stock-effect variants a draw can reach</h2>
+<p>XNA selects a stock-effect variant with an integer <code>ShaderIndex</code>. <code>DIRECTX9</code> runs Microsoft's real variants, so a variant is drawable only if a CNA vertex layout supplies the input structure that variant's vertex shader declares. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/D3D9EffectDraw.cpp"><code>D3D9EffectDraw.cpp</code></a> checks the combination before drawing <code>BasicEffect</code>:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Vertex stride</th><th scope="col">Layout</th><th scope="col">Accepted BasicEffect combination</th></tr></thead>
+<tbody>
+<tr><td>16</td><td>position + colour</td><td>vertex colour, no texture, no lighting</td></tr>
+<tr><td>20</td><td>position + texture coordinate</td><td>texture, no vertex colour, no lighting</td></tr>
+<tr><td>24</td><td>position + colour + texture coordinate</td><td>vertex colour and texture, no lighting</td></tr>
+<tr><td>32</td><td>position + normal + texture coordinate</td><td>lighting and texture (vertex-lit, one-light and per-pixel), no vertex colour</td></tr>
+</tbody>
+</table></div>
+<p>That is 12 of <code>BasicEffect</code>'s 32 variants. Every other combination throws a named <code>no matching CNA vertex layout</code> error rather than drawing with the wrong stride: the position-only (12-byte), position + normal (24 bytes, which collides with the colour + texture layout), position + normal + colour (28) and position + normal + texture + colour (36) inputs have no declaration. <code>AlphaTestEffect</code> (all 8 variants), <code>EnvironmentMapEffect</code> (all 16) and <code>SkinnedEffect</code> (all 18) are fully reachable once <code>PreferPerPixelLighting</code> and <code>specularEnabled</code> reach the draw parameters, which they have since 2026-07-16. A skinned vertex that also carries a colour (stride 56) has no XNA equivalent, because Microsoft's <code>SkinnedEffect</code> bytecode has no colour input; it is routed to CNA's own <code>SkinnedVertexColor3D</code> shader. <code>PbrEffect</code> and <code>SkinnedPbrEffect</code> use CNA's own HLSL in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/shaders/cna"><code>src/shaders/cna</code></a>.</p>
+
+<h2 id="profile">GraphicsProfile from a real capability structure</h2>
+<p><code>DIRECTX9</code> is the one renderer with a native capability structure to consult, so it is the one where <code>GraphicsProfile</code> reaches a hardware query (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/D3D9ProfileCapabilities.cpp"><code>D3D9ProfileCapabilities.cpp</code></a>):</p>
+<ul>
+<li><strong>Construction floor.</strong> A device created under <code>HiDef</code> throws <code>NoSuitableGraphicsDeviceException</code> naming the reported versions when <code>D3DCAPS9</code> reports less than <code>vs_3_0</code>/<code>ps_3_0</code>; <code>Reach</code> has no floor worth checking because every Direct3D 9 HAL device exceeds it.</li>
+<li><strong>Adapter query.</strong> The descriptor's <code>IsProfileSupported(HiDef)</code> calls <code>MeetsHiDefFloorEXT</code> on the adapter caps, without creating a device: shader model 3, texture size at least 4096, <code>MaxVolumeExtent</code> at least 256, <code>NumSimultaneousRTs</code> at least 4, and no power-of-two texture restriction. Every other renderer answers true.</li>
+<li><strong>Profile ceilings.</strong> Independently of the hardware, a <code>Reach</code> game is held to XNA's profile limits: texture edge 2048 (<code>HiDef</code> 4096), cube edge 512 (4096), volume textures none (256), simultaneous render targets 1 (4).</li>
+</ul>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p>On the development loop <code>D3DCAPS9</code> is DXVK's synthesized capability set. <code>IsProfileSupported(HiDef)</code> returning true there proves the comparison logic, not that an XNA-era HiDef GPU is present; the source says so, and the real-hardware plan item remains open.</p></div>
+<p>The profile checks exposed a defect shared by every renderer, which is why it is recorded here. <code>Game</code>'s <code>GraphicsDevice</code> member was default-constructed with <code>Reach</code> before <code>GraphicsDeviceManager</code> existed, so <code>graphics.GraphicsProfile = HiDef; graphics.ApplyChanges();</code> had no path to the live device. Current code closes it in <code>GraphicsDeviceManager::applyToExistingRenderer</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/GraphicsDeviceManager.cpp"><code>GraphicsDeviceManager.cpp</code></a>), which calls <code>SetGraphicsProfileEXT</code> on the existing device before <code>Reset</code>; the ordering is traced on <a href="../../development/internals/runtime/startup.html#initialize">startup internals</a> and the user view is <a href="../../docs/tutorials/152-graphics-profiles.html">Tutorial 152</a>.</p>
+
+<h2 id="device-lifecycle">The lost-device lifecycle</h2>
+<p>Direct3D 9 is the one API where XNA's <code>DeviceLost</code>, <code>DeviceResetting</code> and <code>DeviceReset</code> events map onto a native mechanism, and the renderer implements it literally:</p>
+<ul>
+<li>When <code>Present()</code> returns <code>D3DERR_DEVICELOST</code>, the renderer marks itself lost and raises <code>Lost</code>. While lost, <code>Present()</code> only polls <code>TestCooperativeLevel()</code>, and any clear, draw or readback throws <code>DeviceLostException</code>.</li>
+<li>When the poll reports <code>D3DERR_DEVICENOTRESET</code>, <code>PerformResetRecovery</code> raises <code>Resetting</code>, releases every registered <code>D3DPOOL_DEFAULT</code> resource (dynamic vertex and index buffers, render targets), releases its own cached depth-stencil surface, calls <code>IDirect3DDevice9::Reset</code>, restores the viewport and default surfaces, and raises <code>Reset</code>. Managed-pool resources survive untouched; default-pool ones recreate lazily on next use, as XNA's dynamic buffers expect the game to refill them.</li>
+<li>Releasing the cached <code>GetDepthStencilSurface()</code> pointer matters: an application-held reference to a losable surface makes <code>Reset</code> fail. The app-initiated resize path had the same bug until it adopted the same release loop.</li>
+<li>A failed <code>Reset</code> is not fatal: recovery stays in the lost state and retries at the next <code>Present()</code>, and a failed resize keeps the previous size and retries every frame.</li>
+</ul>
+<p>DXVK rarely loses a device, so the lifecycle is exercised through the framework-reserved debug keys every renderer receives: in <code>Game::PollEvents</code>, after input processing, a non-repeated F9 calls <code>DebugSimulateContextLoss()</code> and F10 calls <code>DebugRestoreContext()</code> (<a href="../framework/game-class-and-lifecycle.html#debug-keys">debug keys</a>). On <code>DIRECTX9</code> the restore goes through the real <code>Reset()</code>. <code>DirectX9_Smoke</code> asserts exact event counts, that <code>Clear()</code> throws while lost, and exact pixels after recovery.</p>
+<p>Two neighbouring extension points are not implemented and should not be confused with this path: <code>SetStringMarkerEXT()</code> throws, and <code>SetContextRecoveryEnabled()</code> throws as well, but only after <code>GraphicsDevice</code> has already stored the new value, which changes the shared <code>Texture2D</code> CPU-shadow policy. A caller that catches that exception is left with the policy changed.</p>
+
+<h2 id="checked-operations">Checked native operations</h2>
+<p>Render-state, viewport, scissor, target and depth-surface calls go through narrow checked wrappers (REMED-GFX-092). A failing <code>HRESULT</code> is reported once, with the operation name and a decoded code; device-loss codes enter the lost-device lifecycle instead of becoming errors; and the affected state category is marked unsafe, so the next clear or draw throws until that complete state is applied again. A render-target transition snapshots every colour slot, the depth surface and the viewport first and rolls back on failure, and only when rollback cannot be proven does it block rendering. The wrappers also give the smoke tests per-instance, one-shot fault injection (<code>InjectNextNativeFailureEXT</code>) without mocking <code>IDirect3DDevice9</code>.</p>
+
+<h2 id="render-targets">Render targets, textures and formats</h2>
+<ul>
+<li><strong>Storage and readback.</strong> A <code>RenderTarget2D</code> is a <code>D3DUSAGE_RENDERTARGET</code> texture in <code>D3DPOOL_DEFAULT</code> with exactly one level: <code>mipMap</code> is accepted and ignored, and <code>GetData</code> for a level above 0 throws <code>NotSupportedException</code>. Default-pool memory cannot be locked, so readback copies with <code>GetRenderTargetData()</code> into a system-memory surface and locks that; back-buffer readback does the same and handles the two byte orders the back buffer can have.</li>
+<li><strong>MSAA.</strong> The sample count is clamped with <code>IDirect3D9::CheckDeviceMultiSampleType()</code>, all or nothing. A multisampled target draws into a separate multisample surface and is resolved into its sampleable texture with <code>StretchRect()</code> when the binding changes; the smoke test clears a 4x target to (200,210,220,255), unbinds it and requires the resolved texture to read exactly that. Cube render targets ignore the requested sample count.</li>
+<li><strong>MRT.</strong> <code>SetRenderTargets</code> binds up to <code>D3DCAPS9::NumSimultaneousRTs</code> surfaces and throws, naming the limit, when asked for more instead of silently binding fewer. A cube face inside a multi-target set is refused. The smoke test proves multi-attachment binding and clear semantics; it does not prove a shader with several colour outputs, so it is not a G-buffer draw claim.</li>
+<li><strong>Volume and cube textures.</strong> <code>CreateTexture3D</code> returns null (the renderer-wide "unsupported" answer) when <code>MaxVolumeExtent</code> is 0, and <code>CreateTextureCube</code> when the device lacks <code>D3DPTEXTURECAPS_CUBEMAP</code>. The smoke test writes 32 distinct bytes into the off-origin 2&times;2&times;2 box at (1,1,1) of a 4&times;4&times;4 volume and requires an exact readback of that box: it proves <code>LockBox()</code> row- and slice-pitch copying in both directions, not a rendering path or mip generation.</li>
+<li><strong>Formats.</strong> The family has an internal <code>D3DFORMAT</code> mapping but no <code>ClassifySurfaceFormatEXT</code> override, so the public texture constructors apply the framework rule: <code>SurfaceFormat::Color</code> only, anything else throws. The back buffer honours the requested format, with one substitution: <code>Color</code> maps to <code>D3DFMT_A8B8G8R8</code>, which Direct3D 9 does not allow for a swap chain, so the back buffer is created as <code>D3DFMT_A8R8G8B8</code>.</li>
+</ul>
+
+<h2 id="capabilities">What the capability answers do and do not say</h2>
+<p><code>DIRECTX9</code> is the only renderer without a <code>SupportsCapability()</code> override, so its answers are the permissive interface defaults (<a href="../../docs/rendering-backends.html#capability-reporting">capability reporting</a>). Two consequences are easy to miss. <code>MultiSampleAntiAliasing</code> reports true even when <code>CheckDeviceMultiSampleType()</code> rejects every count above one, because the probe lives in the target-creation path, not in the public query. And <code>AnisotropicFiltering</code> is answered without consulting <code>D3DCAPS9::MaxAnisotropy</code>: <code>ApplySamplerState</code> writes the requested <code>MaxAnisotropy</code> into <code>D3DSAMP_MAXANISOTROPY</code> unclamped (only the compiled-effect path clamps to the caps). <code>OcclusionQuery</code> is honest in practice: the query is created only when <code>CreateQuery(D3DQUERYTYPE_OCCLUSION, nullptr)</code> succeeds. Probe the operation, or read the <a href="../../docs/tutorials/133-renderer-capability-profile.html">capability profile</a>, before relying on these answers.</p>
+
+<h2 id="sprite-projection">SpriteBatch projection: the half-pixel offset and the zFarPlane sign</h2>
+<p>Real XNA's Direct3D 9 <code>SpriteBatch</code> bakes a half-texel correction into its orthographic projection, because Direct3D 9 puts texel centres at integer coordinates. <code>D3D9SpriteBatchRenderer::BuildMatrixTransformEXT</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/D3D9SpriteBatch.cpp"><code>D3D9SpriteBatch.cpp</code></a>) reproduces it: it builds <code>CreateOrthographicOffCenter(0, W, H, 0, 0, -1)</code> and then shifts the translation terms by half a pixel, <code>M41 += -0.5 * M11</code> and <code>M42 += -0.5 * M22</code>. FNA's modern-API <code>SpriteBatch</code> has no such term, which is why the formula was measured against real XNA rather than copied. The oracle recorded one trap while mutation-testing it: a 1&times;1 texture stretched over a rectangle stays pixel-exact with the offset removed, because a single texel has nothing to shift between, while the four-colour rotated and flipped scenes diverge by 4,800 pixels. Only a multi-texel scene with sharp content boundaries observes the offset.</p>
+<p>The last argument, <code>zFarPlane = -1</code>, is the second finding. The original code passed <code>zFarPlane = 1</code>, which makes the projection's Z row <code>M33 = 1/(zNear - zFar) = -1</code>, <code>M43 = 0</code>, so a sprite's depth became <code>Z' = -layerDepth</code>. Direct3D 9's clip-space Z range is [0, 1], not OpenGL's [-1, 1], so every sprite with a <code>layerDepth</code> above 0 fell outside the clip volume and was removed by the fixed-function clip test with no error, whatever the depth-stencil state. Every earlier scene drew at the default <code>layerDepth</code> 0 and could not see it; the sort-mode scenes, which overlap two translucent sprites at depths 0 and 1, rendered only the first one. With <code>zFarPlane = -1</code> the Z row is the identity (<code>M33 = 1</code>), XNA's documented [0, 1] range (0 front, 1 back) lands inside the clip volume, and the X/Y half-pixel terms are unaffected. Reverting the fix turns the sort-mode test red, which is the mutation check the oracle README records.</p>
+
+<h2 id="oracle">The oracle, as far as this renderer is concerned</h2>
+<p>CTest <code>D3D9_XNA_Diff</code> runs <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/run-oracle-corpus-diff.sh"><code>run-oracle-corpus-diff.sh</code></a> over every scene with <code>cna_oracle_render</code> and diffs each image against the committed real-XNA reference at tolerance 0; it needs only the Direct3D 9 prefix, not the XNA one. A scene is a small declarative text file that both the XNA program and CNA parse; the simplest, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/xna-oracle/scenes/colored3d.scene"><code>colored3d.scene</code></a>, is eleven key/value lines after its header comment:</p>
+<pre><code class="language-bash">width=256
+height=256
+profile=HiDef
+clearcolor=100,149,237,255
+vertexcolor=true
+lighting=false
+primitive=TriangleList
+vertex=-0.6,-0.6,0,255,0,0,255
+vertex=0.0,0.7,0,0,255,0,255
+vertex=0.6,-0.6,0,0,0,255,255</code></pre>
+<p>With vertex colour on and lighting off, <code>BasicEffect</code> draws one red, green and blue cornered triangle under identity transforms over <code>Color.CornflowerBlue</code> (100,149,237,255). Matching corners establish vertex-colour plumbing; matching interior pixels also exercise Gouraud interpolation. The same format, with a few more keys, drives the fog, alpha-test, skinning and sprite scenes. Method, provenance, denominators and the exact exit conditions are on <a href="../../development/takeover/xna-oracle.html">Using the XNA oracle as evidence</a>.</p>
+<p>What the corpus does not cover matters as much. It has cull-mode scenes but no viewport or scissor scene, and the smoke test's resize check proves only a full-size viewport after reset, so CNA's plan calling Direct3D 9 viewport and scissor "oracle-proven" overstates it: the supportable claim is native implementation plus broad draw coverage. <code>Texture3D</code> has no scene. <code>SpriteSortMode.Immediate</code> differs from <code>Deferred</code> only in when work is submitted, which a raster diff cannot observe, and <code>SpriteSortMode.Texture</code> sorts by an implementation-defined identity hash, so no deterministic expected image can exist. Every result also inherits the host: one GPU, DXVK, and synthesized <code>D3DCAPS9</code>.</p>
+
+<h2 id="reading">Read in this order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/include/CNA/Internal/Renderers/DirectX9/DirectX9Renderer.hpp"><code>DirectX9Renderer.hpp</code></a>: the class comment, the profile hooks and the checked-operation list (some method comments predate later work; trust the <code>.cpp</code>).</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/DirectX9Renderer.cpp"><code>DirectX9Renderer.cpp</code></a>: device creation, presentation parameters, reset recovery, clears, targets and state.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/D3D9EffectDraw.cpp"><code>D3D9EffectDraw.cpp</code></a>: the stock-effect dispatch and its reachability table.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/shaders/xna/README.md"><code>the vendored-shader README</code></a>, then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/src/shaders/compare_against_fxb.py"><code>compare_against_fxb.py</code></a>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx9/examples/directx9_smoke_test.cpp"><code>directx9_smoke_test.cpp</code></a>: what each lettered check proves.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/rendering-backends.html#windows-directx">Graphics renderers: the Windows set</a> &middot; <a href="../../docs/tutorials/103-direct3d-windows.html#d3d9">Tutorial 103: when pixel-exactness is the goal</a> &middot; <a href="../../docs/verification.html#oracle">Verification: the XNA oracle corpus</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/graphics/backends.html#map-uncovered">Graphics backends: families without a tour</a> &middot; <a href="../../development/internals/runtime/startup.html#initialize">Startup: profile propagation</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/takeover/xna-oracle.html">Using the XNA oracle as evidence</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html#gpu">Test architecture: GPU tests</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="direct3d-evidence-and-wine.html">Direct3D evidence and Wine</a> &middot; <a href="direct3d-presentation-and-state.html">Direct3D presentation and state</a> &middot; <a href="direct3d-shadereffect-contract.html">Direct3D ShaderEffect</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="direct3d-evidence-and-wine.html" rel="prev"><span>Previous</span>Direct3D evidence: MinGW cross-builds, Wine translators and native Windows</a><a class="dev-pager-next" href="direct3d-presentation-and-state.html" rel="next"><span>Next</span>Direct3D presentation, swap interval, clears, viewport and scissor</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

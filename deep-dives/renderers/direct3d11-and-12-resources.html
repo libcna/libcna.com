@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DIRECTX11 and DIRECTX12 internals: lifetimes, frames in flight, descriptors and target finalisation - CNA Deep Dives</title>
+  <meta name="description" content="Device creation, lifetime groups and recovery, Direct3D 12 frame slots and growable descriptor heaps, HeadlessEXT, readback, MRT and cube finalisation and render-target usage on the DXGI renderers.">
+  <meta name="keywords" content="directx11, directx12, descriptor heap, frames in flight, fence, headlessext, device removed, mrt, rendertargetcube, generatemips, resolvesubresource, d3dcommon">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/renderers/direct3d11-and-12-resources.html">
+  <meta property="og:title" content="DIRECTX11 and DIRECTX12 internals: lifetimes, frames in flight, descriptors and target finalisation - CNA Deep Dives">
+  <meta property="og:description" content="Device creation, lifetime groups and recovery, Direct3D 12 frame slots and growable descriptor heaps, HeadlessEXT, readback, MRT and cube finalisation and render-target usage on the DXGI renderers.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/renderers/direct3d11-and-12-resources.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"DIRECTX11 and DIRECTX12 internals: lifetimes, frames in flight, descriptors and target finalisation","description":"Device creation, lifetime groups and recovery, Direct3D 12 frame slots and growable descriptor heaps, HeadlessEXT, readback, MRT and cube finalisation and render-target usage on the DXGI renderers.","url":"https://libcna.com/deep-dives/renderers/direct3d11-and-12-resources.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine <span class="dev-nav-count">17</span></a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Renderers <span class="dev-nav-count">16</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="native-gpu-evidence-tiers.html" class="docs-nav-link">Modern GPU evidence tiers</a></li>
+        <li><a href="vulkan-presentation-and-readback.html" class="docs-nav-link">Vulkan presentation &amp; readback</a></li>
+        <li><a href="vulkan-deferred-state-and-descriptors.html" class="docs-nav-link">Vulkan state, queries &amp; descriptors</a></li>
+        <li><a href="sdl-gpu-pipeline-state-and-draw-order.html" class="docs-nav-link">SDL_GPU pipelines &amp; draw order</a></li>
+        <li><a href="sdl-gpu-resources-and-frame-recovery.html" class="docs-nav-link">SDL_GPU resources &amp; recovery</a></li>
+        <li><a href="webgpu-renderer-semantics.html" class="docs-nav-link">WebGPU semantics</a></li>
+        <li><a href="renderer-contract.html" class="docs-nav-link">The renderer contract</a></li>
+        <li><a href="presentation-and-backbuffer-readback.html" class="docs-nav-link">Presentation &amp; readback contract</a></li>
+        <li><a href="render-targets-clears-and-viewports.html" class="docs-nav-link">Targets, clears &amp; viewports</a></li>
+        <li><a href="easygl-gl-profiles.html" class="docs-nav-link">EasyGL profiles &amp; GL identities</a></li>
+        <li><a href="easygl-state-and-resource-semantics.html" class="docs-nav-link">EasyGL state &amp; resource semantics</a></li>
+        <li><a href="direct3d-evidence-and-wine.html" class="docs-nav-link">Direct3D evidence &amp; Wine</a></li>
+        <li><a href="direct3d9-xna-fidelity.html" class="docs-nav-link">DIRECTX9 fidelity</a></li>
+        <li><a href="direct3d-presentation-and-state.html" class="docs-nav-link">Direct3D presentation &amp; state</a></li>
+        <li><a href="direct3d11-and-12-resources.html" class="docs-nav-link active" aria-current="page">DIRECTX11/12 resources</a></li>
+        <li><a href="direct3d-shadereffect-contract.html" class="docs-nav-link">Direct3D ShaderEffect</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">4</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Renderers</a></li>
+        <li aria-current="page">DIRECTX11/12 resources</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>DIRECTX11 and DIRECTX12 internals: lifetimes, frames in flight, descriptors and target finalisation</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#shared-foundation">What the two renderers share</a></li>
+          <li><a href="#d3d11-device">DIRECTX11 device creation and the three lifetime groups</a></li>
+          <li><a href="#device-recovery">Device recovery: real code, simulated trigger</a></li>
+          <li><a href="#frames-in-flight">DIRECTX12: two frames in flight</a></li>
+          <li><a href="#descriptor-heaps">DIRECTX12 descriptor heaps: they grow and recycle</a></li>
+          <li><a href="#headless">HeadlessEXT: a windowless DIRECTX12 device</a></li>
+          <li><a href="#readback">Back-buffer readback</a></li>
+          <li><a href="#mrt-finalization">Finalising MRT sets</a></li>
+          <li><a href="#cube-targets">Cube targets: MSAA, mip chains and the public finalisation edge</a></li>
+          <li><a href="#usage">Render-target usage on persistent resources</a></li>
+          <li><a href="#case-study">Worked case: four defects that only the public device route could find</a></li>
+          <li><a href="#corrections">Statements that no longer hold</a></li>
+          <li><a href="#reading">Read in this order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Renderers &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Read from the renderer sources and fixture registrations at 009d40f5; nothing was executed. A genuine DXGI device removal is not triggered by any CNA test; recovery is exercised through the deterministic simulation path.</p></div>
+
+<p class="lede"><code>DIRECTX11</code> and <code>DIRECTX12</code> share shaders, format and state tables through <code>D3DCommon</code>, but not resource algorithms: Direct3D 11 lets the driver own command lists and transitions, Direct3D 12 makes CNA own them. This page describes the resource side of both renderers at this snapshot: device creation and the three lifetime groups, device recovery, Direct3D 12 frames in flight, the growable and fence-safe descriptor heaps, the windowless <code>HeadlessEXT</code> device, back-buffer readback, how MRT sets and cube targets are finalised, and how render-target usage is honoured. It corrects several statements that earlier descriptions of these renderers made. It is for maintainers of either renderer and for anyone debugging lifetime, stale-texture or descriptor-exhaustion reports on Windows.</p>
+
+<h2 id="shared-foundation">What the two renderers share</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/common/d3d"><code>D3DCommon</code></a> holds one Shader Model 5 DXBC package of stock shaders (<code>hlsl_shaders.hpp</code>, compiled offline; see <a href="direct3d-evidence-and-wine.html#cross-build">how it is built</a>), the <code>SurfaceFormat</code>-to-<code>DXGI_FORMAT</code> and XNA-state mappings, constant-buffer layouts, vertex-declaration helpers, the presentation geometry and the program reflection used by <code>ShaderEffect</code>. Both renderers classify formats by asking the device: the 20 classic XNA formats with native BC1&ndash;BC3, and the CNA extension formats classified unsupported (<a href="../../docs/rendering-backends.html#texture-formats">texture formats</a>). <code>DIRECTX9</code> uses none of this; its <code>D3DFORMAT</code> world is separate.</p>
+<p>Shared tables do not mean shared algorithms. The sections below repeatedly show the same public behaviour reached by different native routes, which is why a Direct3D 11 pass is not evidence for Direct3D 12.</p>
+
+<h2 id="d3d11-device">DIRECTX11 device creation and the three lifetime groups</h2>
+<p><code>DirectX11Renderer::CreateDeviceResources</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx11/src/DirectX11Renderer.cpp"><code>DirectX11Renderer.cpp</code></a>) negotiates feature levels 11_1, 11_0, 10_1 and 10_0 on a hardware driver, retries without 11_1 when a driver rejects the explicit request with <code>E_INVALIDARG</code>, and then refuses anything below 11_0, because the SM5 stock shaders need it. It probes whether the device really keeps the bytes it is given for three packed formats (<code>B5G6R5</code>, <code>B5G5R5A1</code>, <code>B4G4R4A4</code>); a device that reports <code>B4G4R4A4</code> but does not store its texels makes <code>SurfaceFormat::Bgra4444</code> unavailable with a warning rather than silently corrupt. Window resize and device loss affect different resources, so the renderer keeps three lifetime groups:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Group</th><th scope="col">Objects</th><th scope="col">Recreated on</th></tr></thead>
+<tbody>
+<tr><td>Device</td><td><code>ID3D11Device</code>, immediate context, the <code>IDXGIFactory2</code> chain, the cached tearing-support flag</td><td>device recovery only</td></tr>
+<tr><td>Swap chain</td><td>the <code>IDXGISwapChain1</code> (flip-discard, two buffers, never multisampled)</td><td>device recovery only; a resize reuses the object with <code>ResizeBuffers()</code></td></tr>
+<tr><td>Window size</td><td>back-buffer view, the optional multisampled colour texture, the depth texture and view, the viewport</td><td>every resize (released before <code>ResizeBuffers()</code>, recreated after) and every recovery</td></tr>
+</tbody>
+</table></div>
+<p>This division avoids both recreating the device on resize and forgetting the swap chain during recovery. Back-buffer MSAA is a separate multisampled texture resolved into the swap-chain buffer before each <code>Present()</code> and before readback. Every Direct3D 11, DXGI and Direct3D 12 interface is held in <code>Microsoft::WRL::ComPtr</code>, including under MinGW. <code>DIRECTX11</code> asks only for a hardware driver and has no WARP path; <code>DIRECTX12</code> can be pointed at WARP with <code>CNA_D3D12_ADAPTER=warp</code>.</p>
+
+<h2 id="device-recovery">Device recovery: real code, simulated trigger</h2>
+<p>Both renderers route <code>DXGI_ERROR_DEVICE_REMOVED</code> and <code>DXGI_ERROR_DEVICE_RESET</code> from <code>Present()</code>, <code>ResizeBuffers()</code> and fence signalling into a lost state, log <code>GetDeviceRemovedReason()</code> and raise <code>DeviceLost</code>. Recovery then rebuilds everything: <code>RecreateDeviceEXT</code> releases every registered long-lived buffer, texture and render target, drops all caches and stock shaders, recreates device, swap chain and window-size resources (Direct3D 12 also its queue, heaps, allocators and fence, under the configuration captured at first creation) and asks each registered resource to recreate itself, reporting how many failed. Registration follows <code>SetContextRecoveryEnabled</code>. On Direct3D 12 the renderer's own lazily created fallback textures are dropped before the registry is copied: they used to be destroyed after the copy, so every recovery after a PBR draw called into freed memory (DX12-0017).</p>
+<p>A genuine device removal cannot be triggered on the development loop. The recovery path is exercised deterministically through <code>DebugSimulateContextLoss()</code> and <code>DebugRestoreContext()</code> (the F9/F10 keys and the shared <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/d3d_context_recovery_contract_test.cpp"><code>d3d_context_recovery_contract_test.cpp</code></a>, DX-244), which raise <code>Lost</code>, <code>Resetting</code> and <code>Reset</code> around a real recreation. Proving that a real removal reaches this path is the native-hardware item CNA keeps open.</p>
+
+<h2 id="frames-in-flight">DIRECTX12: two frames in flight</h2>
+<p>Direct3D 12 makes command-allocator lifetime explicit, so <code>DirectX12Renderer</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx12/include/CNA/Internal/Renderers/DirectX12/DirectX12Renderer.hpp"><code>DirectX12Renderer.hpp</code></a>) keeps <code>kFramesInFlight = 2</code> frame slots. Each slot owns a command allocator, a graphics command list, a 256-byte-aligned constant arena (grown in 1 MiB chunks), a persistently mapped upload ring and a list of retained COM objects; one shared fence and one remembered fence value per slot guard them. A windowed device uses the swap chain's current back-buffer index as the slot; a windowless one rotates the two slots at each <code>Present()</code>.</p>
+<ul>
+<li><strong>Recording.</strong> Clears, draws, resolves, SpriteBatch flushes and per-draw constants all record into the open frame list (DX-237). Every resource a command references is retained in the slot until that slot's fence completes, so destroying a texture right after drawing it is safe.</li>
+<li><strong>Submission.</strong> <code>SubmitFrameCommandsEXT()</code> closes, executes and signals the slot's reserved fence value without waiting.</li>
+<li><strong>Back-pressure.</strong> <code>GetFrameCommandListEXT()</code> waits only when the slot it is about to reuse still has an incomplete fence value from two frames ago, then resets that slot's allocator, list, arena and ring.</li>
+<li><strong>Synchronous islands.</strong> CPU readbacks, uploads that must complete, and native test helpers use a separate immediate list through <code>ExecuteCommandListAndWaitEXT()</code>, which first submits the open frame, then signals a fresh value and waits for exactly that value.</li>
+</ul>
+<p>The older primitive <code>SignalAndWaitForFrameEXT(frameIndex)</code> keeps the rule every frame-slot scheme depends on and is worth understanding for that reason. It signals a <em>new</em>, monotonically increasing value for the frame just submitted and waits only for the <em>previous</em> value recorded for the same slot. A call for slot 0 may therefore signal v2 while waiting for v0; waiting for v2 would erase the overlap two slots exist to permit, and asserting that v2 completed on return would be a race, because <code>ID3D12CommandQueue::Signal()</code> is asynchronous. <code>DirectX12_Smoke</code> calls it for slots 0, 1 and 0 and asserts only that the values increase and that reusing slot 0 waited for v0. The shared <code>Buffer_DynamicStress</code> fixture adds the steady-state claims for Direct3D 12: after warm-up the upload ring creates no new resources, a measured frame performs at most one actual GPU wait, and vertex and index updates receive distinct ring ranges. Earlier descriptions said that ordinary drawing waited for the GPU after every clear and draw; that is no longer the code.</p>
+
+<h2 id="descriptor-heaps">DIRECTX12 descriptor heaps: they grow and recycle</h2>
+<p>Render-target, depth-stencil, shader-resource and sampler descriptors come from four allocators in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx12/include/CNA/Internal/Renderers/DirectX12/D3D12DescriptorHeaps.hpp"><code>D3D12DescriptorHeaps.hpp</code></a>. The first implementation (DX-103) gave each heap a fixed capacity and a monotonic bump cursor with no free list: every slot ever handed out was consumed for the life of the process, so the 65th sampleable resource ever created threw even when only six were alive, and the capacity constants had been raised several times to keep a growing test suite passing. REMED-GFX-177 replaced that with reclamation and growth; the old capacities (64 RTV, 8 DSV, 64 CBV/SRV/UAV, 16 sampler) are now only the <em>starting</em> sizes.</p>
+<ul>
+<li><strong>RTV and DSV: a chain of blocks.</strong> Render-target and depth-stencil views are never bound as a heap; <code>OMSetRenderTargets</code> takes loose CPU handles. <code>D3D12CpuDescriptorAllocator</code> therefore grows by appending another heap block, doubling in size, so every issued handle stays valid forever and nothing that stored one has to be told about growth.</li>
+<li><strong>CBV/SRV/UAV and sampler: a mirrored, replaceable heap.</strong> A shader-visible heap is bound whole and a descriptor table may point only into the bound heap, so it cannot be a chain; it must be replaced. Direct3D 12 also forbids copying descriptors <em>out of</em> a shader-visible heap. <code>D3D12ShaderVisibleDescriptorAllocator</code> therefore keeps the authoritative copy of every descriptor in a non-shader-visible staging heap and mirrors each write into the shader-visible one (<code>Publish</code>); growth creates a larger pair and re-mirrors the live range from the staging heap, a legal copy source. Callers hold a stable <em>index</em>, never a GPU handle, and resolve the handle at the point of use, because growth replaces the heap object. Capacity doubles up to the specification's ceilings, 1,000,000 CBV/SRV/UAV descriptors (Tier 1) and 2,048 samplers, and live demand beyond that throws a named <code>std::runtime_error</code>.</li>
+<li><strong>Fence safety.</strong> A freed index, and a replaced heap, are stamped with the latest fence value that could still reference them (the last submission or the open frame's reserved value) and recycled or released only after the shared fence passes it. Nothing waits, idles the device or allocates a heap per draw; growth happens only when simultaneous live demand exceeds the free list.</li>
+<li><strong>Ownership.</strong> The allocator set is held through a <code>std::shared_ptr</code> captured by every descriptor-owning resource, so a resource destroyed after its renderer still frees into a live allocator. Samplers are allocated only on a sampler-cache miss, one per distinct XNA <code>SamplerState</code> combination, so repeated identical bindings consume nothing.</li>
+</ul>
+<p><code>CNA_D3D12_DESCRIPTOR_TRACE</code> prints the real counters (<code>D3D12DescriptorHeapStats</code>: capacity, live, peak, never-used, free-ready and free-pending slots, recycles, growths, heap objects, generation, publishes and bulk copies). The D3D12-only fixture <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx12/examples/directx12_descriptor_allocator_test.cpp"><code>directx12_descriptor_allocator_test.cpp</code></a> (<code>DirectX12_DescriptorAllocator</code>, registered without the forced-headless mode) checks the claims a pixel cannot show: a freed slot is reissued (as a recycle count and a repeated index), 200 create/destroy cycles neither grow the heap nor advance the never-used cursor beyond one generation, growth under 300 simultaneous resources reaches exactly 512 with a generation bump and moved handles but stable indices, the retired heap survives until its fence passes, and repeated identical sampler bindings allocate nothing. The public-API half, a high-cardinality workload rendering correctly on every renderer, is <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/descriptor_capacity_contract_test.cpp"><code>descriptor_capacity_contract_test.cpp</code></a>.</p>
+
+<h2 id="headless">HeadlessEXT: a windowless DIRECTX12 device</h2>
+<p><code>SpriteFont</code>, <code>Model</code> and parts of <code>Texture2D.FromStream</code>/<code>SaveAsPng</code> need a <code>GraphicsDevice</code>, and on the Linux loop a Direct3D 12 window needs the heavy Proton route. <code>PresentationParameters</code> therefore has the CNA-only <code>HeadlessEXT</code> property (<code>getHeadlessEXTProperty()</code>/<code>setHeadlessEXTProperty()</code>, default false), and <code>CNA_FORCE_HEADLESS_DEVICE_EXT</code> applies it to named renderers from the environment. <code>GraphicsDevice</code> then creates no window and does not initialise the video subsystem. Two renderers honour it, <code>DIRECTX12</code> and <code>SDL_GPU</code>; <code>DIRECTX11</code> creates its swap chain in its constructor and <code>EasyGL</code>'s context is bound to a window, so both throw from their constructors, which the property's documentation calls the honest outcome.</p>
+<p>A windowless <code>DIRECTX12</code> device is not target-less. <code>CreateOffscreenBackBufferResources</code> (DX-241) creates an implicit off-screen <code>R8G8B8A8_UNORM</code> back buffer with the same depth attachment a windowed device gets, sized from the construction-time back-buffer size, and binds it as the default target; <code>SetRenderTarget(nullptr)</code> returns to it. The same resource is used when a swap chain was requested but could not be created. <code>Present()</code> on such a device resolves back-buffer MSAA, submits the frame and rotates the frame slot without presenting, and <code>GetBackBufferData()</code> reads what the frame drew. Until a caller explicitly selects a presentation mode after setting a virtual resolution, a windowless device keeps plain local-pixel sizing.</p>
+
+<h2 id="readback">Back-buffer readback</h2>
+<p>Both renderers override <code>ReadBackbuffer</code>. <code>DIRECTX11</code> resolves MSAA, copies the back buffer into a staging texture and honours <code>RowPitch</code>; <code>DIRECTX12</code> copies through a readback heap on the immediate list, returning the source to its tracked state so a readback never changes what the next draw or present must transition from. Both map a logical request through the presentation geometry (<a href="direct3d-presentation-and-state.html#readback-mapping">readback mapping</a>) and throw <code>NotSupportedException</code>, by name, when there is no back buffer instead of returning a zero-filled frame as a success. Earlier descriptions said <code>DIRECTX12</code> had no back-buffer readback and that its evidence came only from render-target helpers; since DX-205 and DX-241 the public <code>GetBackBufferData()</code> route works windowed and windowless.</p>
+
+<h2 id="mrt-finalization">Finalising MRT sets</h2>
+<p>A single <code>RenderTarget2D</code> has a simple end-of-use rule: when it is unbound, <code>ResolveAndGenerateMipsEXT()</code> resolves the multisampled draw texture into the separate sampleable texture and, for a mipmapped target, regenerates the chain, so a later sampler reads the current image. The rule was once silently missing for an MRT set, because the single-target pointer could not represent several targets: the old code bound all views with <code>OMSetRenderTargets()</code> and finalised none when the set was replaced, and a game could draw into two MSAA targets and then sample stale single-sample textures without any error. Both renderers now keep a non-owning array and count for the active set. On <code>DIRECTX11</code>, <code>SetRenderTarget2D()</code> and <code>SetRenderTargets()</code> first call <code>FlushPendingMRTResolveEXT()</code> (DX-143), which finalises every stored target and clears its entry before anything is bound; <code>DIRECTX12</code> has the same structure in <code>FlushPendingMrtResolveEXT()</code> (DX-255), which it had lacked. All three transitions are covered: MRT to back buffer, MRT to a single target, and MRT to another MRT set. <code>DIRECTX12</code> binds the complete ordered set to every draw (DX-224) and folds all four XNA colour-write masks into its pipeline-state key; CNA's stock shaders write only the first target.</p>
+<p>The proof has to read the <em>sampleable</em> textures of every target, because a repair that resolved only target zero, or that merely left the MSAA draw texture valid, would pass a weaker check. The shared <code>MRT</code> fixture (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/easygl/examples/easygl_mrt_test.cpp"><code>easygl_mrt_test.cpp</code></a>, REMED-GFX-016/DX-224), registered for both renderers, does this with equivalent GLSL and HLSL <code>ShaderEffect</code> programs that write distinct outputs to targets 0 to 3: it covers ordered one-to-four-target rendering, independent colour-write masks, first-target depth ownership, true MRT MSAA with resolve, target-set replacement and producer-to-consumer sampling right after unbind. <code>RenderTarget_MsaaFirstReadback</code> and <code>RenderTarget_ActiveMsaaReadback</code> add the single-target rule that stale resolve data is never a valid answer. That MSAA MRT sets and mipmapped targets are finalised by the same helper is wired in source; a fixture that combines MRT with <code>mipMap = true</code> was not identified.</p>
+
+<h2 id="cube-targets">Cube targets: MSAA, mip chains and the public finalisation edge</h2>
+<p>Neither Direct3D 11 nor Direct3D 12 allows a multisampled cube resource or cube view. On both renderers the MSAA colour resource of a <code>RenderTargetCube</code> is therefore a plain six-slice <code>Texture2DMSArray</code> used only as a render-target view, and a second, single-sample, cube-flagged resource receives <code>ResolveSubresource()</code> for the active face on unbind; the shader-resource view targets the resolved resource. Direct3D 12 additionally transitions the two resources to <code>RESOLVE_SOURCE</code> and <code>RESOLVE_DEST</code>, barriers Direct3D 11's context performs implicitly. Both resolve only the currently active face, and <code>GetMultiSampleCount()</code> reports the applied count.</p>
+<p>Mip generation is where the algorithms really part:</p>
+<ul>
+<li><code>DIRECTX11</code> calls <code>ID3D11DeviceContext::GenerateMips()</code> on the shader-resource view; for a cube that view spans all six faces, so every face's chain is regenerated on the GPU (unchanged faces reproduce their previous levels).</li>
+<li><code>DIRECTX12</code> has no such call. <code>GenerateMipsEXT()</code> reads the previous level back with a synchronous readback, box-filters it on the CPU and uploads the next level, level by level; for a cube only the active face. The result is the same chain; synchronisation and cost are very different.</li>
+</ul>
+<p>An interface-default audit found a routing hole after these algorithms landed: early native smoke checks called <code>BindAsRenderTargetFace()</code> and <code>UnbindAsRenderTarget()</code> directly, while the public route never tracked a bound cube, so a multisampled cube's resolve texture stayed empty and a mipmapped cube's upper levels were never regenerated. Both renderers now override the cube-face route, keep the active cube separately from single-target and MRT state, and call <code>FlushPendingCubeResolveEXT()</code> before any cube-to-cube, cube-to-2D, cube-to-MRT or cube-to-back-buffer transition (REMED-GFX-134): the outgoing cube's resolve and mip generation run before the new destination replaces native state. A single cube face in the plural binding path is delegated to the same route; cube faces inside a multi-target set remain an explicit refusal. Shared fixtures (<code>RenderTargetCube_SampleAfterUnbind</code>, <code>RenderTargetCube_Usage</code>, <code>RenderTargetCube_MsaaFace</code>, <code>RenderTargetCube_GetDataContract</code>) drive an asymmetric cube face through public binding and readback, so a skipped finalisation, wrong face or stale resolve fails visibly.</p>
+
+<h2 id="usage">Render-target usage on persistent resources</h2>
+<p>Direct3D 11 and 12 bind render targets without a load action, so a resource keeps its contents across binds. Both factories accept the <code>preserveContents</code> flag and deliberately leave it unused; the visible policy lives in <code>GraphicsDevice::SetRenderTargets</code>, which, when the first bound target's usage is <code>DiscardContents</code>, clears it to opaque black plus whichever depth and stencil planes that attachment really has. <code>PreserveContents</code> and <code>PlatformContents</code> clear nothing, and the first descriptor decides for an MRT set. A redundant bind is not a no-op: finalisation of the outgoing binding runs first, and a discard target is cleared again. The shared <code>RenderTarget_Usage</code>, <code>RenderTarget_DepthStencilUsage</code>, <code>RenderTargetCube_Usage</code> and <code>GraphicsDevice_OrderedClear</code> fixtures, which render an asymmetric image and rebind with only a small marker so a discard masquerading as preservation cannot pass, are registered for <code>DIRECTX11</code> and <code>DIRECTX12</code> alike (and for <code>DIRECTX9</code> in its own list). The cross-renderer rules are on <a href="../../docs/render-targets.html#rendertargetusage">RenderTargetUsage</a>.</p>
+
+<h2 id="case-study">Worked case: four defects that only the public device route could find</h2>
+<p>The first routine public-<code>GraphicsDevice</code> fixtures on <code>DIRECTX12</code> exposed four defects that direct renderer smoke tests had not traversed. They are recorded here as a historical case; all four are absent at this snapshot:</p>
+<ul>
+<li>SpriteBatch ignored sampler filter and address-mode updates and inherited state from a prior 3D draw. The SpriteBatch flush now resolves slot 0's descriptor from its own pending sampler state through the same dynamic sampler system as the 3D draws.</li>
+<li>Render targets failed to bind their depth-stencil views. A depth-bearing target now allocates its own DSV and binds it with its colour view.</li>
+<li>The six combined colour, depth and stencil clear variants threw. They now share <code>ClearImpl</code>.</li>
+<li><code>SetDepthTestEnabled</code>, <code>SetDepthWriteEnabled</code> and <code>SetBlendEnabled</code> threw when the <code>Model</code> route called them. The first two now feed the pipeline-state key; the third is a deliberate no-op on every Direct3D renderer, because a bare "enable blending" has no blend factors and <code>ApplyBlendState</code> always carries the real configuration.</li>
+</ul>
+<p>The lesson generalises: direct smoke tests and public-API fixtures are complementary. The first prove native mechanisms in isolation, the second prove the shared framework's call paths actually reach them.</p>
+
+<h2 id="corrections">Statements that no longer hold</h2>
+<p>Several claims made about these renderers in earlier descriptions are false at this snapshot, and are listed so that they are not reintroduced:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Earlier statement</th><th scope="col">At this snapshot</th></tr></thead>
+<tbody>
+<tr><td>Direct3D 12 descriptor heaps are fixed bump allocators that never reuse a slot</td><td>they reclaim and grow (REMED-GFX-177); the old sizes are starting sizes</td></tr>
+<tr><td>Ordinary Direct3D 12 drawing submits and waits synchronously; two frames in flight is only tested infrastructure</td><td>draws record into per-slot frame lists and submit without waiting (DX-237); readbacks stay synchronous</td></tr>
+<tr><td>Direct3D 12 has no back-buffer readback; a windowless device has no default target</td><td>both exist (DX-205, DX-241)</td></tr>
+<tr><td>Direct3D 12 has no scissor hook</td><td>scissor is recorded per draw (DX-201)</td></tr>
+<tr><td>The Direct3D 11 and 12 swap chains ignore the requested depth format</td><td>the default depth attachment follows it</td></tr>
+<tr><td>Only Direct3D 12 honours <code>HeadlessEXT</code></td><td><code>SDL_GPU</code> honours it too</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="reading">Read in this order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx12/include/CNA/Internal/Renderers/DirectX12/DirectX12Renderer.hpp"><code>DirectX12Renderer.hpp</code></a>: the frame-slot, heap and binding members (some older member comments describe states that later tasks changed; the <code>.cpp</code> is authoritative).</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx12/src/D3D12DescriptorHeaps.cpp"><code>D3D12DescriptorHeaps.cpp</code></a>: the two allocators.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx12/src/DirectX12Renderer.cpp"><code>DirectX12Renderer.cpp</code></a>: <code>GetFrameCommandListEXT</code>, <code>SubmitFrameCommandsEXT</code>, <code>Present</code>, <code>RecreateDeviceEXT</code>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx11/src/DirectX11Renderer.cpp"><code>DirectX11Renderer.cpp</code></a>: device creation, <code>EnsureSwapChainSize</code>, the flush helpers.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx11/src/D3D11RenderTargets.cpp"><code>D3D11RenderTargets.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/directx12/src/D3D12RenderTargets.cpp"><code>D3D12RenderTargets.cpp</code></a>: resolve and mip generation side by side.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/rendering-backends.html#windows-directx">Graphics renderers: the Windows set</a> &middot; <a href="../../docs/tutorials/103-direct3d-windows.html#d3d12-split">Tutorial 103: the Direct3D 12 presentation split</a> &middot; <a href="../../docs/render-targets.html#rendertargetusage">Render targets: RenderTargetUsage</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/graphics/backends.html#map-uncovered">Graphics backends: families without a tour</a> &middot; <a href="../../development/internals/graphics/resources.html">Graphics resource internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/handbook/fix-a-renderer-bug.html">Fix a renderer bug</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html#gpu">Test architecture: GPU tests</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="direct3d-evidence-and-wine.html">Direct3D evidence and Wine</a> &middot; <a href="direct3d-presentation-and-state.html">Direct3D presentation and state</a> &middot; <a href="vulkan-deferred-state-and-descriptors.html">Vulkan descriptor pools, for contrast</a> &middot; <a href="../graphics/device-reset-and-lifetime.html">Device reset and lifetime</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="direct3d-presentation-and-state.html" rel="prev"><span>Previous</span>Direct3D presentation, swap interval, clears, viewport and scissor</a><a class="dev-pager-next" href="direct3d-shadereffect-contract.html" rel="next"><span>Next</span>Custom HLSL ShaderEffect on the Direct3D renderers</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

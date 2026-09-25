@@ -1,0 +1,2588 @@
+{
+ "unit": "ch28-modern-direct3d",
+ "author": "WP10",
+ "done": true,
+ "target_relevance": "partly-stale",
+ "actions": [
+  "NEW PAGE",
+  "DEEP DIVE",
+  "TESTING/EVIDENCE",
+  "TARGET-CONTRADICTED",
+  "HISTORY",
+  "BUG"
+ ],
+ "summary": "A dense chapter on the three Direct3D renderers: DIRECTX9's oracle-driven XNA fidelity (stock-effect bytecode, profile enforcement, lost devices, sprite projection fixes), the DXGI renderers' lifetimes, presentation, viewport, clear and readback behaviour, Direct3D 12 frames in flight and descriptor heaps, MRT and cube finalisation, the ShaderEffect contract and HeadlessEXT. Much of it is stale at 009d40f5: descriptor heaps now grow, D3D12 drawing is pipelined, D3D12 has scissor and back-buffer readback, DXGI presentation modes and intervals and depth formats are honoured, and ShaderEffect uses reflection. libcna.com had only renderer-table rows, Tutorial 103 and the oracle maintainer page; five deep-dive pages now carry the current depth.",
+ "sections": [],
+ "empty_sections": [],
+ "concepts": [
+  {
+   "id": "WP10-ch28-001",
+   "section": "Modern Direct3D",
+   "text": "DIRECTX9, DIRECTX11 and DIRECTX12 share one development loop: cross-compiled on Linux with MinGW-w64 and run under Wine on a real GPU, DIRECTX9 and DIRECTX11 through DXVK and DIRECTX12 through vkd3d-proton in its own prefix.",
+   "kind": "workflow",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#translators",
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#three-identities"
+   ],
+   "tokens": [
+    "~/.wine-cna-d3d12",
+    "vkd3d-proton"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "scripts/run-wine-dxvk.sh, run-wine-dxvk9.sh, run-wine-vkd3d.sh (prefix variables); cmake/toolchains/mingw-w64.cmake"
+   }
+  },
+  {
+   "id": "WP10-ch28-002",
+   "section": "Modern Direct3D",
+   "text": "Native-Windows CI for the Direct3D renderers is the manual-dispatch d3d-windows-ci.yml (MSVC, windows-latest, DIRECTX11, DIRECTX12 and DIRECT2D); nothing runs on Windows automatically and no workflow names DIRECTX9.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#native-windows"
+   ],
+   "tokens": [
+    "workflow_dispatch",
+    "No workflow names"
+   ],
+   "note": "The source said native-Windows CI 'now covers' DIRECTX11/12; at 009d40f5 the job exists but runs only on manual dispatch.",
+   "target": {
+    "result": "corrected",
+    "evidence": ".github/workflows/d3d-windows-ci.yml (on: workflow_dispatch)"
+   }
+  },
+  {
+   "id": "WP10-ch28-003",
+   "section": "Modern Direct3D",
+   "text": "The stock-shader model differs per identity: DIRECTX9 runs Microsoft's XNA stock-effect sources compiled to SM2; DIRECTX11 uses one shared Shader Model 5 DXBC package; DIRECTX12 uses the same package plus pipeline-state and root-signature caches.",
+   "kind": "architecture",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#three-identities"
+   ],
+   "tokens": [
+    "one shared Shader Model 5 DXBC package",
+    "pipeline-state and root-signature caches"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/common/d3d/src/shaders/hlsl_shaders.hpp; modules/renderers/directx9/src/shaders/d3d9_shaders.hpp; directx12/src/D3D12PipelineStateCache.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-004",
+   "section": "Modern Direct3D",
+   "text": "All three create render targets, MRT sets and occlusion queries natively; on DIRECTX9 the occlusion query exists only when CreateQuery(D3DQUERYTYPE_OCCLUSION, nullptr) reports device support, otherwise the factory returns null.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#three-identities",
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#capabilities"
+   ],
+   "tokens": [
+    "CreateQuery(D3DQUERYTYPE_OCCLUSION, nullptr)"
+   ],
+   "note": "The source's own coverage section also claimed occlusion queries were not built for Direct3D 9 and 12; both implement them at 009d40f5.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (CreateOcclusionQuery); directx12/src/D3D12OcclusionQuery.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-005",
+   "section": "D3D9: zero-tolerance XNA oracle comparisons",
+   "text": "DIRECTX9 targets pixel-for-pixel agreement with XNA 4.0 rather than feature parity, and is the only renderer recorded as matching all 39 oracle scenes at tolerance 0 under Wine and DXVK.",
+   "kind": "goal",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#oracle"
+   ],
+   "tokens": [
+    "D3D9_XNA_Diff"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/examples/CMakeLists.txt (D3D9_XNA_Diff); tools/xna-oracle/README.md"
+   }
+  },
+  {
+   "id": "WP10-ch28-006",
+   "section": "D3D9: zero-tolerance XNA oracle comparisons",
+   "text": "DIRECTX9 does not reimplement the stock shaders: it embeds bytecode compiled offline from Microsoft's vendored XNA .fx sources with the genuine d3dcompiler_47.dll under Wine; the stock pipeline links only d3d9, and d3dcompiler is linked only into the isolated ShaderEffect target.",
+   "kind": "architecture",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#stock-effects",
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#design"
+   ],
+   "tokens": [
+    "verify-d3d9-stock-effects-vendored.sh",
+    "cna_renderer_d3d9_effect"
+   ],
+   "note": "The source implied run-time compilation through d3dcompiler_47.dll; compilation is an offline generation step and the result is embedded.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx9/src/shaders/compile_shaders_sm2.py; modules/renderers/directx9/CMakeLists.txt"
+   }
+  },
+  {
+   "id": "WP10-ch28-007",
+   "section": "Oracle: XNA 4.0 under Wine",
+   "text": "The XNA side of the oracle (tools/xna-oracle/Oracle.cs) runs the real XNA 4.0 runtime under Wine against the GAC assemblies, compiled by the prefix's own .NET Framework 4.0 csc.exe; the CNA side renders the same declarative scene through public API.",
+   "kind": "tooling",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/takeover/xna-oracle.html#what"
+   ],
+   "tokens": [
+    "csc.exe",
+    "CnaOracleRender.cpp"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "tools/xna-oracle/Oracle.cs; tools/xna-oracle/CnaOracleRender.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-008",
+   "section": "Oracle: XNA 4.0 under Wine",
+   "text": "Both sides of a DIRECTX9 oracle comparison run on the same DXVK layer and GPU, so a diff isolates CNA behaviour from graphics-stack differences; DXVK must be installed in the XNA prefix too or the comparison would measure a driver difference.",
+   "kind": "methodology",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/takeover/xna-oracle.html#provenance"
+   ],
+   "tokens": [
+    "silently measure a driver difference"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "tools/xna-oracle/README.md (prefix requirements)"
+   }
+  },
+  {
+   "id": "WP10-ch28-009",
+   "section": "Oracle: XNA 4.0 under Wine",
+   "text": "The pinned corpus has 39 top-level scenes; every retained DIRECTX9 comparison is exact under that Wine/DXVK configuration, which says nothing about paths the corpus does not exercise.",
+   "kind": "evidence",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/takeover/xna-oracle.html#records",
+    "development/takeover/xna-oracle.html#limits"
+   ],
+   "tokens": [
+    "All 39 byte-exact at tolerance 0"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "tools/xna-oracle/scenes/ (39 .scene files); scripts/run-oracle-corpus-diff.sh"
+   }
+  },
+  {
+   "id": "WP10-ch28-010",
+   "section": "Current contract and evidence",
+   "text": "DIRECTX9 creates its device with plain Direct3DCreate9, deliberately not the Ex variant, and chooses hardware or software vertex processing from the pre-creation D3DCAPS9 instead of assuming it.",
+   "kind": "design",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#design"
+   ],
+   "tokens": [
+    "deliberately not Direct3DCreate9Ex"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (CreateDeviceResources)"
+   }
+  },
+  {
+   "id": "WP10-ch28-011",
+   "section": "Current contract and evidence",
+   "text": "DIRECTX9 implements XNA's DeviceLost, DeviceResetting and DeviceReset lifecycle literally: lost on D3DERR_DEVICELOST, TestCooperativeLevel polling, release of default-pool resources and cached surfaces, Reset, retry on failure.",
+   "kind": "lifecycle",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#device-lifecycle"
+   ],
+   "tokens": [
+    "PerformResetRecovery",
+    "TestCooperativeLevel()"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (Present, PollDeviceLost, PerformResetRecovery)"
+   }
+  },
+  {
+   "id": "WP10-ch28-012",
+   "section": "Current contract and evidence",
+   "text": "61 of the 66 stock-effect shaders CNA compiles have instruction streams identical to Microsoft's shipped bytecode once comment tokens (constant table, creator string) are stripped; the five that differ are the per-pixel-lighting vertex shaders, because of the compiler version (D3DCompiler_43 versus d3dcompiler_47), not a flag.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#bytecode-parity"
+   ],
+   "tokens": [
+    "61 of 66",
+    "D3DCompiler_43"
+   ],
+   "note": "The source counted 'five stock effects' and 'byte-identical'; the 66 entry points span six .fx files including SpriteEffect, and identity is of instruction streams after stripping comment tokens.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx9/src/shaders/compare_against_fxb.py (docstring, 2026-07-14 result); plans/plan_dx9.md D9-73"
+   }
+  },
+  {
+   "id": "WP10-ch28-013",
+   "section": "Current contract and evidence",
+   "text": "DIRECTX9's SpriteBatch reproduces real XNA's Direct3D 9 half-pixel offset, and the offset's absence is invisible on a 1x1 test texture: only a multi-texel scene with sharp boundaries observes it.",
+   "kind": "pitfall",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#sprite-projection"
+   ],
+   "tokens": [
+    "half-pixel",
+    "M41 += -0.5 * M11"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/D3D9SpriteBatch.cpp (BuildMatrixTransformEXT); tools/xna-oracle/README.md (mutation finding)"
+   }
+  },
+  {
+   "id": "WP10-ch28-014",
+   "section": "Current contract and evidence",
+   "text": "DIRECTX9 enforces GraphicsProfile from D3DCAPS9: HiDef construction requires vs_3_0/ps_3_0 (NoSuitableGraphicsDeviceException otherwise), IsProfileSupported(HiDef) checks the adapter caps, and profile ceilings hold regardless of hardware; it is the only renderer whose profile answer reaches a native capability query.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#profile"
+   ],
+   "tokens": [
+    "MeetsHiDefFloorEXT",
+    "NoSuitableGraphicsDeviceException"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/D3D9ProfileCapabilities.cpp; DirectX9RendererDescriptor.cpp (IsProfileSupported); modules/graphics/src/Xna/GraphicsAdapter.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-015",
+   "section": "Current contract and evidence",
+   "text": "The render-target sampling, PreferPerPixelLighting and EnvironmentMapEffect specular gaps on DIRECTX9 were closed: GpuDrawParams now carries preferPerPixelLighting and specularEnabled and the dispatch reads them.",
+   "kind": "fixed-gap",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#effect-reach"
+   ],
+   "tokens": [
+    "PreferPerPixelLighting",
+    "specularEnabled"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/D3D9EffectDraw.cpp (header comment, ComputeBasicEffectShaderIndex)"
+   }
+  },
+  {
+   "id": "WP10-ch28-016",
+   "section": "Current contract and evidence",
+   "text": "Four of the five compiler-divergent per-pixel-lighting shaders are recorded as oracle-proven at 0/65,536 pixels, each first shown discriminating by a vertex-lit twin; the fifth, untextured VSBasicPixelLighting, is blocked because it needs a 12-byte position-only vertex layout CNA does not have.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#bytecode-parity"
+   ],
+   "tokens": [
+    "23,409",
+    "VSBasicPixelLighting"
+   ],
+   "note": "The source called the fifth an untextured vertex-lit variant; it is the untextured per-pixel-lighting vertex shader.",
+   "target": {
+    "result": "corrected",
+    "evidence": "plans/plan_dx9.md D9-73 (2026-07-16 closure); modules/renderers/directx9/src/D3D9EffectDraw.cpp (header comment)"
+   }
+  },
+  {
+   "id": "WP10-ch28-017",
+   "section": "Current contract and evidence",
+   "text": "The lost-device path is reachable through framework-reserved debug keys: after input processing a non-repeated F9 calls DebugSimulateContextLoss() and F10 DebugRestoreContext(); on DIRECTX9 the restore runs the real Reset and the smoke test checks exact event counts, rendering failure while lost and exact pixels after recovery.",
+   "kind": "test-strategy",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#device-lifecycle"
+   ],
+   "tokens": [
+    "DebugSimulateContextLoss()",
+    "exact event counts"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/runtime/src/Game.cpp (PollEvents); modules/renderers/directx9/examples/directx9_smoke_test.cpp (D9-34 checks)"
+   }
+  },
+  {
+   "id": "WP10-ch28-018",
+   "section": "Current contract and evidence",
+   "text": "On DIRECTX9, SetStringMarkerEXT() throws, and SetContextRecoveryEnabled() throws only after GraphicsDevice has stored the new value, which changes the shared Texture2D CPU-shadow policy: a caller that catches the exception is left with the policy changed.",
+   "kind": "failure-mode",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#device-lifecycle"
+   ],
+   "tokens": [
+    "SetStringMarkerEXT()",
+    "CPU-shadow policy"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (NotYetImplemented calls); modules/graphics/src/Xna/GraphicsDevice.cpp (SetContextRecoveryEnabled); Texture2D.cpp (contextRecoveryEnabled_)"
+   }
+  },
+  {
+   "id": "WP10-ch28-019",
+   "section": "Current contract and evidence",
+   "text": "A comparison of recovery and debug behaviour across a fourteen-product audit cohort accompanied these D3D9 findings.",
+   "kind": "cross-reference",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Points at a cross-renderer matrix of an older audit cohort whose membership included renderer families no longer present; the current cross-renderer contract is recorded by the renderer-contract work package, not here."
+  },
+  {
+   "id": "WP10-ch28-020",
+   "section": "Coverage limits",
+   "text": "DIRECTX9 has no ClassifySurfaceFormatEXT override, so public Texture2D, TextureCube and Texture3D construction applies the framework rule: SurfaceFormat::Color only, anything else throws, despite an internal D3DFORMAT mapping.",
+   "kind": "limitation",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#render-targets"
+   ],
+   "tokens": [
+    "no ClassifySurfaceFormatEXT override"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/Texture2D.cpp (ValidateTexture2DFormatEXT Defer branch); Texture.cpp (ValidateFormat); directx9 has no classifier"
+   }
+  },
+  {
+   "id": "WP10-ch28-021",
+   "section": "Coverage limits",
+   "text": "Texture3D has no oracle scene on DIRECTX9, but DirectX9_Smoke creates a 4x4x4 volume only when MaxVolumeExtent is non-zero, writes 32 bytes into the off-origin 2x2x2 box at (1,1,1) and requires an exact readback, proving LockBox() row and slice pitches, not rendering or mips.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#render-targets"
+   ],
+   "tokens": [
+    "LockBox()",
+    "2×2×2"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/examples/directx9_smoke_test.cpp (D9-51 volume check)"
+   }
+  },
+  {
+   "id": "WP10-ch28-022",
+   "section": "Coverage limits",
+   "text": "The claim that OcclusionQuery is not built for DIRECTX9 or DIRECTX12 is false at the snapshot: DIRECTX9 creates a query after a native support probe and DIRECTX12 has a real query renderer.",
+   "kind": "correction",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#capabilities"
+   ],
+   "tokens": [
+    "OcclusionQuery is honest in practice"
+   ],
+   "note": "Written on the page as the current behaviour.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (CreateOcclusionQuery); modules/renderers/directx12/src/D3D12OcclusionQuery.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-023",
+   "section": "Coverage limits",
+   "text": "SpriteSortMode.Immediate and .Texture are not viable oracle scenes: Immediate differs only in submission timing, which a raster diff cannot observe, and Texture sorts by an implementation-defined identity hash.",
+   "kind": "methodology",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/takeover/xna-oracle.html#when",
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#oracle"
+   ],
+   "tokens": [
+    "SpriteSortMode.Immediate"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "tools/xna-oracle/README.md (sort-mode section)"
+   }
+  },
+  {
+   "id": "WP10-ch28-024",
+   "section": "Coverage limits",
+   "text": "Every DIRECTX9 result on the development loop inherits one caveat: D3DCAPS9 is synthesized by DXVK, not reported by an XNA-era Windows driver, and native hardware verification remains open.",
+   "kind": "evidence-caveat",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#profile",
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#evidence-ladder"
+   ],
+   "tokens": [
+    "synthesized capability set"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/include/.../D3D9ProfileCapabilities.hpp (D9-105 caveat); plans/plan_dx9.md D9-140"
+   }
+  },
+  {
+   "id": "WP10-ch28-025",
+   "section": "D3D9 render-target limits and evidence",
+   "text": "DIRECTX9 reads a render target back through GetRenderTargetData() into a system-memory surface and LockRect, because default-pool memory cannot be locked; the smoke test proves exact colour for an 8x8 D24S8 target and for one cube face, then an independent back-buffer readback after unbind.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#render-targets"
+   ],
+   "tokens": [
+    "GetRenderTargetData()"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/D3D9RenderTargets.cpp (GetData); directx9_smoke_test.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-026",
+   "section": "D3D9 render-target limits and evidence",
+   "text": "DIRECTX9 MSAA is capability-gated by CheckDeviceMultiSampleType() (all or nothing); a 4x target is resolved with StretchRect() into its sampleable texture on transition and the test reads the resolved texture, which must be exactly (200,210,220,255).",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#render-targets"
+   ],
+   "tokens": [
+    "CheckDeviceMultiSampleType()",
+    "(200,210,220,255)"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (ClampMultiSampleCountEXT); D3D9RenderTargets.cpp (ResolveForTransitionEXT); directx9_smoke_test.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-027",
+   "section": "D3D9 render-target limits and evidence",
+   "text": "DIRECTX9 never overrides SupportsCapability, so MultiSampleAntiAliasing reports true even when CheckDeviceMultiSampleType() rejects every count above one; the probe lives only in the target-creation path.",
+   "kind": "pitfall",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#capabilities"
+   ],
+   "tokens": [
+    "MultiSampleAntiAliasing reports true even when"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/include/.../DirectX9Renderer.hpp (no SupportsCapability override); IGraphicsRenderer.hpp (defaults)"
+   }
+  },
+  {
+   "id": "WP10-ch28-028",
+   "section": "D3D9 render-target limits and evidence",
+   "text": "DIRECTX9's AnisotropicFiltering answer does not consult D3DCAPS9::MaxAnisotropy, and ApplySamplerState writes the requested MaxAnisotropy to D3DSAMP_MAXANISOTROPY unclamped; only the compiled-effect path clamps to the caps.",
+   "kind": "pitfall",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#capabilities"
+   ],
+   "tokens": [
+    "D3DSAMP_MAXANISOTROPY unclamped"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (ApplySamplerState); D3D9CompiledEffect.cpp (caps_.MaxAnisotropy)"
+   }
+  },
+  {
+   "id": "WP10-ch28-029",
+   "section": "D3D9 render-target limits and evidence",
+   "text": "DIRECTX9 MRT is bounded by D3DCAPS9::NumSimultaneousRTs and an over-request throws naming the limit; the test proves multi-attachment binding and clearing, not a shader with several outputs, so it is not a G-buffer draw claim.",
+   "kind": "limitation",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#render-targets"
+   ],
+   "tokens": [
+    "NumSimultaneousRTs",
+    "not a G-buffer draw claim"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (SetRenderTargets)"
+   }
+  },
+  {
+   "id": "WP10-ch28-030",
+   "section": "One oracle scene",
+   "text": "An oracle scene is a small declarative key=value file both the XNA and the CNA program parse; colored3d.scene draws one vertex-coloured BasicEffect triangle over CornflowerBlue under identity transforms, so matching corners test vertex-colour plumbing and matching interiors Gouraud interpolation.",
+   "kind": "worked-example",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#oracle"
+   ],
+   "tokens": [
+    "colored3d.scene",
+    "Gouraud interpolation"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "tools/xna-oracle/scenes/colored3d.scene"
+   }
+  },
+  {
+   "id": "WP10-ch28-031",
+   "section": "One oracle scene",
+   "text": "The same scene format, with a few more keys, scales from that triangle to the fog, alpha-test, skinning and sprite scenes of the corpus.",
+   "kind": "format",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#oracle"
+   ],
+   "tokens": [
+    "fog, alpha-test, skinning and sprite scenes"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "tools/xna-oracle/README.md (key table); tools/xna-oracle/scenes/fog_gradient_quad.scene"
+   }
+  },
+  {
+   "id": "WP10-ch28-032",
+   "section": "Two defects exposed by the oracle",
+   "text": "DIRECTX9 SpriteBatch once built its projection with zFarPlane=1, clipping every sprite whose layerDepth was above 0; the sort-mode oracle scenes exposed it and zFarPlane=-1 fixed it.",
+   "kind": "defect-history",
+   "disposition": "FIXED BUG",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#sprite-projection"
+   ],
+   "tokens": [
+    "zFarPlane = -1"
+   ],
+   "note": "Positive evidence: D3D9SpriteBatchRenderer::BuildMatrixTransformEXT calls CreateOrthographicOffCenter(0, W, H, 0, 0, -1); the sprite_sortmode_* scenes and the DirectX9_SpriteBatch registration cover it, and the oracle README records a mutation check that turns the sort-mode check red when reverted. Kept on the page as a labelled worked case.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/D3D9SpriteBatch.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-033",
+   "section": "Two defects exposed by the oracle",
+   "text": "A game's GraphicsProfile request once never reached the live device, because Game's GraphicsDevice member was default-constructed with Reach before GraphicsDeviceManager existed; the defect was shared by every renderer and found through DIRECTX9's profile tests.",
+   "kind": "defect-history",
+   "disposition": "FIXED BUG",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#profile"
+   ],
+   "tokens": [
+    "applyToExistingRenderer"
+   ],
+   "note": "Positive evidence: GraphicsDeviceManager::applyToExistingRenderer calls GraphicsDevice::SetGraphicsProfileEXT with the manager's profile before Reset (D9-103 comment); DirectX9_GraphicsProfile is registered. Kept on the page as a historical case.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/runtime/src/GraphicsDeviceManager.cpp (applyToExistingRenderer)"
+   }
+  },
+  {
+   "id": "WP10-ch28-034",
+   "section": "Why the zFarPlane sign hid nonzero-depth sprites",
+   "text": "Direct3D 9 clip-space Z is [0,1], not OpenGL's [-1,1]; with zFarPlane=1 the orthographic Z row is M33=1/(zNear-zFar)=-1, so Z'=-layerDepth lies outside the clip volume for any layerDepth above 0 and the fixed-function clip removes the sprite with no error, whatever the depth-stencil state; zFarPlane=-1 gives an identity Z row.",
+   "kind": "mechanism",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#sprite-projection"
+   ],
+   "tokens": [
+    "M33 = 1/(zNear - zFar) = -1",
+    "Z' = -layerDepth"
+   ],
+   "note": "The source's explanation of the clipping bound was imprecise; the page states the exact matrix terms from the TARGET comment.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx9/src/D3D9SpriteBatch.cpp (BuildMatrixTransformEXT comment D9-93)"
+   }
+  },
+  {
+   "id": "WP10-ch28-035",
+   "section": "Why the zFarPlane sign hid nonzero-depth sprites",
+   "text": "The defect stayed invisible because every earlier scene drew at the default layerDepth 0; only overlapping translucent sprites at depths 0 and 1 in the sort-mode scenes revealed it.",
+   "kind": "lesson",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#sprite-projection"
+   ],
+   "tokens": [
+    "Every earlier scene drew at the default"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "tools/xna-oracle/README.md (sprite_sortmode_* bullets)"
+   }
+  },
+  {
+   "id": "WP10-ch28-036",
+   "section": "Three D3D11 resource-lifetime groups",
+   "text": "DIRECTX11's device group (device, immediate context, IDXGIFactory2 chain, cached tearing-support flag) is created once and torn down only by device recovery.",
+   "kind": "lifetime",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#d3d11-device"
+   ],
+   "tokens": [
+    "IDXGIFactory2"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (CreateDeviceResources)"
+   }
+  },
+  {
+   "id": "WP10-ch28-037",
+   "section": "Three D3D11 resource-lifetime groups",
+   "text": "DIRECTX11's swap chain (IDXGISwapChain1) is recreated only with the device; a plain resize reuses it with ResizeBuffers() instead of calling CreateSwapChainForHwnd again.",
+   "kind": "lifetime",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#d3d11-device"
+   ],
+   "tokens": [
+    "ResizeBuffers()"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (EnsureSwapChainSize)"
+   }
+  },
+  {
+   "id": "WP10-ch28-038",
+   "section": "Three D3D11 resource-lifetime groups",
+   "text": "DIRECTX11's window-size group (back-buffer view, optional MSAA colour texture, depth texture and view, viewport) is released before ResizeBuffers() and recreated after it, on every resize and every recovery.",
+   "kind": "lifetime",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#d3d11-device"
+   ],
+   "tokens": [
+    "released before",
+    "Window size"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (ReleaseWindowSizeDependentViews, CreateWindowSizeDependentViews)"
+   }
+  },
+  {
+   "id": "WP10-ch28-039",
+   "section": "Three D3D11 resource-lifetime groups",
+   "text": "Resize rebuilds only the window-size group while device recovery rebuilds all three, which avoids both recreating the device on resize and forgetting the swap chain during recovery.",
+   "kind": "design",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#d3d11-device"
+   ],
+   "tokens": [
+    "This division avoids both recreating the device on resize"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (EnsureSwapChainSize, RecreateDeviceEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-040",
+   "section": "Three D3D11 resource-lifetime groups",
+   "text": "Every Direct3D 11, DXGI and Direct3D 12 interface in CNA is held in Microsoft::WRL::ComPtr, including under MinGW (an early MinGW/Wine spike checked As(), GetParent() and ReleaseAndGetAddressOf() before the model was adopted).",
+   "kind": "ownership",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#d3d11-device"
+   ],
+   "tokens": [
+    "Microsoft::WRL::ComPtr"
+   ],
+   "note": "The spike itself is history and is not re-derivable from TARGET.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/include/.../DirectX11Renderer.hpp; directx12/include/.../DirectX12Renderer.hpp (using ComPtr)"
+   }
+  },
+  {
+   "id": "WP10-ch28-041",
+   "section": "D3D11: native Windows implementation",
+   "text": "DIRECTX11 is verified in the same MinGW-w64, Wine and DXVK loop as DIRECTX9.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#three-identities"
+   ],
+   "tokens": [
+    "DXVK (Direct3D 11 to Vulkan)"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/examples/CMakeLists.txt (cna_directx11_ctest_command)"
+   }
+  },
+  {
+   "id": "WP10-ch28-042",
+   "section": "D3D11: native Windows implementation",
+   "text": "DIRECTX11's covered path spans the device and context pipeline, buffers, textures, render targets with MSAA and MRT, state objects, the stock shaders of the shared DXBC package, SpriteBatch and a run-time D3DCompile() ShaderEffect.",
+   "kind": "scope",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#cross-build",
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#compile-model"
+   ],
+   "tokens": [
+    "SHADERS",
+    "vs_5_0"
+   ],
+   "note": "The source counted 'all ten stock HLSL variants'; the shared SHADERS list now holds many more (PBR, skinned, instanced, vertex-lit), and the list itself is the authority.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/common/d3d/src/shaders/compile_shaders_hlsl.py (SHADERS list); directx11/src/D3D11EffectRenderer.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-043",
+   "section": "D3D11: native Windows implementation",
+   "text": "Direct3D pixel assertions use GPU readback, so they establish more than successful API return codes.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#evidence-ladder"
+   ],
+   "tokens": [
+    "results come from GPU readback"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (ReadBackbuffer); shared fixtures in cmake/DirectXParityTests.cmake"
+   }
+  },
+  {
+   "id": "WP10-ch28-044",
+   "section": "D3D11: native Windows implementation",
+   "text": "DIRECTX11 device-removed handling is not detection-only: CheckDeviceRemoved raises the lost state and RecreateDeviceEXT rebuilds device, swap chain, caches and registered resources; what remains unobserved is a genuine removal reaching it, which the loop cannot trigger.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#device-recovery"
+   ],
+   "tokens": [
+    "real code, simulated trigger",
+    "RecreateDeviceEXT"
+   ],
+   "note": "The source said recovery evidence was detection-only; full recreation code and a deterministic public contract fixture exist.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (CheckDeviceRemoved, RecreateDeviceEXT, DebugRestoreContext); modules/graphics/examples/d3d_context_recovery_contract_test.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-045",
+   "section": "D3D11: native Windows implementation",
+   "text": "An early DIRECTX11 static link failed because the SpriteBatch renderer called back into Effect::Apply() in the main library and MinGW's single-pass archive resolution never revisited it; it was fixed with a repeated link dependency.",
+   "kind": "build-history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Build-structure history: at 009d40f5 renderers are modular targets (cna_add_renderer, PUBLIC cna_renderer_d3dcommon) and MinGW test executables link with --allow-multiple-definition; the original link line is not re-derivable."
+  },
+  {
+   "id": "WP10-ch28-046",
+   "section": "The public presentation-mode call reaches D3D11 and D3D12, but neither scales yet",
+   "text": "GraphicsDeviceManager forwards the CNA PresentationMode to the device and the device to each renderer before every Reset.",
+   "kind": "flow",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#presentation-modes"
+   ],
+   "tokens": [
+    "GraphicsDeviceManager forwards its choice"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/runtime/src/GraphicsDeviceManager.cpp (applyToExistingRenderer SetPresentationMode)"
+   }
+  },
+  {
+   "id": "WP10-ch28-047",
+   "section": "The public presentation-mode call reaches D3D11 and D3D12, but neither scales yet",
+   "text": "DIRECTX11 and DIRECTX12 do scale: both compute ComputeD3DPresentationGeometry for NativeBackBuffer, FixedHeightDynamicWidth, Stretch, Letterbox and Overscan and GraphicsDevice maps viewport and scissor through the resulting physical rectangle; it is DIRECTX9 that stores the mode and never reads it.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#presentation-modes"
+   ],
+   "tokens": [
+    "ComputeD3DPresentationGeometry",
+    "every mode therefore behaves like NativeBackBuffer"
+   ],
+   "note": "The source said the D3D11/D3D12 handlers were intentional no-ops; at 009d40f5 they compute presentation geometry.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/common/d3d/include/CNA/Internal/Renderers/D3DCommon/D3DPresentation.hpp; directx11/src/DirectX11Renderer.cpp (GetViewportSize, GetDefaultViewportRect); directx9/src/DirectX9Renderer.cpp (SetPresentationMode stores only)"
+   }
+  },
+  {
+   "id": "WP10-ch28-048",
+   "section": "The public presentation-mode call reaches D3D11 and D3D12, but neither scales yet",
+   "text": "On the DXGI renderers SetVirtualResolution feeds the geometry and GetViewportSize() returns the logical size rather than the window's physical size.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#presentation-modes"
+   ],
+   "tokens": [
+    "GetViewportSize() returns the logical size"
+   ],
+   "note": "",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (GetViewportSize); directx12/src/DirectX12Renderer.cpp (GetViewportSize)"
+   }
+  },
+  {
+   "id": "WP10-ch28-049",
+   "section": "The public presentation-mode call reaches D3D11 and D3D12, but neither scales yet",
+   "text": "A renderer-neutral contract for all five presentation modes exists as the shared presentation_mode_contract_test.cpp fixture (DX-217), registered for both DXGI renderers.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#presentation-modes"
+   ],
+   "tokens": [
+    "presentation_mode_contract_test.cpp"
+   ],
+   "note": "The source said no test could prove a mode-specific result until a composite path existed.",
+   "target": {
+    "result": "corrected",
+    "evidence": "cmake/DirectXParityTests.cmake (PresentationModeContract); modules/graphics/examples/presentation_mode_contract_test.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-050",
+   "section": "One PresentInterval::Two, two opposite Direct3D mistakes",
+   "text": "DIRECTX9 converts PresentInterval to D3DPRESENT_INTERVAL_IMMEDIATE, TWO or ONE in D3DPRESENT_PARAMETERS, and a change marks presentation dirty and immediately runs the resize Reset path, because Direct3D 9 has no per-present interval.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#present-interval"
+   ],
+   "tokens": [
+    "INTERVAL_TWO"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (BuildPresentParameters, SetSwapInterval)"
+   }
+  },
+  {
+   "id": "WP10-ch28-051",
+   "section": "One PresentInterval::Two, two opposite Direct3D mistakes",
+   "text": "DIRECTX9 checks neither D3DCAPS9::PresentationIntervals nor the windowed-mode restriction to default, immediate and one, so requesting Two in an ordinary window can make Reset() fail; the renderer logs, restores the previous size, stays dirty and retries every Present(), and does not roll back the public PresentationParameters.",
+   "kind": "defect",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#present-interval"
+   ],
+   "tokens": [
+    "PresentationIntervals"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (EnsureDeviceSize failure branch)"
+   }
+  },
+  {
+   "id": "WP10-ch28-052",
+   "section": "One PresentInterval::Two, two opposite Direct3D mistakes",
+   "text": "DIRECTX11 and DIRECTX12 pass the stored interval to DXGI Present (max(0, interval)), so Two reaches DXGI as 2; the Boolean vsyncEnabled_ is used only for the tearing decision.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#present-interval"
+   ],
+   "tokens": [
+    "so 2 reaches DXGI as 2"
+   ],
+   "note": "The source said both collapse every interval to 0 or 1.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (Present); directx12/src/DirectX12Renderer.cpp (Present)"
+   }
+  },
+  {
+   "id": "WP10-ch28-053",
+   "section": "One PresentInterval::Two, two opposite Direct3D mistakes",
+   "text": "No located test measures half-rate pacing or the no-vsync tearing branch on any Direct3D renderer; the shared swap-interval fixture proves forwarding only.",
+   "kind": "verification-gap",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#present-interval"
+   ],
+   "tokens": [
+    "no located test measures half-rate pacing",
+    "swap_interval_forwarding_contract_test.cpp"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/examples/swap_interval_forwarding_contract_test.cpp (DX-217 forwarding proof)"
+   }
+  },
+  {
+   "id": "WP10-ch28-054",
+   "section": "One PresentInterval::Two, two opposite Direct3D mistakes",
+   "text": "A successful reset or a stored PresentInterval::Two is not evidence of half-refresh pacing on any of the three renderers.",
+   "kind": "evidence-caveat",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#present-interval"
+   ],
+   "tokens": [
+    "A stored PresentInterval::Two is not evidence of half-refresh pacing"
+   ],
+   "note": "",
+   "target": {
+    "result": "not-applicable",
+    "evidence": "methodology statement"
+   }
+  },
+  {
+   "id": "WP10-ch28-055",
+   "section": "One PresentInterval::Two, two opposite Direct3D mistakes",
+   "text": "The swap-interval results were placed beside eleven other products of an older audit cohort in a cross-renderer table.",
+   "kind": "cross-reference",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Cross-renderer matrix of an older cohort including renderer families no longer present; the current cross-renderer presentation contract is recorded with the renderer-contract unit."
+  },
+  {
+   "id": "WP10-ch28-056",
+   "section": "Only D3D9 consumes the presentation format/fullscreen hook",
+   "text": "DIRECTX9 maps the requested back-buffer SurfaceFormat to D3DFORMAT and substitutes A8R8G8B8 for Color's A8B8G8R8, which Direct3D 9 does not allow for a swap chain.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#formats-fullscreen",
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#render-targets"
+   ],
+   "tokens": [
+    "A8R8G8B8"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (BackBufferDisplayFormatForD3D9)"
+   }
+  },
+  {
+   "id": "WP10-ch28-057",
+   "section": "Only D3D9 consumes the presentation format/fullscreen hook",
+   "text": "DIRECTX9 maps None, Depth16, Depth24 and Depth24Stencil8 to no attachment, D3DFMT_D16, D3DFMT_D24X8 and D3DFMT_D24S8, and sets Windowed = !IsFullScreen.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#formats-fullscreen"
+   ],
+   "tokens": [
+    "D3DFMT_D24X8"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/D3D9FormatMapping.cpp (DepthFormatToD3D9); DirectX9Renderer.cpp (BuildPresentParameters)"
+   }
+  },
+  {
+   "id": "WP10-ch28-058",
+   "section": "Only D3D9 consumes the presentation format/fullscreen hook",
+   "text": "A manager Reset reaches DIRECTX9's UpdatePresentationFormatEXT(), which resets the native device at once so a first-frame depth clear sees the requested surface; the smoke test observes a real D24S8 surface.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#formats-fullscreen"
+   ],
+   "tokens": [
+    "resets the native device at once"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (UpdatePresentationFormatEXT D9-64)"
+   }
+  },
+  {
+   "id": "WP10-ch28-059",
+   "section": "Only D3D9 consumes the presentation format/fullscreen hook",
+   "text": "DIRECTX11 and DIRECTX12 keep a fixed R8G8B8A8 colour format and ignore the full-screen argument, but their default depth attachment follows PresentationParameters.DepthStencilFormat (None allocates nothing, Depth24 shares D24S8 storage with stencil kept unreachable).",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#formats-fullscreen"
+   ],
+   "tokens": [
+    "the default depth attachment now follows"
+   ],
+   "note": "The source said both ignore all three arguments and always allocate D24S8.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (RecreateDefaultRenderSurfaces, UpdatePresentationFormatEXT); directx12 DX12-0019; modules/graphics/examples/d3d_presentation_format_contract_test.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-060",
+   "section": "Only D3D9 consumes the presentation format/fullscreen hook",
+   "text": "Neither DXGI renderer calls SetFullscreenState or passes a full-screen descriptor to CreateSwapChainForHwnd, and exclusiveFullscreen_ stays false: an SDL full-screen window is not DXGI exclusive full screen.",
+   "kind": "limitation",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#formats-fullscreen"
+   ],
+   "tokens": [
+    "SetFullscreenState"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "grep of directx11/directx12 sources (no SetFullscreenState; exclusiveFullscreen_ only initialised)"
+   }
+  },
+  {
+   "id": "WP10-ch28-061",
+   "section": "Only D3D9 consumes the presentation format/fullscreen hook",
+   "text": "A windowless DIRECTX12 device (HeadlessEXT) has no swap chain but is not target-less: it renders into an implicit off-screen R8G8B8A8 back buffer with the normal depth attachment.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#headless",
+    "deep-dives/renderers/direct3d-presentation-and-state.html#formats-fullscreen"
+   ],
+   "tokens": [
+    "CreateOffscreenBackBufferResources",
+    "is not target-less"
+   ],
+   "note": "The source said a headless device had no default depth attachment and could render only into explicit targets.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx12/src/DirectX12Renderer.cpp (CreateOffscreenBackBufferResources DX-241)"
+   }
+  },
+  {
+   "id": "WP10-ch28-062",
+   "section": "Only D3D9 consumes the presentation format/fullscreen hook",
+   "text": "DIRECTX9's format mapping is not a guarantee that a mapped format is a legal display mode, and a failed native reset can leave the previous attachments active while public state has already changed.",
+   "kind": "pitfall",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#formats-fullscreen"
+   ],
+   "tokens": [
+    "is not a guarantee that a format is a legal display mode"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (EnsureDeviceSize failure branch)"
+   }
+  },
+  {
+   "id": "WP10-ch28-063",
+   "section": "Only D3D9 consumes the presentation format/fullscreen hook",
+   "text": "The presentation-format results were compared across a fourteen-product audit cohort.",
+   "kind": "cross-reference",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Older cross-renderer cohort including renderer families no longer present; not current documentation."
+  },
+  {
+   "id": "WP10-ch28-064",
+   "section": "Evidence ladder for D3D11 3D draws",
+   "text": "The first rung of the Direct3D 11 3D ladder cleared to blue and then drew an opaque red triangle through indexed and non-indexed stride-16 calls, so input layout, shaders, constant buffer, topology, rasterisation and readback were proven together and a stale clear could not pass.",
+   "kind": "test-strategy",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#discriminating-fixtures"
+   ],
+   "tokens": [
+    "Change the pixel, then read it"
+   ],
+   "note": "The original checks lived in the pre-DX-243 DirectX11_Smoke; the page records the design rule and names the shared fixtures that carry it now.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "design rule; carried by shared DirectX parity fixtures (cmake/DirectXParityTests.cmake)"
+   }
+  },
+  {
+   "id": "WP10-ch28-065",
+   "section": "Evidence ladder for D3D11 3D draws",
+   "text": "The second rung separated texture sampling (a known texel sampled exactly, stride 20) from vertex-colour modulation (a vertex colour through a white texture, stride 24).",
+   "kind": "test-strategy",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#discriminating-fixtures"
+   ],
+   "tokens": [
+    "Separate the terms of a product"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "design rule; shared textured and vertex-colour BasicEffect fixtures in cmake/DirectXParityTests.cmake"
+   }
+  },
+  {
+   "id": "WP10-ch28-066",
+   "section": "Evidence ladder for D3D11 3D draws",
+   "text": "The lighting rung used a byte-exact unlit control and required the lit result only to differ from both the unlit result and the clear colour, avoiding the pretence that a hand-derived GPU floating-point result is stable.",
+   "kind": "test-strategy",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#discriminating-fixtures"
+   ],
+   "tokens": [
+    "hand-derived floating-point GPU result"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "design rule; BasicEffect_LitVertexColor fixture registration"
+   }
+  },
+  {
+   "id": "WP10-ch28-067",
+   "section": "Evidence ladder for D3D11 3D draws",
+   "text": "Fog was checked with the flag off (exact vertex colour) and at the fog end (exact fog colour), an environment map constrained to one cube face, and skinning with an identity bone instead of an all-zero matrix, each falsifying a different failure mode.",
+   "kind": "test-strategy",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#discriminating-fixtures"
+   ],
+   "tokens": [
+    "SkinnedEffect_IdentityBones",
+    "BasicEffect_Fog"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "cmake/DirectXParityTests.cmake (BasicEffect_Fog, EnvironmentMapEffect_Golden, SkinnedEffect_IdentityBones)"
+   }
+  },
+  {
+   "id": "WP10-ch28-068",
+   "section": "Evidence ladder for D3D11 3D draws",
+   "text": "The Direct3D 11 smoke executable no longer holds the pixel ladder or a large check count: DX-243 narrowed it to native integration, and public pixels moved into the shared parity inventory; results support only the named paths.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#ctest-wiring",
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#discriminating-fixtures"
+   ],
+   "tokens": [
+    "narrowed (DX-243)",
+    "not a licence to extrapolate"
+   ],
+   "note": "The source quoted 147 checks in the D3D11 smoke executable; that executable was later narrowed and no count is published.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx11/examples/directx11_smoke_test.cpp (DX-243 header)"
+   }
+  },
+  {
+   "id": "WP10-ch28-069",
+   "section": "Viewport/scissor: three viewport paths, but only two scissor paths",
+   "text": "DIRECTX9 and DIRECTX11 apply viewport and scissor immediately through native setters, with scissor enable in render or rasterizer state, and SpriteBatch derives its projection from the bound viewport.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#viewport-scissor"
+   ],
+   "tokens": [
+    "RSSetScissorRects"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (SetScissorRect, SetViewport, GetSpriteViewportSizeEXT); directx9/src/DirectX9Renderer.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-070",
+   "section": "Viewport/scissor: three viewport paths, but only two scissor paths",
+   "text": "Direct3D 11 viewport and scissor evidence is no longer a renderer-local getter check but the shared public fixtures ViewportState, Viewport_Subregion, Scissor, Deferred_Viewport, Deferred_Scissor, SpriteBatch_CustomViewport and RenderTarget_ViewportScissorReset.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#viewport-scissor"
+   ],
+   "tokens": [
+    "Viewport_Subregion",
+    "RenderTarget_ViewportScissorReset"
+   ],
+   "note": "The source cited D3D11 Smoke Check O, which invoked renderer methods directly; that smoke content was replaced by public fixtures.",
+   "target": {
+    "result": "corrected",
+    "evidence": "cmake/DirectXParityTests.cmake"
+   }
+  },
+  {
+   "id": "WP10-ch28-071",
+   "section": "Viewport/scissor: three viewport paths, but only two scissor paths",
+   "text": "CNA's Direct3D 9 plan calls its viewport and scissor oracle-proven, but the oracle corpus has cull-mode scenes and no viewport or scissor scene, and the smoke resize check proves only a full-size viewport; the supportable claim is native implementation plus draw coverage.",
+   "kind": "evidence-caveat",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#viewport-scissor",
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#oracle"
+   ],
+   "tokens": [
+    "oracle-proven"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "tools/xna-oracle/scenes/ (no viewport/scissor scene)"
+   }
+  },
+  {
+   "id": "WP10-ch28-072",
+   "section": "Viewport/scissor: three viewport paths, but only two scissor paths",
+   "text": "DIRECTX12 stores the viewport and every draw, instanced draw, SpriteBatch flush and compiled-effect draw records GetEffectiveViewportEXT(): the custom rectangle unclamped, depth clamped to [0,1], or the full target when no positive rectangle is set; SpriteBatch uses the same basis.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#viewport-scissor"
+   ],
+   "tokens": [
+    "GetEffectiveViewportEXT()"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx12/src/DirectX12Renderer.cpp (GetEffectiveViewportEXT, GetSpriteViewportSizeEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-073",
+   "section": "Viewport/scissor: three viewport paths, but only two scissor paths",
+   "text": "DIRECTX12 implements scissor: SetScissorRect stores the rectangle and every draw records GetEffectiveScissorEXT(), which clamps to the target and turns a degenerate or outside rectangle into an empty one; disabled means the whole target because Direct3D 12 has no enable bit.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#viewport-scissor"
+   ],
+   "tokens": [
+    "GetEffectiveScissorEXT()"
+   ],
+   "note": "The source said DIRECTX12 had no scissor hook and always drew a full-target rectangle.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx12/src/DirectX12Renderer.cpp (SetScissorRect, GetEffectiveScissorEXT DX-201)"
+   }
+  },
+  {
+   "id": "WP10-ch28-074",
+   "section": "Viewport/scissor: three viewport paths, but only two scissor paths",
+   "text": "The viewport and scissor results were compared across an older audit cohort in a cross-renderer matrix.",
+   "kind": "cross-reference",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Older cross-renderer cohort including renderer families no longer present."
+  },
+  {
+   "id": "WP10-ch28-075",
+   "section": "Clear: exact native bits do not imply one shared public contract",
+   "text": "DIRECTX11 clears every bound render-target view and selects depth and stencil clear bits independently only when a depth-stencil view is bound; DIRECTX12 records the same selection into the frame list through ClearImpl.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#clears"
+   ],
+   "tokens": [
+    "ClearImpl"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (Clear*); directx12/src/DirectX12Renderer.cpp (ClearImpl)"
+   }
+  },
+  {
+   "id": "WP10-ch28-076",
+   "section": "Clear: exact native bits do not imply one shared public contract",
+   "text": "Above the renderer, GraphicsDevice derives depth and stencil availability from the bound 2D or cube attachment itself instead of inferring stencil from every non-None depth format.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#clears"
+   ],
+   "tokens": [
+    "derives depth and stencil availability"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (HasRealDepthBuffer/HasRealStencilBuffer in SetRenderTargets and Clear)"
+   }
+  },
+  {
+   "id": "WP10-ch28-077",
+   "section": "Clear: exact native bits do not imply one shared public contract",
+   "text": "A requested depth or stencil clear with no depth-stencil view bound is a legal no-op on both DXGI renderers; DIRECTX12 always has a bound colour target because of its default or implicit off-screen back buffer.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#clears"
+   ],
+   "tokens": [
+    "legal no-op"
+   ],
+   "note": "",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx12/src/DirectX12Renderer.cpp (ClearImpl boundDsv_ check; CreateOffscreenBackBufferResources)"
+   }
+  },
+  {
+   "id": "WP10-ch28-078",
+   "section": "Clear: exact native bits do not imply one shared public contract",
+   "text": "DIRECTX9 builds its Clear flags from the depth format of the currently bound attachment (activeDepthStencilFormatOrdinal_, updated on every successful target transition), not from the back buffer's presentation format.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-presentation-and-state.html#clears"
+   ],
+   "tokens": [
+    "activeDepthStencilFormatOrdinal_"
+   ],
+   "note": "The source described a mismatch (gate on the presentation format, a target losing a depth clear); at 009d40f5 the gate follows the bound attachment.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (ClearDepth etc.; BindRenderTargetSurfacesEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-079",
+   "section": "Clear: exact native bits do not imply one shared public contract",
+   "text": "The D3D9 smoke test's clear combinations all used a D24S8 back buffer, so they could not have revealed a presentation-format gating mismatch.",
+   "kind": "test-gap",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Moot at 009d40f5: the gate now follows the bound attachment and the shared GraphicsDevice_OrderedClear and target-usage fixtures are registered for DIRECTX9."
+  },
+  {
+   "id": "WP10-ch28-080",
+   "section": "Clear: exact native bits do not imply one shared public contract",
+   "text": "The clear results were compared across a thirteen-product audit cohort.",
+   "kind": "cross-reference",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Older cross-renderer cohort including renderer families no longer present."
+  },
+  {
+   "id": "WP10-ch28-081",
+   "section": "MRT finalization across all bound targets",
+   "text": "When a single RenderTarget2D is unbound, ResolveAndGenerateMipsEXT() resolves its MSAA draw texture into the sampleable texture and regenerates the mip chain, so a later sampler reads the current image.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#mrt-finalization"
+   ],
+   "tokens": [
+    "ResolveAndGenerateMipsEXT()"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/D3D11RenderTargets.cpp (ResolveAndGenerateMipsEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-082",
+   "section": "MRT finalization across all bound targets",
+   "text": "The end-of-use rule was once missing for an MRT set: views were bound together but no target was finalised when the set was replaced, so two MSAA targets could be drawn and then sampled stale without any error.",
+   "kind": "defect-history",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#mrt-finalization"
+   ],
+   "tokens": [
+    "The rule was once silently missing for an MRT set"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (DX-143 comments)"
+   }
+  },
+  {
+   "id": "WP10-ch28-083",
+   "section": "MRT finalization across all bound targets",
+   "text": "DIRECTX11 keeps a non-owning array and count of the active MRT set and runs FlushPendingMRTResolveEXT() before any new binding, covering MRT to back buffer, MRT to a single target and MRT to another set; DIRECTX12 gained the same structure (FlushPendingMrtResolveEXT, DX-255).",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#mrt-finalization"
+   ],
+   "tokens": [
+    "FlushPendingMRTResolveEXT()",
+    "FlushPendingMrtResolveEXT()"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (FlushPendingMRTResolveEXT); directx12/include/.../DirectX12Renderer.hpp (DX-255)"
+   }
+  },
+  {
+   "id": "WP10-ch28-084",
+   "section": "MRT finalization across all bound targets",
+   "text": "The MRT proof must read every target's sampleable texture; the shared MRT fixture now does this for both DXGI renderers with ShaderEffect programs writing distinct outputs 0 to 3, true MRT MSAA with resolve, set replacement and sampling right after unbind.",
+   "kind": "test-strategy",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#mrt-finalization"
+   ],
+   "tokens": [
+    "true MRT MSAA with resolve"
+   ],
+   "note": "The source described the proof inside D3D11_Smoke; it now lives in the shared fixture.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/easygl/examples/easygl_mrt_test.cpp (REMED-GFX-016/DX-224 header); cmake/DirectXParityTests.cmake (MRT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-085",
+   "section": "MRT finalization across all bound targets",
+   "text": "Single-target mip generation is pixel-tested, but the combination of an N>1 MRT set with mipMap=true shares the helper and is wired, not independently pixel-tested.",
+   "kind": "verification-gap",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#mrt-finalization"
+   ],
+   "tokens": [
+    "a fixture that combines MRT with"
+   ],
+   "note": "",
+   "target": {
+    "result": "unverifiable-hedged",
+    "evidence": "no fixture combining MRT and mipMap was identified in cmake/DirectXParityTests.cmake"
+   }
+  },
+  {
+   "id": "WP10-ch28-086",
+   "section": "D3D12: shared foundations and split verification",
+   "text": "DIRECTX12 reuses DIRECTX11's DXBC shaders, format and state mappings and constant-buffer layouts through D3DCommon, but shared tables do not imply shared resource algorithms.",
+   "kind": "architecture",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#shared-foundation"
+   ],
+   "tokens": [
+    "Shared tables do not mean shared algorithms"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx12/CMakeLists.txt (PUBLIC cna_renderer_d3dcommon)"
+   }
+  },
+  {
+   "id": "WP10-ch28-087",
+   "section": "D3D12: shared foundations and split verification",
+   "text": "DIRECTX12 implements device, queues, descriptor heaps, command lists, fences, per-resource barrier tracking, PSOs, root signatures, per-slot samplers, 2D/cube/3D textures, MRT, mips, device-queried MSAA, occlusion queries, stock shaders, SpriteBatch, run-time shaders and device recreation.",
+   "kind": "scope",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#ctest-wiring",
+    "deep-dives/renderers/direct3d11-and-12-resources.html#device-recovery"
+   ],
+   "tokens": [
+    "resource-state tracking",
+    "RecreateDeviceEXT"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx12/include/.../DirectX12Renderer.hpp; D3D12ResourceStateTracker.hpp; directx12_smoke_test.cpp (families A-D)"
+   }
+  },
+  {
+   "id": "WP10-ch28-088",
+   "section": "D3D12: shared foundations and split verification",
+   "text": "On the Linux loop most DIRECTX12 fixtures run forced-headless (CNA_FORCE_HEADLESS_DEVICE_EXT=DIRECTX12), three window fixtures run through Proton, and the manual swap-chain diagnostic remains outside the routine suite; a native Windows build runs every fixture windowed.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#ctest-wiring"
+   ],
+   "tokens": [
+    "BackbufferResize",
+    "CNA_FORCE_HEADLESS_DEVICE_EXT=DIRECTX12"
+   ],
+   "note": "The source said the routine D3D12 suite was entirely off-screen with only a manual windowed diagnostic.",
+   "target": {
+    "result": "corrected",
+    "evidence": "cmake/DirectXParityTests.cmake (DIRECTX12_PROTON, forced-headless environment)"
+   }
+  },
+  {
+   "id": "WP10-ch28-089",
+   "section": "Backbuffer readback is not part of the shared D3D11 foundation",
+   "text": "DIRECTX11's ReadBackbuffer copies the back buffer (after MSAA resolve) into a staging texture, honours RowPitch and backs GetBackBufferData(); it reads the back buffer, never a bound render target.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#readback"
+   ],
+   "tokens": [
+    "honours RowPitch"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (ReadBackbuffer)"
+   }
+  },
+  {
+   "id": "WP10-ch28-090",
+   "section": "Backbuffer readback is not part of the shared D3D11 foundation",
+   "text": "DIRECTX12 overrides ReadBackbuffer too (DX-205), reading the swap-chain or implicit off-screen back buffer through a readback heap, mapping logical coordinates and refusing by name when there is no back buffer.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#readback"
+   ],
+   "tokens": [
+    "since DX-205 and DX-241"
+   ],
+   "note": "The source said DIRECTX12 had no back-buffer readback override.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx12/src/DirectX12Renderer.cpp (ReadBackbuffer, ReadbackSubresourceEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-091",
+   "section": "Backbuffer readback is not part of the shared D3D11 foundation",
+   "text": "The readback results were compared with other renderers and FNA in a cross-renderer matrix.",
+   "kind": "cross-reference",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Cross-renderer matrix of an older audit cohort; the current cross-renderer readback contract is recorded with the renderer-contract unit."
+  },
+  {
+   "id": "WP10-ch28-092",
+   "section": "Two frames in flight and blocking call sites",
+   "text": "DIRECTX12 keeps kFramesInFlight = 2 slots, each with its own command allocator, graphics command list, constant arena, upload ring and retained-object list, guarded by one shared fence and a fence value per slot.",
+   "kind": "lifetime",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#frames-in-flight"
+   ],
+   "tokens": [
+    "kFramesInFlight = 2"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx12/include/.../DirectX12Renderer.hpp (commandAllocators_, frameCommandLists_, frameFenceValues_)"
+   }
+  },
+  {
+   "id": "WP10-ch28-093",
+   "section": "Two frames in flight and blocking call sites",
+   "text": "SignalAndWaitForFrameEXT signals a new, increasing value for the frame just submitted and waits only for the previous value recorded for that slot; waiting for the new value would erase the overlap the two slots exist for.",
+   "kind": "ordering",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#frames-in-flight"
+   ],
+   "tokens": [
+    "waits only for the"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx12/src/DirectX12Renderer.cpp (SignalAndWaitForFrameEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-094",
+   "section": "Two frames in flight and blocking call sites",
+   "text": "DirectX12_Smoke calls the primitive for slots 0, 1 and 0 and asserts increasing values and that slot reuse waited for the old value, deliberately not that the newest value completed, because Signal() is asynchronous and that would be a race.",
+   "kind": "test-strategy",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#frames-in-flight"
+   ],
+   "tokens": [
+    "would be a race"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx12/examples/directx12_smoke_test.cpp (checks A7, A8)"
+   }
+  },
+  {
+   "id": "WP10-ch28-095",
+   "section": "Two frames in flight and blocking call sites",
+   "text": "A back-pressure measurement placed 48 large GPU copies ahead of the old fence and compared the loaded wait with an already-complete control.",
+   "kind": "test-history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "That timing check is not in the DX-243 smoke test at 009d40f5; steady-state wait behaviour is now asserted by the shared Buffer_DynamicStress fixture (recorded on the page)."
+  },
+  {
+   "id": "WP10-ch28-096",
+   "section": "Two frames in flight and blocking call sites",
+   "text": "Ordinary DIRECTX12 clears and draws no longer submit and wait per call: they record into the open frame list and submit without waiting at Present (DX-237); only readbacks and immediate helpers use the synchronous ExecuteCommandListAndWaitEXT path.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#frames-in-flight"
+   ],
+   "tokens": [
+    "Earlier descriptions said that ordinary drawing waited"
+   ],
+   "note": "The source said ordinary drawing used the synchronous helper and that two frames in flight was only tested infrastructure.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx12/src/DirectX12Renderer.cpp (GetFrameCommandListEXT, SubmitFrameCommandsEXT, ExecuteCommandListAndWaitEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-097",
+   "section": "Two frames in flight and blocking call sites",
+   "text": "DIRECTX12 descriptor allocators reclaim freed slots and grow on demand (REMED-GFX-177): RTV/DSV as a chain of blocks with stable handles, CBV/SRV/UAV and samplers as a staging-mirrored shader-visible heap addressed by stable index, with fence-stamped recycling; 64/8/64/16 are only starting sizes.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#descriptor-heaps"
+   ],
+   "tokens": [
+    "REMED-GFX-177",
+    "only the"
+   ],
+   "note": "The source said the heaps were fixed-capacity bump allocators that never return a slot and exhaust under churn.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx12/include/.../D3D12DescriptorHeaps.hpp; src/D3D12DescriptorHeaps.cpp; examples/directx12_descriptor_allocator_test.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-098",
+   "section": "Two frames in flight and blocking call sites",
+   "text": "Descriptor exhaustion still fails loudly rather than aliasing another view, but only when live demand exceeds the Direct3D 12 specification ceilings (1,000,000 CBV/SRV/UAV at Tier 1, 2,048 samplers), with a named runtime_error.",
+   "kind": "limitation",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#descriptor-heaps"
+   ],
+   "tokens": [
+    "1,000,000",
+    "2,048"
+   ],
+   "note": "",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx12/src/D3D12DescriptorHeaps.cpp (Grow); DirectX12Renderer.cpp (spec constants)"
+   }
+  },
+  {
+   "id": "WP10-ch28-099",
+   "section": "External Wine/vkd3d architecture mismatch",
+   "text": "Swap-chain creation under plain Wine crashes in Wine's own dxgi.dll because the system dxgi.dll cannot hand a Direct3D 12 queue to vkd3d-proton's separately overridden d3d12.dll; the cause is external to CNA.",
+   "kind": "platform-limitation",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#translators"
+   ],
+   "tokens": [
+    "null read inside Wine's own"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "scripts/run-proton-vkd3d.sh (root-cause header); scripts/run-wine-vkd3d.sh"
+   }
+  },
+  {
+   "id": "WP10-ch28-100",
+   "section": "External Wine/vkd3d architecture mismatch",
+   "text": "Launched through Proton with its matched DLL set, Direct3D 12 swap-chain creation succeeds and the diagnostic runs a ten-frame clear-and-present loop.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-evidence-and-wine.html#translators"
+   ],
+   "tokens": [
+    "ten-frame clear-and-present loop"
+   ],
+   "note": "The 'two runs' count is CNA's record and was not re-run.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "scripts/run-proton-vkd3d.sh (header result); modules/renderers/directx12/examples/directx12_swapchain_diag.cpp (frameCount 10)"
+   }
+  },
+  {
+   "id": "WP10-ch28-101",
+   "section": "Explicitly corrected claims",
+   "text": "Earlier DIRECTX12 tracking listed run-time state objects, sixteen-slot sampler state, public 2D and cube render targets with MRT, Texture3D and TextureCube::GetData as open although they were implemented.",
+   "kind": "documentation-history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "History of CNA's own tracking documents; all five are implemented at 009d40f5 (DX-117, DX-118, DX-119, DX-122 and the cube readback path in D3D12TextureCube.cpp), and the page's corrections table covers the later statements that matter."
+  },
+  {
+   "id": "WP10-ch28-102",
+   "section": "One public ShaderEffect API, two Direct3D contracts",
+   "text": "On the DXGI renderers a ShaderEffect also drives 3D draws: World, View and Projection are written by name and an input layout is matched from the vertex shader signature to the bound VertexDeclaration, throwing NotSupportedException when it cannot match.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#three-d-path"
+   ],
+   "tokens": [
+    "An applied ShaderEffect also drives"
+   ],
+   "note": "The source said the D3D11/D3D12 custom effect was a SpriteBatch-only facility and that neither 3D dispatch read the custom effect.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp and directx12/src/DirectX12Renderer.cpp (customEffectRequested branch); D3D11EffectRenderer.cpp (BindForDrawEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-103",
+   "section": "One public ShaderEffect API, two Direct3D contracts",
+   "text": "DIRECTX11 and DIRECTX12 accept the same constructor strings and compile main as vs_5_0 and ps_5_0 with strictness and optimisation level 3.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#compile-model"
+   ],
+   "tokens": [
+    "D3DCOMPILE_ENABLE_STRICTNESS"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/D3D11EffectRenderer.cpp; directx12/src/D3D12EffectRenderer.cpp (CompileProgram)"
+   }
+  },
+  {
+   "id": "WP10-ch28-104",
+   "section": "One public ShaderEffect API, two Direct3D contracts",
+   "text": "In the SpriteBatch path the shader receives SpriteBatch's 32-byte vertex: POSITION0 float2 at 0, TEXCOORD0 float2 at 8, COLOR0 float4 at 16.",
+   "kind": "reference",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#sprite-path"
+   ],
+   "tokens": [
+    "POSITION0",
+    "TEXCOORD0"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/D3D11EffectRenderer.cpp (Bind spriteElements)"
+   }
+  },
+  {
+   "id": "WP10-ch28-105",
+   "section": "One public ShaderEffect API, two Direct3D contracts",
+   "text": "A shader declaring float3 POSITION, a tangent or a game-specific stride is usable in the 3D path when the bound VertexDeclaration supplies those semantics.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#three-d-path"
+   ],
+   "tokens": [
+    "matches the vertex shader's input signature"
+   ],
+   "note": "",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx11/src/D3D11EffectRenderer.cpp (GetOrCreateInputLayoutEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-106",
+   "section": "The names are documentation; the byte offsets are the API",
+   "text": "Uniform names are resolved by D3DProgramReflection on the DXGI renderers: unknown names are ignored, trailing [0] is canonicalised, up to 14 constant buffers, 16 resources and 16 samplers are represented, and vpSize is written by the renderer.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#reflection",
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#history"
+   ],
+   "tokens": [
+    "Names are resolved by reflection",
+    "128-byte block"
+   ],
+   "note": "The source's fixed 128-byte, name-ignoring layout is recorded on the page only as history.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/common/d3d/src/D3DProgramReflection.cpp; include/.../D3DProgramReflection.hpp (limits); git log 235e57901 DX-223"
+   }
+  },
+  {
+   "id": "WP10-ch28-107",
+   "section": "The names are documentation; the byte offsets are the API",
+   "text": "SetUniformInt writes integer bits into an int variable on the DXGI renderers, while DIRECTX9 converts it to a float because its effect uploads to float4 registers.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#reflection"
+   ],
+   "tokens": [
+    "SetUniformInt writes integer bits"
+   ],
+   "note": "",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/common/d3d/src/D3DProgramReflection.cpp (SetInt); directx9/src/D3D9EffectRenderer.cpp (SetUniformInt)"
+   }
+  },
+  {
+   "id": "WP10-ch28-108",
+   "section": "The names are documentation; the byte offsets are the API",
+   "text": "Array setters and extra texture slots work on the DXGI ShaderEffect: SetUniformFloatArray, Vec2Array, Vec3Array and Mat4Array are implemented, and BindTexture, BindTextureCube and BindTexture3D bind reflected slots while SpriteBatch's own t0 is preserved unless explicitly set.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#reflection",
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#sprite-path"
+   ],
+   "tokens": [
+    "SetUniformFloatArray",
+    "unless the caller explicitly set a texture there"
+   ],
+   "note": "The source said array setters and texture hooks were inherited no-ops.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx11/src/D3D11EffectRenderer.cpp (BindProgramEXT, SetUniform*Array, BindTexture*)"
+   }
+  },
+  {
+   "id": "WP10-ch28-109",
+   "section": "Where D3D11 and D3D12 stop being the same",
+   "text": "DIRECTX11 binds shaders, layout and constant buffers as separate context state, mapping every reflected constant buffer with D3D11_MAP_WRITE_DISCARD on each bind and attaching it to the same b slot in both stages.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#d3d11-vs-d3d12"
+   ],
+   "tokens": [
+    "D3D11_MAP_WRITE_DISCARD"
+   ],
+   "note": "",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx11/src/D3D11EffectRenderer.cpp (BindProgramEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-110",
+   "section": "Where D3D11 and D3D12 stop being the same",
+   "text": "DIRECTX12 builds the effect's root signature from its reflected resource counts through the root-signature cache and gets PSOs from the shared cache keyed by shaders and current state; uniform values are snapshot into each consuming draw's frame constant range.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#d3d11-vs-d3d12"
+   ],
+   "tokens": [
+    "root-signature cache"
+   ],
+   "note": "The source described one PSO built up front with a fixed CBV/SRV/sampler root signature.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx12/src/D3D12EffectRenderer.cpp (CompileProgram, GetOrCreatePipelineStateEXT); DirectX12Renderer.cpp (custom draw)"
+   }
+  },
+  {
+   "id": "WP10-ch28-111",
+   "section": "Where D3D11 and D3D12 stop being the same",
+   "text": "A DIRECTX12 ShaderEffect is not locked to one single-sample R8G8B8A8 pipeline: the PSO key includes the bound render-target formats, sample count, blend, depth-stencil and rasterizer state, so MRT, MSAA and other formats each get their own cached state.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#d3d11-vs-d3d12"
+   ],
+   "tokens": [
+    "each combination gets its own cached pipeline state"
+   ],
+   "note": "",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx12/src/DirectX12Renderer.cpp (FillPsoStateFromCurrentEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-112",
+   "section": "Shared D3D11/D3D12 pixel-test example",
+   "text": "A colour-inverting custom HLSL pair drawn through SpriteBatch over solid red must produce exactly (0,255,255,255), which proves the input layout, renderer-written vpSize, b0 binding, t0/s0 resource path, pixel shader and readback in one public draw.",
+   "kind": "worked-example",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#example"
+   ],
+   "tokens": [
+    "(0,255,255,255)"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/ShaderEffect.hpp; SpriteBatch.hpp (Begin overload with Effect*)"
+   }
+  },
+  {
+   "id": "WP10-ch28-113",
+   "section": "Shared D3D11/D3D12 pixel-test example",
+   "text": "The shared ShaderEffect_ReflectionContract fixture covers the reflection contract for both DXGI renderers, with DIRECTX12 running forced-headless on the Linux loop and reading its off-screen back buffer.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#example"
+   ],
+   "tokens": [
+    "ShaderEffect_ReflectionContract"
+   ],
+   "note": "The source described separate D3D11 windowed and D3D12 HeadlessEXT smoke checks; which fixture contains the inversion case was not traced.",
+   "target": {
+    "result": "corrected",
+    "evidence": "cmake/DirectXParityTests.cmake (ShaderEffect_ReflectionContract)"
+   }
+  },
+  {
+   "id": "WP10-ch28-114",
+   "section": "Persistent Direct3D resources implement the shared usage contract",
+   "text": "The Direct3D factories receive the preserve flag but bind without a native load action, so resources keep their contents across binds and the flag is deliberately unused.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#usage"
+   ],
+   "tokens": [
+    "deliberately leave it unused"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (CreateRenderTargetCubeEXT REMED-GFX-136); directx9/src/DirectX9Renderer.cpp (CreateRenderTargetCube)"
+   }
+  },
+  {
+   "id": "WP10-ch28-115",
+   "section": "Persistent Direct3D resources implement the shared usage contract",
+   "text": "GraphicsDevice::SetRenderTargets implements the usage policy: DiscardContents clears to opaque black plus the depth and stencil planes the first attachment really has; Preserve and Platform clear nothing; the first descriptor decides for MRT.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#usage"
+   ],
+   "tokens": [
+    "opaque black plus whichever depth and stencil planes"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (SetRenderTargets DiscardContents branch)"
+   }
+  },
+  {
+   "id": "WP10-ch28-116",
+   "section": "Persistent Direct3D resources implement the shared usage contract",
+   "text": "A redundant bind is not a no-op: finalisation of the outgoing binding runs first and a discard target is cleared again.",
+   "kind": "pitfall",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#usage"
+   ],
+   "tokens": [
+    "A redundant bind is not a no-op"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (SetRenderTarget2D flushes); GraphicsDevice.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-117",
+   "section": "Persistent Direct3D resources implement the shared usage contract",
+   "text": "The usage fixtures render an asymmetric image and rebind with only a small marker, so a discard masquerading as preservation cannot pass; depth and stencil variants preserve an occluder or stamp across a bind cycle.",
+   "kind": "test-strategy",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#usage"
+   ],
+   "tokens": [
+    "a discard masquerading as preservation cannot pass"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "cmake/DirectXParityTests.cmake (RenderTarget_Usage, RenderTarget_DepthStencilUsage, RenderTargetCube_Usage)"
+   }
+  },
+  {
+   "id": "WP10-ch28-118",
+   "section": "Persistent Direct3D resources implement the shared usage contract",
+   "text": "The usage and ordered-clear fixtures are registered for DIRECTX11 and DIRECTX12 alike through the shared inventory (DIRECTX12 forced-headless on the Linux loop) and for DIRECTX9 in its own list.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#usage"
+   ],
+   "tokens": [
+    "are registered for DIRECTX11 and DIRECTX12 alike"
+   ],
+   "note": "The source said DIRECTX12 only cross-built the fixtures.",
+   "target": {
+    "result": "corrected",
+    "evidence": "cmake/DirectXParityTests.cmake; modules/renderers/directx9/examples/CMakeLists.txt (DirectX9_RenderTargetCube_Usage etc.)"
+   }
+  },
+  {
+   "id": "WP10-ch28-119",
+   "section": "Cube-target MSAA, mip generation, and public finalization",
+   "text": "DIRECTX11 and DIRECTX12 use parallel cube-MSAA designs but different mip-generation routes, a concrete case of shared tables not implying shared algorithms.",
+   "kind": "architecture",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#cube-targets"
+   ],
+   "tokens": [
+    "Mip generation is where the algorithms really part"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/D3D11RenderTargets.cpp; directx12/src/D3D12RenderTargets.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-120",
+   "section": "Cube-target MSAA, mip generation, and public finalization",
+   "text": "A public routing hole left an outgoing cube target unfinalised because only direct smoke checks called the cube bind and unbind methods; REMED-GFX-134 closed it on both DXGI renderers.",
+   "kind": "defect-history",
+   "disposition": "FIXED BUG",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#cube-targets"
+   ],
+   "tokens": [
+    "REMED-GFX-134"
+   ],
+   "note": "Positive evidence: both renderers override SetRenderTargetCubeFace and call FlushPendingCubeResolveEXT before every binding change (D3D11 source and D3D12 header REMED-GFX-134); shared RenderTargetCube_SampleAfterUnbind, _Usage and _MsaaFace fixtures are registered. Kept on the page as a labelled historical case.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (FlushPendingCubeResolveEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-121",
+   "section": "RenderTargetCube MSAA",
+   "text": "Neither Direct3D 11 nor 12 allows a multisampled cube, so the MSAA colour of a RenderTargetCube is a six-slice Texture2DMSArray used only as a render-target view, resolved with ResolveSubresource() into a single-sample cube resource that the shader view targets.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#cube-targets"
+   ],
+   "tokens": [
+    "Texture2DMSArray"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/D3D11RenderTargets.cpp (TEXTURE2DMSARRAY RTV); directx12/src/D3D12RenderTargets.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-122",
+   "section": "RenderTargetCube MSAA",
+   "text": "DIRECTX12 transitions the two cube resources to RESOLVE_SOURCE and RESOLVE_DEST before resolving, barriers Direct3D 11's context performs implicitly.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#cube-targets"
+   ],
+   "tokens": [
+    "RESOLVE_SOURCE"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx12/src/D3D12RenderTargets.cpp (ResolveMsaaEXT)"
+   }
+  },
+  {
+   "id": "WP10-ch28-123",
+   "section": "RenderTargetCube MSAA",
+   "text": "Both DXGI renderers resolve only the active cube face on unbind and report the applied sample count; the cube MSAA face case is covered by the shared RenderTargetCube_MsaaFace fixture.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#cube-targets"
+   ],
+   "tokens": [
+    "resolve only the currently active face",
+    "RenderTargetCube_MsaaFace"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/D3D11RenderTargets.cpp (ResolveMsaaEXT activeFace_)"
+   }
+  },
+  {
+   "id": "WP10-ch28-124",
+   "section": "Mip-chain generation: one native GPU call versus an explicit CPU round trip",
+   "text": "DIRECTX11 regenerates cube mip chains with ID3D11DeviceContext::GenerateMips() on a view spanning all six faces; unchanged faces reproduce their prior levels.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#cube-targets"
+   ],
+   "tokens": [
+    "ID3D11DeviceContext::GenerateMips()"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/D3D11RenderTargets.cpp (UnbindAsRenderTarget)"
+   }
+  },
+  {
+   "id": "WP10-ch28-125",
+   "section": "Mip-chain generation: one native GPU call versus an explicit CPU round trip",
+   "text": "DIRECTX12 has no GenerateMips: GenerateMipsEXT reads each previous level back, box-filters it on the CPU and uploads the next level (for a cube, the active face only), the same chain at very different synchronisation cost.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#cube-targets"
+   ],
+   "tokens": [
+    "box-filters it on the CPU"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx12/src/D3D12RenderTargets.cpp (GenerateMipsEXT, BoxFilterDownsample)"
+   }
+  },
+  {
+   "id": "WP10-ch28-126",
+   "section": "How renderer tracking closes the public finalization edge",
+   "text": "Both DXGI renderers track the active cube separately from 2D and MRT state and call FlushPendingCubeResolveEXT() before every cube-to-anything transition, so resolve and mips run before native state changes.",
+   "kind": "ordering",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#cube-targets"
+   ],
+   "tokens": [
+    "FlushPendingCubeResolveEXT()"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp; directx12/include/.../DirectX12Renderer.hpp (currentCubeRT_)"
+   }
+  },
+  {
+   "id": "WP10-ch28-127",
+   "section": "How renderer tracking closes the public finalization edge",
+   "text": "A single cube face in the plural binding path is delegated to the cube route, and cube faces inside a multi-target set are refused explicitly rather than treated as 2D targets.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#cube-targets"
+   ],
+   "tokens": [
+    "cube faces inside a multi-target set remain an explicit refusal"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx11/src/DirectX11Renderer.cpp (SetRenderTargets)"
+   }
+  },
+  {
+   "id": "WP10-ch28-128",
+   "section": "How renderer tracking closes the public finalization edge",
+   "text": "Shared GraphicsDevice fixtures drive an asymmetric rendered cube face through public binding and readback, so a skipped finalisation, wrong face or stale resolve fails visibly.",
+   "kind": "test-strategy",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#cube-targets"
+   ],
+   "tokens": [
+    "RenderTargetCube_SampleAfterUnbind"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "cmake/DirectXParityTests.cmake (RenderTargetCube_* fixtures)"
+   }
+  },
+  {
+   "id": "WP10-ch28-129",
+   "section": "HeadlessEXT: routine off-screen D3D12 coverage",
+   "text": "SpriteFont, Model and parts of Texture2D.FromStream/SaveAsPng need a GraphicsDevice, and a Direct3D 12 window on the Linux loop needs the heavy Proton route, which motivated a windowless device mode.",
+   "kind": "motivation",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#headless"
+   ],
+   "tokens": [
+    "SpriteFont, Model and parts of"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/.../PresentationParameters.hpp (HeadlessEXT doc)"
+   }
+  },
+  {
+   "id": "WP10-ch28-130",
+   "section": "HeadlessEXT: routine off-screen D3D12 coverage",
+   "text": "PresentationParameters has the CNA-only HeadlessEXT property (getHeadlessEXTProperty/setHeadlessEXTProperty, default false); CNA_FORCE_HEADLESS_DEVICE_EXT applies it to named renderers from the environment.",
+   "kind": "api",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#headless"
+   ],
+   "tokens": [
+    "getHeadlessEXTProperty()",
+    "CNA_FORCE_HEADLESS_DEVICE_EXT"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/include/Microsoft/Xna/Framework/Graphics/PresentationParameters.hpp; GraphicsDevice.cpp"
+   }
+  },
+  {
+   "id": "WP10-ch28-131",
+   "section": "HeadlessEXT: routine off-screen D3D12 coverage",
+   "text": "Two renderers honour HeadlessEXT, DIRECTX12 and SDL_GPU; DIRECTX11 (swap chain created in its constructor) and EasyGL (window-bound context) throw from their constructors.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#headless"
+   ],
+   "tokens": [
+    "Two renderers honour it"
+   ],
+   "note": "The source said only DIRECTX12 honoured it.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/graphics/include/.../PresentationParameters.hpp (getHeadlessEXTProperty doc: D3D12 and SDL GPU)"
+   }
+  },
+  {
+   "id": "WP10-ch28-132",
+   "section": "HeadlessEXT: routine off-screen D3D12 coverage",
+   "text": "A windowless DIRECTX12 device renders to an implicit off-screen back buffer, Present() submits and rotates the frame slot without presenting, and GetBackBufferData() reads the frame; it serves tests, server-side rendering and thumbnails.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#headless"
+   ],
+   "tokens": [
+    "is not target-less",
+    "rotates the frame slot"
+   ],
+   "note": "",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/directx12/src/DirectX12Renderer.cpp (Present windowless branch, DX-241)"
+   }
+  },
+  {
+   "id": "WP10-ch28-133",
+   "section": "Four D3D12 defects exposed by headless GraphicsDevice tests",
+   "text": "DIRECTX12 SpriteBatch once ignored sampler filter and address-mode updates and inherited a prior 3D draw's sampler.",
+   "kind": "defect-history",
+   "disposition": "FIXED BUG",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#case-study"
+   ],
+   "tokens": [
+    "SpriteBatch ignored sampler filter"
+   ],
+   "note": "Positive evidence: D3D12SpriteBatch resolves slot 0's sampler descriptor from its own pendingFilter_/pendingAddress* through the DX-119 dynamic sampler system; shared sampler-contract fixtures are registered for DIRECTX12.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx12/src/D3D12SpriteBatch.cpp (DX-133 pending sampler state)"
+   }
+  },
+  {
+   "id": "WP10-ch28-134",
+   "section": "Four D3D12 defects exposed by headless GraphicsDevice tests",
+   "text": "DIRECTX12 render targets once failed to bind their depth-stencil views.",
+   "kind": "defect-history",
+   "disposition": "FIXED BUG",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#case-study"
+   ],
+   "tokens": [
+    "Render targets failed to bind their depth-stencil views"
+   ],
+   "note": "Positive evidence: a depth-bearing D3D12RenderTargetRenderer allocates a DSV and binds it (DX-146 comment); RenderTarget_DepthStencilUsage is registered for DIRECTX12.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx12/src/D3D12RenderTargets.cpp (dsv_ allocation, BindAsRenderTarget)"
+   }
+  },
+  {
+   "id": "WP10-ch28-135",
+   "section": "Four D3D12 defects exposed by headless GraphicsDevice tests",
+   "text": "The six combined colour, depth and stencil clear variants once threw on DIRECTX12.",
+   "kind": "defect-history",
+   "disposition": "FIXED BUG",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#case-study"
+   ],
+   "tokens": [
+    "The six combined colour"
+   ],
+   "note": "Positive evidence: all Clear* variants route to ClearImpl (DX-146); ClearOverloads and GraphicsDevice_OrderedClear are registered for DIRECTX12.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx12/src/DirectX12Renderer.cpp (ClearImpl)"
+   }
+  },
+  {
+   "id": "WP10-ch28-136",
+   "section": "Four D3D12 defects exposed by headless GraphicsDevice tests",
+   "text": "SetDepthTestEnabled, SetDepthWriteEnabled and SetBlendEnabled once threw on DIRECTX12 when the Model route called them.",
+   "kind": "defect-history",
+   "disposition": "FIXED BUG",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#case-study"
+   ],
+   "tokens": [
+    "threw when the"
+   ],
+   "note": "Positive evidence: the first two set currentDepthEnable_/currentDepthWriteEnable_ that feed the PSO key; SetBlendEnabled is a deliberate no-op; the ContextRecovery_Model and model fixtures are registered for DIRECTX12.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/directx12/src/DirectX12Renderer.cpp (SetDepthTestEnabled, SetDepthWriteEnabled, SetBlendEnabled)"
+   }
+  },
+  {
+   "id": "WP10-ch28-137",
+   "section": "Four D3D12 defects exposed by headless GraphicsDevice tests",
+   "text": "Direct renderer smoke tests and public GraphicsDevice fixtures are complementary: the first prove native mechanisms in isolation, the second prove the shared framework's call paths reach them.",
+   "kind": "lesson",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#case-study"
+   ],
+   "tokens": [
+    "direct smoke tests and public-API fixtures are complementary"
+   ],
+   "note": "",
+   "target": {
+    "result": "not-applicable",
+    "evidence": "methodology; consistent with DX-243 split between smoke and shared fixtures"
+   }
+  }
+ ],
+ "figures": [],
+ "examples": [
+  {
+   "id": "WP10-ch28-ex1",
+   "text": "colored3d.scene declarative oracle scene (eleven key=value lines)",
+   "disposition": "RECREATED",
+   "verified": "read-checked",
+   "destinations": [
+    "deep-dives/renderers/direct3d9-xna-fidelity.html#oracle"
+   ],
+   "note": "Copied from tools/xna-oracle/scenes/colored3d.scene at 009d40f5 without its header comment."
+  },
+  {
+   "id": "WP10-ch28-ex2",
+   "text": "shared D3D11/D3D12 colour-inverting ShaderEffect HLSL pair plus SpriteBatch Begin/Draw/End",
+   "disposition": "RECREATED",
+   "verified": "syntax-checked",
+   "destinations": [
+    "deep-dives/renderers/direct3d-shadereffect-contract.html#example"
+   ],
+   "note": "C++ half syntax-checked with g++ -std=c++23 -fsyntax-only -DCNA_RENDERER_SDL_RENDERER -DCNA_PLATFORM_SDL3 against all TARGET modules/*/include plus sharp-runtime next @ 41b918c9 module includes (not pinned by TARGET); the error message now appends GetCompileErrorEXT(); the constant buffer was reduced to vpSize because reflection makes the old padding layout unnecessary; HLSL read-checked only."
+  },
+  {
+   "id": "WP10-ch28-ex3",
+   "text": "PresentationParameters HeadlessEXT accessor declarations (getHeadlessEXTProperty/setHeadlessEXTProperty)",
+   "disposition": "SUPERSEDED",
+   "verified": "read-checked",
+   "destinations": [
+    "deep-dives/renderers/direct3d11-and-12-resources.html#headless"
+   ],
+   "note": "Two declarations; named inline on the page and in Tutorial 103 rather than repeated as a listing."
+  }
+ ],
+ "issues": [
+  {
+   "kind": "platform-limitation",
+   "text": "DIRECTX9 requests D3DPRESENT_INTERVAL_TWO without checking D3DCAPS9::PresentationIntervals or windowed mode; Reset can fail and retry every Present while public PresentationParameters keeps Two.",
+   "ref": "new",
+   "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (BuildPresentParameters, SetSwapInterval, EnsureDeviceSize)"
+  },
+  {
+   "kind": "functional-gap",
+   "text": "DIRECTX9 stores PresentationMode and the virtual resolution but never reads them; every mode behaves like NativeBackBuffer.",
+   "ref": "new",
+   "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (SetPresentationMode, SetVirtualResolution, GetViewportSize)"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "DIRECTX9 does not track an MRT set for finalisation: SetRenderTargets binds multisample surfaces of several targets but only a single tracked target is StretchRect-resolved on the next transition, so MSAA MRT targets may be sampled unresolved.",
+   "ref": "new",
+   "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (SetRenderTargets comment 'MRT binds are NOT tracked'); D3D9RenderTargets.cpp (ResolveForTransitionEXT)"
+  },
+  {
+   "kind": "functional-gap",
+   "text": "DIRECTX9 BasicEffect reaches only 12 of 32 variants; combinations without a matching CNA vertex layout throw 'no matching CNA vertex layout'; untextured VSBasicPixelLighting is permanently unproven.",
+   "ref": "new",
+   "evidence": "modules/renderers/directx9/src/D3D9EffectDraw.cpp (DrawBasicEffectEXT)"
+  },
+  {
+   "kind": "functional-gap",
+   "text": "DIRECTX9 RenderTarget2D ignores mipMap (single level; GetData level>0 throws NotSupportedException) and cube render targets ignore the MSAA request.",
+   "ref": "new",
+   "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (CreateRenderTarget2D, CreateRenderTargetCube); D3D9RenderTargets.cpp (GetData)"
+  },
+  {
+   "kind": "functional-gap",
+   "text": "DIRECTX9 has no ClassifySurfaceFormatEXT, so public textures are Color-only although an internal D3DFORMAT mapping exists.",
+   "ref": "new",
+   "evidence": "modules/graphics/src/Xna/Texture2D.cpp (Defer -> ValidateFormat)"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "DIRECTX9 MultiSampleAntiAliasing and AnisotropicFiltering capability answers are unconditional defaults; D3DSAMP_MAXANISOTROPY is set unclamped by ApplySamplerState.",
+   "ref": "new",
+   "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (ApplySamplerState); IGraphicsRenderer.hpp defaults"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "DIRECTX9 SetContextRecoveryEnabled throws after GraphicsDevice already stored the new flag (partial state change of the Texture2D shadow policy).",
+   "ref": "new",
+   "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (SetContextRecoveryEnabled); directx9 NotYetImplemented"
+  },
+  {
+   "kind": "functional-gap",
+   "text": "DIRECTX9's draw dispatch has no branch for a custom ShaderEffect; only SpriteBatch consumes a D3D9 ShaderEffect.",
+   "ref": "new",
+   "evidence": "modules/renderers/directx9/src/D3D9EffectDraw.cpp (DrawPrimitivesExImpl); no customEffectRequested use in directx9/src"
+  },
+  {
+   "kind": "platform-limitation",
+   "text": "DIRECTX11/DIRECTX12 never enter DXGI exclusive full screen (no SetFullscreenState; exclusiveFullscreen_ always false).",
+   "ref": "new",
+   "evidence": "modules/renderers/directx11/src, directx12/src (no SetFullscreenState)"
+  },
+  {
+   "kind": "verification-gap",
+   "text": "No test measures PresentInterval::Two pacing or the no-vsync tearing branch on any Direct3D renderer; genuine DXGI device removal is never triggered; DIRECTX9 has no CI job and native-Windows runs are manual.",
+   "ref": "new",
+   "evidence": ".github/workflows/d3d-windows-ci.yml (workflow_dispatch); modules/graphics/examples/swap_interval_forwarding_contract_test.cpp"
+  },
+  {
+   "kind": "verification-gap",
+   "text": "MRT combined with mipMap=true on the DXGI renderers is wired through the same finalisation helper but no fixture combining them was identified.",
+   "ref": "new",
+   "evidence": "cmake/DirectXParityTests.cmake"
+  },
+  {
+   "kind": "not-an-issue",
+   "text": "Former DIRECTX12 fixed-capacity descriptor heaps (exhaustion after 64 sampleable resources ever created) are absent: allocators reclaim and grow (REMED-GFX-177).",
+   "ref": "new",
+   "evidence": "modules/renderers/directx12/src/D3D12DescriptorHeaps.cpp"
+  },
+  {
+   "kind": "not-an-issue",
+   "text": "Former DIRECTX9 clear gating on the back buffer's presentation depth format is absent; the gate follows the bound attachment.",
+   "ref": "new",
+   "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (activeDepthStencilFormatOrdinal_)"
+  },
+  {
+   "kind": "not-an-issue",
+   "text": "Former DIRECTX11/12 collapse of PresentInterval to 0/1, fixed D24S8 depth, missing D3D12 scissor and missing D3D12 back-buffer readback are absent at the snapshot.",
+   "ref": "new",
+   "evidence": "DirectX11Renderer.cpp/DirectX12Renderer.cpp (Present, RecreateDefaultRenderSurfaces, GetEffectiveScissorEXT, ReadBackbuffer)"
+  },
+  {
+   "kind": "not-an-issue",
+   "text": "CNA prose inside TARGET is stale in places (plan calls D3D9 viewport/scissor oracle-proven; header comments list stencil and DSV as follow-up gaps; GraphicsRendererDescriptor.hpp says 45 of 46 renderers).",
+   "ref": "new",
+   "evidence": "plans/plan_dx9.md; directx12/include/.../DirectX12Renderer.hpp; modules/graphics/include/.../GraphicsRendererDescriptor.hpp"
+  }
+ ]
+}
