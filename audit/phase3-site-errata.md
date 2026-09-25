@@ -79,3 +79,5 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 72 | `features.html#xna-api` (protected; correct the number only) | "~145 Keys members" | `Keys.hpp` has 160 (WPB5) | WPB5 | open |
 | 73 | `deep-dives/verification/oracles-and-engagement.html#goldens` (our page, WP19) | `ExpectPixel` "reads back one region" | it reads exactly one pixel: `GetBackBufferData` rejects any other element count (WPB6) | WPB6 | open |
 | 74 | `docs/audio.html` (MIDI) | MIDI is switched off | the pinned SDL_mixer (3075d3ed) turns its Timidity MIDI decoder on by default and CNA's build does not turn it off (B11, read from CMake; nothing built) — re-verify | B11 | open |
+| 75 | `deep-dives/renderers/direct3d11-and-12-resources.html#mrt-finalization` (our page, WP10) | no MRT+mipMap fixture was identified | the fixture exists: `bound_target_lifetime_test` leg L1, registered for DIRECTX11/12 (B10) | B10 | open |
+| 76 | `deep-dives/renderers/windows-2d-renderers.html#d2d-formats` (our page, WP11) | advises setting `DepthFormat::None` for DIRECT2D | DIRECT2D never receives Depth24 on the Game path: `Reset` normalises it to None (B10) | B10 | open |
