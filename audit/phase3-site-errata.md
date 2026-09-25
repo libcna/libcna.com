@@ -69,3 +69,4 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 62 | `deep-dives/renderers/presentation-and-backbuffer-readback.html#swap-interval` (our page, WP08) | DIRECT2D ignores the swap interval | DIRECT2D passes the interval to DXGI Present (WP11) | WP11 | open |
 | 63 | `development/handbook/update-the-c-api.html#inventory` | nine release-gate criteria are "recorded and measured as met" | running the gate at TARGET measures two unmet and `--check` fails (WP21/B9) | WP21 | open |
 | 64 | `deep-dives/practice/project-records-and-evidence.html#task-ids` (our page, WP20) | the gate "reads… one unmet criterion" | two unmet at TARGET (WP21/B9) | WP21 | open |
+| 65 | `deep-dives/foundations/ecosystem.html#graph`, `#easy-gl` (our page, WP01) | easy-gl is C++20 with "two smoke-test targets" | its CMake requires `cxx_std_23` (PUBLIC); `tests/CMakeLists.txt` registers four executables (WP17, easy-gl @ deda7a42) | WP17 | open |

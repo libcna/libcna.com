@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>easy-gl and meta-gl: the two-library GL stack beneath the EasyGL family - CNA Deep Dives</title>
+  <meta name="description" content="How meta-gl and easy-gl split loading, typed calls, ownership and failure beneath CNA&#x27;s five GL identities: revisions CNA needs, feature gating, per-thread state, context loss, tests and build inheritance.">
+  <meta name="keywords" content="easy-gl, meta-gl, easygl::device, unsupportedfeatureexception, std::terminate, recoverableresource, resourceregistry, generationtracked, easygl_emscripten_exception_model, thread_local dispatch, sibling revision, gl feature table">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/siblings/easygl-and-metagl.html">
+  <meta property="og:title" content="easy-gl and meta-gl: the two-library GL stack beneath the EasyGL family - CNA Deep Dives">
+  <meta property="og:description" content="How meta-gl and easy-gl split loading, typed calls, ownership and failure beneath CNA&#x27;s five GL identities: revisions CNA needs, feature gating, per-thread state, context loss, tests and build inheritance.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/siblings/easygl-and-metagl.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"easy-gl and meta-gl: the two-library GL stack beneath the EasyGL family","description":"How meta-gl and easy-gl split loading, typed calls, ownership and failure beneath CNA's five GL identities: revisions CNA needs, feature gating, per-thread state, context loss, tests and build inheritance.","url":"https://libcna.com/deep-dives/siblings/easygl-and-metagl.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine <span class="dev-nav-count">17</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../renderers/index.html" class="docs-nav-link">Renderers <span class="dev-nav-count">19</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Sibling libraries <span class="dev-nav-count">2</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="easygl-and-metagl.html" class="docs-nav-link active" aria-current="page">easy-gl and meta-gl</a></li>
+        <li><a href="freedirect-and-freeapi.html" class="docs-nav-link">free-direct and free-api</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification <span class="dev-nav-count">2</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">8</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Sibling libraries</a></li>
+        <li aria-current="page">easy-gl and meta-gl</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>easy-gl and meta-gl: the two-library GL stack beneath the EasyGL family</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#pins">Which revisions this page describes</a></li>
+          <li><a href="#ownership">Two libraries, one ownership split</a></li>
+          <li><a href="#initialization">Device initialization: context facts come from meta-gl</a></li>
+          <li><a href="#feature-table">Capability gating by feature, not by version</a></li>
+          <li><a href="#failure-models">Two failure models one layer apart</a></li>
+          <li><a href="#metagl-surface">meta-gl's typed surface and its release discipline</a></li>
+          <li><a href="#threads">Per-thread dispatch: what "the current context" means</a></li>
+          <li><a href="#api-corrections">API corrections to know when porting older easy-gl code</a></li>
+          <li><a href="#raii-helpers">Four small RAII helpers</a></li>
+          <li><a href="#context-loss">Two tiers of context-loss recovery</a></li>
+          <li><a href="#testing">How the libraries test themselves without a GPU</a></li>
+          <li><a href="#nested-build">What CNA inherits when it adds easy-gl</a></li>
+          <li><a href="#limitations">Known limitations at the revisions read</a></li>
+          <li><a href="#reading">Source reading order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Sibling libraries &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. CNA facts were read at 009d40f5; easy-gl facts at develop @ deda7a42 (2026-08-22) and meta-gl facts at develop @ 20c8b2dc (2026-09-03), which CNA does not pin. The code examples were syntax-checked with g++ -std=c++23 -fsyntax-only against those two header trees (with a stub for meta-gl's generated export header); no library, test or GPU run was executed.</p></div>
+
+<p class="lede">CNA's five GL identities (<code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL1</code>, <code>WEBGL2</code>) share one renderer implementation that sits on two separate sibling libraries: meta-gl, which loads OpenGL entry points and wraps them in typed calls, and easy-gl, which adds object ownership on top. This page describes those two libraries as CNA consumes them: which revisions CNA snapshot <code>009d40f5</code> actually needs, how responsibility and failure handling are split between the layers, how features are gated, what happens per thread and on context loss, how the libraries test themselves, and what CNA inherits when it adds them to its build. It is for maintainers who debug a GL-family problem below CNA's own renderer code or who update the sibling checkouts.</p>
+
+<h2 id="pins">Which revisions this page describes</h2>
+<p>CNA does not pin either library. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>RendererSelection.cmake</code></a> adds the fixed relative path <code>../easy-gl</code> once when any GL identity is selected, and easy-gl's own CMake adds <code>../meta-gl</code>; there is no submodule, lock file, <code>FetchContent</code> fallback or SHA comparison. The only easy-gl and meta-gl commits named anywhere in the snapshot are in its integration records (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/integration/INTEGRATION_BRANCH_INVENTORY.md"><code>INTEGRATION_BRANCH_INVENTORY.md</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/integration/FINAL_RECONCILIATION.md"><code>FINAL_RECONCILIATION.md</code></a>): easy-gl <code>0b46d35c</code> and meta-gl <code>571d3a62</code>, recorded on 2026-08-09 as the then-current public heads. Those are dated evidence, and they are no longer sufficient:</p>
+<ul>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/easygl/src/EasyGLRenderer.cpp"><code>EasyGLRenderer.cpp</code></a> maps <code>SurfaceFormat::Rg32</code> to <code>::easygl::InternalFormat::Rgba16</code> (a CNA change of 2026-09-10). easy-gl's <code>InternalFormat</code> is an alias of <code>metagl::InternalFormat</code>, and the <code>Rgba16</code> enumerator first exists in meta-gl <code>20c8b2dc</code> (2026-09-03, "expose desktop RGBA16 format"). Against the recorded <code>571d3a62</code> that line has no enumerator to name (read in both repositories; nothing was compiled).</li>
+<li>Under Emscripten, CNA sets the cache variable <code>EASYGL_EMSCRIPTEN_EXCEPTION_MODEL</code> to <code>JS</code> before adding easy-gl. The variable exists only from easy-gl <code>deda7a42</code> (2026-08-22, "make the exception ABI selectable"); an older easy-gl ignores it (see <a href="#failure-models">two failure models</a>).</li>
+</ul>
+<p>The practical minimum for this snapshot is therefore the current <code>develop</code> tip of each library, and that is what this page was read at:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Library</th><th scope="col">Revision read</th><th scope="col">Tree</th><th scope="col">What CNA 009d40f5 needs from it</th></tr></thead><tbody>
+<tr><td>easy-gl</td><td><a href="https://github.com/libcna/easy-gl/tree/deda7a426c3c166c0e03a4790f1ede610e2e46fb"><code>develop</code> @ <code>deda7a42</code></a> (2026-08-22)</td><td><code>d9b556c9</code></td><td>The selectable Emscripten exception ABI; the RAII resource classes and <code>ResourceRegistry</code></td></tr>
+<tr><td>meta-gl</td><td><a href="https://github.com/libcna/meta-gl/tree/20c8b2dc5bb80e32706784066db9fd9e15b3f46a"><code>develop</code> @ <code>20c8b2dc</code></a> (2026-09-03)</td><td><code>0250915f</code></td><td><code>InternalFormat::Rgba16</code>; the loader, typed wrappers and context-lifecycle notifications CNA calls directly</td></tr>
+</tbody></table></div>
+<p>Both are evidence for those revisions, not versions CNA promises to work with. They are also the revisions that recent consumer projects record: the <code>dependencies.lock</code> files of cna-street and living-room-simulator pin exactly <code>deda7a42</code> and <code>20c8b2dc</code>, next to CNA commits of 2026-09-06 and 2026-09-11, while the older lock of cna-template (CNA of 2026-08-11) still names <code>0b46d35c</code> and <code>571d3a62</code> (see <a href="../reference/ecosystem-quick-reference.html#applications">applications as bounded consumers</a>). Continuous integration does not settle the question either: most CNA workflows obtain siblings through <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/ci/clone_siblings.sh"><code>clone_siblings.sh</code></a>, which shallow-clones, for each sibling, the first branch that exists among the pushed branch, the pull request's target and <code>next</code>, falling back to <code>develop</code>; a few workflows (for example <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/.github/workflows/d3d-windows-ci.yml"><code>d3d-windows-ci.yml</code></a>) use a plain checkout of the default branch. Either way a CI run builds against whatever the sibling's tip is on that day. A result about a GL-family build is complete only when it names the CNA commit and both sibling commits.</p>
+
+<h3 id="history-rewrite">The 2026-08-09 history rewrite</h3>
+<p>On 2026-08-09 both libraries' public histories were replayed to remove co-author trailers. CNA's integration record states, and the local clones confirm, that the rewritten heads have exactly the trees CNA had accepted before (meta-gl <code>571d3a62</code> has tree <code>a7771c55</code>, easy-gl <code>0b46d35c</code> has tree <code>e89ff546</code>), so the content did not change; the pre-rewrite commit objects are no longer reachable from any branch, and a citation of one of them cannot be resolved by a reader. The same record says the archive tags were re-pointed and now carry annotations that name their old targets; the clones read for this page carry no tags, so that part was not re-checked. Signatures changed too: in these clones the rewritten commits up to <code>0b46d35c</code> and <code>571d3a62</code> report no signature, and the later commits carry signatures whose key is not in this host's keyring. Cite these libraries by branch, commit, tree and date, and do not repeat a statement that their history is signed without saying which objects it is about.</p>
+
+<h2 id="ownership">Two libraries, one ownership split</h2>
+<figure class="diagram-figure" role="group" aria-labelledby="fig-gl-stack-cap">
+<pre class="diagram">  host (CNA platform: SDL3, SDL2, X11, Wayland or Win32; browser under Emscripten)
+    |  creates window + GL context, makes it current, swaps, supplies GetProcAddress
+    v
+  CNA EasyGL renderer  (cna_renderer_easygl, one target for five identities)
+    |                         \
+    |  easygl::Device,         \  44 distinct metagl::gl* wrappers called directly,
+    |  Texture, Buffer, ...      \ plus metagl::Initialize / IsContextLost / NotifyContextLost
+    v                             v
+  easy-gl  (namespace easygl) ----------> meta-gl  (namespace metagl)
+  RAII, move-only resource classes        loader, typed enums and handles,
+  throws Exception /                      context facts, per-call validation;
+  UnsupportedFeatureException             std::terminate() on contract violation
+                                              |
+                                              v
+                                   driver entry points (GL, GLES, WebGL)</pre>
+<figcaption id="fig-gl-stack-cap"><strong>Figure.</strong> The GL stack under CNA's EasyGL family, top to bottom. The host platform owns the window, the context and presentation and hands a GetProcAddress callback down. CNA's single EasyGL renderer target uses easy-gl for owned resources and device state, but also calls meta-gl directly for 44 wrappers and for loader and context-lifecycle functions. easy-gl builds on meta-gl, which alone talks to the driver's entry points. The two libraries report failure differently: easy-gl throws C++ exceptions, meta-gl terminates the process.</figcaption>
+</figure>
+<p>meta-gl is the procedural layer: runtime loading of entry points through the host's <code>GetProcAddress</code>, <code>enum class</code> wrappers for GL constants, lightweight typed handles and one free function per GL call in namespace <code>metagl</code>. It deliberately owns nothing: its own notes say ownership belongs in easy-gl. easy-gl is the object layer: move-only classes whose constructors create and whose destructors delete GL objects, a <code>Device</code> for state and draws, capability detection and a few RAII helpers, in namespace <code>easygl</code>. The dependency is hard in both build and source: easy-gl's CMake adds <code>../meta-gl</code> and links <code>meta-gl::meta-gl</code> <code>PUBLIC</code>, and at <code>deda7a42</code> 18 of its production files (3 public headers, 15 sources) include meta-gl headers directly.</p>
+<p>"Toolkit-independent", easy-gl's own description, means independent of the windowing toolkit, not of every layer below it. Neither library creates a window or context, pumps events or presents; CNA's platform layer does that, which is how one easy-gl serves SDL3, SDL2, X11, Wayland, Win32 and the browser. CNA is also not purely an easy-gl client: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/easygl/src/EasyGLRenderer.cpp"><code>EasyGLRenderer.cpp</code></a> calls 44 distinct <code>metagl::gl*</code> wrappers itself (queries, pixel store, attachment enums, timer queries), so meta-gl's failure contract applies to CNA's own calls as well.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Property</th><th scope="col">meta-gl @ 20c8b2dc</th><th scope="col">easy-gl @ deda7a42</th></tr></thead><tbody>
+<tr><td>Role</td><td>Function loading, typed enums and handles, context and capability facts, per-call validation</td><td>Resource ownership (RAII, move-only), device state and draws, feature gating</td></tr>
+<tr><td>Failure model</td><td><code>std::terminate()</code>, also in Release</td><td>C++ exceptions (<code>easygl::Exception</code>, <code>UnsupportedFeatureException</code>)</td></tr>
+<tr><td>Public headers</td><td>12 under <code>include/metagl/</code> (plus vendored Khronos headers)</td><td>30 under <code>include/easygl/</code></td></tr>
+<tr><td>Physical lines in <code>include/</code> + <code>src/</code></td><td>12,581 (3 sources plus one <code>.inc</code>)</td><td>4,449 (21 sources)</td></tr>
+<tr><td>Language level</td><td>C++23</td><td>C++23 (<code>cxx_std_23</code> is a <code>PUBLIC</code> compile feature); the README still says C++20</td></tr>
+<tr><td>Options when nested</td><td>All default <code>OFF</code>; legacy aliases honoured only when top-level</td><td><code>EASYGL_BUILD_TESTS</code> and <code>EASYGL_BUILD_EXAMPLES</code> default <code>ON</code></td></tr>
+<tr><td>Packaging</td><td>Installable; <code>find_package(meta-gl 0.3)</code>, same-minor compatibility only while 0.x</td><td>No package config; consumers use <code>add_subdirectory</code></td></tr>
+</tbody></table></div>
+<p>The size relation surprises people who think of easy-gl as "the library CNA uses": the lower, procedural layer is almost three times larger by physical lines, because it is a hand-audited typed mapping of hundreds of entry points. Older figures measured with a code-line counter on the 2026-08-07 trees (3,606 and about 8,856 code lines) show the same inversion; the numbers above were counted with <code>git show &lt;rev&gt;:&lt;file&gt; | wc -l</code> over the two directories at the revisions read.</p>
+
+<h2 id="initialization">Device initialization: context facts come from meta-gl</h2>
+<p><code>easygl::Device::initialize(loader)</code> is one-shot (a second call returns at once) and runs in this order: a null loader throws <code>easygl::Exception("GL loader callback is null.")</code>; <code>metagl::Initialize(loader)</code> must succeed or <code>"Failed to bootstrap GL functions."</code> is thrown; easy-gl then copies meta-gl's <code>GetContextInfo()</code> and <code>GetCapabilities()</code> (API kind, version, vendor, renderer, version strings, extensions, WebGL 1/2 flags) into its own <code>Capabilities</code> and runs <code>detect_common_features()</code>. Five baseline features must then be present (<code>VertexArrayObject</code>, <code>Shader</code>, <code>Program</code>, <code>Buffer</code>, <code>BasicRendering</code>); any missing one throws. Finally it records <code>GL_MAX_TEXTURE_SIZE</code> as the limit <code>max_texture_size</code>.</p>
+<p><code>Device</code> is easy-gl's largest class. Besides initialisation it covers clear (including the per-buffer <code>clear_buffer*</code> forms), viewport and scissor, blend state with per-draw-buffer overloads of the blend function and colour mask for multiple render targets, depth and stencil, culling, polygon offset and line width, sample coverage and sample mask, pixel store, plain and bounds-checked readback (<code>read_pixels</code>, <code>read_pixels_robust</code>), the draw family (arrays, elements, instanced, indirect, ranged and base-vertex), compute dispatch, the tessellation patch size (<code>set_patch_vertices</code>) and debug facilities (debug groups, object labels, message control and <code>set_debug_callback</code>). Polygon mode (wireframe) is not on <code>Device</code>; CNA detects the native wireframe API itself.</p>
+<p>Earlier easy-gl versions parsed <code>GL_VERSION</code> themselves. Delegating to meta-gl matters on the web: meta-gl classifies every Emscripten context as <code>ApiKind::WebGL</code> (from <code>__EMSCRIPTEN__</code> and the version string) instead of letting an ES-shaped version string pass for native OpenGL ES, and it reports WebGL 1 as version 2.0 and WebGL 2 as 3.0 so that one ES-style comparison serves both. <code>metagl::Initialize</code> itself fails, without publishing a half-filled table, when the version is unsupported or a required entry point is missing: desktop needs OpenGL 3.3 and <code>glGetStringi</code>; WebGL 1 needs the GLES 2.0 entry points; WebGL 2 additionally needs <code>glGetStringi</code>. OpenGL ES older than 2.0 and desktop OpenGL older than 3.3 are out of scope.</p>
+<p>Because <code>Device::initialize</code> is one-shot, CNA does not call it again after a context loss: on restore the renderer reloads the platform loader and meta-gl's function table directly (<code>metagl::LoadCurrentContext</code> and <code>metagl::Initialize</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/easygl/src/EasyGLRenderer.cpp"><code>EasyGLRenderer.cpp</code></a>), as described in <a href="../../development/internals/graphics/easygl.html#context">EasyGL internals: context loss</a>.</p>
+
+<h2 id="feature-table">Capability gating by feature, not by version</h2>
+<p><code>easygl::Capabilities::detect_common_features()</code> is a per-feature table, not one "desktop or ES" branch, because the two API families diverge feature by feature. WebGL deliberately goes through the ES rules, which is how features WebGL never has (geometry and tessellation shaders, debug output) fall out of the same version checks.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Feature</th><th scope="col">Desktop OpenGL</th><th scope="col">OpenGL ES and WebGL</th></tr></thead><tbody>
+<tr><td><code>VertexArrayObject</code></td><td>3.0, or <code>GL_ARB_vertex_array_object</code></td><td>3.0, or <code>GL_OES_vertex_array_object</code> (the WebGL 1 route)</td></tr>
+<tr><td><code>FramebufferObject</code></td><td>3.0, or the ARB/EXT framebuffer-object extensions</td><td>always (2.0 and up: FBOs are core in ES 2.0)</td></tr>
+<tr><td><code>UniformBufferObject</code></td><td>3.1 or <code>GL_ARB_uniform_buffer_object</code></td><td>3.0</td></tr>
+<tr><td><code>Texture3D</code>, <code>TextureFloat</code>, <code>TextureRG</code></td><td>1.2, 3.0, 3.0</td><td>3.0, or <code>GL_OES_texture_3D</code>, <code>GL_OES_texture_float</code>, <code>GL_EXT_texture_rg</code></td></tr>
+<tr><td><code>Instancing</code>, <code>SamplerObject</code></td><td>3.1, 3.3</td><td>3.0 (instancing also via <code>GL_EXT_draw_instanced</code> or <code>GL_NV_draw_instanced</code>), 3.0</td></tr>
+<tr><td><code>GeometryShader</code></td><td>3.2</td><td>3.2</td></tr>
+<tr><td><code>TessellationShader</code></td><td>4.0</td><td>3.2: the ES requirement is numerically lower</td></tr>
+<tr><td><code>ComputeShader</code>, <code>DebugOutput</code></td><td>4.3 (compute also via <code>GL_ARB_compute_shader</code>), 4.3</td><td>3.1, 3.2</td></tr>
+<tr><td><code>DirectStateAccess</code></td><td>4.5</td><td>never set; an unset feature answers <code>false</code></td></tr>
+<tr><td><code>OpenGlOnlyImmediateMode</code>, <code>OpenGlOnlyPolygonMode</code>, <code>OpenGlOnlyLineWidthWide</code></td><td>always <code>true</code>, even on a 3.3 core context</td><td><code>false</code></td></tr>
+<tr><td><code>AnisotropicFiltering</code>, <code>TextureCompression</code></td><td colspan="2">extension only, both families: <code>GL_EXT_texture_filter_anisotropic</code>; S3TC or ASTC LDR</td></tr>
+</tbody></table></div>
+<p>Two quirks follow from the table. The desktop rows are version checks, so a driver that exposes a feature through an extension not listed there reports it as absent. And <code>OpenGlOnlyImmediateMode</code> answers <code>true</code> on a core-profile context that has no immediate mode, so that flag says "desktop family", not "usable". Calling code asks the table instead of guessing from <code>is_opengles()</code>:</p>
+<pre><code class="language-cpp">// Query the per-feature table rather than branching on the API family.
+if (device.supports(easygl::Feature::TessellationShader))
+{
+    ConfigurePatchPipeline();
+}
+else
+{
+    UseFallbackSubdivision();   // desktop GL below 4.0, or GLES below 3.2
+}
+
+// With the default Config::throw_on_missing_feature == true this throws
+// UnsupportedFeatureException; with false it returns silently.
+device.require(easygl::Feature::FramebufferObject);</code></pre>
+<p>CNA's renderer does not use this table at the snapshot: it contains no <code>easygl::Feature</code> query and no <code>require()</code> call. It reads <code>capabilities().is_webgl()</code>, <code>is_opengl()</code> and the version string, asks <code>metagl::IsFunctionAvailable("glColorMaski")</code> for indexed colour masks, and probes limits and formats on the live context itself, because a GLES 3.0 request is routinely answered with a 3.2 context (see <a href="../../development/internals/graphics/easygl.html#profiles">EasyGL internals: what the five profiles change</a>). Treat the table as easy-gl's contract for its own classes and for other clients, not as the source of CNA's capability answers.</p>
+
+<h3 id="desktop-es-tier">The desktop ES tier is a diagnostic, not the sharing mechanism</h3>
+<p>meta-gl computes a <code>DesktopEsTier</code> (<code>None</code>, <code>Baseline</code>, <code>Es30</code>, <code>Es31</code>, <code>Es32</code>) for a desktop 3.3+ context by checking the same mandatory entry-point lists it uses for native ES, with <code>GL_ARB_ES3_1_compatibility</code> and <code>GL_ARB_ES3_2_compatibility</code> as a fast extra signal. At <code>20c8b2dc</code> it is explicitly internal: the header is excluded from the <code>metagl.hpp</code> umbrella, the function is <code>metagl::detail::GetDesktopEsTier()</code> and is outside the API/ABI guarantees, and the public <code>Capabilities::gles30/gles31/gles32</code> flags stay <code>false</code> on every desktop context by a recorded design choice, so that <code>Capabilities</code> never blurs which kind of context it is. CNA references none of it. What lets <code>OPENGL33</code> share one CNA implementation with the ES and WebGL identities is CNA's own profile layer (the predicates in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/easygl/include/CNA/Internal/Renderers/EasyGL/GlProfile.hpp"><code>GlProfile.hpp</code></a>) on top of meta-gl's common programmable subset, not the tier value.</p>
+
+<h2 id="failure-models">Two failure models one layer apart</h2>
+<p>easy-gl reports a missing capability as a recoverable C++ exception. For six optional entry points it checks <code>metagl::IsFunctionAvailable()</code> before calling: <code>Query</code>, <code>Sampler</code>, <code>TransformFeedback</code>, <code>Sync</code>, <code>ProgramPipeline::create()</code> and <code>Texture::get_level_parameter*()</code> throw <code>UnsupportedFeatureException</code> instead of calling a null pointer. <code>ProgramPipeline</code> documents that separable program pipelines are permanently absent from WebGL 1 and WebGL 2, not a tier a later WebGL will close.</p>
+<p>meta-gl treats misuse as a contract violation and ends the process with <code>std::terminate()</code>, in Release as well: a <code>size_t</code> that does not fit <code>GLsizei</code>, incomplete matrix data, an unsupported bitfield. The same applies to any wrapper called before initialisation or whose entry point did not load: every wrapper begins with a guard of the form <code>if (!(g_gl.initialized &amp;&amp; g_gl.X != nullptr)) std::terminate();</code> (372 <code>std::terminate()</code> sites in <code>src/Functions.cpp</code>). A wrapper that easy-gl does not pre-check therefore terminates rather than throws when its entry point is missing. easy-gl's own notes list <code>draw_elements_base_vertex</code> and similar ES 3.2 calls as unguarded on ES 3.0 contexts, which is why CNA never reaches <code>glDrawElementsBaseVertex</code> on the ES and WebGL profiles and rebases attribute pointers instead (<a href="../renderers/easygl-state-and-resource-semantics.html#base-vertex">base-vertex draws on every profile</a>).</p>
+<p>Handles cross between the layers without ownership. A meta-gl handle is a plain value; wrapping a raw name neither creates nor deletes anything:</p>
+<pre><code class="language-cpp">metagl::TextureId texture{rawName};          // just a typed GLuint
+metagl::glBindTexture(metagl::TextureTarget::Texture2D, texture);
+// TextureId never deletes rawName; an easygl::Texture owns that lifetime.</code></pre>
+
+<h3 id="exception-abi">The failure model reaches the WebAssembly build</h3>
+<p>Because easy-gl throws, Emscripten builds need C++ exception support, and every object in the final link must use the same exception ABI, meta-gl's included. easy-gl sets the model in its own CMake before it adds meta-gl. Up to <code>0b46d35c</code> that was an unconditional <code>-fwasm-exceptions</code>. From <code>deda7a42</code> it is the cache variable <code>EASYGL_EMSCRIPTEN_EXCEPTION_MODEL</code>: <code>WASM</code> (the standalone default, <code>-fwasm-exceptions</code>) or <code>JS</code> (<code>-fexceptions</code>, and <code>-sDISABLE_EXCEPTION_CATCHING=0</code> at link); any other value is a configure error. CNA forces <code>JS</code> because its own web contract is the JS-lowered exception ABI plus Asyncify for a blocking <code>Game::Run()</code>, and Emscripten rejects Asyncify combined with <code>-fwasm-exceptions</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/BuildPerformance.cmake"><code>BuildPerformance.cmake</code></a>; <a href="../platforms/web-build-and-main-loop.html#exception-abi">web build: one exception ABI</a>). The easy-gl commit and the CNA commit that sets the variable were made 46 seconds apart on 2026-08-22, which is the clearest sign that they belong together: an easy-gl older than <code>deda7a42</code> silently ignores the variable and compiles itself and meta-gl with native Wasm exceptions, a mix CNA's web contract does not allow.</p>
+
+<h2 id="metagl-surface">meta-gl's typed surface and its release discipline</h2>
+<p>At <code>20c8b2dc</code> meta-gl exports 358 numbered <code>metagl::gl*</code> wrappers. Its verifier, <code>tools/verify_api.py</code>, fails unless the markers form the contiguous range 1 to 358 with 358 unique names, and it cross-checks the exact mandatory sets of 142, 104, 68 and 44 functions that GLES 2.0, 3.0, 3.1 and 3.2 add against the vendored Khronos <code>gl32.h</code>. The type vocabulary is 105 <code>enum class</code> declarations in <code>Enums.hpp</code> and 16 structs in <code>Types.hpp</code>: eleven object handles (<code>ShaderId</code>, <code>ProgramId</code>, <code>TextureId</code>, <code>BufferId</code>, <code>FramebufferId</code>, <code>RenderbufferId</code>, <code>SamplerId</code>, <code>VertexArrayId</code>, <code>QueryId</code>, <code>TransformFeedbackId</code>, <code>ProgramPipelineId</code>), <code>UniformLocation</code>, <code>AttribLocation</code>, <code>ActiveAttribIndex</code>, <code>ImageUnit</code> and the helper <code>GlBitfieldTraits</code>. Counts of 99 enums and 15 structs in meta-gl's older notes are stale. Three commits after the 2026-08-09 record added the four S3TC compressed formats, guarded the native version parser out of Emscripten builds, and added <code>Rgba16</code>; none changed the wrapper count.</p>
+<p>For a 12-header library the binary discipline is strict: hidden default visibility with an explicit <code>METAGL_API</code> export macro, a GNU/Clang linker version script (<code>cmake/metagl.version</code>), SONAME and exported-symbol policy tests, and an installed-package consumer test. The project version is <code>0.3.0</code>, and for 0.x releases the package accepts only the same minor version because a minor bump may break the API. Options do not leak into a parent: <code>METAGL_BUILD_TESTS</code>, <code>METAGL_BUILD_GPU_TESTS</code>, <code>METAGL_BUILD_EXAMPLES</code>, <code>METAGL_BUILD_DOCS</code>, <code>METAGL_SANITIZE</code>, <code>METAGL_ENABLE_DEBUG_LOGGING</code> and <code>METAGL_DEBUG_IMMEDIATE</code> all default <code>OFF</code>, and the old <code>BUILD_TESTING</code>/<code>BUILD_EXAMPLES</code>/<code>SANITIZE</code> names are honoured only when meta-gl is the top-level project. Nested under CNA it therefore builds nothing but the library.</p>
+
+<h2 id="threads">Per-thread dispatch: what "the current context" means</h2>
+<p>All of meta-gl's mutable state is <code>thread_local</code> at <code>20c8b2dc</code>: the function table (<code>g_gl</code>) and the availability map in <code>src/Functions.cpp</code>, and the context info, generation counter, capabilities and listener list in <code>src/Context.cpp</code>. The loader header still describes the model as "call once on the GL thread … then hand off rendering to any thread"; the code does not allow that. A thread that has not called <code>Initialize</code> has an empty table, so its first wrapper call terminates, and it has its own generation counter and its own (empty) listener list. Three consequences for CNA:</p>
+<ul>
+<li>Every thread that issues GL calls must initialise meta-gl itself. CNA's <code>EnsureCallingThreadContext</code> makes the context current and calls <code>metagl::Initialize</code> when <code>metagl::IsInitialized()</code> is false for that thread; the background-upload lease relies on it (<a href="../../development/internals/graphics/easygl.html#context">context lease</a>).</li>
+<li>A generation comparison is only meaningful on the thread that created the resource; another thread compares against its own counter.</li>
+<li>Context-loss listeners registered on the render thread are notified only by <code>NotifyContextLost</code>/<code>NotifyContextRestored</code> calls made on that thread.</li>
+</ul>
+<p>This was established by reading the declarations and the guards; no multi-threaded run was made for this page.</p>
+
+<h2 id="api-corrections">API corrections to know when porting older easy-gl code</h2>
+<p>easy-gl's planning records several reasoned corrections that change call sites. <code>Program::uniform_block_index()</code> returns <code>std::optional&lt;unsigned int&gt;</code> instead of the raw <code>GL_INVALID_INDEX</code> sentinel, so a caller needs no GL header to test for failure. <code>Framebuffer</code>'s attach functions take <code>const Texture&amp;</code> or <code>const Renderbuffer&amp;</code> instead of a bare <code>unsigned int</code>, so passing the wrong kind of handle is a compile error rather than a later <code>GL_INVALID_OPERATION</code>; <code>ProgramPipeline</code> and <code>TransformFeedback</code> were changed the same way.</p>
+<pre><code class="language-cpp">if (std::optional&lt;unsigned int&gt; blockIndex = shaderProgram.uniform_block_index("Lighting"))
+{
+    shaderProgram.set_uniform_block_binding(*blockIndex, /* bindingPoint */ 0);
+}   // no "Lighting" block: handled without ever comparing against GL_INVALID_INDEX
+
+easygl::Framebuffer gbuffer;
+gbuffer.attach_texture_2d(easygl::FramebufferTarget::Framebuffer,
+                          easygl::FramebufferAttachment::Depth,
+                          easygl::TextureTarget::Texture2D, depthTexture, /* level */ 0);
+// depthTexture is a const easygl::Texture&amp;; a Renderbuffer here does not compile.</code></pre>
+<p>Two behavioural changes are easy to miss. <code>Device::clear()</code> once disabled the scissor test before every clear; at <code>deda7a42</code> it only builds the clear mask and calls <code>glClear</code>, so code that relied on the implicit disable must call <code>set_scissor_test_enabled(false)</code> itself. CNA does not depend on either behaviour: its own <code>Clear</code> disables the scissor test and forces all colour write masks for the duration of the clear and restores both, because XNA's clear ignores them (<a href="../../development/internals/graphics/easygl.html#draw">EasyGL internals: draw path</a>). And <code>Texture::bind(target)</code> activates texture unit 0 before binding, while <code>active_bind(unit, target)</code> activates the given unit; both leave that unit active. The unit-0 activation was lost in a refactoring and restored in <code>0b46d35c</code> with a regression test, <code>test_texture_bind_and_active_bind_semantics</code>.</p>
+
+<h2 id="raii-helpers">Four small RAII helpers</h2>
+<p>Four utilities close ergonomic gaps rather than adding GL capability. All are non-copyable and non-movable, and CNA uses none of them at the snapshot (it registers its recoverable objects with <code>ResourceRegistry::add</code>/<code>remove</code> directly).</p>
+<ul>
+<li><code>ScopedDebugGroup(device, label, id = 0)</code> calls <code>push_debug_group(DebugSource::Application, id, label)</code> and its destructor calls <code>pop_debug_group()</code> unconditionally, so a labelled region in a RenderDoc or Nsight capture stays balanced across early returns and exceptions. It performs no availability check; use it only where debug groups exist.</li>
+<li><code>UniformCache(program)</code> memoises <code>uniform_location</code> by name. A failed lookup (a mistyped or optimised-out uniform, <code>-1</code>) is memoised exactly like a successful one, so repeating the name never re-queries; only <code>invalidate()</code>, required after every relink, clears the cache. It stores a raw <code>const Program*</code>, so the program must outlive the cache.</li>
+<li><code>ScopedBind(bind, unbind)</code> runs the first callable in its constructor and stores the second in a <code>std::function</code> that the destructor always runs; it works for any bind/unbind pair, not one resource type.</li>
+<li><code>ResourceRegistration(registry, resource)</code> calls <code>registry.add(&amp;resource)</code> and, in its destructor, <code>registry.remove(&amp;resource)</code>, so a recoverable resource cannot leave a dangling pointer in its registry.</li>
+</ul>
+<pre><code class="language-cpp">{
+    easygl::ScopedDebugGroup group(device, "Shadow Pass");
+    RenderShadowCasters();                      // pop_debug_group() runs even if this throws
+}
+
+easygl::UniformCache uniforms(shaderProgram);
+shaderProgram.set_uniform(uniforms["uTime"], elapsedSeconds);
+shaderProgram.set_uniform(uniforms["uLightDir"], lightDir.x, lightDir.y, lightDir.z);
+// ... only after shaderProgram is relinked:
+uniforms.invalidate();
+
+{
+    easygl::ScopedBind bound([&amp;] { vao.bind(); }, [&amp;] { vao.unbind(); });
+    ConfigureVertexAttributes(vao);             // unbind() runs on every exit path
+}</code></pre>
+
+<h2 id="context-loss">Two tiers of context-loss recovery</h2>
+<p>easy-gl has two separate mechanisms for surviving a lost GL context, at two levels of commitment.</p>
+<p><strong>Tier one: detection, for free.</strong> Eleven resource classes derive from <code>easygl::detail::GenerationTracked</code>: <code>Buffer</code>, <code>Framebuffer</code>, <code>Program</code>, <code>ProgramPipeline</code>, <code>Query</code>, <code>Renderbuffer</code>, <code>Sampler</code>, <code>Shader</code>, <code>Texture</code>, <code>TransformFeedback</code> and <code>VertexArray</code>. The base stores the handle and the meta-gl generation at creation (<code>creation_generation()</code>); <code>is_valid_for_current_generation()</code> is true only when the handle is non-zero and that generation equals <code>metagl::GetContextGeneration()</code> (on the calling thread; see <a href="#threads">per-thread dispatch</a>); <code>reset_handle_no_gl()</code> zeroes handle and generation without issuing a GL call, because a lost context cannot be trusted with one. <code>Sync</code> is the exception: its handle is a pointer-shaped <code>GLsync</code>, it does not derive from the base, and it offers only its own <code>reset_handle_no_gl()</code>, so it can drop a stale handle but cannot answer the generation question.</p>
+<p><strong>Tier two: rebuilding, opt-in.</strong> A class that derives from <code>easygl::RecoverableResource</code> implements <code>release_gl_handle_only()</code> (forget GPU handles, keep CPU-side data) and <code>recreate_gl_resource()</code> (rebuild from that data). <code>easygl::ResourceRegistry</code> is a <code>metagl::ContextListener</code>: after <code>register_with_meta_gl()</code>, meta-gl's loss and restore notifications call <code>OnContextLost()</code> and <code>OnContextRestored()</code>, which invoke the two methods on every registered resource in registration order, both times front to back. The destructor unregisters from meta-gl. The registry iterates its live vector, not a copy, so a callback that adds or removes a registration while it runs invalidates the iteration; keep registration changes out of those callbacks (read, not exercised).</p>
+<p>Inside easy-gl no production class implements tier two: every resource class inherits <code>GenerationTracked</code>, none <code>RecoverableResource</code>. easy-gl's lifecycle suite therefore tests the mechanism with a stub, in <code>test_resource_registry_context_lost</code> and <code>test_resource_registry_wired_to_meta_gl</code>:</p>
+<pre><code class="language-cpp">// From easy-gl's ContextLifecycleTests.cpp: a test-only stub, not a production class.
+struct FakeResource : easygl::RecoverableResource
+{
+    int&amp; released;
+    int&amp; recreated;
+    FakeResource(int&amp; rel, int&amp; rec) : released(rel), recreated(rec) {}
+    void release_gl_handle_only() override { ++released; }
+    void recreate_gl_resource()   override { ++recreated; }
+};</code></pre>
+<p>The real adopters are in CNA. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/easygl/include/CNA/Internal/Renderers/EasyGL/EasyGLRenderer.hpp"><code>EasyGLRenderer.hpp</code></a> declares ten classes that derive from <code>::easygl::RecoverableResource</code>: <code>EasyGLTextureRenderer</code>, <code>EasyGLRenderTargetRenderer</code>, <code>EasyGLRenderTargetCubeRenderer</code>, <code>EasyGLTextureCubeRenderer</code>, <code>EasyGLOcclusionQueryRenderer</code>, <code>EasyGLGpuTimerRenderer</code>, <code>EasyGLSpriteBatchRenderer</code>, <code>EasyGLVertexBufferRenderer</code>, <code>EasyGLIndexBufferRenderer</code> and <code>EasyGLRenderer</code> itself, which registers first so that renderer-owned objects are released before and recreated before their children. A plain easy-gl client still has to detect staleness through tier one and rebuild by hand, or write its own <code>RecoverableResource</code> around its CPU data, as CNA does. What each CNA object keeps and rebuilds, and the policy switch that turns registration off, are on <a href="../../development/internals/graphics/easygl.html#context">EasyGL internals: context loss</a> and <a href="../renderers/easygl-state-and-resource-semantics.html#recovery">context-recovery policy</a>.</p>
+
+<h2 id="testing">How the libraries test themselves without a GPU</h2>
+<p>easy-gl has four hand-rolled test executables, all driven by fake loaders: <code>easy-gl-smoke-tests</code> (<code>SmokeInitTests.cpp</code>), <code>easy-gl-resource-smoke-tests</code> (<code>SmokeResourceTests.cpp</code>), <code>easy-gl-context-lifecycle-tests</code> and <code>easy-gl-webgl-tests</code>. A fake <code>GetProcAddress</code> returns lambdas with hard-wired answers, literal version strings such as <code>"3.3.0 easy-gl stub"</code>, <code>"OpenGL ES 3.1"</code> or <code>"OpenGL ES 2.0 (WebGL 1.0 (OpenGL ES 2.0 Chromium))"</code>, and literal enum values, so detection and resource bookkeeping run with no GPU or display. The lifecycle suite drives generation counting, loss and restore, tiered GLES 2.0/3.0 loaders and a missing required GLES 2.0 function; the WebGL suite checks <code>ApiKind::WebGL</code> classification, WebGL 1/2 flags, the <code>GL_OES_vertex_array_object</code> gate (initialisation must throw on a sub-3.0 WebGL context without it) and exception-not-crash behaviour of the guarded entry points. The two desktop-shaped suites are not built under Emscripten, because their invented desktop version strings can never come from a browser; the Emscripten-relevant coverage is the other two. That is a test-model boundary, not evidence that the browser behaviour was run.</p>
+<p>The checks are 128 plain <code>assert()</code> calls. In a build with <code>NDEBUG</code> (CMake's Release and RelWithDebInfo) they compile to nothing and the executables pass without checking anything; easy-gl's own Emscripten preset uses a Debug build for exactly that reason. easy-gl has no CI workflow at <code>deda7a42</code>.</p>
+<p>meta-gl's suite is broader: <code>metagl-compile-tests</code>, <code>metagl-mock-loader-test</code>, <code>metagl-release-contract-test</code>, <code>metagl-thread-test</code>, <code>metagl-desktop-tier-test</code>, the Python <code>metagl-soname-test</code> and <code>metagl-export-symbols-test</code>, <code>metagl-api-consistency-test</code> and <code>metagl-installed-package-test</code>. A real headless context is exercised only by the opt-in <code>metagl-egl-smoke-test</code> (EGL plus Mesa or another EGL implementation), and <code>METAGL_BUILD_GPU_TESTS</code> without <code>METAGL_BUILD_TESTS</code> is a configure-time <code>FATAL_ERROR</code>. Its GitHub workflow builds Linux GCC static, Linux Clang shared and Windows MSVC shared configurations, runs the EGL smoke test on Linux, and has a separate ASan/UBSan job. None of these suites was run for this page, and CNA's own EasyGL tests (see <a href="../../development/internals/graphics/easygl.html#validation">how to validate this family</a>) are a separate population.</p>
+
+<h2 id="nested-build">What CNA inherits when it adds easy-gl</h2>
+<p>The two libraries behave differently when nested. meta-gl builds only its library. easy-gl defaults <code>EASYGL_BUILD_TESTS</code> and <code>EASYGL_BUILD_EXAMPLES</code> to <code>ON</code> (and <code>EASYGL_USE_SYSTEM_OPENGL</code> and <code>EASYGL_ENABLE_WARNINGS</code> as well), calls <code>enable_testing()</code> in its own subtree when tests are on, and is added by CNA without <code>EXCLUDE_FROM_ALL</code>. CNA sets the two build options to <code>OFF</code> only in its <code>web</code> preset (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakePresets.json"><code>CMakePresets.json</code></a>); neither the root CMake nor the renderer-selection code forces them. A native GL-identity configuration from any other preset or from a plain command line therefore compiles the four easy-gl test executables as part of the default build, and whether their <code>add_test</code> registrations appear in a <code>ctest</code> run from CNA's build root was not established (they are added before CNA's own <code>enable_testing()</code>; nothing was configured for this page). Pass <code>-DEASYGL_BUILD_TESTS=OFF -DEASYGL_BUILD_EXAMPLES=OFF</code> when the extra targets are unwanted.</p>
+<p>The example is self-limiting but not inert: <code>hello-triangle-sdl</code> is added only when <code>find_package(SDL3 QUIET)</code> finds an SDL3 package. CNA's <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/SdlAvailability.cmake"><code>SdlAvailability.cmake</code></a> records (NPV-0114) that this lookup once picked up an SDL3 installed under <code>/usr/local</code> and added an SDL-linked executable to a <code>CNA_ENABLE_SDL=OFF</code> build; with SDL disabled CNA now sets <code>CMAKE_DISABLE_FIND_PACKAGE_SDL3</code> and its siblings, so an optional lookup anywhere in the tree finds nothing. When the <code>easy-gl</code> target exists, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>UnitTests.cmake</code></a> also links it into <code>cna_test_build_config</code>, so CNA's aggregate test build sees easy-gl's headers.</p>
+
+<h2 id="limitations">Known limitations at the revisions read</h2>
+<ul>
+<li><code>Config::enable_debug_logging</code> does nothing: <code>Config</code> has no <code>log_callback</code> to receive output, and easy-gl's notes track the callback as unfinished. <code>Config::validate_calls</code> is likewise declared and never read.</li>
+<li><code>Query::result_u64()</code> reads the result with the 32-bit <code>glGetQueryObjectuiv</code> and widens it, because meta-gl exposes no 64-bit query-object read. Values above <code>UINT32_MAX</code> cannot be returned.</li>
+<li>ES 3.2 entry points such as <code>draw_elements_base_vertex</code> are not version-guarded; on an ES 3.0 context they reach meta-gl's terminate guard.</li>
+<li>easy-gl installs targets but ships no package configuration, so <code>find_package(easy-gl)</code> is not supported.</li>
+</ul>
+<p>The 32-bit query limit is visible in CNA. <code>EasyGLGpuTimerRenderer</code> issues <code>GL_TIME_ELAPSED</code> queries through meta-gl directly, casting <code>0x88BF</code> into <code>metagl::QueryTarget</code> because that ES 3.0-shaped enum does not contain the extension target, and reads nanoseconds with <code>glGetQueryObjectuiv</code>: a measurement saturates a little above 4.29 seconds. meta-gl also offers no way to ask <code>GL_GPU_DISJOINT_EXT</code>, so the renderer cannot detect a disjoint event; it rejects the all-ones value <code>0xFFFFFFFF</code>, which is both the saturation value and what drivers return for an undefined result, as "not available" (the source records that before this rule every timer's first sample read as 4294.967295 ms). Frame-scale GPU timings are meaningful; a result that crosses a disjoint event without producing that value is not detected.</p>
+
+<h2 id="reading">Source reading order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>RendererSelection.cmake</code></a>: the sibling check, the single <code>add_subdirectory(../easy-gl)</code> and the Emscripten exception-model override.</li>
+<li>meta-gl <code>include/metagl/Loader.hpp</code>, <code>Context.hpp</code> and <code>ContextEvents.hpp</code>, then the <code>thread_local</code> state at the top of <code>src/Functions.cpp</code> and <code>src/Context.cpp</code>.</li>
+<li>easy-gl <code>src/Device.cpp</code> (<code>initialize</code>, <code>require</code>, <code>clear</code>) and <code>src/Capabilities.cpp</code> (<code>detect_common_features</code>).</li>
+<li>easy-gl <code>include/easygl/detail/GenerationTracked.hpp</code>, <code>RecoverableResource.hpp</code> and <code>src/ResourceRegistry.cpp</code>, then <code>tests/smoke/ContextLifecycleTests.cpp</code>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/easygl/include/CNA/Internal/Renderers/EasyGL/EasyGLRenderer.hpp"><code>EasyGLRenderer.hpp</code></a>: CNA's <code>RecoverableResource</code> adopters, then <code>EnsureCallingThreadContext</code> and <code>EasyGLGpuTimerRenderer</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/easygl/src/EasyGLRenderer.cpp"><code>EasyGLRenderer.cpp</code></a>.</li>
+</ol>
+<p>Setting the libraries up for a build is covered by <a href="../../docs/building.html#step-2-siblings">Building CNA: sibling checkouts</a> and <a href="../../docs/tutorials/102-opengl-family.html#siblings">Tutorial 102</a>; the wider map of sibling repositories is <a href="../foundations/ecosystem.html#easy-gl">The CNA ecosystem</a>, and the libraries' role from an application's point of view is <a href="../../docs/tutorials/90-easy-gl.html">Tutorial 90</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/rendering-backends.html#gl-family">Graphics renderers: the GL family</a> &middot; <a href="../../docs/tutorials/102-opengl-family.html#siblings">Tutorial 102: the OpenGL family</a> &middot; <a href="../../docs/tutorials/90-easy-gl.html">Tutorial 90: easy-gl</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/repository/source-ownership.html#siblings">Source ownership: sibling repositories</a> &middot; <a href="../../architecture.html#siblings">Architecture: required sibling repositories</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/graphics/easygl.html">EasyGL renderer internals</a> &middot; <a href="../../development/internals/graphics/opengl4.html">OpenGL4 internals (shares the GL corpus)</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/handbook/fix-a-renderer-bug.html">Fix a renderer bug</a> &middot; <a href="../../development/handbook/change-build-configuration.html">Change the build configuration</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../development/reference/cmake-options.html#options">CMake option index</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="../renderers/easygl-gl-profiles.html">EasyGL GL profiles</a> &middot; <a href="../renderers/easygl-state-and-resource-semantics.html">EasyGL state and resource semantics</a> &middot; <a href="../foundations/ecosystem.html#easy-gl">The CNA ecosystem: easy-gl and meta-gl</a> &middot; <a href="../build/third-party-dependencies.html#gl-and-freedirect">Dependency acquisition: GL and FreeDirect siblings</a> &middot; <a href="../platforms/web-build-and-main-loop.html#exception-abi">Web build: one exception ABI</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-next" href="freedirect-and-freeapi.html" rel="next"><span>Next</span>free-direct and free-api beneath the FREEDIRECT renderer</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
