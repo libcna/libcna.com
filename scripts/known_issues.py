@@ -260,6 +260,8 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
         s_, d_ = by[src], by[dst]
         d_["cand_ids"] = sorted(set(d_.get("cand_ids") or []) | set(s_.get("cand_ids") or []))
         d_["origin"] = f"{d_.get('origin', '')}; folded with {src} by the adversarial audit"
+        d_["evidence"] = (d_.get("evidence") or "") + (f"<p><em>Independently reported as {html.escape(src)} (folded into this entry by the adversarial audit):</em> "
+                                                       + html.escape(s_.get("summary", "")) + "</p>")
         have = {x["path"] for x in d_["sources"]}
         d_["sources"] = d_["sources"] + [x for x in s_["sources"] if x["path"] not in have]
         for d in disp:

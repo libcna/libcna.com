@@ -33,6 +33,9 @@ run python3 scripts/compare_presentation.py --phase3 --quiet
 if [ "${PHASE3_FINAL:-0}" = "1" ]; then
   run python3 scripts/bible_ledger.py check --final
 fi
+# independent adversarial-audit gates: Bible graph, ledger anchors, issue json/pages/hubs/duplicates, generated ledger counts, applied page fixes
+run python3 scripts/adversarial_audit.py all
+run python3 scripts/apply_page_fixes.py check
 run git diff --check
 echo "overall: $([ $rc -eq 0 ] && echo PASS || echo FAIL)"
 exit $rc
