@@ -128,7 +128,7 @@ def parse_bible() -> list[dict]:
 def main() -> int:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "build"
     OUT.mkdir(parents=True, exist_ok=True)
-    pk: dict[str, list[dict]] = {f"B{i}": [] for i in range(1, 13)}  # B10-B12 = candidates recorded by the chapter/aux packages (never mixed into B1-B9)
+    pk: dict[str, list[dict]] = {f"B{i}": [] for i in range(1, 14)}  # B10-B12 = candidates recorded by the chapter/aux packages (never mixed into B1-B9)
     bible = parse_bible()
     for it in bible:
         n = int(it["cand"][-3:])
@@ -165,7 +165,7 @@ def main() -> int:
             else:
                 wp = str(doc.get("wp", f.stem))
                 grp = "B10" if wp in {"WP02", "WP03", "WP04", "WP05", "WP06", "WP07", "WP08", "WP09", "WP10", "WP11"} else \
-                      "B11" if wp in {"WP12", "WP13", "WP14", "WP15"} else "B12"
+                      "B11" if wp in {"WP12", "WP13", "WP14", "WP15"} else "B13" if wp == "WPB7" else "B12"
                 pk[grp].append(it)
     (OUT / "triage-B10.json").write_text(json.dumps({"skipped": skipped}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     if cmd == "summary":

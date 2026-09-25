@@ -78,3 +78,4 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 71 | `deep-dives/graphics/vertex-streams-and-declarations.html#declaration-to-renderer` (our page, WP07) | may overstate Vulkan's refusal | a single-stream draw falls back to its stride route behind `RequireFaithfulDeclarationEXT` (WPB3, hedged) | WPB3 | open |
 | 72 | `features.html#xna-api` (protected; correct the number only) | "~145 Keys members" | `Keys.hpp` has 160 (WPB5) | WPB5 | open |
 | 73 | `deep-dives/verification/oracles-and-engagement.html#goldens` (our page, WP19) | `ExpectPixel` "reads back one region" | it reads exactly one pixel: `GetBackBufferData` rejects any other element count (WPB6) | WPB6 | open |
+| 74 | `docs/audio.html` (MIDI) | MIDI is switched off | the pinned SDL_mixer (3075d3ed) turns its Timidity MIDI decoder on by default and CNA's build does not turn it off (B11, read from CMake; nothing built) — re-verify | B11 | open |
