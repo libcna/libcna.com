@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio and input architecture - CNA Development</title>
+  <meta name="description" content="Audio device, mixer and XNA layers with the SOUND_ENABLED split, the event-to-snapshot flow input really uses, the threading assumptions of both subsystems, and where to look first when either misbehaves.">
+  <meta name="keywords" content="audio, input, mixerengine, sound_enabled, cna_audio_platform, iaudiodevice, platforminputbridge, keyboard snapshot, frameworkdispatcher, callback barrier, relative mouse, touchpanel">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/architecture/audio-input.html">
+  <meta property="og:title" content="Audio and input architecture - CNA Development">
+  <meta property="og:description" content="Audio device, mixer and XNA layers with the SOUND_ENABLED split, the event-to-snapshot flow input really uses, the threading assumptions of both subsystems, and where to look first when either misbehaves.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/architecture/audio-input.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Audio and input architecture","description":"Audio device, mixer and XNA layers with the SOUND_ENABLED split, the event-to-snapshot flow input really uses, the threading assumptions of both subsystems, and where to look first when either misbehaves.","url":"https://libcna.com/development/architecture/audio-input.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item is-open"><a href="overview.html" class="docs-nav-link is-group-active">Architecture Maps</a>
+      <ul class="dev-nav-sub">
+        <li><a href="runtime.html" class="docs-nav-link">Runtime lifecycle</a></li>
+        <li><a href="platform.html" class="docs-nav-link">Platform layer</a></li>
+        <li><a href="graphics.html" class="docs-nav-link">Graphics</a></li>
+        <li><a href="content.html" class="docs-nav-link">Content</a></li>
+        <li><a href="audio-input.html" class="docs-nav-link active" aria-current="page">Audio &amp; input</a></li>
+        <li><a href="bindings.html" class="docs-nav-link">C API &amp; bindings</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Development</a></li>
+        <li><a href="overview.html">Architecture Maps</a></li>
+        <li aria-current="page">Audio &amp; input</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Audio and input architecture</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#audio">Audio layers</a></li>
+          <li><a href="#input-flow">Native event to public snapshot</a></li>
+          <li><a href="#threading">Threading assumption</a></li>
+          <li><a href="#debug">First debugging points</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Architecture Maps &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The layers and the input flow were read from the audio and input modules, CMake and Game::PollEvents, and cross-checked against CNA's input-backend and ALSA documents; the named tests exist but were not executed for this page, and no audio device or input hardware was exercised.</p></div>
+
+<p class="lede">Audio and input both expose stable, game-facing state while platform-specific code handles devices and events, and both are real-time services: audio is pulled by a device callback on its own thread, and input is pushed once per frame by the game loop. Neither should be collapsed into &ldquo;whatever SDL does&rdquo;, because CNA also supports paths with no SDL in them. This page maps the layers, the event-to-snapshot flow that input actually uses at this snapshot, and the threading assumptions each subsystem relies on.</p>
+
+<h2 id="audio">Audio layers</h2>
+<pre class="diagram">SoundEffect, SoundEffectInstance, DynamicSoundEffectInstance, Microphone, XACT (AudioEngine, WaveBank, SoundBank, Cue)
+        &#9474;                                   FrameworkDispatcher::Update() pumps streams and media once per Update
+        &#9660;
+MixerEngine  (facade, internal header)  &#8592; SOUND_ENABLED: exists only for SDL3 and ALSA
+   &#9500;&#9472; SDL3_mixer route   src/Backend/Sdl3Mixer    (CNA_AUDIO_PLATFORM=SDL3)
+   &#9492;&#9472; CNA's own mixer     src/Backend/CnaMixer     (CNA_AUDIO_PLATFORM=ALSA; stb_vorbis and dr_libs decoders)
+        &#9474;  both open the selected device through CreateSelectedAudioDevice()
+        &#9660;
+IAudioDevice / IAudioRecordingDeviceProvider     (independent of IPlatform)
+   SDL3 &#183; SDL2 &#183; ALSA &#183; NULL     &#8594; sound hardware, or a paced silent callback for NULL</pre>
+<p>Public APIs include <code>SoundEffect</code>, <code>SoundEffectInstance</code>, <code>DynamicSoundEffectInstance</code>, <code>Microphone</code> and the XACT-shaped types. <code>MixerEngine</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/audio/include/CNA/Internal/Audio/MixerEngine.hpp"><code>MixerEngine.hpp</code></a>) is the internal facade the XNA classes are written against: the build supplies exactly one implementation, either the SDL3_mixer route or CNA's own mixer. <code>CNA_AUDIO_PLATFORM</code> selects the device implementation (<code>SDL3</code>, <code>SDL2</code>, <code>NULL</code> or <code>ALSA</code>; <code>OPENAL</code> and <code>WASAPI</code> are refused), independently of <code>CNA_PLATFORM</code>: a headless application may use SDL3 audio and a graphical one may choose deterministic <code>NULL</code> audio. Audio is not part of <code>IPlatform</code>.</p>
+<p>Only <code>SDL3</code> and <code>ALSA</code> have a mixer, and <code>SOUND_ENABLED</code> is defined for exactly those two. The two mixer backends are the only callers of <code>CreateSelectedAudioDevice()</code>, so at this snapshot the <code>SDL2</code> and <code>NULL</code> devices are transports that no production playback path opens: with either selected, the XNA facade is compiled without a mixer, <code>SoundEffect::Play()</code> reports false and instances stay stopped, and <code>SDL2</code> and <code>NULL</code> also have no capture provider. ALSA uses the ALSA device, loads <code>libasound</code> at run time and mixes with CNA's own engine. <code>FrameworkDispatcher::Update()</code> lives in this module but reaches into media and input: it pumps dynamic sound streams, microphone buffers, <code>MediaPlayer</code> and, when a touch device exists, <code>TouchPanel::Update()</code>; that coupling is the reason for the declared audio &harr; media cycle in the <a href="../repository/module-graph.html#cycles">module graph</a>.</p>
+<p>Decode, voice state, mixing and device-callback lifetimes are distinct. <code>IAudioBufferCallback::FillBuffer</code> may run on a real-time native thread and, by contract, must not block, allocate or throw (avoid logging and any destruction that waits on the callback itself, too). <code>IAudioDevice::Stop()</code> is a callback barrier that waits for an in-flight callback, <code>Close()</code> guarantees the callback never runs again, and neither may be called from inside the callback. Shutdown therefore needs a callback barrier before buffers or voices the callback could still observe are released; <code>AudioDeviceConformanceTests.StartStopAndCloseFormCallbackBarriers</code> pins the device half, and the SDL3 mixer guards its borrowed tracks with a mixer-generation counter. The object-level lifetimes are in the <a href="../takeover/ownership.html#content-audio">ownership map</a> and <a href="../internals/audio/engine.html">audio engine internals</a>.</p>
+
+<h2 id="input-flow">Native event to public snapshot</h2>
+<pre class="diagram">IPlatform::PollEvents(batch)        each implementation maps native events to PlatformEvent values and keeps
+  &#9492;&#9472; Game::PollEvents, per event         its own keyboard / mouse / gamepad / joystick state
+      &#9500;&#9472; PlatformInputBridge::ProcessEvent   (always first)
+      &#9474;    &#9500;&#9472; legacy InputManager accumulators (compatibility state for the raw bridge)
+      &#9474;    &#9500;&#9472; mouse-click callbacks, text input and IME editing, device connect / disconnect
+      &#9474;    &#9492;&#9472; touch &#8594; TouchPanel event map &#8594; gesture detector
+      &#9492;&#9472; Game handling: quit, window, lifecycle, drop
+end of the batch, once per frame
+  &#9500;&#9472; IPlatformKeyboard::Update() and IPlatformMouse::Update()          every frame
+  &#9492;&#9472; IPlatformGamepad::Update() and IPlatformJoystick::Update()        only once the gamepad subsystem is up
+        &#9660;
+public queries in Update / Draw:  Keyboard::GetState &#8592; keyboard snapshot &#183; Mouse::GetState &#8592; mouse snapshot
+   GamePad::GetState &#8592; gamepad snapshot &#183; TouchPanel::GetState &#8592; the panel's event map</pre>
+<p>The keyboard, mouse, gamepad and joystick state that game code reads is published by the <em>platform services</em>, not by the input bridge. <code>PlatformInputBridge::ProcessEvent</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/input/src/Internal/SdlInputBridge.cpp"><code>SdlInputBridge.cpp</code></a>) feeds the compatibility accumulators, text input and editing, mouse-click callbacks, device hot-plug notifications and the touch map; then the runtime calls each service's <code>Update()</code> once per frame, after the batch and before <code>Update</code> and <code>Draw</code>. <code>Keyboard::GetState()</code>, <code>Mouse::GetState()</code> and <code>GamePad::GetState()</code> read those stored snapshots and never poll a native API, so repeated reads within a frame return the same value. Touch is the exception in the other direction: <code>TouchPanel</code> accumulates from events itself and <code>TouchPanel::Update()</code> alone advances previous locations and retires releases. Controller and joystick services are updated lazily: <code>Game</code> no longer acquires the controller subsystem at startup, and the update runs only once something has asked for the gamepad or joystick service.</p>
+<p>Relative mouse movement is the notable consume-on-read exception. In relative mode <code>Mouse::GetState()</code> calls <code>IPlatformMouse::ConsumeRelativeDelta()</code>, so a second read with no intervening motion returns zero; do not treat every getter as an immutable snapshot. The mapping table and the per-device fidelity notes are in CNA's own <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/input-backend.md"><code>input backend document</code></a>; the test suites live under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/input/tests"><code>modules/input/tests</code></a> (for example the <code>SdlInputBridge*</code> golden, mouse, keyboard, text-input and touch suites and <code>InputResetTests.cpp</code>). Older prose that describes the bridge as the source of the keyboard and mouse snapshot is stale.</p>
+
+<h2 id="threading">Threading assumption</h2>
+<p>The input pipeline assumes that the game-loop thread owns event processing and snapshot publication. Its process-wide state (the compatibility accumulators, the gesture detector, the touch panel's arrays and queues, the static click and text-input callbacks) is deliberately unsynchronized, and <code>InputManager</code>'s own header states the rule: writes come from <code>Game::PollEvents()</code>, reads come from <code>Update()</code> and <code>Draw()</code> on the same thread, and nothing may call the setters or getters from a background thread. Absence of locks is not evidence of arbitrary thread safety. If a platform callback arrives on another thread, it must be marshalled into the platform event path rather than touching input state directly.</p>
+<p>Audio is the opposite case: the device callback runs on another thread by design, so shared mixer state is protected (<code>MixerLock</code> for short control updates, a mutex around the dynamic-stream registry that <code>FrameworkDispatcher::Update()</code> snapshots before running each instance) and the callback itself is held to the no-block, no-allocate rule above. The full thread and callback map is in <a href="../takeover/threading.html">Thread and callback map</a>.</p>
+
+<h2 id="debug">First debugging points</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Symptom</th><th scope="col">Inspect</th></tr></thead>
+<tbody>
+<tr><td>No native input</td><td>the platform's event pump, its capability flags and whether the accessor (<code>GetKeyboard</code>, <code>GetMouse</code>, <code>GetGamepad</code>) returns a service at all</td></tr>
+<tr><td>Native event exists, public state stale</td><td>the end of <code>Game::PollEvents</code> (the service <code>Update()</code> calls), then <code>PlatformInputBridge::ProcessEvent</code> for text, touch and click paths, and the frame snapshot boundary</td></tr>
+<tr><td>Controller only</td><td>lazy subsystem acquisition (<code>IsSubsystemInitialized</code> for the gamepad), device enumeration and update, and the four player-slot mapping</td></tr>
+<tr><td>Audio starts then crashes</td><td>the callback barrier in <code>Stop</code> and <code>Close</code>, voice and buffer lifetime, mixer generation, and backend shutdown ordering</td></tr>
+<tr><td>Silent <code>NULL</code> or <code>SDL2</code> audio</td><td>this is the expected result of the selection: no mixer, so <code>SoundEffect::Play()</code> reports false. Verify <code>CNA_AUDIO_PLATFORM</code> before debugging anything else</td></tr>
+</tbody>
+</table></div>
+<p>Continue with <a href="../internals/input/events.html">input internals</a>, <a href="../internals/audio/engine.html">audio engine internals</a> and the <a href="platform.html">platform architecture</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/audio.html#implementations">Audio: implementations</a> &middot; <a href="../../docs/platforms.html#audio-table">Platform Support: audio implementations</a> &middot; <a href="../../docs/input.html">Input</a> &middot; <a href="../../docs/game-loop.html#frameworkdispatcherupdate">Game loop: FrameworkDispatcher.Update</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="overview.html">Architecture overview</a> &middot; <a href="platform.html">Platform architecture</a> &middot; <a href="runtime.html">Runtime lifecycle</a> &middot; <a href="../repository/module-graph.html#cycles">Module graph: declared cycles</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../internals/audio/engine.html">Audio engine internals</a> &middot; <a href="../internals/input/events.html">Input internals</a> &middot; <a href="../internals/modules/devices.html">Devices and sensor lifetime</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../takeover/threading.html">Thread and callback map</a> &middot; <a href="../takeover/ownership.html#content-audio">Ownership: caches and asynchronous audio</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../reference/selection-axes.html#audio">Selection axes: audio implementations</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="content.html" rel="prev"><span>Previous</span>Content architecture</a><a class="dev-pager-next" href="bindings.html" rel="next"><span>Next</span>C API and bindings architecture</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

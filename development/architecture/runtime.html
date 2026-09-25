@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Runtime lifecycle - CNA Development</title>
+  <meta name="description" content="The architecture-level trace of a CNA game: Game construction and startup order, what one Tick does, draw and present, shutdown ordering, the browser and mobile loop variants, and where to break first.">
+  <meta name="keywords" content="game, tick, game loop, startup, shutdown, graphicsdevicemanager, pollevents, fixed timestep, canbegindrawext, frameworkdispatcher, emscripten loop, dispose">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/architecture/runtime.html">
+  <meta property="og:title" content="Runtime lifecycle - CNA Development">
+  <meta property="og:description" content="The architecture-level trace of a CNA game: Game construction and startup order, what one Tick does, draw and present, shutdown ordering, the browser and mobile loop variants, and where to break first.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/architecture/runtime.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Runtime lifecycle","description":"The architecture-level trace of a CNA game: Game construction and startup order, what one Tick does, draw and present, shutdown ordering, the browser and mobile loop variants, and where to break first.","url":"https://libcna.com/development/architecture/runtime.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item is-open"><a href="overview.html" class="docs-nav-link is-group-active">Architecture Maps</a>
+      <ul class="dev-nav-sub">
+        <li><a href="runtime.html" class="docs-nav-link active" aria-current="page">Runtime lifecycle</a></li>
+        <li><a href="platform.html" class="docs-nav-link">Platform layer</a></li>
+        <li><a href="graphics.html" class="docs-nav-link">Graphics</a></li>
+        <li><a href="content.html" class="docs-nav-link">Content</a></li>
+        <li><a href="audio-input.html" class="docs-nav-link">Audio &amp; input</a></li>
+        <li><a href="bindings.html" class="docs-nav-link">C API &amp; bindings</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Development</a></li>
+        <li><a href="overview.html">Architecture Maps</a></li>
+        <li aria-current="page">Runtime lifecycle</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Runtime lifecycle</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#startup">Construction and startup</a></li>
+          <li><a href="#tick">What one Tick does</a></li>
+          <li><a href="#draw">Draw and present</a></li>
+          <li><a href="#shutdown">Shutdown and destruction</a></li>
+          <li><a href="#variants">Loop variants</a></li>
+          <li><a href="#trace">Practical tracing points</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Architecture Maps &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The sequence was read from Game.cpp, GraphicsDeviceManager.cpp and GraphicsDevice.cpp at this snapshot; the browser and mobile paths were read, not run. The named tests exist but were not executed for this page.</p></div>
+
+<p class="lede">The authoritative control path of a CNA game is concentrated in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a>. Start there for startup, timing, event order, <code>Update</code> and <code>Draw</code> sequencing and shutdown; the graphics half of a frame continues in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/GraphicsDeviceManager.cpp"><code>GraphicsDeviceManager.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a>. This page is the architecture-level trace: what runs in which order, what owns what, and which observable behaviors are compatibility contracts rather than implementation detail. The function-by-function traces are the source tours linked at the end.</p>
+
+<h2 id="startup">Construction and startup</h2>
+<pre class="diagram">Game::Game()  delegates to  Game(PlatformFactory::Create())
+ &#9500;&#9472; platform_               InstallPlatform(): push on the live-platform stack + SetCurrentPlatform   (first member)
+ &#9500;&#9472; platformInstallation_    scope guard: undoes the install if a later member throws; disarmed at the end
+ &#9500;&#9472; platformCapabilities_, eventBatch_ (caller-owned event vector, reused every frame)
+ &#9500;&#9472; Components_
+ &#9500;&#9472; GraphicsDevice_         value member: GraphicsDevice() &#8594; resolveRenderer() &#8594; descriptor &#8594; window &#8594; renderer
+ &#9474;                          (default adapter, GraphicsProfile::Reach, default PresentationParameters)
+ &#9500;&#9472; Content_, Window_, LaunchParameters_, Services_
+ &#9492;&#9472; constructor body: default culture from the platform's locales &#183; Window_ bound to the device's window
+                    &#183; Content_ bound to the device &#183; RegisterAllBuiltInXnbReaders() &#183; FrameworkDispatcher::Update()
+
+Game::Run                                   (RunOneFrame performs the same DoInitialize once, then one Tick)
+ &#9500;&#9472; DoInitialize
+ &#9474;    &#9500;&#9472; IGraphicsDeviceManager::CreateDevice   (only if a manager registered itself as a service)
+ &#9474;    &#9500;&#9472; Initialize: components' Initialize; DeviceDisposing &#8594; UnloadContent; LoadContent
+ &#9474;    &#9492;&#9472; components sorted into the update-order and draw-order lists
+ &#9500;&#9472; BeginRun &#8594; BeforeLoop (marks the game active, raising Activated)
+ &#9500;&#9472; RunLoop: while RunApplication &#8594; Tick;  then OnExiting
+ &#9492;&#9472; EndRun &#8594; AfterLoop</pre>
+<p>The declaration order in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/include/Microsoft/Xna/Framework/Game.hpp"><code>Game.hpp</code></a> is load-bearing: <code>platform_</code> is declared before every other member, so it exists before members that use its services and outlives them during destruction. Avoid moving members or introducing backend access into earlier constructors without re-auditing this order. <code>GamePlatformOwnershipTest.ExplicitPlatformIsOwnedAndInstalledBeforeGameMembers</code> and <code>GamePlatformOwnershipTest.AFailedConstructionLeavesNothingInstalled</code> pin the ownership half, and <code>GameTest.ConstructionRegistersBuiltInXnbReadersBeforeLoadContent</code> pins the reader registration.</p>
+<p>Two points are easy to get backwards. First, the renderer and window already exist when the derived game's constructor body runs: <code>GraphicsDevice_</code> resolves its renderer inside the base <code>Game</code> constructor, with the default profile and presentation parameters. Second, <code>GraphicsDeviceManager</code> does not create that device. Its constructor registers it as <code>IGraphicsDeviceManager</code> and <code>IGraphicsDeviceService</code>, and <code>Game::DoInitialize</code> then calls <code>CreateDevice</code>, which records that the manager does not own the device and applies the game's preferences to the existing one through <code>applyToExistingRenderer</code> (profile, presentation mode, then an in-place <code>GraphicsDevice::Reset</code>). <code>GraphicsDeviceManagerTest.ApplyChangesRaisesResettingAndResetExactlyOnce</code> covers the event side. <code>Initialize</code> defers <code>LoadContent</code> until <code>DeviceCreated</code> if a registered device service has no device yet (<code>GameTest.DeferredLoadContentFiresOnDeviceCreatedWhenServiceHasNoDeviceAtInitializeTime</code>). No controller subsystem is acquired at startup: the platform acquires it the first time something asks for the gamepad or joystick service, because eager acquisition cost a full device enumeration before the first frame.</p>
+
+<h2 id="tick">What one Tick does</h2>
+<ol>
+<li>Read the platform's monotonic counter (<code>IPlatform::GetPerformanceCounter</code> and <code>GetPerformanceFrequency</code>) and add the elapsed time to an accumulator.</li>
+<li>In fixed-timestep mode, wait until enough time has accumulated: <code>IPlatform::Delay(1)</code> while the accumulator plus the estimated worst-case sleep precision is short of <code>TargetElapsedTime</code> (the estimate is updated from measured sleeps, capped at 4 ms), then <code>std::this_thread::yield()</code> until the target is reached.</li>
+<li>Poll one caller-owned batch of platform events, <code>IPlatform::PollEvents(std::vector&lt;PlatformEvent&gt;&amp;)</code>, which clears and refills the vector.</li>
+<li>Pass every event first to <code>PlatformInputBridge::ProcessEvent</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/input/src/Internal/SdlInputBridge.cpp"><code>SdlInputBridge.cpp</code></a>), so that <code>Exit()</code> handling further down never stops the rest of the batch from reaching input. Then handle the runtime's own reactions: quit and close requests call <code>Exit()</code>; window resize, pixel-size and display-scale events refresh <code>GameWindow</code> and the device viewport and notify the renderer that its surface changed; focus events change <code>IsActive</code>; drop events reach <code>GameWindow</code>; application-lifecycle events suspend or resume the loop on mobile targets.</li>
+<li>Advance the snapshot services: the platform's keyboard and mouse <code>Update()</code> every frame, and gamepad and joystick <code>Update()</code> only if the gamepad subsystem has been initialized. This is the end of <code>Game::PollEvents</code>; there is no separate input-update method (no <code>Game::UpdateInput</code> exists).</li>
+<li>Clamp the accumulator to <code>MaxElapsedTime</code> (500 ms). In fixed mode run <code>Update(GameTime)</code> once per whole <code>TargetElapsedTime</code> in the accumulator (several times when catching up); in variable mode run it once with the accumulated time. <code>IsRunningSlowly</code> turns on when the accumulated catch-up lag reaches five steps and off again when it returns to zero. <code>Game::Update</code> runs enabled components in update order and ends with <code>FrameworkDispatcher::Update()</code>.</li>
+<li>If drawing is allowed (<code>Exit()</code> and <code>SuppressDraw()</code> both suppress the current frame's draw), call <code>BeginDraw</code>, then <code>Draw(GameTime)</code>, then <code>EndDraw</code>.</li>
+</ol>
+<p>The first XNA-compatible update receives zero elapsed time, and total game time advances <em>after</em> the update, so update <em>n</em> sees the total that existed before its own step. The test file's header states that this was measured against the real XNA runtime and adopted over the FNA behavior, which set the elapsed time to <code>TargetElapsedTime</code> for every update and advanced the total before calling <code>Update</code>. <code>GameClockFirstUpdateTest.TheFirstFixedStepUpdateSeesZeroElapsedTime</code>, <code>.TotalGameTimeIsTheTimeBeforeTheStep</code> and <code>.VariableStepTotalAlsoLagsItsOwnUpdate</code> pin it. These details are observable compatibility behavior; changing them is not a timing &ldquo;cleanup&rdquo;. The event-order side is pinned by the golden transcript <code>platform-event-semantics.txt</code> through <code>GameEventSemanticsGoldenTest.ObservableEventSemanticsMatchTheCapturedBaseline</code>, which is instantiated over every platform implementation compiled into the binary (a pairing the selected renderer refuses is skipped, not compared). Two unguarded details in the event handler are worth knowing: the window-event case deliberately does not filter by window id (that is pinned observable behavior), and a non-repeating F9 or F10 key press calls the renderer's <code>DebugSimulateContextLoss()</code> or <code>DebugRestoreContext()</code> in every build; renderers that do not override those hooks ignore them.</p>
+
+<h2 id="draw">Draw and present</h2>
+<p><code>Game::BeginDraw</code> delegates to the registered graphics device manager, if any. <code>GraphicsDeviceManager::BeginDraw</code> asks the <em>renderer</em> whether a frame may start (<code>IGraphicsRenderer::CanBeginDrawEXT()</code>, default true; the DirectX 11, DirectX 12, WebGPU and EasyGL families override it so that a lost device or browser WebGL context skips <code>Draw</code> and presentation while <code>Update</code> keeps ticking) and then acquires a renderer thread-context lease for the frame with <code>GraphicsDevice::AcquireRendererThreadContextLeaseForFrame()</code>. The lease is null for renderers that need none and real for the GL families (EasyGL and OpenGL4 override <code>AcquireThreadContextLeaseEXT</code>). <code>EndDraw</code> calls <code>GraphicsDevice::Present()</code>, which takes its own short lease that restores the previous binding around the renderer's present, and then releases the frame lease, also when presentation throws. A game with no registered manager still presents: <code>Game::EndDraw</code> falls back to <code>GraphicsDevice::Present()</code> directly, without a frame lease.</p>
+<p><code>GraphicsDevice::Present</code> rejects presentation with an <code>InvalidOperationException</code> (&ldquo;Cannot present while render targets are bound&rdquo;) while a render target remains bound. That is the contract, not an oversight: the framework reports a frame that returns from <code>Draw</code> with a target still bound instead of unbinding it for the application, exactly as FNA does (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/present_lifecycle_contract_test.cpp"><code>present_lifecycle_contract_test.cpp</code></a> documents the reasoning and is registered for several renderer families; it was not executed for this page).</p>
+
+<h2 id="shutdown">Shutdown and destruction</h2>
+<p><code>Game::Dispose(true)</code> disposes disposable components, then the content manager (which clears its cache), then the registered graphics device service, which for a manager unregisters its services, releases the frame lease, unsubscribes from device events and raises <code>DeviceDisposing</code> (this is what runs <code>UnloadContent</code>, so by then the content manager has already been disposed). It never deletes the Game-owned device. Disposal is idempotent: <code>GameTest.DisposingDeviceInvokesUnloadContent</code> and <code>GameTest.RepeatedDisposeDoesNotReinvokeUnloadContent</code> pin one <code>UnloadContent</code> per game.</p>
+<p>The normal Game-owned <code>GraphicsDevice_</code> remains a value member: <code>~Game</code> calls <code>Dispose(false)</code> (which only marks the game disposed), uninstalls the ambient platform, and then destroys members in reverse declaration order. The device's destructor disposes it: it marks itself disposed, raises <code>Disposing</code>, disposes every registered resource while the renderer still exists, and only afterwards resets the renderer, the surface presenter and the window and releases its video-subsystem reference. The owned platform is destroyed last. The <a href="../internals/runtime/shutdown.html">ownership and shutdown trace</a> separates explicit disposal, destructor-only cleanup and borrowed service pointers.</p>
+<p>Destruction bugs are usually order bugs. When a crash appears during exit, log the resource-registry drain, renderer teardown, window and context destruction, and platform service release separately, and remember that <code>Game::Exit()</code> only requests loop exit: <code>Run()</code> returning does not destroy the game.</p>
+
+<h2 id="variants">Loop variants</h2>
+<ul>
+<li><strong>Browser (Emscripten).</strong> <code>RunLoop</code> drives a callback under Asyncify and waits for <code>requestAnimationFrame</code> between frames. That callback is a separate code path: it polls events first, keeps its own accumulator (capped at 250 ms), runs <code>Update</code> per whole step, and draws only if at least one update ran in that callback. It does not use the fixed-step sleep, ignores <code>IsFixedTimeStep = false</code>, gives the first update a full step and advances total game time before <code>Update</code>, so the XNA clock rule above applies to the native <code>Tick</code> path only (the <a href="../../docs/game-loop.html#fixed-vs-variable-timestep">user guide</a> states the same caveat). An exception in a frame is logged and stops the loop; an exception before the loop is logged in <code>Run()</code> and rethrown.</li>
+<li><strong>Mobile.</strong> On targets where <code>CNA::isMobilePlatform()</code> is true, a suspended game parks in <code>WaitWhileSuspended</code> (a 16 ms delay followed by an event poll) instead of ticking. <code>WillEnterBackground</code> suspends and deactivates; <code>DidEnterForeground</code> resets the timing counters so the background period is not replayed as catch-up updates; <code>Terminating</code> clears the suspension and calls <code>Exit()</code> so <code>OnExiting</code> still runs. <code>GameTest.MobileLifecycleEventsSuspendResumeAndTerminateTheLoop</code> scripts these events through a wrapper platform.</li>
+<li><strong>Embedded drivers.</strong> <code>RunOneFrame()</code> performs <code>DoInitialize</code> once and then one <code>Tick</code>, for hosts and tests that own the loop.</li>
+</ul>
+
+<h2 id="trace">Practical tracing points</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Question</th><th scope="col">Break or log here first</th></tr></thead>
+<tbody>
+<tr><td>No <code>Update</code></td><td><code>Game::RunLoop</code>, <code>Game::Tick</code>, the exit flag and event handling in <code>Game::PollEvents</code></td></tr>
+<tr><td>Timing spike</td><td>the monotonic-time read in <code>AdvanceElapsedTime</code>, the accumulator and its 500 ms clamp, the fixed-step catch-up loop</td></tr>
+<tr><td>Input looks stale</td><td>the end of <code>Game::PollEvents</code> (the service <code>Update()</code> calls), then <code>PlatformInputBridge::ProcessEvent</code></td></tr>
+<tr><td>Draw skipped</td><td><code>Game::BeginDraw</code>, <code>GraphicsDeviceManager::BeginDraw</code>, <code>IGraphicsRenderer::CanBeginDrawEXT</code>, <code>SuppressDraw</code> and <code>Exit</code></td></tr>
+<tr><td>No presentation</td><td><code>Game::EndDraw</code>, <code>GraphicsDeviceManager::EndDraw</code>, <code>GraphicsDevice::Present</code>, the renderer's present path, and whether a render target is still bound</td></tr>
+<tr><td>Exit crash</td><td><code>Game::Dispose</code>, the graphics resource registry drain and native teardown in <code>GraphicsDevice::Dispose</code></td></tr>
+</tbody>
+</table></div>
+<p>Continue with the source tours: <a href="../internals/runtime/module.html">runtime module</a>, <a href="../internals/runtime/startup.html">startup</a>, <a href="../internals/runtime/frame.html">one frame</a> and <a href="../internals/runtime/shutdown.html">ownership and shutdown</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/game-loop.html#lifecycle-diagram">Game loop: lifecycle diagram</a> &middot; <a href="../../docs/game-loop.html#fixed-vs-variable-timestep">Fixed vs variable timestep</a> &middot; <a href="../../docs/game-loop.html#disposebool">Game loop: Dispose(bool)</a> &middot; <a href="../../docs/game-loop.html#graphicsdevicemanager">Game loop: GraphicsDeviceManager</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="overview.html">Architecture overview</a> &middot; <a href="graphics.html">Graphics architecture</a> &middot; <a href="platform.html">Platform architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../internals/runtime/module.html">Runtime module internals</a> &middot; <a href="../internals/runtime/startup.html">Startup source trace</a> &middot; <a href="../internals/runtime/frame.html">One frame source trace</a> &middot; <a href="../internals/runtime/shutdown.html">Ownership and shutdown</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../takeover/mental-model.html">The canonical mental model</a> &middot; <a href="../takeover/ownership.html">Ownership and lifetime master map</a> &middot; <a href="../handbook/debug-shutdown-and-lifetime.html">Debug shutdown and lifetime behavior</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="overview.html" rel="prev"><span>Previous</span>Architecture overview</a><a class="dev-pager-next" href="platform.html" rel="next"><span>Next</span>Platform architecture</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
