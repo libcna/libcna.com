@@ -285,6 +285,30 @@ def cmd_merge(_: argparse.Namespace) -> int:
             return {k: fix(x) for k, x in v.items()}
         return v
     issues = [fix(i) for i in issues]
+    # orchestrator patches (QA corrections and wording fixes): audit/data/bible/issues/patches.json
+    #   {"global_replace": [["old", "new"], ...], "entries": {"CNA-BUG-nnn": {"set": {"field": "text"}}}}
+    pp = ISS / "patches.json"
+    if pp.exists():
+        patches = load(pp)
+        by = {i["id"]: i for i in issues}
+        for old_s, new_s in patches.get("global_replace", []):
+            issues = [json.loads(json.dumps(i).replace(json.dumps(old_s)[1:-1], json.dumps(new_s)[1:-1])) for i in issues]
+        by = {i["id"]: i for i in issues}
+        for iid, spec in (patches.get("entries") or {}).items():
+            if iid not in by:
+                print(f"patches.json: unknown entry {iid}")
+                return 1
+            by[iid].update(spec.get("set", {}))
+        # entries refuted by the adversarial QA review: unpublished; their candidates become NOT A BUG with the QA evidence
+        refuted = patches.get("refuted", {})
+        if refuted:
+            issues = [i for i in issues if i["id"] not in refuted]
+            for d in disp:
+                if d.get("published_as") in refuted:
+                    d["classification"] = "NOT A BUG"
+                    d["evidence"] = "Refuted by the independent QA review: " + refuted[d["published_as"]]
+                    d["qa_refuted_entry"] = d["published_as"]
+                    d["published_as"] = None
     ids = Counter(i["id"] for i in issues)
     bad = [k for k, n in ids.items() if n > 1]
     if bad:

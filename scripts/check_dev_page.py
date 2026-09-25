@@ -149,7 +149,11 @@ def main() -> int:
                 continue
             if u.fragment and tgt.suffix == ".html" and unquote(u.fragment) not in ids_of(tgt, idcache):
                 errors.append(f"missing fragment: {href}")
-        text = " ".join(pa.text)
+        # generated Phase-3 blocks (backlinks, expansions) quote CNA's own documents (e.g. COVERAGE.md) legitimately: vocabulary rules skip them
+        pv = P()
+        pv.feed(re.sub(r"<!--p3:(?:begin|deep-links|issue-links)[^>]*-->.*?<!--/?p3:(?:end|deep-links|issue-links)[^>]*-->", "",
+                       art.group(0) if art else raw, flags=re.S))
+        text = " ".join(pv.text)
         for m in strong_rx.finditer(text):
             errors.append(f"retired renderer identity in text: {m.group(0)}")
         for m in re.finditer(r"alpha\.1", text):
