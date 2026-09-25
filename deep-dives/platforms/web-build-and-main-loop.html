@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The web target: Emscripten build contract, browser loop, storage and renderer evidence - CNA Deep Dives</title>
+  <meta name="description" content="CNA&#x27;s Emscripten build contract (exception ABI, Asyncify, threads), the Asyncify browser loop, content and save storage in the virtual file system, web networking, and the evidence per browser renderer.">
+  <meta name="keywords" content="emscripten, webassembly, asyncify, browser main loop, memfs, idbfs, preload-file, webgl2, html_dom, svg_dom, playwright, web">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/platforms/web-build-and-main-loop.html">
+  <meta property="og:title" content="The web target: Emscripten build contract, browser loop, storage and renderer evidence - CNA Deep Dives">
+  <meta property="og:description" content="CNA&#x27;s Emscripten build contract (exception ABI, Asyncify, threads), the Asyncify browser loop, content and save storage in the virtual file system, web networking, and the evidence per browser renderer.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/platforms/web-build-and-main-loop.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"The web target: Emscripten build contract, browser loop, storage and renderer evidence","description":"CNA's Emscripten build contract (exception ABI, Asyncify, threads), the Asyncify browser loop, content and save storage in the virtual file system, web networking, and the evidence per browser renderer.","url":"https://libcna.com/deep-dives/platforms/web-build-and-main-loop.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine <span class="dev-nav-count">17</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../renderers/index.html" class="docs-nav-link">Renderers <span class="dev-nav-count">16</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Cross-platform engineering <span class="dev-nav-count">4</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="cross-platform-contract.html" class="docs-nav-link">Cross-platform contract</a></li>
+        <li><a href="windows-cross-compiling-and-wine.html" class="docs-nav-link">Windows cross-builds and Wine</a></li>
+        <li><a href="web-build-and-main-loop.html" class="docs-nav-link active" aria-current="page">Web build, loop and evidence</a></li>
+        <li><a href="android-and-apple-platforms.html" class="docs-nav-link">Android and Apple</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification <span class="dev-nav-count">2</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">5</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Cross-platform engineering</a></li>
+        <li aria-current="page">Web build, loop and evidence</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>The web target: Emscripten build contract, browser loop, storage and renderer evidence</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#contract">The toolchain changes the execution contract</a></li>
+          <li><a href="#assets">Content has to cross into the virtual file system</a></li>
+          <li><a href="#storage">Saves live in memory unless the page adds persistence</a></li>
+          <li><a href="#network">Networking changes topology, not only transport</a></li>
+          <li><a href="#loop">The browser loop at this snapshot</a></li>
+          <li><a href="#build-evidence">What a successful web build establishes</a></li>
+          <li><a href="#renderer-evidence">Renderer evidence on the web: four rungs</a></li>
+          <li><a href="#reading">Read in this order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Cross-platform engineering &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Checked by reading the Emscripten CMake, Game.cpp, StorageDevice.cpp, ENetBackend.cpp, the browser harness scripts and the web workflows at 009d40f5, and Sharp Runtime next @ 41b918c9 for isolated storage. Nothing was built, served or run in a browser; save volatility is a reading of the code.</p></div>
+
+<p class="lede">CNA has no separate JavaScript implementation: its web build sends the same C++23 framework through Emscripten and links it with SDL3's browser port. WebAssembly keeps most of the language and loses much of the process model, so the hard parts of a web port sit at its boundaries: the exception and suspension ABI every object must share, a loop the browser schedules, content that has to be put into a virtual file system, saves that live in memory, sockets that cannot listen, and a verdict that has to leave a process whose exit status nobody can observe. This page explains each boundary at this snapshot and then separates the kinds of evidence that exist for the browser renderers. The task-level walk-throughs are <a href="../../docs/tutorials/81-emscripten.html">Tutorial 81</a>, <a href="../../docs/tutorials/124-web-gotchas.html">Tutorial 124</a> and <a href="../../docs/tutorials/105-browser-renderers.html">Tutorial 105</a>.</p>
+
+<h2 id="contract">The toolchain changes the execution contract</h2>
+<p>A web configure runs under <code>emcmake</code> (the <code>web</code> preset names no toolchain file, so it is run as <code>emcmake cmake --preset web</code>). The platform implementation is <code>SDL3</code>; <code>CNA_PLATFORM=EMSCRIPTEN</code> is a reserved name that is refused. With no explicit choice the renderer is <code>WEBGL2</code>, one of five identities that exist only under Emscripten (<code>WEBGL1</code>, <code>WEBGL2</code>, <code>CANVAS</code>, <code>HTML_DOM</code>, <code>SVG_DOM</code>); the native GL profiles <code>OPENGLES2</code>, <code>OPENGLES3</code> and <code>OPENGL33</code> are refused with a message that points to the WebGL identities (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>RendererSelection.cmake</code></a>). One configure is not limited to one renderer: <code>CNA_GRAPHICS_RENDERERS</code> can link several browser renderers into one bundle and let the page choose at run time, which is what the multi-renderer web workflow builds.</p>
+<p>When the default identity is <code>WEBGL1</code> or <code>WEBGL2</code>, <code>cna_apply_emscripten_renderer_link_contract()</code> links the executable with <code>-sMIN_WEBGL_VERSION</code> and <code>-sMAX_WEBGL_VERSION</code> both pinned to 1 or 2, so a WebGL 2 build never silently runs GLSL ES 3.00 in a WebGL 1 context and a WebGL 1 build is never quietly upgraded; Canvas, DOM and WebGPU families inherit no GL requirements from it. EasyGL, the sibling library behind both WebGL identities, is configured with <code>EASYGL_EMSCRIPTEN_EXCEPTION_MODEL=JS</code> when embedded, so it joins CNA's exception ABI.</p>
+
+<h3 id="exception-abi">One exception ABI for every frame</h3>
+<p>CNA uses C++ exceptions in ordinary error paths, and under Emscripten every C++ frame that can propagate one has to use the same exception model. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/BuildPerformance.cmake"><code>BuildPerformance.cmake</code></a> defines <code>cna_emscripten_exception_abi</code> as JavaScript-lowered exceptions (<code>-fexceptions</code> when compiling, <code>-fexceptions -sDISABLE_EXCEPTION_CATCHING=0</code> when linking), links it privately to every CNA-owned target, and publishes it through <code>cna_build_config</code> (<code>CNA::BuildConfig</code>; the exception interface is also exported as <code>CNA::EmscriptenExceptionAbi</code>) so a consumer's own translation units and final link use the same model (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a>). The same interface adds <code>-sSTACK_SIZE=1048576</code>; CNA's own web example targets additionally link <code>-sALLOW_MEMORY_GROWTH=1</code>. Earlier revisions used native WebAssembly exceptions (<code>-fwasm-exceptions</code>); that choice interacted with the old main loop as described <a href="#historical-case">below</a>, and it is not the model at this snapshot.</p>
+<p>Exceptions that escape before the loop starts need special care on the web. <code>Game::Run()</code> catches <code>std::exception</code> around initialisation, logs it and rethrows (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a>), because an exception that leaves <code>Run()</code> reaches the browser as a rejected promise carrying only an opaque exception pointer, with no type, no <code>what()</code> and nothing in the console. On a native build the extra line is harmless.</p>
+
+<h3 id="asyncify">Asyncify is an executable policy, not a library property</h3>
+<p>Blocking <code>Game::Run()</code> on the web needs the WebAssembly stack to be suspended and resumed between frames, which Emscripten's Asyncify provides. It is a separate interface target, <code>cna_emscripten_asyncify</code> (<code>-sASYNCIFY=1</code>), and it is applied only to CNA-owned <code>EXECUTABLE</code> targets, unless a target sets the property <code>CNA_EMSCRIPTEN_ASYNCIFY</code> to <code>OFF</code>. The C API's WebAssembly artifact does exactly that and adds <code>-sASYNCIFY=0</code>: a JavaScript-driven library must keep ordinary synchronous exports and let the browser schedule its per-frame calls, and a <code>CheckWasmLinkContract</code> script checks that no later flag re-enables it (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/CMakeLists.txt"><code>C API CMake</code></a>). An application outside CNA's tree that uses a blocking <code>Game::Run()</code> must link <code>CNA::EmscriptenAsyncify</code> itself; <code>CNA::EmscriptenAbi</code> is the compatibility composition of the exception ABI and Asyncify. The test executable is the exception: <code>CnaTests</code> links <code>-sJSPI=1</code> and <code>-sEXIT_RUNTIME=1</code> so that loopback networking tests can yield to Node's event loop and the process exits after printing its results (see <a href="../build/configuring-cna.html#web">configuring CNA: Emscripten</a>).</p>
+
+<h3 id="threads">Threads are an application-wide ABI choice</h3>
+<p>A default web build is single-threaded. <code>CNA_ENABLE_EMSCRIPTEN_THREADS</code> (default <code>OFF</code>, and a configure error on any non-Emscripten target; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakeLists.txt"><code>CMakeLists.txt</code></a>) switches the whole application to the shared-memory pthread ABI: <code>-pthread</code> on every compile and link, Sharp Runtime's own web thread support forced on, and on the final link <code>-sOFFSCREEN_FRAMEBUFFER=1</code> and <code>-sWASMFS=1</code>. The WasmFS choice has a recorded reason: the legacy JavaScript file system proxies every syscall of a pthread to the browser main thread, which can deadlock a background <code>Content.Load</code> while the game loop is active (the comment names Firefox), whereas WasmFS keeps preloaded-file operations inside WebAssembly. Threaded and single-threaded archives cannot be linked together, so SDL's persistent install has two roots, <code>.sdl-prebuilt-emscripten</code> and <code>.sdl-prebuilt-emscripten-pthreads</code>. The browser offers shared memory only to cross-origin-isolated pages; providing those response headers is the host page's job, not something the build emits (see <a href="../../docs/tutorials/78-multithreading.html">Tutorial 78</a>).</p>
+
+<h2 id="assets">Content has to cross into the virtual file system</h2>
+<p>A native executable can find files beside its working directory. A page cannot: Emscripten exposes a virtual file system, and a file exists there only if the page creates it or the linker packages it. <code>ContentManager</code> resolves an asset through <code>std::filesystem</code> and then through the platform's file service, and both look into that virtual tree. In CNA's own tree exactly two build sites package content, both with <code>--preload-file &lt;dir&gt;/Content@/Content</code>: the 2D graphics demo (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/CMakeLists.txt"><code>graphics examples</code></a>) and the sound demo (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/audio/examples/CMakeLists.txt"><code>audio examples</code></a>). There is no project-wide asset manifest, no <code>--embed-file</code> policy and no custom shell file that fills the gap. A successful link therefore proves nothing about content: each web application must account for every name that can reach <code>ContentManager</code> or <code>TitleContainer</code>, and two builds of the same commit can carry different content if their preload mappings differ.</p>
+
+<h2 id="storage">Saves live in memory unless the page adds persistence</h2>
+<p><code>StorageDevice</code> resolves its root independently of the platform implementation (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/src/StorageDevice.cpp"><code>StorageDevice.cpp</code></a>, <code>EnsureStorageRoot</code>): <code>$XDG_DATA_HOME/&lt;game&gt;</code>, else <code>$LOCALAPPDATA/&lt;game&gt;</code>, else <code>$HOME/.local/share/&lt;game&gt;</code> (<code>~/Library/Application Support/&lt;game&gt;</code> on Apple), else a directory under the current path. Under Emscripten those variables come from the JavaScript runtime's default environment rather than from a user session, so the root is an ordinary directory in the virtual file system: in-memory MEMFS by default, and WasmFS, whose default backend is also in memory, in a threaded build. CNA's sources contain no IDBFS mount and no <code>FS.syncfs</code> call, and nothing bridges its storage to <code>localStorage</code> or IndexedDB. Reading the code, a save therefore succeeds, is readable for the rest of the page's life, and is gone after a reload; this was not executed for this page. The SDL3 platform's preference path (<code>GetPreferencesPath</code>, through <code>SDL_GetPrefPath</code>) is also inside the virtual file system, and <code>StorageDevice</code> does not use it.</p>
+<p>Sharp Runtime's separate <code>System::IO::IsolatedStorage</code> takes a different route: on Emscripten its root is <code>/save/.cna_isolated_storage</code>, its source comment expects the application's startup code to mount IDBFS at <code>/save</code>, and closing an isolated-storage stream calls <code>FS.syncfs</code> (sharp-runtime <code>next</code> @ <code>41b918c9</code>, <code>StoragePaths.cpp</code> and <code>IsolatedStorageFileStream.cpp</code>). CNA's <code>StorageDevice</code> does not go through it, and no CNA code mounts <code>/save</code>. A game that needs durable browser saves therefore has to add them itself, either through the browser's storage APIs or by mounting a persistent file system over the path it writes and synchronising after writes; both are application code and neither is verified here. <a href="../../docs/tutorials/124-web-gotchas.html#no-storage">Tutorial 124</a> shows the browser-storage route.</p>
+
+<h2 id="network">Networking changes topology, not only transport</h2>
+<p>A browser tab can open outbound connections but can never listen, and Emscripten's socket layer does not report a usable ephemeral port. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/src/Internal/ENetBackend.cpp"><code>ENetBackend.cpp</code></a> therefore hosts on the fixed port 61191 instead of <code>ENET_PORT_ANY</code> (meaningful only for a Node-run relay or server build) and rebuilds the joining side as an outbound-only ENet client; UDP-broadcast discovery is compiled out, so <code>Find</code> returns nothing; and <code>EndJoin</code> does not pump the handshake synchronously on the web. A web build can keep SystemLink message transport while losing native hosting and LAN discovery, so network evidence must name the role and the host, not only "ENet linked". The session-level consequences are on <a href="../services/network-sessions.html#web">network sessions: the web</a>.</p>
+
+<h2 id="loop">The browser loop at this snapshot</h2>
+<p>On the desktop, <code>Game::RunLoop()</code> ticks while <code>RunApplication</code> is true. Under Emscripten it stores the game in one static slot and alternates one frame body, <code>EmscriptenMainLoopCallback()</code>, with <code>CNA_WaitForAnimationFrame()</code>, an <code>EM_ASYNC_JS</code> function that awaits <code>requestAnimationFrame</code>. Asyncify suspends and resumes the same WebAssembly stack between frames, so <code>Run()</code> blocks and returns exactly as it does natively: a stack-local <code>MyGame game; game.Run();</code> is valid, and after the loop <code>Run()</code> calls <code>EndRun()</code> and <code>AfterLoop()</code>. The source comment records why the frame body is called directly: a separately registered browser callback could not re-enter the instance while <code>Run()</code>'s stack is suspended.</p>
+<p>The frame body is still not the desktop <code>Tick</code>. By reading <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a>: time comes from the platform's <code>GetTicksMilliseconds()</code> rather than the performance counter; a frame's delta is capped at a hard-coded 250 ms rather than <code>MaxElapsedTime</code> (500 ms); every frame drains whole <code>TargetElapsedTime</code> steps, so <code>IsFixedTimeStep = false</code> is not honoured; <code>IsRunningSlowly</code> is set false before every update; a frame draws only if at least one update ran, and <code>SuppressDraw()</code> is never consulted; <code>Exiting</code> is raised inside the frame body; a frame exception is caught, logged and ends the loop without <code>Exiting</code>; and the mobile suspend handling is not part of this path. None of these stops a demo from drawing, and each can change game behaviour, tests, shutdown or timing-sensitive networking, which is why they belong to the compatibility contract. The full comparison is on <a href="../../development/internals/runtime/frame.html#web">one frame source trace</a> and <a href="../framework/game-time-and-timestep.html#browser-clock">game time and the timestep</a>; the control flow is on <a href="../framework/game-class-and-lifecycle.html#browser">the Game class</a>.</p>
+
+<h3 id="historical-case">A historical case: the hand-off that destroyed the game</h3>
+<p>The current design exists because the earlier one failed in an instructive way; CNA's own <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/emscripten-mainloop-game-lifetime.md"><code>emscripten-mainloop-game-lifetime.md</code></a> records the former implementation and the contract that replaced it. Earlier revisions (alpha.1 among them) ended <code>Run()</code> in <code>emscripten_set_main_loop</code> with <code>simulateInfiniteLoop = 1</code>, which Emscripten implements as a raw JavaScript <code>throw 'unwind'</code>. Under native WebAssembly exceptions, the cleanup landing pad generated for a local object with a destructor caught that foreign throw, so a stack-local game was destroyed at the call site while the registered callback still held pointers into it, including the graphics device manager. The page built, loaded and started; the first scheduled frame then touched dead state.</p>
+<p>The way the fault was located is the reusable part (a historical account; the current tree keeps the result, not the investigation). The first hypothesis blamed pointer adjustment across multiple inheritance in the graphics manager, which looked plausible because a stale-looking address crossed an interface boundary. Focused reproductions under AddressSanitizer, UndefinedBehaviorSanitizer with vptr checks and Emscripten's <code>SAFE_HEAP</code> did not support it. An isolated lifetime reproduction did: the decisive evidence was temporal rather than structural, the sequence constructor, hand-off, destructor, callback. That located the defect in the hosting contract shared by every web renderer instead of in any one renderer. The interim workaround allocated the game with <code>new</code> and never deleted it, and that migration carried a second lesson: a search-based fix must end with a search for survivors, not with a count of edited files, because an entry point that is built only for the web is easy to miss. At this snapshot the benchmark, like every other entry point, constructs its game on the stack, which is correct under the Asyncify loop. The general rule survives the fix: a function that syntactically does not return may still run cleanup machinery, so ownership has to follow the host's actual control flow.</p>
+
+<h3 id="testing-loop">How to test a host-owned loop</h3>
+<p>A useful regression test cannot stop at "the loop was entered". It must keep the page alive until at least one frame has run, assert inside that frame that the game object and its device are alive, and report through a channel the browser harness can read (a named <code>window</code> flag), because a WebAssembly process exit code is not observable the way a native child's is. It should separately exercise exit and shutdown if those semantics are claimed: at this snapshot that means checking that <code>Exiting</code>, <code>EndRun()</code> and <code>AfterLoop()</code> run and that <code>Run()</code> returns. CNA's lifetime document states the same requirement for its runtime browser checks (several <code>Update()</code>/<code>Draw()</code> frames, <code>Exit()</code>, a return from <code>Run()</code>, normal destruction) and that merely compiling the page does not verify the contract. The minimum diagnostic trace is small and worth logging whenever a web port misbehaves: construction, loop entry, each suspension, first frame, exit request, destruction.</p>
+
+<h2 id="build-evidence">What a successful web build establishes</h2>
+<p>A completed Emscripten link is real evidence: the selected source closure is accepted by the web toolchain, the C++23 surface compiles with that SDK, and the selected renderers' symbols resolve. It does not establish that runtime content was packaged, that saves survive a reload, that a frame was reached after the browser took control, that generated WebGL shaders compiled in a browser, or that the page displayed the selected renderer rather than merely loading its module.</p>
+<p>A bare Node launch is a poor substitute for a browser. DOM renderers need <code>window</code> and <code>document</code>, SDL-backed renderers need browser host services, and WebGL needs a real graphics context, so errors such as "window is not defined" or an SDL initialisation failure under Node say that the wrong host was used, not that a renderer's drawing semantics were tested. Node remains the right host for renderer-independent code, which is how <code>CnaTests.js</code> runs.</p>
+<p>A reproducible web evidence record names at least: the CNA commit, the emsdk version (CI pins 6.0.3), the renderer identity or set, the configure options that change the ABI (threads, an Asyncify opt-out), the target, the produced <code>.html</code>, <code>.js</code> and <code>.wasm</code>, every preload mapping, and the host level reached: linked, launched under Node, or served over HTTP to a named browser. Those are ascending levels, not synonyms.</p>
+
+<h2 id="renderer-evidence">Renderer evidence on the web: four rungs</h2>
+<p>The five browser identities are not five equally verified implementations. Four kinds of evidence exist, and each rung includes more of the delivery chain without making the lower tests redundant:</p>
+<ul>
+<li><strong>Build:</strong> the renderer compiled and linked to WebAssembly.</li>
+<li><strong>Host start:</strong> a JavaScript host loaded the module far enough to run startup.</li>
+<li><strong>Structure:</strong> a real browser observed renderer-specific DOM or SVG objects and invariants that another renderer could not trivially impersonate.</li>
+<li><strong>Pixels:</strong> the browser's compositor produced expected colours at sampled screen positions.</li>
+</ul>
+<p>A pixel sample can prove presentation while missing a malformed object tree; a structural assertion can prove the renderer identity while missing blending. The strongest suite does both.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Identity</th><th scope="col">Build</th><th scope="col">Browser run</th><th scope="col">Structure</th><th scope="col">Pixels</th></tr></thead>
+<tbody>
+<tr><td><code>HTML_DOM</code></td><td>CI</td><td>automatic: <code>htmldom-ci.yml</code>, six pages in headless Chromium</td><td>yes</td><td>screenshot samples</td></tr>
+<tr><td><code>SVG_DOM</code></td><td>CI (multi-renderer bundle)</td><td>manual runner only</td><td>yes (SVG namespace)</td><td>four scissor-order samples</td></tr>
+<tr><td><code>WEBGL2</code></td><td>CI (multi-renderer bundle)</td><td>no harness in the tree</td><td>no</td><td>no</td></tr>
+<tr><td><code>WEBGL1</code></td><td>admitted by the CMake logic; built by no workflow</td><td>no harness in the tree</td><td>no</td><td>no</td></tr>
+<tr><td><code>CANVAS</code></td><td>CI (multi-renderer bundle)</td><td>no harness in the tree; a written manual checklist</td><td>no</td><td>no</td></tr>
+</tbody>
+</table></div>
+<p>The table is deliberately asymmetric. A build entry says nothing about frame one, and a handful of sampled pixels says nothing about complete rendering parity; what the table gives each claim is a precise meaning, and it shows the shortest path to stronger evidence for each identity.</p>
+<h3 id="htmldom">HTML_DOM: automated browser and compositor evidence</h3>
+<p><code>htmldom-ci.yml</code> pins emsdk 6.0.3, installs Playwright with Chromium, starts Xvfb, configures <code>HTML_DOM</code> and runs <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/run-htmldom-test-suite.sh"><code>run-htmldom-test-suite.sh</code></a>, which builds <code>cna_test_htmldom_all</code> and serves six pages over loopback HTTP on distinct ports: <code>smoke</code>, <code>pixel</code>, <code>stress</code>, <code>dispose</code>, <code>host-integration</code> and <code>memory</code> (the workflow's header comment still says four). The driver waits for a verdict the page publishes on <code>window</code> (for example <code>__cnaSmokeDone</code> and <code>__cnaSmokeResult</code>) and prints passed against expected checks. For pixels it takes a real Playwright screenshot of the composited page, decodes it inside the page into a canvas and reads points with <code>getImageData</code> (inside and outside a scissor rectangle, an atlas interior and a point near its edge), so the evidence is what Chromium finally showed, not what the renderer's DOM claims (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/htmldom-browser-test.mjs"><code>htmldom-browser-test.mjs</code></a>). The host-integration page proves that CNA refuses to seize a host-owned DOM element and creates no viewport of its own; it rewrites the HTML response with Playwright's <code>page.route()</code> because injecting through <code>addInitScript</code> runs too late relative to module bootstrap (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/htmldom-host-integration-test.mjs"><code>htmldom-host-integration-test.mjs</code></a>). The timing mechanism is part of the proof. This workflow checks out an older pinned sharp-runtime revision than the snapshot's component closure needs, so it is configured to do this rather than recorded as passing at this snapshot.</p>
+<h3 id="svgdom">SVG_DOM: a real browser harness without a caller</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/svgdom-browser-test.mjs"><code>svgdom-browser-test.mjs</code></a> drives three pages (<code>smoke</code>, <code>pixel</code>, <code>scissor-order</code>) through Playwright. It checks that the root is a real <code>&lt;svg&gt;</code> in the SVG namespace and that every sprite-bearing flush-slot child is an SVG-namespace element, that the SDL backbuffer canvas stays hidden, and it samples four decisive composited points for the draw-order regression. The namespace checks are anti-spoofing evidence: an HTML or canvas renderer cannot satisfy them by producing a similar picture. No workflow or CTest registration calls its shell runner, so SVG_DOM has a reproducible manual browser route plus the automatic bundle link, not a continuous compositor test.</p>
+<h3 id="webgl-canvas">WEBGL1, WEBGL2 and CANVAS: translation without browser execution</h3>
+<p><code>emscripten-multi-renderer-ci.yml</code> configures <code>WEBGL2;CANVAS;HTML_DOM;SVG_DOM</code> into one bundle, checks with <code>llvm-nm</code> that expected symbols are in the built archives and counts the descriptor entries in the generated registry; it launches no browser. Nothing in the tree runs <code>WEBGL1</code>, <code>WEBGL2</code> or <code>CANVAS</code> in a browser, so context creation, shader-version compatibility, uploads, presentation and context loss are open for them. In particular, no GLSL generated for <code>WEBGL1</code> has been compiled by a real WebGL 1 implementation, and the WebGL renderers' context-loss handling exists in source but no test deliberately loses and restores a context and then demands a fresh visible frame. The <code>WEBGPU</code> identity also has a browser route, driven by the manual scripts <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/run-webgpu-browser-test.sh"><code>run-webgpu-browser-test.sh</code></a> and <code>run-webgpu-parity-test.sh</code> rather than by a workflow (see <a href="../../docs/tutorials/132-webgpu.html#browser">Tutorial 132</a>).</p>
+
+<figure class="diagram-figure" role="group" aria-labelledby="fig-web-execution-cap">
+<pre class="diagram">
+ emcmake configure + build          Wasm + JS (+ .data from --preload-file)
+ (exception ABI, Asyncify,   ---->  one renderer or a multi-renderer bundle
+  optional pthread ABI)                           |
+                                                  v
+                                   served over HTTP (not file://)
+                                                  |
+                                                  v
+                                           browser page
+                                                  |
+                                                  v
+          Game::Run() on the Wasm stack: init -> frame body -> await rAF -> ...
+          (Asyncify suspends between frames; Run() returns after exit)
+                                                  |
+                                                  v
+          WEBGL1/2 (EasyGL) | CANVAS | HTML_DOM | SVG_DOM | WEBGPU
+                                                  |
+               +------------------+---------------+----------------+
+               v                  v                                v
+       window verdict flag   DOM / SVG structure         compositor screenshot
+       (page -> harness)     (renderer identity)         samples (pixels)
+</pre>
+<figcaption id="fig-web-execution-cap"><strong>Figure.</strong> The browser execution chain at this snapshot. An Emscripten build with CNA's exception ABI and Asyncify produces WebAssembly, JavaScript and optional preloaded content, which must be served over HTTP to a browser page. <code>Game::Run()</code> runs on the WebAssembly stack and is suspended between frames while the browser schedules animation frames, then returns after exit. The selected browser renderer draws, and three separate observations can be made: a verdict the page publishes on <code>window</code>, renderer-specific DOM or SVG structure, and pixels sampled from the compositor's screenshot. Loading a page, reaching a frame, engaging the intended renderer and verifying composited pixels are separate milestones.</figcaption>
+</figure>
+
+<h3 id="harness-shape">A common browser-verification shape</h3>
+<p>All browser identities can converge on one harness pattern, which the HTML_DOM and SVG_DOM drivers already follow in part: serve the artifacts over loopback HTTP; wait for a named <code>window</code> verdict with a timeout; fail on console errors and page exceptions; assert a renderer-specific structural token; sample a few composited pixels from a real screenshot; and archive the page log and screenshot. Renderer-specific cases then add shader compilation, context restoration, DOM ownership or canvas behaviour. The central rule is to prove that the intended runtime engaged: a green build can be produced without a browser, a green page before any frame, and a plausible image by the wrong rendering route. Identity, execution and visible output are three separate facts, and the evidence should contain all three. The cross-platform framing is on <a href="cross-platform-contract.html#evidence">the cross-platform contract</a>.</p>
+
+<h2 id="reading">Read in this order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/BuildPerformance.cmake"><code>BuildPerformance.cmake</code></a>: the exception ABI, Asyncify and the per-target opt-out.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a>: what <code>cna_build_config</code> publishes to consumers, including the pthread ABI.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a>: <code>Run</code>, <code>RunLoop</code> and <code>EmscriptenMainLoopCallback</code>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/src/StorageDevice.cpp"><code>StorageDevice.cpp</code></a>: where saves go.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/run-htmldom-test-suite.sh"><code>run-htmldom-test-suite.sh</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/scripts/htmldom-browser-test.mjs"><code>htmldom-browser-test.mjs</code></a>: the one automated browser suite.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/.github/workflows/emscripten-multi-renderer-ci.yml"><code>emscripten-multi-renderer-ci.yml</code></a>: what the bundle job checks and what it does not run.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/platforms.html#web">Platforms: Web (Emscripten)</a> &middot; <a href="../../docs/tutorials/81-emscripten.html">Tutorial 81: Emscripten</a> &middot; <a href="../../docs/tutorials/124-web-gotchas.html">Tutorial 124: web gotchas</a> &middot; <a href="../../docs/tutorials/105-browser-renderers.html">Tutorial 105: browser renderers</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/runtime.html">Runtime architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/runtime/frame.html#web">One frame source trace: Emscripten</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="../framework/game-class-and-lifecycle.html">The Game class</a> &middot; <a href="../services/network-sessions.html">Network sessions</a> &middot; <a href="cross-platform-contract.html">The cross-platform contract</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="windows-cross-compiling-and-wine.html" rel="prev"><span>Previous</span>Windows from Linux: MinGW cross-builds, runtime staging and Wine evidence</a><a class="dev-pager-next" href="android-and-apple-platforms.html" rel="next"><span>Next</span>Android and Apple targets: structure, lifecycle, assets and evidence</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
