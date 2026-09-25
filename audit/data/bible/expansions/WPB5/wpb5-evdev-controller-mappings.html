@@ -1,0 +1,28 @@
+<h2 id="evdev-controller-mappings">Controller mappings on the native Linux platforms</h2>
+<p>On the native <code>X11</code> and <code>WAYLAND</code> platforms, controllers come from the kernel's evdev nodes and not from SDL. That makes one question CNA's own responsibility: which evdev device counts as an XNA gamepad, and which of its buttons is <code>A</code>. The SDL3 platform leaves this question to SDL's gamepad layer, and CNA adds nothing there. The Linux sources are compiled only for a Linux target (<code>src/Linux</code> in {{src:modules/platform/CMakeLists.txt|the platform CMake file}}).</p>
+<h3 id="evdev-classification">How a node is classified</h3>
+<p>The controller hub opens each node under <code>/dev/input</code> and classifies it with <code>ClassifyEvdevDevice</code> ({{src:modules/platform/src/Linux/EvdevLayout.cpp|EvdevLayout.cpp}}):</p>
+<ul>
+<li>A node with <code>INPUT_PROP_ACCELEROMETER</code> is never a controller. It is the motion-sensor half of a pad, and the hub attaches it to the pad it belongs to.</li>
+<li>Any button in the kernel's gamepad range (<code>BTN_GAMEPAD</code> onwards) makes the node a gamepad.</li>
+<li>Buttons only in the joystick range (or <code>BTN_TRIGGER_HAPPY</code>), together with sticks or a hat, make it a joystick.</li>
+<li>Anything else, such as a keyboard, a mouse or a touchpad, is closed at once.</li>
+</ul>
+<p>Many generic USB and Bluetooth HID pads describe themselves with only the joystick range. On their own they therefore appear only in the raw <code>Joysticks</code> view above, never as a <code>GamePad</code>.</p>
+<h3 id="evdev-mapping-database">The mapping database</h3>
+<p>When the hub starts (on the first gamepad acquisition), <code>ControllerMappingDatabase::FromEnvironment()</code> reads the file named by <code>CNA_GAMECONTROLLERCONFIG_FILE</code>, then the entries in <code>CNA_GAMECONTROLLERCONFIG</code>, one per line ({{src:modules/platform/src/Linux/EvdevMapping.cpp|EvdevMapping.cpp}}). The format is the community controller database's, the <code>gamecontrollerdb.txt</code> format that SDL-based games use. CNA ships no database of its own; choosing one is left to the user or the game.</p>
+<pre><code class="language-bash">CNA_GAMECONTROLLERCONFIG_FILE=~/gamecontrollerdb.txt ./my-game</code></pre>
+<p>A usable mapping decides over what the driver reports ({{src:modules/platform/src/Linux/EvdevControllers.cpp|EvdevControllers.cpp}}). A mapping turns a joystick-range pad into a gamepad that takes a free player slot. It also overrides a pad that the kernel's gamepad API already describes, which is how a user corrects one. A mapping whose elements name no input that the device has is ignored.</p>
+<p>A mapping is matched by a GUID made from the device's bus, vendor, product and version ({{src:modules/platform/src/Linux/EvdevMapping.hpp|EvdevMapping.hpp}}). The exact version is tried first, then any version of the device. When an entry states a <code>crc:</code> field, the CRC-16/ARC of the device name must also match.</p>
+<p>The reader follows the database's rules:</p>
+<ul>
+<li>Entries for another <code>platform:</code> are skipped.</li>
+<li>Comments, blank lines and malformed lines are not entries.</li>
+<li>An element the reader does not know is skipped, and the rest of the entry still applies.</li>
+<li>A later entry for the same device replaces an earlier one.</li>
+<li>Of the <code>hint:</code> conditions, the two button-label hints turn a Nintendo-style labelled entry into a positional one by swapping the face buttons. Any other hint takes the default that the entry states.</li>
+<li>Button, axis and hat indices are numbered as the database numbers them.</li>
+<li>Half axes, inverted axes, buttons on axes and hat directions are honoured.</li>
+<li>Values are converted to CNA's scale, on which a stick pushed up is positive.</li>
+</ul>
+<p><strong>Evidence.</strong> The <code>LinuxEvdevMapping</code> suite ({{src:modules/platform/tests/CNA/Platform/LinuxEvdevMappingTests.cpp|LinuxEvdevMappingTests.cpp}}) consists of pure-function tests. It runs through the <code>CnaX11MappingTests</code> and <code>CnaWaylandMappingTests</code> entries, and needs no device and no display ({{src:cmake/UnitTests.cmake|UnitTests.cmake}}). Its test against a real database file, <code>EveryEntryOfADatabaseFileIsRead</code>, skips unless <code>CNA_TEST_GAMECONTROLLERDB</code> names a file. No workflow sets that variable, so acceptance of the full community file is not a CI result. Checked by reading at <code>009d40f5</code>; not executed.</p>
