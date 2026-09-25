@@ -229,6 +229,7 @@ def build(rv: dict[str, dict], dec: dict, files: set[str]) -> tuple[dict, list[s
             patch["added"].append(d["entry"])
     for e in dec.get("new_findings", []):        # defects the audit itself found while re-reading (no earlier candidate)
         patch["added"].append(e)
+    patch["added"].sort(key=lambda e: e["id"])           # allocation order = temporary id, so earlier ids never shift when entries are added
     return {k: v for k, v in patch.items() if v}, pending
 
 

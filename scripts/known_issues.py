@@ -308,7 +308,7 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
         for cid in e.get("cand_ids") or []:
             for d in disp:
                 if d["cand"] == cid:
-                    d["classification"] = "STILL EXISTS"
+                    d["classification"] = "PARTIALLY FIXED" if e.get("status") == "narrowed" else "STILL EXISTS"
                     d["published_as"] = new
                     d["evidence"] = "Restored by the independent adversarial audit (earlier dismissal: " + d.get("evidence", "")[:200] + ")"
         by[new] = e

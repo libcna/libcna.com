@@ -2,7 +2,7 @@
 """Independent adversarial checks for the Phase-3 result (written without reusing bible_inventory.py / bible_ledger.py).
 
     adversarial_audit.py graph      # re-derive the Bible LaTeX inclusion graph from main.tex and compare it with audit/data/bible/units.json
-    adversarial_audit.py anchors    # ledger destinations: page + fragment exist, tokens occur at page level (error) and inside the cited anchor section (counted)
+    adversarial_audit.py anchors [--strict|--repair]   # ledger destinations: page + fragment exist, tokens occur at page level (error) and inside the cited anchor section (counted); --repair re-points imprecise anchors
     adversarial_audit.py issues     # data/known-issues.json <-> detail pages <-> hubs: counts, orphans, facts, evidence flags, unreviewed duplicate candidates
     adversarial_audit.py counts [--write]   # the published quantities between <!-- counts:begin/end --> in audit/phase3-adversarial-audit.md: --write regenerates, default checks
     adversarial_audit.py all        # graph + anchors + issues + counts (what scripts/validate_all.sh runs)
@@ -233,6 +233,68 @@ def section(rel: str, frag: str) -> str | None:
         else:
             _sections[key] = _norm(section_text(t.ids[frag])) if frag in t.ids else None
     return _sections[key]
+
+
+def _best_anchor(base: str, tokens: list[str]) -> str | None:
+    """The id on a page whose own section holds every token, preferring the smallest such section."""
+    section(base, "")
+    t = _trees.get(base)
+    if t is None:
+        return None
+    best: tuple[int, str] | None = None
+    whole = len(section(base, "") or "")
+    for frag, node in t.ids.items():
+        if node.tag in ("main", "article", "body", "html", "nav", "header", "footer"):
+            continue                       # a container holds every token and says nothing about where the concept lives
+        sec = section(base, frag)
+        if sec and whole and len(sec) > 0.6 * whole:
+            continue
+        if sec and all(_norm(x) in sec for x in tokens) and (best is None or len(sec) < best[0]):
+            best = (len(sec), frag)
+    return best[1] if best else None
+
+
+def repair_anchors() -> int:
+    """Precision repair of ledger destinations whose tokens sit on the page but outside the cited anchor. Single destination: re-point it to the smallest
+    anchor section that holds all tokens. Several destinations: add that anchor (nothing is removed). Concepts with no such anchor are left alone."""
+    changed = left = 0
+    for p in sorted(RECORDS.glob("*.json")):
+        rec = json.loads(p.read_text(encoding="utf-8"))
+        dirty = False
+        for c in rec.get("concepts") or []:
+            dests, toks = c.get("destinations") or [], c.get("tokens") or []
+            if not dests or not toks:
+                continue
+            blobs = []
+            for d in dests:
+                base, _, frag = d.partition("#")
+                blobs.append(section(base, frag) if frag else section(base, ""))
+            if any(b is None for b in blobs):
+                continue
+            ab = " ".join(blobs)
+            missing = [t for t in toks if _norm(t) not in ab]
+            if not missing:
+                continue
+            fixed = None
+            for d in dests:
+                base = d.partition("#")[0]
+                frag = _best_anchor(base, toks)
+                if frag:
+                    fixed = f"{base}#{frag}"
+                    break
+            if not fixed:
+                left += 1
+                continue
+            if len(dests) == 1:
+                c["destinations"] = [fixed]
+            elif fixed not in dests:
+                c["destinations"] = dests + [fixed]
+            dirty = True
+            changed += 1
+        if dirty:
+            p.write_text(json.dumps(rec, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"anchors --repair: {changed} concept destination(s) made precise; {left} left (no single anchor section holds every token)")
+    return 0
 
 
 def cmd_anchors(strict: bool = False) -> int:
@@ -477,6 +539,7 @@ def main() -> int:
     sub.add_parser("graph")
     a = sub.add_parser("anchors")
     a.add_argument("--strict", action="store_true", help="treat anchor-precision misses as errors")
+    a.add_argument("--repair", action="store_true", help="re-point imprecise ledger anchors (rewrites audit/data/bible/records)")
     sub.add_parser("issues")
     cn = sub.add_parser("counts")
     cn.add_argument("--write", action="store_true")
@@ -485,7 +548,7 @@ def main() -> int:
     if args.cmd == "graph":
         return cmd_graph()
     if args.cmd == "anchors":
-        return cmd_anchors(args.strict)
+        return repair_anchors() | cmd_anchors(args.strict) if args.repair else cmd_anchors(args.strict)
     if args.cmd == "issues":
         return cmd_issues()
     if args.cmd == "counts":
