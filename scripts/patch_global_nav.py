@@ -14,8 +14,39 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ENTRIES = [("development/index.html", "Development", r'documentation\.html" class="nav-link(?: active)?">Documentation</a>'),
-           ("deep-dives/index.html", "Deep Dives", r'development/index\.html" class="nav-link(?: active)?">Development</a>'),
-           ("known-issues/index.html", "Known Issues", r'deep-dives/index\.html" class="nav-link(?: active)?">Deep Dives</a>')]
+           ("deep-dives/index.html", "Deep Dives", r'development/index\.html" class="nav-link(?: active)?">Development</a>')]
+
+
+FOOT = re.compile(r'<li><a href="(?P<x>(?:\.\./)*(?:docs/)?)faq\.html">FAQ</a></li></ul>')
+
+
+ML_FOOT = re.compile(r'(?P<ind>[ \t]*)<li><a href="(?P<x>(?:\.\./)*(?:docs/)?)faq\.html">FAQ</a></li>\n')
+
+
+def patch_footer(text: str) -> str:
+    """Add Deep Dives and Known Issues to the footer's Docs column (idempotent)."""
+    if "known-issues/index.html" in text.split("<footer", 1)[-1]:
+        return text
+
+    def repl(m: re.Match) -> str:
+        x = m.group("x")
+        root = x[:-5] if x.endswith("docs/") else x + "../"
+        return (m.group(0)[:-len("</ul>")] + f'<li><a href="{root}deep-dives/index.html">Deep Dives</a></li>'
+                f'<li><a href="{root}known-issues/index.html">Known Issues</a></li></ul>')
+    if FOOT.search(text):
+        return FOOT.sub(repl, text, count=1)
+    # multi-line footers of docs/ and tutorial pages
+    head, sep, foot = text.rpartition("<footer")
+    m = ML_FOOT.search(foot)
+    if not sep or not m:
+        return text
+    x = m.group("x")
+    root = x[:-5] if x.endswith("docs/") else x + "../"
+    ind = m.group("ind")
+    add = (f'{ind}<li><a href="{root}deep-dives/index.html">Deep Dives</a></li>\n'
+           f'{ind}<li><a href="{root}known-issues/index.html">Known Issues</a></li>\n')
+    foot = foot[:m.end()] + add + foot[m.end():]
+    return head + sep + foot
 
 
 def patch(text: str) -> str:
@@ -33,7 +64,7 @@ def patch(text: str) -> str:
             return original + link
 
         text, _n = pat.subn(repl, text, count=1)
-    return text
+    return patch_footer(text)
 
 
 def main() -> int:
