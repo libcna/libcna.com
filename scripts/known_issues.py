@@ -128,6 +128,8 @@ def check_issue(it: dict, files: set[str], errs: list[str], where: str, known_pa
         errs.append(f"{where}: a bug needs a severity judgement")
     if it.get("confidence") not in CONFIDENCES:
         errs.append(f"{where}: confidence must be one of {sorted(CONFIDENCES)}")
+    if _MARKUP_RX.search(it.get("public_contract") or ""):
+        errs.append(f"{where}: public_contract is a plain-text field; markup or entities found (it is escaped on the page and would show literally)")
     for s in it.get("sources") or []:
         p = s.get("path", "") if isinstance(s, dict) else ""
         if p not in files:
@@ -432,6 +434,8 @@ def build_entries(with_adversarial: bool) -> tuple[list[dict], list[dict], dict,
         issues, disp, audit_trail, rc = apply_adversarial(issues, disp, counters)
         if rc:
             return rc
+    for i in issues:                                   # public_contract is a plain-text field (the page escapes it); 36 Phase-3 entries carried <code> markup that rendered literally
+        i["public_contract"] = plain_text(i.get("public_contract"))
     return issues, disp, remap, counters, audit_trail
 
 
@@ -451,7 +455,7 @@ def cmd_merge(_: argparse.Namespace) -> int:
     if audit_trail:
         out["adversarial_audit"] = audit_trail
     DISPO.write_text(json.dumps(out, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-    print(f"merged {len(issues)} public issue(s) and {len(disp)} disposition(s); temp ids remapped: {remap}")
+    print(f"merged {len(issues)} public issue(s) and {len(disp)} disposition(s); {len(remap)} temp ids remapped")
     return 0
 
 
@@ -460,6 +464,14 @@ def cmd_merge(_: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------------------------
 def esc(s: str) -> str:
     return html.escape(s, quote=True)
+
+
+_MARKUP_RX = re.compile(r"</?(?:code|em|strong|a|p|ul|li|br)\b[^>]*>|&(?:lt|gt|amp|quot|#\d+);|\{\{src")
+
+
+def plain_text(s: str | None) -> str:
+    """Markup-free text for the plain-text fields (public_contract): tags removed, entities decoded."""
+    return html.unescape(re.sub(r"</?(?:code|em|strong|a|p|ul|li|br)\b[^>]*>", "", s or "")).strip()
 
 
 def issue_pages(issues: list[dict] | None = None) -> list[dict]:
