@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>C# binding internals - CNA Development</title>
+  <meta name="description" content="How the external CNA.NET binding (cna-cs at e223909) loads, admits and calls CNA&#x27;s C ABI: layers, ABI 0.21.0 gate, handles, release queue and callbacks; not a claim of compatibility with ABI 0.29.0.">
+  <meta name="keywords" content="cna-cs, cna.net, c#, .net, libraryimport, safehandle, native library resolver, abi policy, p/invoke, finalizer, unmanagedcallersonly, c abi">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/bindings/csharp.html">
+  <meta property="og:title" content="C# binding internals - CNA Development">
+  <meta property="og:description" content="How the external CNA.NET binding (cna-cs at e223909) loads, admits and calls CNA&#x27;s C ABI: layers, ABI 0.21.0 gate, handles, release queue and callbacks; not a claim of compatibility with ABI 0.29.0.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/bindings/csharp.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"C# binding internals","description":"How the external CNA.NET binding (cna-cs at e223909) loads, admits and calls CNA's C ABI: layers, ABI 0.21.0 gate, handles, release queue and callbacks; not a claim of compatibility with ABI 0.29.0.","url":"https://libcna.com/development/internals/bindings/csharp.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="c-api-internals.html" class="docs-nav-link is-group-active">C API &amp; bindings internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="csharp.html" class="docs-nav-link active" aria-current="page">C# binding</a></li>
+        <li><a href="java.html" class="docs-nav-link">Java binding</a></li>
+        <li><a href="python.html" class="docs-nav-link">Python binding</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="c-api-internals.html">C API &amp; bindings</a></li>
+        <li aria-current="page">C# binding</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>C# binding internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#layers">The four physical layers</a></li>
+          <li><a href="#admission">Native loading is a compatibility gate, not a filename lookup</a></li>
+          <li><a href="#sound">Representative call: managed SoundEffect → native track</a></li>
+          <li><a href="#callbacks">Managed Game callback boundary</a></li>
+          <li><a href="#validate">Change workflow and evidence</a></li>
+          <li><a href="#reading">Reading order at cna-cs commit e223909</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; C API &amp; bindings internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Binding facts were read at libcna/cna-cs e223909986a705d0026908155f59388c100cbda3 (2026-09-03), which admits C ABI 0.21.0 only; CNA snapshot 009d40f5 declares 0.29.0. Snapshot facts are limited to its C headers and C API sources. No binding test, probe or build was executed, and native compatibility is not established.</p></div>
+
+<p class="lede">CNA.NET (<code>libcna/cna-cs</code>) is an external C#/.NET binding that reaches CNA only through the experimental C ABI. This page explains how it is built &mdash; its layers, its native-loading gate, its handle and string marshalling, its finalizer-safe release queue and its game-callback trampolines &mdash; for a maintainer who has to update it or reason about a managed/native ownership bug. Everything here was read at cna-cs commit <code>e223909986a705d0026908155f59388c100cbda3</code> (2026-09-03); it is evidence for that revision of the binding, not for the CNA snapshot these pages document.</p>
+
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Not a compatibility claim.</strong> At the audited commit the binding admits exactly one native generation, C ABI <strong>0.21.0</strong>. CNA snapshot <code>009d40f5</code> declares C ABI <strong>0.29.0</strong> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/abi.h"><code>modules/c-api/include/CNA/C/abi.h</code></a>, and two of the minor steps in between (0.28.0 and 0.29.0) are recorded by CNA as incompatible (see the <a href="../../../docs/c-api.html#version-history">ABI version history</a>). The binding's resolver therefore rejects a library built from this snapshot before any game runs. Native compatibility between this binding and the snapshot is not established, and nothing on this page was built or executed: the binding sources and the snapshot's C headers were read, no test was run.</p></div>
+
+<h2 id="layers">The four physical layers</h2>
+<pre class="diagram">CNA.XnaCompat  (Microsoft.Xna.Framework public hierarchy)
+  → CNA.Framework (CNA.* managed objects, ownership, pure values)
+  → CNA.Interop   (LibraryImport declarations, ABI structs, loader policy)
+  → cna_c_api     (C ABI, logical library name "cna-native") → native CNA C++</pre>
+<p>The solution has three source projects under <code>src/</code>, and each layer has one job:</p>
+<ul>
+<li><strong><code>CNA.XnaCompat</code></strong> is the XNA 4.0 compatibility fa&ccedil;ade (<code>Microsoft.Xna.Framework.*</code>). Preserving XNA's public hierarchy often requires <em>composition</em> rather than inheritance: the compat <code>Microsoft.Xna.Framework.Audio.SoundEffect</code> is a sealed class that holds a <code>CNA.Audio.SoundEffect</code>, and its <code>SoundEffectInstance</code> holds an inner <code>CNA.Audio.SoundEffectInstance</code>. Its public contract is measured against real XNA metadata by <code>tools/api-compat</code>, not derived from CNA's headers.</li>
+<li><strong><code>CNA.Framework</code></strong> owns the managed resource wrappers (<code>NativeResourceHandle</code>), the <code>Game</code> base class and its callback trampolines, value types and <code>CnaException</code>, the only exception type a failing native call becomes. <code>CnaException</code> exposes the failing result only as a string name (<code>NativeResult</code>) because no <code>CNA.Interop</code> type may appear in a public signature.</li>
+<li><strong><code>CNA.Interop</code></strong> is internal. <code>Native.cs</code> is the handwritten raw declaration list and, per its own header comment, the only file in the solution that names the native library. Its methods use .NET's <code>[LibraryImport]</code>, so the interop source generator emits the marshalling stubs during the managed build &mdash; but the route inventory, the parameter widths and the ownership decisions are written by hand, not generated from CNA's headers. At the audited commit it declares <strong>1,002</strong> entry points, and <code>CnaAbiTests.RequiredSymbols_AreEveryDeclaredNativeImport</code> pins that literal as a tripwire so that adding an import is a deliberate act. A new C route therefore never appears in C# on its own.</li>
+</ul>
+<p><code>NativeLibraryResolver</code> sits in <code>CNA.Interop</code> and is registered by a module initializer for the <code>CNA.Interop</code> assembly only. The layers are also a rule: a feature class must not bypass <code>CNA.Interop</code> with its own ad-hoc <code>DllImport</code>, because the loader gate below only covers imports declared in <code>Native</code>.</p>
+
+<h2 id="admission">Native loading is a compatibility gate, not a filename lookup</h2>
+<p>The resolver binds only the logical name <code>cna-native</code> and answers every other name with &ldquo;not mine&rdquo;. Selecting a file and admitting it are two separate stages.</p>
+
+<h3 id="selection">Stage 1: selecting exactly one file</h3>
+<ol>
+<li><code>CNA_NATIVE_LIBRARY</code>, if set, must be an <em>absolute</em> path to an existing file. It has the highest precedence, and when it is set no fallback is attempted: a wrong value is an error, not a hint.</li>
+<li>Otherwise <code>CNA_NATIVE_DIR</code>, if set, must be an absolute, existing directory containing at least one recognized library name; again no fallback when it is set.</li>
+<li>Otherwise the application's own locations: <code>AppContext.BaseDirectory</code>, the directory of the <code>CNA.Interop</code> assembly, and <code>runtimes/&lt;RID&gt;/native</code> (the packaged RID-native asset layout).</li>
+</ol>
+<p>Recognized file names are <code>cna-native</code> and <code>cna_c_api</code> with the platform's prefix/suffix (<code>libcna_c_api.so</code>, <code>cna_c_api.dll</code>, <code>libcna_c_api.dylib</code>, &hellip;). More than one match in the chosen location is refused as a conflict rather than resolved by preference. The resolver deliberately never probes a source checkout or the process-wide loader search path, so a package consumer cannot succeed merely because a developer build happens to be visible. Every failure message names the selection route, the platform/RID and a remediation; <code>CNA_NATIVE_DIAGNOSTICS=1</code> adds the operating-system loader's own text.</p>
+
+<h3 id="policy">Stage 2: admission against a reviewed point matrix</h3>
+<p>After <code>NativeLibrary.Load</code> the resolver, in order: requires the export <code>cna_get_abi_version</code> and calls it; looks the encoded version up in the compiled matrix (<code>CnaNativeAbiPolicy.TryGetProfile</code>); requires every entry point declared by <code>Native</code> to be exported; then runs two side-effect-free runtime canaries &mdash; <code>cna_error_get_last_message_size</code> must succeed and write its out-parameter, and <code>cna_touch_capabilities_init</code> must fill a 16-byte, version-1 structure with a canonical body without touching guard bytes on either side. Any failure frees the library and throws <code>DllNotFoundException</code> with the detected and expected ABI.</p>
+<p>The executable matrix is compiled into <code>CnaNativeAbiPolicy</code> (<code>ConsumerVersion</code> = 0.21.0, one profile classified <code>exact</code>); the resolver does not read JSON at run time. The machine-readable record is <code>eng/cna-native-abi-policy.json</code> (<code>policyVersion</code> <code>cna-cs-native-abi/1</code>, <code>consumerAbi</code> 0.21.0, <code>acceptedVersions</code> = [0.21.0], <code>default</code> reject), and the test <code>CnaAbiTests.MachineReadablePolicy_MatchesExecutableMatrix</code> keeps the two in step. The JSON also records the evidence behind the one accepted entry (a consumed-surface baseline diff and a C-authority layout/prototype run against 0.21.0 headers), the retired entries 0.6.0, 0.7.0, 0.8.0, 0.19.0 and 0.20.0 with the reason each was dropped, and eleven named admission fixtures (for example <code>unreviewed-0.22.0</code>, <code>missing-required-symbol</code>, <code>changed-required-signature</code>, <code>structurally-incompatible-0.21.0</code>), all expected to reject except the two exact-0.21.0 cases. <code>scripts/Verify-NativeAbiCompatibility.sh</code> runs those fixtures on Linux only.</p>
+<p>There is no &ldquo;same major 0.x&rdquo; range: the policy text says a 0.x minor is &ldquo;never accepted as a same-major range&rdquo;. The retired list shows that additive export availability is not the whole policy either &mdash; 0.20.0 was retired although nothing the binding consumes changed, so that the matrix stays a list of reviewed points instead of growing into a range. <code>CnaAbi.EnsureCompatible</code>, which <code>Game</code>'s constructor calls before its first native call, re-asserts the matrix at the public boundary in case an alternate host bypasses the resolver.</p>
+<p>A maintainer must not simply change the expected version to 0.29.0. The migration is a review: compare consumed prototypes, struct layouts, numeric constants, callback contracts, result codes, ownership and behaviour between 0.21.0 and 0.29.0 (the binding's own <code>tools/coverage/baselinediff.py</code> exists for the export/layout half), add the new point to both the compiled matrix and the JSON with its evidence, then run the admission fixtures and the native suites against a real 0.29.0 library.</p>
+
+<h3 id="target-delta">What the snapshot's 0.29.0 surface looks like from this binding</h3>
+<p>A name-level comparison, done by reading and not executing anything: all 1,002 entry points the binding imports at <code>e223909</code> are still declared by name in the snapshot's 61 public C headers under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C"><code>CNA/C/</code></a>, and the binding names neither the route removed in 0.29.0 (<code>cna_sprite_batch_draw_mesh_ext</code> and its <code>CNA_SpriteMeshEXT</code> struct) nor any renderer-identity constant (it reads the renderer only as a name string). That is the input to the review above, not its result: a name that still exists can have a changed prototype, layout or contract, and the version gate rejects a 0.29.0 library before the symbol check is ever reached. The routes and constants this page relies on &mdash; <code>cna_get_abi_version</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/abi.h"><code>abi.h</code></a>), <code>cna_game_create</code>, <code>cna_game_set_frame_hooks_ext</code>, <code>cna_game_destroy</code>, <code>CNA_GameCallbacks</code>, <code>CNA_GameFrameHooks</code>, <code>CNA_CallbackError</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/runtime.h"><code>runtime.h</code></a>), the <code>cna_sound_effect_*</code> routes (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/audio.h"><code>audio.h</code></a>), and <code>CNA_RESULT_THREAD</code> (8), <code>CNA_RESULT_CALLBACK</code> (9) and <code>CNA_RESULT_INVALID_STATE</code> (3) &mdash; are all present at the snapshot.</p>
+
+<h3 id="wire">Handles, strings and errors on the wire</h3>
+<ul>
+<li><strong>Handles.</strong> <code>CnaHandle</code> stores the C ABI's <code>uint64_t</code> <code>CNA_Handle</code> as <code>ulong</code>, never as a native pointer. Many managed wrappers, however, keep the value inside a pointer-width <code>SafeHandle</code> (<code>NativeResourceHandle</code> stores <code>nint</code>), so conversion back uses the <em>checked</em> <code>AsNint</code>, which throws rather than truncates. The design assumes 64-bit processes; a future 32-bit target or a WebAssembly bridge cannot inherit that assumption. See <a href="c-api-internals.html#handles">the native handle registry</a> for what the 64 bits mean (slot plus generation).</li>
+<li><strong>Strings.</strong> <code>CnaStringMarshal.WithStringView</code> UTF-8-encodes a managed string into a <code>stackalloc</code> buffer when it is at most 256 bytes and into a heap array otherwise, pins it only for the duration of the synchronous native call, and passes a pointer-plus-length <code>CNA_StringView</code> (a null pointer for the empty string). Native receives a borrowed view for one call, not an owned NUL-terminated string.</li>
+<li><strong>Errors.</strong> <code>CnaException.ThrowIfFailed</code> reads the calling thread's last native diagnostic through the two-call <code>cna_error_get_last_message_size</code> / <code>cna_error_copy_last_message</code> protocol (<code>CnaError.GetLastErrorMessage</code>, which never throws itself) and builds a managed exception. The diagnostic is thread-local on the native side, so it must be read on the thread that made the failing call, immediately afterwards. The C-side rules are in the <a href="../../../docs/c-api.html#model">C API programming model</a>.</li>
+</ul>
+
+<h2 id="sound">Representative call: managed SoundEffect → native track</h2>
+<pre class="diagram">new CNA.Audio.SoundEffect(byte[] PCM, offset, count, rate, channels, loopStart, loopLength)
+  → managed validation (rate 8000..48000, Mono/Stereo, block alignment, range, loop)
+  → Native.cna_sound_effect_create_pcm16_range_ext(CnaAmbientGame.Current, info, bytes, ..., out CnaHandle)
+  → native C resource + HandleRegistry → C++ SoundEffect (bytes copied into a native vector)
+  → NativeResourceHandle owns the result, releases via cna_sound_effect_destroy
+SoundEffect.CreateInstance()
+  → CreateNativeInstanceHandle → Native.cna_sound_effect_create_instance(parent handle)
+  → managed SoundEffectInstance owns the child handle (release: cna_sound_effect_instance_destroy)
+  → Play() → cna_sound_effect_instance_play → C++ mixer voice
+Teardown: child Dispose, then parent Dispose, then Game.Dispose</pre>
+<p>The constructor validates in XNA's order &mdash; format (sample rate 8,000&ndash;48,000 Hz, mono or stereo), whole-buffer block alignment, the offset/count range, then the loop region &mdash; entirely in managed code, so failures are deterministic even before a native game exists. <code>CnaSoundEffectCreateInfo</code> sets its own <code>struct_size</code> and <code>struct_version</code> (1) in its constructor. The <code>byte[]</code> is pinned with <code>fixed</code> only for the duration of the call; the C route copies the PCM bytes into a native vector before returning, so the managed array need not stay pinned during playback. Creation needs the ambient game handle (<code>CnaAmbientGame.Current</code>, set by <code>Game</code>'s constructor) because the C ABI has no parameterless audio route.</p>
+<p><code>CreateNativeInstanceHandle</code> returns one new native child handle. The public <code>CNA.Audio.SoundEffect.CreateInstance</code> wraps it once; the XNA-compat <code>SoundEffect.CreateInstance</code> calls the same internal method and composes a new compat <code>SoundEffectInstance</code> around that same handle. The compat instance strongly roots its parent, while the parent keeps only weak references to its children and disposes every still-live child before releasing its own native effect. Creating an intermediate public managed instance and wrapping its handle a second time would give one native handle two owners and a double release.</p>
+<p>The ordering is semantic, not memory hygiene. At the snapshot, <code>cna_sound_effect_destroy</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiAudio.cpp"><code>CnaCApiAudio.cpp</code></a> refuses with <code>CNA_RESULT_INVALID_STATE</code> while any instance of that effect is alive, and <code>cna_game_destroy</code> refuses while owned audio resources remain; the native side of this sequence is traced in <a href="c-api-internals.html#audio">the C API SoundEffect trace</a>, and the mixer below it in <a href="../audio/engine.html">Audio engine internals</a>.</p>
+
+<h3 id="release">NativeResourceHandle and the owner-thread release queue</h3>
+<p><code>NativeResourceHandle</code> is a <code>SafeHandle</code> with a per-resource release delegate and an <code>ownsHandle</code> flag. A borrowed resource must be wrapped with <code>ownsHandle: false</code> &mdash; the case it was added for is the video player's frame texture, which the C API documents as valid only until the next call on that player; otherwise the critical finalizer would destroy an object its real owner still controls. <code>Detach</code> gives up ownership, returns the value and marks the wrapper invalid, so neither <code>Dispose</code> nor the finalizer will release it; <code>ContentManager</code> uses it to hand a SpriteFont atlas texture to the font, and compat <code>SoundEffect.FromStream</code> uses it to move a decoded effect into the compat type.</p>
+<p>Native handles are creation-thread-affine, and a .NET critical finalizer runs on the finalizer thread, where a direct release would receive <code>CNA_RESULT_THREAD</code> and lose the only copy of the handle. <code>ReleaseHandle</code> therefore releases immediately only when it runs on the owner thread (the managed thread ID captured at construction); off-thread it queues the raw value and release delegate under that owner thread's ID. A failed on-thread release is queued too, so a parent refused because a child still lives is retried later. <code>DrainPendingReleasesForCurrentThread</code> repeats passes over the queue as long as some release succeeds (children first, then the parents they were blocking) and returns anything still failing to the queue instead of dropping it. Counters are exposed through <code>NativeResourceHandle.GetMetrics</code>.</p>
+<p>The drain points at the audited commit are all in <code>Game</code>: its constructor, entry to and return from <code>Run()</code>, the direct-call helpers <code>RunOneFrame()</code>, <code>Tick()</code>, <code>ResetElapsedTime()</code> and <code>SuppressDraw()</code>, and <code>Dispose</code>. The per-frame callback trampolines do not drain, so while a game sits inside a long <code>Run()</code> loop, finalizer-queued releases wait until one of those calls, and a wrapper whose owner thread never reaches another drain point leaves a pending native resource. Explicit, deterministic <code>Dispose</code> on the owner thread remains the reliable path. The general thread-affinity rules are collected in the <a href="../../takeover/threading.html">thread and callback map</a>.</p>
+
+<h2 id="callbacks">Managed Game callback boundary</h2>
+<p><code>CNA.Framework.Game</code>'s constructor allocates a <code>GCHandle</code> to itself and passes it as the callback context, fills <code>CnaManagedGameCallbacks</code> (load content, update, draw, unload content) inside <code>CnaGameCreateInfo</code>, checks the ABI (<code>CnaAbi.EnsureCompatible</code>), drains pending releases, and calls <code>cna_game_create</code>. It then installs a second table, <code>CnaGameFrameHooks</code>, through <code>cna_game_set_frame_hooks_ext</code>; at the audited commit only its <code>initialize</code> hook is used. This mirrors the snapshot's C design, where frame hooks are a separate table so the original callback struct never grows (see <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/runtime.h"><code>runtime.h</code></a>). If installing the hooks fails, the game is destroyed and the <code>GCHandle</code> freed before the exception is thrown.</p>
+<p>Every callback is a static <code>[UnmanagedCallersOnly]</code> trampoline with the cdecl calling convention that resolves the <code>Game</code> from the context, runs the managed method, and catches every exception: a managed exception must never unwind through C++ frames. <code>ReportCallbackFailure</code> encodes the exception message as UTF-8 (shortened until it fits) into a 512-byte buffer allocated once per <code>Game</code> with <code>GC.AllocateArray(..., pinned: true)</code>, points <code>CNA_CallbackError.message</code> at it and returns <code>CNA_RESULT_CALLBACK</code>. The C header documents the message as borrowed only until the callback returns; a buffer pinned for the whole game lifetime removes any doubt that it is still rooted when native copies it.</p>
+<p><code>Game.Dispose</code> releases components, microphone subscriptions, media-player state, window and game event registrations (all of which hold native context pointers into <code>GCHandle</code>s), then forces <code>GC.Collect</code> / <code>WaitForPendingFinalizers</code> / <code>GC.Collect</code> so that wrappers whose XNA counterparts are not <code>IDisposable</code> (effect techniques and passes are the recorded case) are finalized, drains the queue, and calls <code>cna_game_destroy</code> <em>once</em>. Disposal must not throw, so a refusal is recorded instead: the handle is kept in a static &ldquo;undestroyed game&rdquo; slot with the reason. Because native admits one C-owned game at a time, the <em>next</em> <code>Game</code> constructor that fails to create a game collects, drains, retries the recorded destroy and, if that succeeds, retries creation; otherwise its exception names the earlier refusal. The source comments record why the destroy itself is not retried inside <code>Dispose</code>: a second destroy of a handle the first call may already have consumed is undefined. A callback signature or timing change must be checked in all three places: the native callback structure, the <code>CNA.Interop</code> layout and function-pointer type, and the <code>CNA.Framework.Game</code> trampoline. The native half of game creation and teardown is in <a href="c-api-internals.html#game">the C game trace</a>.</p>
+
+<h2 id="validate">Change workflow and evidence</h2>
+<p>To expose a new CNA API in C#:</p>
+<ol>
+<li>Add and test the native C route first, following <a href="../../handbook/update-the-c-api.html">I need to update the C API</a> and the checklist in <a href="c-api-internals.html#invariants">C API validation and evolution</a>.</li>
+<li>Mirror the exact primitive widths, struct layout and ownership in <code>CNA.Interop/Native.cs</code> (and bump the 1,002 tripwire deliberately).</li>
+<li>Add an idiomatic wrapper in <code>CNA.Framework</code>; add an XNA-compat fa&ccedil;ade member only if the method belongs to that public contract.</li>
+<li>Update the native ABI policy only after a reviewed ABI diff for the new generation, never before.</li>
+<li>Run managed, native-integration, ownership-stress, ABI-verification and strict public-metadata checks.</li>
+</ol>
+<p>If the route returns a borrow, establish the parent's lifetime and use a non-owning handle; if it returns an owned child, make sure disposal happens before its parent and on its creation thread (see the <a href="../../takeover/ownership.html">ownership and lifetime map</a>). Exercise non-ASCII strings, buffer count and stride, wrong-thread release, a missing export and a wrong-ABI library. Changing only a high-level class can hide a stale raw import until its first runtime call.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Evidence group at <code>e223909</code></th><th scope="col">What it covers</th></tr></thead>
+<tbody>
+<tr><td><code>tests/CNA.Framework.Tests</code></td><td>Managed behaviour without a native library, including <code>CnaAbiTests</code> (version decoding, matrix acceptance/rejection, required-symbol list, JSON-vs-code policy agreement).</td></tr>
+<tr><td><code>tests/CNA.XnaCompat.Tests</code></td><td>The public XNA fa&ccedil;ade.</td></tr>
+<tr><td><code>tests/CNA.Integration.Tests</code></td><td>Real native calls: <code>ResourceIntegrationTests.SoundEffectInstance_MovesThroughItsStates</code> (instance state round trip), <code>GameLifecycleTests</code> (ABI admission, construct/dispose repeatability, lifecycle callback order, timing round trip) and many more.</td></tr>
+<tr><td><code>tests/CNA.OwnershipStress</code></td><td>A separate executable, so a native double free kills only that process: 24 create/use/destroy cycles by default (1,000 with <code>CNA_OWNERSHIP_STRESS_DEEP=1</code>, or a count argument), alternating explicit disposal with abandonment plus forced finalization, with a throwing <code>GraphicsDevice.Disposing</code> handler every tenth cycle; it reads the release and destroy-retry metrics.</td></tr>
+<tr><td><code>tools/abi-verify</code></td><td>C-authority layout, constant and prototype verification of the managed declarations against a CNA include directory, with negative controls.</td></tr>
+<tr><td><code>tools/native-abi-probe</code> and <code>scripts/Verify-NativeAbiCompatibility.sh</code></td><td>Loader admission in an isolated process (<code>CNA_ABI_PROBE_STATUS=accepted|rejected</code>) and the eleven policy fixtures (Linux only).</td></tr>
+<tr><td><code>tools/api-compat</code></td><td>Compiled public/protected metadata compared with legally supplied XNA 4.0 Windows runtime assemblies.</td></tr>
+</tbody></table></div>
+<div class="callout callout--note"><span class="callout-icon">&#8505;</span><p><strong>A green run is not integration evidence by default.</strong> Native integration facts use a <code>[NativeFact]</code> attribute that <em>skips</em> the test when the library cannot be loaded, and an ABI-rejected library surfaces as exactly that load failure. Against a 0.29.0 library the native facts would be skipped, not failed, so a passing test report proves nothing about this snapshot. None of these suites has been run against CNA snapshot <code>009d40f5</code>; the 0.21-only policy is a real blocker to interpreting such a run as integration evidence. The binding's <code>release-qualification</code> workflow pins CNA headers at a 0.21.0-generation commit and runs its native lanes only when a secret-supplied Linux library is configured.</p></div>
+<p>The binding's README is stale relative to its code at the audited commit: it still says the binding targets C ABI 0.20.0 and resolves 861 imports, where the compiled policy and the JSON say 0.21.0 and the tripwire says 1,002. Use the policy, the tests and the current source as the authority. For where this binding sits among the other external projects, see <a href="../../../docs/c-api.html#bindings">Bindings boundary</a> and <a href="../../architecture/bindings.html">C API and bindings architecture</a>; the <a href="java.html">Java</a> and <a href="python.html">Python</a> pages describe the same problems solved with JNI and <code>ctypes</code>.</p>
+
+<h2 id="reading">Reading order at cna-cs commit e223909</h2>
+<ol class="source-list">
+<li><a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/eng/cna-native-abi-policy.json"><code>eng/cna-native-abi-policy.json</code></a>, <a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/src/CNA.Interop/CnaNativeAbiPolicy.cs"><code>CnaNativeAbiPolicy.cs</code></a> and <a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/src/CNA.Interop/NativeLibraryResolver.cs"><code>NativeLibraryResolver.cs</code></a>: determine whether this checkout can load the selected CNA library at all.</li>
+<li><a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/src/CNA.Interop/Native.cs"><code>Native.cs</code></a>, <a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/src/CNA.Interop/CnaHandle.cs"><code>CnaHandle.cs</code></a>, <a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/src/CNA.Interop/CnaStringMarshal.cs"><code>CnaStringMarshal.cs</code></a> and <a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/src/CNA.Framework/CnaException.cs"><code>CnaException.cs</code></a>: inspect wire declarations, marshalling and error conversion before any feature wrapper.</li>
+<li><a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/src/CNA.Framework/NativeResourceHandle.cs"><code>NativeResourceHandle.cs</code></a> and <a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/src/CNA.Framework/Game.cs"><code>Game.cs</code></a>: understand the owner-thread release queue, callback pinning and game teardown.</li>
+<li><a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/src/CNA.Framework/Audio/SoundEffect.cs"><code>CNA.Framework/Audio/SoundEffect.cs</code></a>, <a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/src/CNA.Framework/Audio/SoundEffectInstance.cs"><code>SoundEffectInstance.cs</code></a>, the compat <a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/src/CNA.XnaCompat/Microsoft/Xna/Framework/Audio/SoundEffect.cs"><code>Microsoft/Xna/Framework/Audio/SoundEffect.cs</code></a> and <a href="c-api-internals.html#audio">the in-tree C route trace</a>: follow one call through every ownership layer.</li>
+<li><a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/tests/CNA.Integration.Tests/ResourceIntegrationTests.cs"><code>ResourceIntegrationTests.cs</code></a>, <a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/tests/CNA.Integration.Tests/CnaNativeProbe.cs"><code>CnaNativeProbe.cs</code></a> and <a href="https://github.com/libcna/cna-cs/blob/e223909986a705d0026908155f59388c100cbda3/tests/CNA.OwnershipStress/Program.cs"><code>CNA.OwnershipStress</code></a>: choose live-native and finalizer-order evidence, after ABI admission, and know when a native fact silently skips.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/c-api.html#bindings">C API guide: bindings boundary</a> &middot; <a href="../../../docs/c-api.html#version-history">ABI version history</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/bindings.html">C API and bindings architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="c-api-internals.html">C API internals</a> &middot; <a href="java.html">Java binding internals</a> &middot; <a href="python.html">Python binding internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/update-the-c-api.html">I need to update the C API</a> &middot; <a href="../../takeover/ownership.html">Ownership and lifetime master map</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/public-headers.html">Public header index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="c-api-internals.html" rel="prev"><span>Previous</span>C API internals</a><a class="dev-pager-next" href="java.html" rel="next"><span>Next</span>Java binding internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Content runtime internals - CNA Development</title>
+  <meta name="description" content="How ContentManager::Load&lt;T&gt; resolves an asset through the XNB, CNB and loose-file tiers, keys its cache by type, owns readers and loaders, and which tests pin each rule.">
+  <meta name="keywords" content="contentmanager, load, xnb, cnb, cnj, content type reader, cnbloaderregistry, asset cache, unload, dispose, loose file reader, external reference">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/content/runtime.html">
+  <meta property="og:title" content="Content runtime internals - CNA Development">
+  <meta property="og:description" content="How ContentManager::Load&lt;T&gt; resolves an asset through the XNB, CNB and loose-file tiers, keys its cache by type, owns readers and loaders, and which tests pin each rule.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/content/runtime.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Content runtime internals","description":"How ContentManager::Load<T> resolves an asset through the XNB, CNB and loose-file tiers, keys its cache by type, owns readers and loaders, and which tests pin each rule.","url":"https://libcna.com/development/internals/content/runtime.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="runtime.html" class="docs-nav-link active" aria-current="page">Content internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="pipeline.html" class="docs-nav-link">Build-time pipeline</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li aria-current="page">Content</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Content runtime internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#module">Boundary and dependencies</a></li>
+          <li><a href="#load">One <code>Load&lt;T&gt;</code> call, function by function</a></li>
+          <li><a href="#xnb">XNB: header, reader table and shared resources</a></li>
+          <li><a href="#cnb">CNB: validated container and owned registry</a></li>
+          <li><a href="#lifetime">Cache, disposal and special ownership</a></li>
+          <li><a href="#failure">Maintainer change route and tests</a></li>
+          <li><a href="#reading">Source reading order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Content internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The tests named here were located and their registration read; none was executed. Whether a .cnb inside an Android package loads was not established, and the untyped external-reference decoder's missing truncation guard was found by reading only.</p></div>
+
+<p class="lede">The runtime content module is not one generic file decoder. <code>ContentManager::Load&lt;T&gt;</code> walks a deliberate priority ladder (a compiled XNB first, a compiled CNB second, then a per-type loose-file reader whose resolution can prefer a <code>.cnj</code> sidecar), and each tier has its own registry, validation path and ownership rules. This page traces that ladder function by function at the TARGET snapshot for maintainers who change loading, caching or a reader; the user-level behaviour is on the <a href="../../../docs/content-manager.html">ContentManager guide</a> and <a href="../../../docs/content-pipeline-xnb.html">XNB loading guide</a>.</p>
+
+<h2 id="module">Boundary and dependencies</h2>
+<p><code>cna_content</code> is a runtime module. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/CMakeLists.txt"><code>modules/content/CMakeLists.txt</code></a> links it <code>PUBLIC</code> to <code>cna_graphics_core</code>, <code>cna_audio</code>, <code>cna_media</code>, <code>cna_math</code> and <code>cna_core</code> (plus the sharp-runtime <code>Core.Base</code>, <code>IO</code> and <code>Resources</code> components; <code>Security.Cryptography</code> is <code>PRIVATE</code>), because a loaded asset can construct textures, effects, models, sounds, songs and videos. It does <em>not</em> link the build-time <code>cna_content_pipeline</code>, so a game that only loads content never pulls in FreeType or the build-time media decoders; the other direction of that boundary is on <a href="pipeline.html#boundary">Content pipeline internals</a>. The source tree <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src"><code>modules/content/src</code></a> is split into <code>Xnb/</code> (binary XNB reader, writer, decompressors, built-in readers), <code>Cnb/</code> (CNB container and codecs), <code>Xna/</code> (<code>ContentManager.cpp</code>, <code>ContentReader.cpp</code> and the XNA-shaped orchestration), <code>GltfImport/</code> (the glTF importer core), <code>Pipeline/</code> (the canonical build-time engine, which lives in this runtime module so tests and format code share one schema definition) and <code>Internal/</code>. The module's public headers sit in two roots: the XNA-shaped ones under <code>include/Microsoft/Xna/Framework/Content/</code> and the CNA-owned ones under <code>include/CNA/</code> (<code>CNA/Content/Cnb</code>, <code>CNA/Content/Pipeline</code>, <code>CNA/Internal/Xnb</code>).</p>
+<p><code>ContentManager</code> holds a borrowed <code>IServiceProvider*</code> and an optional borrowed <code>GraphicsDevice*</code>. <code>getGraphicsDeviceInternal()</code> uses the direct pointer when <code>setGraphicsDevice</code> set one, otherwise asks the provider for <code>IGraphicsDeviceService</code>, and throws <code>ContentLoadException</code> (&ldquo;no GraphicsDevice is available&rdquo;) when neither supplies a device, which is how a GPU-requiring load refuses. Nothing in the content module owns the game's <code>GraphicsDevice</code>. <code>Game</code>'s constructor calls <code>Content_.setGraphicsDevice(GraphicsDevice_)</code> and then <code>RegisterAllBuiltInXnbReaders()</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a>, so a game's own manager always has a direct device pointer and the 61 built-in XNB readers (60 without native <code>int128</code>) before <code>Initialize()</code>; a standalone manager in a tool, test or C API host has neither until its owner provides them.</p>
+<h3 id="gltf-edge">An unusual physical ownership edge</h3>
+<p>The same CMake file compiles <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/gltf_to_cnj/gltf_to_cnj.cpp"><code>tools/gltf_to_cnj/gltf_to_cnj.cpp</code></a> <em>into</em> <code>cna_content</code> with <code>CNA_GLTF_TO_CNJ_NO_MAIN=1</code>, so the runtime and the command-line tools share one glTF-to-CNJ implementation instead of compiling private copies (the comment names both <code>cna-content</code> and <code>cna_tool_gltf_to_cnb</code> as callers). Vendored <code>cgltf</code> and <code>stb</code> headers and <code>tools/gltf_to_cnj</code> are <code>PRIVATE</code> include roots; zstd (<code>CNA_CNB_HAVE_ZSTD</code>) and Draco (<code>cna_draco</code>) are linked only when available. Moving that tool file, or adding it to another target without checking this declaration, can change runtime behaviour or produce duplicate symbols.</p>
+
+<h2 id="load">One <code>Load&lt;T&gt;</code> call, function by function</h2>
+<pre class="diagram">ContentManager::Load&lt;T&gt;(assetName)                        ContentManager.hpp (template)
+  → disposed? throw std::runtime_error
+  → key = NormalizeKey(name)          '\' → '/', per-byte std::tolower
+  → loadedAssets_[{typeid(T), key}] hit? → std::any_cast&lt;T&gt; (no log, no filesystem)
+  → log "Loading asset"
+  → ResolveExistingAssetPath(BuildAssetPath(name) + ".xnb")
+      TryReadAssetBytes(...)  → LoadXnbAsset&lt;T&gt;          tier 1: XNB
+  → ResolveExistingAssetPath(BuildAssetPath(name) + ".cnb")
+      filesystem::exists  → LoadCnbAsset&lt;T&gt;              tier 2: CNB
+  → name ends in ".cnb" and exists → LoadCnbAsset&lt;T&gt;       tier 2b: literal CNB
+  → typeReaders_[typeid(T)]  (none → ContentLoadException "No reader registered")
+      ResolveAssetPath: literal path → name.cnj → reader extensions → bare path
+      LooseFileContentTypeReader&lt;T&gt;::Read(path, *this)   tier 3: loose
+      (std::exception → ContentLoadException, ContentLoadException passes through)
+  → loadedAssets_[key] = result; return result by value</pre>
+<p>The whole ladder is a header template in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/include/Microsoft/Xna/Framework/Content/ContentManager.hpp"><code>ContentManager.hpp</code></a>, not in the <code>.cpp</code>. The cache key is <code>AssetCacheKey{std::type_index, normalizedName}</code>: the requested C++ type plus the logical name with backslashes turned into slashes and every byte passed through <code>std::tolower</code> (so ASCII letters in the C locale). It does not include the resolved filesystem path or the <code>RootDirectory</code>, so changing the root after a load does not invalidate the cached entry for the same logical name; <code>Unload()</code> does. Keying by type is what lets <code>Load&lt;T2&gt;</code> of a name cached as <code>T1</code> reach normal validation and a clear <code>ContentLoadException</code> instead of <code>std::bad_any_cast</code> (the CNB-36 comment in the header, pinned by <code>CnjAssetCacheTypeSafetyTests</code>).</p>
+<p>XNB wins even over a caller's literal path or a registered loose reader, and needs no per-<code>T</code> reader on the manager: its root type is decided by the file's own type-reader table through the process-wide <code>ContentTypeReaderManager</code>. Only <code>name + ".xnb"</code> is tried; a caller who spells <code>"foo.xnb"</code> does not get a literal XNB tier, whereas <code>"foo.cnb"</code> does get tier 2b. CNB ranks below XNB and above everything CNA can compile <em>from</em>, because a <code>.cnb</code> is CNA's own compiled artifact; it is self-describing through its asset-type identifier and also needs no reader registered on the manager. Only after both compiled tiers miss does <code>typeReaders_</code> select a loose reader, and <code>ResolveAssetPath</code> then prefers an existing literal path, then <code>name.cnj</code> (a <code>.cnj</code> sidecar has the final say over a native file of the same name), then the reader's <code>GetExtensions()</code> in order, falling back to the bare path. It checks existence rather than <code>has_extension()</code> because a dot inside a localized asset name such as <code>Flag.en-US</code> is not an extension. Changing this order is a compatibility decision that needs resolver-order tests (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests/Microsoft/Xna/Framework/Content/CnjResolverOrderTests.cpp"><code>CnjResolverOrderTests.cpp</code></a>), not only a loader unit test.</p>
+
+<h3 id="path-helpers">Path and file services</h3>
+<p>In <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xna/ContentManager.cpp"><code>ContentManager.cpp</code></a>, <code>BuildAssetPath</code> normalizes separators in both root and name, treats both as UTF-8 and joins them with <code>PathFromUtf8</code>, so a non-ASCII content root survives on every host. <code>ResolveExistingAssetPath</code> resolves an existing path case-insensitively through <code>ResolveExistingNativePath</code>; on Android a relative path is returned unchanged because it belongs to the packaged-asset namespace, and walking the process working directory would enumerate an unrelated, sandboxed <code>/</code>. <code>TryReadAssetBytes</code> reads an ordinary file with open, size (at most <code>INT32_MAX</code>) and read checks, each failure a <code>ContentLoadException</code>, and otherwise delegates to the current platform's <code>TryLoadFileIgnoringCase</code> (on Android directly for relative paths). For XNB, resolving the tier and reading the bytes are one step, because packaged assets have no reliable existence-only query.</p>
+<p>The CNB tiers and the loose tier use <code>std::filesystem::exists</code> and file streams instead, so they do not consult the platform filesystem fallback. To debug a missing asset, record the logical name, the tier that was tried, the resolved UTF-8 path and whether the platform fallback was consulted; <code>UnicodeContentRootTests</code> covers the non-ASCII root.</p>
+<p>The CNAEXT content manifest is a different thing from this resolution. <code>RefreshContentManifest()</code> scans the content root once and <code>GetContentManifest()</code> / <code>GetXnbReaderUsageSummary()</code> return that snapshot (the user-level description is in the <a href="../../../docs/content-manager.html#core-api">ContentManager core API table</a>). The header states that the manifest is <em>not</em> consulted by <code>ResolveAssetPath()</code> or <code>Load&lt;T&gt;()</code>, which keep asking the live filesystem so that a file written a moment ago is noticed. The reader-name inventory comes from <code>ScanXnbReaderNames</code>, which parses only an uncompressed, well-formed <code>.xnb</code> and swallows any failure for that one entry; a compressed file therefore appears with an empty reader list. The scan groups files by their path minus the last extension and gives special meaning only to <code>.xnb</code> and <code>.cnj</code>; every other extension, a <code>.cnb</code> included, is listed among the entry's native extensions, so the manifest does not model the CNB tier. Wiring the manifest into the resolver is deliberately deferred in the header comment, because a large test surface depends on the manager noticing files immediately.</p>
+
+<h2 id="xnb">XNB: header, reader table and shared resources</h2>
+<p><code>LoadXnbAsset&lt;T&gt;</code> refuses input above <code>INT32_MAX</code> bytes, parses the header with <code>ParseXnbHeader</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/include/CNA/Internal/Xnb/XnbHeader.hpp"><code>XnbHeader.hpp</code></a>), cross-checks the file's declared <code>totalLength</code> against the bytes actually read (the value comes from the file and must not drive pointer arithmetic unchecked), requires 14 bytes before a compressed payload, and builds a <code>ContentReader</code> over the uncompressed body, an LZX-decompressed payload, or an LZ4-decompressed payload (MonoGame's single raw block, decoded by the bounded in-tree <code>DecompressXnbLz4Payload</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xnb/XnbDecompression.cpp"><code>XnbDecompression.cpp</code></a>). An unknown flag combination (both bits set) is refused.</p>
+<p><code>ContentReader::ReadAsset</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/include/Microsoft/Xna/Framework/Content/ContentReader.hpp"><code>ContentReader.hpp</code></a> runs <code>InitializeTypeReaders</code>, reads the root object, then <code>ReadSharedResources</code>. Initialization has two passes, matching FNA: every reader named in the file's table is created through <code>ContentTypeReaderManager::CreateReader</code> and its version checked with <code>SupportsVersion</code>, and only then is <code>Initialize</code> called on each, so a reader may rely on its peers already existing. An unregistered or version-mismatched reader becomes a <code>ContentLoadException</code> naming the reader, not a null dereference. Shared resources are likewise read in full before any fixup runs. Counts and sizes are bounded before allocation by <code>XnbReadLimits</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/include/CNA/Internal/Xnb/XnbReadLimits.hpp"><code>XnbReadLimits.hpp</code></a>): <code>maxDecompressedSize</code> 256 MiB, <code>maxStringBytes</code> 1 MiB, <code>maxTypeReaderCount</code> 4,096, <code>maxSharedResourceCount</code> 1,000,000, <code>maxCollectionElementCount</code> 10,000,000 and <code>maxObjectNestingDepth</code> 256, each checked by <code>ContentReader</code>, the type-reader table parser or the decompressors before the corresponding allocation or recursion. The struct also carries <code>maxFileSize</code> (64 MiB), and it is worth knowing where that one bites: the decompressors refuse a compressed payload larger than it, and the canonical <em>source</em> read used by the build-time XNB importer (see below) refuses a larger file. The runtime tier's own whole-file test is the <code>INT32_MAX</code> check in <code>TryReadAssetBytes</code> and <code>LoadXnbAsset</code>, so an uncompressed <code>.xnb</code> between 64 MiB and 2 GiB is not refused by the file-size limit at run time.</p>
+<h3 id="external-references">External references</h3>
+<p>External XNB references resolve relative to the <em>referencing logical asset</em>, never the process working directory. <code>ResolveRelativeAssetPath</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xna/ContentReader.cpp"><code>ContentReader.cpp</code></a> refuses an absolute reference outright, joins the rest onto the referencing asset's directory, collapses <code>.</code>/<code>..</code> lexically and refuses a result that climbs above the content root, while a legitimate sibling move such as <code>../textures/foo</code> from <code>effects/myeffect</code> is allowed. Two paths then diverge:</p>
+<ul>
+<li>The typed <code>ReadExternalReference&lt;T&gt;()</code> (instantiated for <code>Texture2D</code>, <code>TextureCube</code> and <code>shared_ptr&lt;Effect&gt;</code>) calls <code>ContentManager::Load&lt;T&gt;</code>, so it walks the full ladder and shares the typed cache.</li>
+<li>The untyped <code>ReadExternalReference()</code> (the <code>object</code>-typed form, used by <code>ExternalReferenceReader</code> for effect-parameter dictionaries and similar) calls <code>LoadUntypedXnbReference</code>, which caches under <code>std::any</code> (keyed by <code>typeid(std::any)</code> and the normalized name) and insists on a compiled <code>.xnb</code> (no CNB or loose fallback). Its decoder, <code>LoadXnbAssetUntyped</code>, handles uncompressed and LZX payloads and <strong>refuses LZ4</strong> with a &ldquo;not yet supported&rdquo; <code>ContentLoadException</code>; it does not repeat the typed decoder's &ldquo;truncated before its compressed-payload size field&rdquo; guard (see the maintainer notes below).</li>
+</ul>
+<p>A change to external-reference policy must preserve both sibling lookup and traversal rejection; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests/Microsoft/Xna/Framework/Content/ContentReaderExternalReferenceTests.cpp"><code>ContentReaderExternalReferenceTests.cpp</code></a> is the first evidence. The reader list and container details for users are on <a href="../../../docs/content-pipeline-xnb.html#container-format-support">XNB container support</a>.</p>
+<h3 id="canonical-read">The canonical read path shared with the build tools</h3>
+<p>Not every <code>.xnb</code> is read into live objects. The build-time XNB importer, described on <a href="pipeline.html#coordinator">the pipeline page</a>, transcodes a supported built-in root to a native asset without a <code>GraphicsDevice</code>. It reuses the same header parser, the same LZX and LZ4 decompressors and the same type-table validation as the runtime tier: <code>DecodeXnbCanonicalAsset</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xnb/XnbCanonicalData.cpp"><code>XnbCanonicalData.cpp</code></a> calls <code>ParseXnbHeader</code> and both decompressors, and reaches a <code>ContentReader</code> through the friend helper <code>XnbCanonicalReaderAccess</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xnb/XnbCanonicalReaderAccess.hpp"><code>XnbCanonicalReaderAccess.hpp</code></a>), which calls <code>ContentReader::InitializeCanonicalTypeReadersEXT</code> (it parses the reader table and shared-resource count but creates no reader objects) and <code>ReadCanonicalTypeReaderReferenceEXT</code>. A change to a texture, model or sound reader can therefore alter what <code>cna-content</code> accepts as an <code>.xnb</code> source, not only what a game loads, and the 64 MiB <code>maxFileSize</code> above applies to that source read.</p>
+
+<h2 id="cnb">CNB: validated container and owned registry</h2>
+<p><code>LoadCnbAsset&lt;T&gt;</code> parses and fully validates the file with <code>CnbDocument::ParseFile</code> (the whole file is read and every CRC checked), asks <code>CnbLoaderRegistry::ResolveForDocument</code> for the loader and calls a <em>copy</em> of it with the manager and logical name, then <code>std::any_cast&lt;T&gt;</code>s the result; a type mismatch becomes a <code>ContentLoadException</code> saying which asset type the file holds. The registry in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Cnb/CnbLoaderRegistry.cpp"><code>CnbLoaderRegistry.cpp</code></a> is a process-wide table behind a <code>std::shared_mutex</code>:</p>
+<ul>
+<li>Two entry points partition the identifier space: <code>RegisterBuiltIn</code> accepts only CNA's range (below <code>0x80000000</code>), <code>Register</code> (the game route behind <code>ContentManager::RegisterCnbLoaderEXT&lt;T&gt;</code>) accepts only the custom range minted by <code>CnbAssetTypeIdFromName</code>, and a custom identifier must equal the hash of its canonical name.</li>
+<li>Re-registering the same identifier with the same name and ownership is tolerated (the first loader is kept); anything else is a <code>std::logic_error</code>.</li>
+<li>For a custom identifier <code>ResolveForDocument</code> also requires the file's own canonical type name (its <code>CMET</code> metadata) to equal the registered one, because a 31-bit hash can collide; a numeric match alone never selects a loader.</li>
+<li>Returning a copy of the loader means a concurrent registration or removal cannot invalidate the callable being run.</li>
+</ul>
+<p>That lock does not make a <code>ContentManager</code> thread-safe: its asset cache and loose-reader maps are plain <code>unordered_map</code>s with no instance lock. Every manager constructor calls <code>RegisterBuiltinLoaders()</code>, which registers the twelve built-in loose readers (<code>Texture2D</code>, <code>TextureCube</code>, <code>shared_ptr&lt;Texture3D&gt;</code>, <code>SoundEffect</code>, <code>shared_ptr&lt;Effect&gt;</code>, <code>SpriteFont</code>, <code>Model</code>, <code>AnimationClipEXT</code>, <code>Curve</code>, <code>shared_ptr&lt;SkinnedModelEXT&gt;</code>, <code>Song</code>, <code>Video</code>) on the instance and then the idempotent CNB built-ins: <code>CnbLoaderRegistry::RegisterBuiltIns()</code> for Curve and AnimationClip, which need only their codecs, and eight more in <code>ContentManager.cpp</code> itself (Model v1/v2, Texture2D, TextureCube, Texture3D, SpriteFont, SoundEffect, Song, Video), because those construct objects that need the manager or a <code>GraphicsDevice</code> and must box exactly the type <code>Load&lt;T&gt;</code> asks for (a <code>shared_ptr</code> for <code>Texture3D</code>). A new CNB asset type therefore needs a codec and schema, a registry identity and the exact return type, not just a file extension. The format itself is documented on <a href="../../../docs/cnb-format.html#loading">CNB Format: the loading path</a>.</p>
+<h3 id="registries">Three registries, three scopes</h3>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Registry</th><th scope="col">Scope</th><th scope="col">Keyed by</th><th scope="col">Locking at TARGET</th></tr></thead>
+<tbody>
+<tr><td><code>ContentTypeReaderManager</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xna/ContentTypeReaderManager.cpp"><code>ContentTypeReaderManager.cpp</code></a>)</td><td>Process-wide</td><td>Canonical XNB reader name; first registration wins, a repeat is ignored; <code>RemoveTypeCreatorEXT</code> erases</td><td>None: a function-local static <code>unordered_map</code>, no mutex. A second process-wide map beside it, <code>TargetTypeNames</code>, associates a C++ <code>type_index</code> with the canonical name (filled by the <code>ContentTypeReader&lt;T&gt;</code> constructors through <code>AssociateTargetType</code>, read by <code>GetTypeReader</code> and <code>ReadRawObject&lt;T&gt;()</code>); it is unlocked too</td></tr>
+<tr><td><code>CnbLoaderRegistry</code></td><td>Process-wide</td><td>Numeric asset-type id, plus canonical name for custom ids</td><td><code>std::shared_mutex</code>; loaders returned by copy</td></tr>
+<tr><td><code>typeReaders_</code> and <code>cnjNamedLoaders_</code></td><td>Per <code>ContentManager</code></td><td><code>std::type_index</code> of <code>T</code>; <code>RegisterTypeReader&lt;T&gt;</code> replaces silently</td><td>None (instance state)</td></tr>
+</tbody></table></div>
+<p>For <code>.cnj</code>, <code>RegisterCnjLoader&lt;T&gt;(typeName, factory)</code> dispatches on the envelope's own <code>"type"</code> string rather than on a numeric id. It throws <code>std::invalid_argument</code> for an empty name or factory and <code>std::logic_error</code> if a dedicated reader already owns <code>T</code> or the <code>(T, typeName)</code> pair repeats; the first registration for a <code>T</code> installs a <code>GenericCnjTypeReader&lt;T&gt;</code> (extension <code>.cnj</code>) that looks the type string up in <code>cnjNamedLoaders_</code>.</p>
+
+<h2 id="lifetime">Cache, disposal and special ownership</h2>
+<p><code>loadedAssets_</code> stores <code>std::any</code> values and <code>Load&lt;T&gt;</code> returns <code>T</code> by value, so caching requires a copy-constructible <code>T</code>. For shared-pointer assets and for XNA value types whose GPU state is shared-owned, the cache and the caller share the underlying object; there is no separate weak texture cache. <code>Unload()</code> is exactly <code>loadedAssets_.clear()</code>: it cannot revoke copies or shared references already handed out. <code>Dispose()</code> routes to the protected virtual <code>Dispose(bool)</code>, which calls <code>Unload()</code> only when <code>disposing</code> is true, clears the cache either way and marks the manager disposed; the destructor is defaulted. Do not invent a blanket &ldquo;<code>ContentManager</code> destroys every GPU object&rdquo; guarantee.</p>
+<p><code>Load&lt;Audio::SoundEffect&gt;</code> is an explicit specialization. <code>SoundEffect</code> is move-only with a per-owner dispose cascade, so sharing one cached instance would let one caller's disposal stop another caller's playing instances; each call instead returns an independently owned value and nothing is cached. The specialization carries its own copy of the XNB tier, gained its CNB tier later (loaded through <code>shared_ptr&lt;SoundEffect&gt;</code> because <code>std::any</code> cannot hold a move-only type; the CNBF-103A comment records that it was once missing), and then the loose tier. A cache-policy change must cover this special case and <code>ContentManagerTextureCacheCycleTests</code>.</p>
+<h3 id="threading">Thread and renderer affinity</h3>
+<p>The <code>ContentReader</code> constructor acquires a renderer-thread context lease (<code>GraphicsDevice::AcquireRendererThreadContextLease</code>) when the manager has a <em>direct</em> device pointer, because deserializing a texture or effect may create renderer resources; a manager that reaches its device only through the service provider does not take the lease. That is a context and lifetime accommodation, not support for unsynchronized parallel <code>Load</code> calls. Async content loading would have to audit four things explicitly: the manager's unlocked cache and reader maps, the unlocked XNB reader registry, graphics thread affinity, and callback order; the current lease solves none of the first three. Phase-1's <a href="../../../docs/tutorials/77-async-loading.html">Tutorial 77</a> gives the user-level rule (load on one thread).</p>
+
+<h2 id="failure">Maintainer change route and tests</h2>
+<ul>
+<li><strong>New loose format:</strong> implement a <code>LooseFileContentTypeReader&lt;T&gt;</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/include/Microsoft/Xna/Framework/Content/LooseFileContentTypeReader.hpp"><code>LooseFileContentTypeReader.hpp</code></a>), register it in <code>RegisterBuiltinLoaders</code> or via <code>RegisterTypeReader&lt;T&gt;</code>, decide extension and <code>.cnj</code> precedence, and test missing and malformed files and a wrong requested type.</li>
+<li><strong>New XNB reader:</strong> add a process-wide canonical factory with <code>AddTypeCreator</code> and a version contract (or declare it with <code>ReflectiveTypeReaderBuilder&lt;T&gt;</code>), wire built-ins through <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xnb/XnbBuiltInReaders.cpp"><code>XnbBuiltInReaders.cpp</code></a>, then add a fixture proving the type table, shared references and decompression.</li>
+<li><strong>New CNB schema:</strong> validate the container before constructing objects, keep the reserved/custom identifier rules, register with the exact boxed type, and test golden vectors plus a runtime <code>Load&lt;T&gt;</code> round trip.</li>
+<li><strong>Any path change:</strong> test a Unicode root, packaged lookup, external-reference containment and cache-key behaviour. If the loaded object is graphics- or audio-backed, run those subsystems' lifetime tests too.</li>
+</ul>
+<p>Relevant tests (all under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests"><code>modules/content/tests</code></a>): <code>ContentManagerXnbTests</code>, <code>ContentTypeReaderManagerTests</code>, <code>CnbContentManagerTests</code>, <code>CnjResolverOrderTests</code>, <code>CnjAssetCacheTypeSafetyTests</code>, <code>ContentManagerTextureCacheCycleTests</code>, <code>ContentReaderExternalReferenceTests</code>, <code>UnicodeContentRootTests</code> and <code>CnbSpecConformanceTests</code>. They compile into the content test object group; the focused executable is <code>CnaContentTests</code>, built by the <code>unit-content</code> build preset in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakePresets.json"><code>CMakePresets.json</code></a> (its <code>unit</code> configure preset uses the <code>STUB</code> renderer without networking, FFmpeg or Draco). Several texture-reader tests are renderer-gated with <code>CNA_SKIP_IF_RENDERER_IS_NONE_OF</code> (defined in the graphics module's test header <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/CNA/RendererTestGate.hpp"><code>RendererTestGate.hpp</code></a>), so under <code>STUB</code> they skip rather than pass. The most recent edits to the content module before TARGET were confined to four test files, all of which add the OpenGL4 renderer to a renderer list: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests/CNA/Internal/Xnb/Texture2DContentTypeReaderTests.cpp"><code>Texture2DContentTypeReaderTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests/CNA/Internal/Xnb/Texture3DTextureCubeContentTypeReaderTests.cpp"><code>Texture3DTextureCubeContentTypeReaderTests.cpp</code></a> extend their skip gates, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests/CNA/Internal/GltfImport/GltfUnlitMaterialTests.cpp"><code>GltfUnlitMaterialTests.cpp</code></a> extends a <code>CNA_RENDERER_IS</code> condition, and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests/CNA/Internal/GltfImport/GltfRendererPbrFallbackPolicyTests.cpp"><code>GltfRendererPbrFallbackPolicyTests.cpp</code></a> updates the expected OpenGL4 texture-binder wording. No production content source changed in that stretch. Tests that spawn a tool process are excluded on Windows, Emscripten, Android and iOS by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>UnitTests.cmake</code></a>. None of them was executed for this page; list the built binary's tests or use the configured CTest before claiming a fixture ran. The general test layout is on <a href="../../testing/architecture.html">Test architecture</a>.</p>
+<h3 id="known-gaps">Inconsistencies a maintainer should know</h3>
+<ul>
+<li><strong>LZ4 through an external reference.</strong> A directly loaded LZ4 <code>.xnb</code> decodes, but the same file reached through an untyped external reference is refused by <code>LoadXnbAssetUntyped</code>.</li>
+<li><strong><code>OpenStream</code> is not on the <code>Load&lt;T&gt;</code> path.</strong> The header comment on <code>OpenStream</code> says every <code>.xnb</code> load goes through it, but <code>Load&lt;T&gt;</code> reads with <code>TryReadAssetBytes</code>; only the protected <code>ReadAsset&lt;T&gt;</code> honours an override. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xna/ResourceContentManager.cpp"><code>ResourceContentManager.cpp</code></a> overrides only <code>OpenStream</code>, so its public <code>Load&lt;T&gt;</code> still searches files (Phase-1's <a href="../../../docs/content-manager.html#caching-and-lifetime">ContentManager guide</a> says so too).</li>
+<li><strong>The untyped decoder has fewer guards than the typed one.</strong> <code>LoadXnbAssetUntyped</code> checks <code>totalLength</code> against the file size but, unlike <code>LoadXnbAsset&lt;T&gt;</code>, not the 14-byte minimum for a compressed file before it builds a four-byte <code>MemoryStream</code> at offset 10 to read the decompressed size. By reading, a compressed-flag file of 10 to 13 bytes reaches that read without a guard, whereas the typed decoder throws <code>ContentLoadException</code> first. No test in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests/Microsoft/Xna/Framework/Content/ContentReaderExternalReferenceTests.cpp"><code>ContentReaderExternalReferenceTests.cpp</code></a> (five cases, all typed) or elsewhere in the content tests names the truncation message, and this was not exercised.</li>
+<li><strong>CNB and packaged assets.</strong> The CNB and loose tiers do not use the platform-filesystem fallback that the XNB tier uses; whether a <code>.cnb</code> inside an Android package loads was not established.</li>
+<li><strong>Wrong <code>T</code> for an XNB versus a CNB.</strong> A <code>.cnb</code> holding a different asset type than <code>T</code> becomes a <code>ContentLoadException</code> naming what the file holds, and the loose tier wraps any <code>std::exception</code> the same way. The XNB tier has no equivalent wrapper: <code>ContentReader::InnerReadObject&lt;T&gt;</code> does <code>std::any_cast&lt;T&gt;</code> on what the root reader produced, and nothing between it and <code>Load&lt;T&gt;</code> catches <code>std::bad_any_cast</code>, so asking for the wrong type of an <code>.xnb</code> asset can surface that exception (the <a href="../../../docs/content-pipeline-xnb.html#diagnosing-xnb-problems">XNB guide's diagnosis section</a> says the same from the user side).</li>
+<li><strong>Two disposal exceptions.</strong> <code>Load&lt;T&gt;</code> on a disposed manager throws <code>std::runtime_error</code>, while <code>ReadAsset&lt;T&gt;</code> throws <code>System::ObjectDisposedException</code>. <code>Dispose(bool)</code> does nothing on a second call because the whole body sits behind the disposed flag.</li>
+<li><strong>SoundEffect loose errors.</strong> The generic template wraps a loose reader's <code>std::exception</code> in <code>ContentLoadException</code>; the <code>SoundEffect</code> specialization's loose tier does not.</li>
+</ul>
+
+<h2 id="reading">Source reading order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/include/Microsoft/Xna/Framework/Content/ContentManager.hpp"><code>ContentManager.hpp</code></a>: read the <code>Load&lt;T&gt;</code>, <code>LoadXnbAsset&lt;T&gt;</code>, <code>LoadCnbAsset&lt;T&gt;</code> and <code>ResolveAssetPath</code> templates first; tier priority and cache behaviour live here, not in the <code>.cpp</code>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xna/ContentManager.cpp"><code>ContentManager.cpp</code></a>: constructors, <code>getGraphicsDeviceInternal</code>, path and file services, <code>Dispose(bool)</code>, the untyped XNB path, <code>RegisterBuiltinLoaders</code> and the <code>SoundEffect</code> specialization (at the end of the file).</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/include/Microsoft/Xna/Framework/Content/ContentReader.hpp"><code>ContentReader.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xna/ContentReader.cpp"><code>ContentReader.cpp</code></a>: root dispatch, the two-pass reader table, shared resources, external references and the renderer-thread lease.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xna/ContentTypeReaderManager.cpp"><code>ContentTypeReaderManager.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Cnb/CnbLoaderRegistry.cpp"><code>CnbLoaderRegistry.cpp</code></a>: compare the XNB canonical-name table with the CNB numeric/name table, including their different locking.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/CMakeLists.txt"><code>content CMakeLists.txt</code></a> and <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests"><code>content tests</code></a>: confirm the runtime/tool source edge and pick a behaviour-specific fixture.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/content-manager.html#two-asset-paths">ContentManager: .xnb first, .cnb second, loose files last</a> &middot; <a href="../../../docs/content-manager.html#caching-and-lifetime">ContentManager: caching and lifetime</a> &middot; <a href="../../../docs/content-pipeline-xnb.html#how-contentmanager-resolves-an-asset">XNB loading: how ContentManager resolves an asset</a> &middot; <a href="../../../docs/cnb-format.html#loading">CNB Format: the loading path</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/content.html">Content architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="pipeline.html">Content pipeline internals (the build-time half)</a> &middot; <a href="../runtime/module.html">Runtime module internals</a> &middot; <a href="../graphics/resources.html">Textures and render targets</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/modify-contentmanager.html">I need to modify ContentManager</a> &middot; <a href="../../handbook/modify-the-content-pipeline.html">I need to modify the Content Pipeline</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture and change recipes</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-next" href="pipeline.html" rel="next"><span>Next</span>Content pipeline internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

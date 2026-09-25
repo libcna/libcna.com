@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>C API internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s experimental C ABI 0.29.0 is implemented at the TARGET snapshot: artifacts, the exception barrier, the generation-checked handle registry, game and child lifetimes, and the tests that pin them.">
+  <meta name="keywords" content="c api, c abi, cna_c_api, handle registry, callwithexceptionbarrier, cna_game_destroy, thread affinity, cna_result, ownership, wasm, version script, language bindings">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/bindings/c-api-internals.html">
+  <meta property="og:title" content="C API internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s experimental C ABI 0.29.0 is implemented at the TARGET snapshot: artifacts, the exception barrier, the generation-checked handle registry, game and child lifetimes, and the tests that pin them.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/bindings/c-api-internals.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"C API internals","description":"How CNA's experimental C ABI 0.29.0 is implemented at the TARGET snapshot: artifacts, the exception barrier, the generation-checked handle registry, game and child lifetimes, and the tests that pin them.","url":"https://libcna.com/development/internals/bindings/c-api-internals.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="c-api-internals.html" class="docs-nav-link active" aria-current="page">C API &amp; bindings internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="csharp.html" class="docs-nav-link">C# binding</a></li>
+        <li><a href="java.html" class="docs-nav-link">Java binding</a></li>
+        <li><a href="python.html" class="docs-nav-link">Python binding</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li aria-current="page">C API &amp; bindings</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>C API internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#shape">Build artifact and public boundary</a></li>
+          <li><a href="#handles">Opaque handle registry and actual ownership</a></li>
+          <li><a href="#game">Representative binding call: C game creation and one frame</a></li>
+          <li><a href="#audio">Representative child call: SoundEffect and instance</a></li>
+          <li><a href="#invariants">Validation, ABI evolution and tests</a></li>
+          <li><a href="#reading">Source reading order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; C API &amp; bindings internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Read at 009d40f5 only. CNA_BUILD_C_API defaults to OFF and no CI workflow builds the library; no build or C API test was run for this page.</p></div>
+
+<p class="lede">The C surface is not a thin symbol rename of C++ CNA. It is a second ownership model: versioned C structures, canonical UTF-8, string and boolean rules, result codes with a thread-local diagnostic, generation-checked typed handles, child-before-parent destruction gates and a lifecycle-callback adapter. This page traces how <code>modules/c-api</code> implements those rules at the TARGET snapshot, for maintainers who change a C route and for anyone who writes or reviews a language binding, which inherits every one of these choices even when its wrapper looks object-oriented.</p>
+
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Source-level only.</strong> Everything here was checked by reading <code>modules/c-api</code> at <code>009d40f5</code>; nothing was built or executed. The option <code>CNA_BUILD_C_API</code> defaults to OFF, no CI workflow builds the library, and CNA's own release gate for ABI 0.29.0 reads &ldquo;Not ready&rdquo;. The user-facing picture (build, package, version history, coverage, gates) is on the <a href="../../../docs/c-api.html">Native C API guide</a>; this page does not repeat it.</p></div>
+
+<h2 id="shape">Build artifact and public boundary</h2>
+<p><code>cna_c_api</code> (alias <code>CNA::CApi</code>) is compiled from 59 feature-family translation units, <code>CnaCApi*.cpp</code>, listed explicitly in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/CMakeLists.txt"><code>modules/c-api/CMakeLists.txt</code></a>; the other files under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src"><code>modules/c-api/src</code></a> are private <code>*Detail.hpp</code> headers shared between families. The 61 public headers under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C"><code>modules/c-api/include/CNA/C</code></a> are aggregated by <code>cna.h</code>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/abi.h"><code>modules/c-api/include/CNA/C/abi.h</code></a> carries the experimental ABI version (<strong>0.29.0</strong>: <code>CNA_ABI_VERSION_MAJOR</code> 0, <code>_MINOR</code> 29, <code>_PATCH</code> 0, packed by <code>CNA_ABI_VERSION_ENCODE</code> as <code>major&lt;&lt;16 | minor&lt;&lt;8 | patch</code>), the fixed-width <code>CNA_Result</code> (<code>uint32_t</code>, codes 0&ndash;14), <code>CNA_Bool</code> (<code>uint8_t</code>), <code>CNA_Handle</code> (<code>uint64_t</code>, <code>CNA_INVALID_HANDLE</code> = 0), the <code>CNA_C_API</code> export macro and <code>cna_get_abi_version()</code>.</p>
+<p>Two language levels apply and should not be confused. The public headers are held to a <strong>C99 consumer floor</strong> (the compatibility matrix in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/c-api/compatibility_matrix.json"><code>tools/c-api/compatibility_matrix.json</code></a> requires c99/c11/c17 and c++11/14/17 cells; the shipped example is compiled at exactly C99), while CNA's own C test targets compile at C17 with extensions off and <code>-Wall -Wextra -Wpedantic -Werror</code> (<code>/W4 /WX</code> on MSVC).</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Artifact</th><th scope="col">When</th><th scope="col">How the surface is controlled</th></tr></thead>
+<tbody>
+<tr><td>Shared library <code>libcna_c_api</code></td><td>Every non-Emscripten build with <code>CNA_BUILD_C_API=ON</code></td><td><code>CXX_VISIBILITY_PRESET hidden</code> and <code>VISIBILITY_INLINES_HIDDEN</code>; <code>CNA_C_API</code> marks routes <code>visibility("default")</code> (GCC/Clang) or <code>dllexport</code>/<code>dllimport</code> (Windows). On ELF only (<code>UNIX AND NOT APPLE AND NOT EMSCRIPTEN</code>) the link adds <code>--exclude-libs,ALL</code> and the version script <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/cmake/CnaCApiExports.map"><code>CnaCApiExports.map</code></a>: <code>cna_*</code> global, everything else local. <code>INSTALL_RPATH "$ORIGIN"</code>.</td></tr>
+<tr><td>Static archive <code>CNA::CApiStatic</code></td><td>Option <code>CNA_C_API_BUILD_STATIC</code>, Linux-like hosts with Python 3</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/c-api/generate_static_archive.py"><code>generate_static_archive.py</code></a> partially links the closure into one object and localizes every non-<code>cna_*</code> symbol; consumers get <code>CNA_C_API_STATIC</code>, which empties the export macro.</td></tr>
+<tr><td>Wasm module <code>cna_c_api_wasm</code></td><td>Emscripten (the library itself is then <code>STATIC</code>)</td><td>An ES module factory (<code>cna_c_api.mjs</code> + <code>.wasm</code>, <code>createCnaCApi</code>) whose <code>-sEXPORTED_FUNCTIONS</code> list is generated from the public headers by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/c-api/generate_wasm_exports.py"><code>generate_wasm_exports.py</code></a>; the headers are declared as inputs so a newly declared route cannot be silently missing. <code>-sASYNCIFY=0</code>: JavaScript owns the loop and calls the one-frame route (<code>cna_game_run_one_frame</code>) from <code>requestAnimationFrame</code>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/wasm/module_entry.c"><code>module_entry.c</code></a> pins the wasm32 layout of <code>CNA_GameCallbacks</code> and <code>CNA_GameCreateInfo</code> with <code>_Static_assert</code>s.</td></tr>
+</tbody></table></div>
+<p>The ELF symbol-version node is <code>CNA_C_API_0.1</code> and is intentionally <em>not</em> the semantic ABI version: already-linked consumers record the node name, so renaming it on every minor would turn each additive release into a hard break (the map file's own comment says it changes only for a major break). These are three distinct final artifacts, not one library that works unchanged everywhere, and a route change has to be checked against each of them.</p>
+
+<h3 id="route-anatomy">Route anatomy and the exception barrier</h3>
+<p>A fallible route follows one shape: validate the C-facing arguments, clear every <code>out_</code> handle to <code>CNA_INVALID_HANDLE</code>, run the body inside <code>CallWithExceptionBarrier</code>, resolve typed native objects through the handle registry, then translate results back into POD values or caller-owned buffers. The order of the first two steps is itself a contract: a refused creation must leave its output invalid, which is why <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiDetail.hpp"><code>CnaCApiDetail.hpp</code></a> tells authors to call <code>ValidateCanonicalBool</code> only <em>after</em> clearing the output.</p>
+<p><code>CallWithExceptionBarrier</code> is a <code>noexcept</code> template whose <code>catch</code> arms are ordered from most derived to most general, so C++ exceptions never cross the ABI. The mapping at TARGET, in arm order:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Caught (in order)</th><th scope="col"><code>CNA_Result</code></th></tr></thead>
+<tbody>
+<tr><td><code>std::bad_alloc</code></td><td><code>OUT_OF_MEMORY</code></td></tr>
+<tr><td><code>std::overflow_error</code>, <code>std::range_error</code></td><td><code>OVERFLOW</code></td></tr>
+<tr><td><code>std::out_of_range</code>, <code>std::invalid_argument</code></td><td><code>INVALID_ARGUMENT</code></td></tr>
+<tr><td>other <code>std::logic_error</code></td><td><code>INVALID_STATE</code> (deliberately not <code>INTERNAL</code>)</td></tr>
+<tr><td><code>std::ios_base::failure</code>, <code>std::filesystem::filesystem_error</code>, <code>System::IO::IOException</code>, <code>ContentLoadException</code></td><td><code>IO</code></td></tr>
+<tr><td><code>StorageDeviceNotConnectedException</code>, <code>InstancePlayLimitException</code>, gamer-privilege / guide-visible, sensor failure, network-session join failure, network not available</td><td><code>INVALID_STATE</code> (sensor and join failures also record their error id in the thread's diagnostic)</td></tr>
+<tr><td><code>NoAudioHardwareException</code>, <code>NoMicrophoneConnectedException</code>, gamer services not available, game update required</td><td><code>NOT_SUPPORTED</code></td></tr>
+<tr><td>other <code>NetworkException</code>, <code>CNA::Platform::PlatformException</code></td><td><code>PLATFORM</code></td></tr>
+<tr><td><code>CNA::Graphics::EngineException</code> (CNAEXT builds only)</td><td><code>NOT_SUPPORTED</code></td></tr>
+<tr><td><code>CNA::CNAException</code>, <code>System::InvalidOperationException</code>, <code>DeviceLostException</code>, <code>DeviceNotResetException</code></td><td><code>INVALID_STATE</code></td></tr>
+<tr><td><code>System::ArgumentException</code></td><td><code>INVALID_ARGUMENT</code></td></tr>
+<tr><td><code>System::NotImplementedException</code>, <code>System::NotSupportedException</code>, <code>NoSuitableGraphicsDeviceException</code></td><td><code>NOT_SUPPORTED</code></td></tr>
+<tr><td>any other <code>std::exception</code>; <code>...</code></td><td><code>INTERNAL</code></td></tr>
+</tbody></table></div>
+<p>Because the arms are positional, changing the native exception hierarchy (a new base class, a re-parented exception) can silently move a failure into a different arm; <code>PlatformException</code>, for example, derives from <code>std::runtime_error</code> and must stay above the generic arm. A new native exception type therefore needs a C-ABI behaviour review, and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/cpp/BoundaryDetailTest.cpp"><code>BoundaryDetailTest.cpp</code></a> (<code>CApi_BoundaryDetail</code>) pins the mapping for representative exceptions (argument, allocation, not-supported, device-lost family, unknown failure) together with the error-copy and string helpers.</p>
+<p>Every arm goes through <code>Fail</code>, which writes a <code>thread_local</code> <code>LastError</code> (result, category, message, plus the optional join-error and sensor-error ids) in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiDetail.cpp"><code>CnaCApiDetail.cpp</code></a>. A successful call does not clear it; the three <code>cna_error_*</code> queries in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/core.h"><code>core.h</code></a> never overwrite it. <code>CNA_ErrorCategory</code> is derived from the result by <code>ErrorCategoryForResult</code> (<code>OVERFLOW</code> and <code>BUFFER_TOO_SMALL</code> share <code>RANGE</code>).</p>
+
+<h2 id="handles">Opaque handle registry and actual ownership</h2>
+<pre class="diagram">CNA_Handle (uint64_t)
+  bits 63..32  generation   1 .. UINT32_MAX, bumped on every Release, wraps to 1 (never 0)
+  bits 31..0   slot index + 1  (0 is never a valid slot; handle 0 = CNA_INVALID_HANDLE)
+
+HandleRegistry::Slot { generation, ObjectKind kind, shared_ptr&lt;void&gt; object,
+                       std::thread::id creationThread, uint64_t userTag }</pre>
+<p>There is exactly one registry per process: <code>GetRuntimeHandles()</code> returns the <code>HandleRegistry</code> inside the static <code>RuntimeState</code> of <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiRuntime.cpp"><code>CnaCApiRuntime.cpp</code></a>. <code>Create</code> reuses the first slot whose object is empty (a linear scan) or appends a new one, records the kind, the calling thread and a zero user tag, and encodes the handle from the slot's current generation. <code>Get&lt;T&gt;</code> takes the registry mutex, rejects handle 0, slot 0, generation 0, an out-of-range slot, an empty slot or a generation mismatch (<code>INVALID_HANDLE</code>), then a different <code>ObjectKind</code> (<code>INVALID_HANDLE</code>), then a different creation thread (<code>THREAD</code>), and only then <code>static_pointer_cast</code>s the stored <code>shared_ptr&lt;void&gt;</code>. <code>Release</code> performs the same lookup and thread check, moves the object out, clears the slot and bumps the generation; the moved-out <code>shared_ptr</code> is destroyed after the lock scope ends, so a destructor that re-enters the registry cannot deadlock. A stale handle cannot resolve to a reused slot until that slot's 32-bit generation has cycled.</p>
+<p>Three consequences matter to binding authors. First, the kind check is the <em>only</em> type guard: a route that names the wrong C++ type for a kind would be undefined behaviour, which is why, for instance, every audio event registration is stored under one base class (<code>AudioRegistrationBase</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiAudioDetail.hpp"><code>CnaCApiAudioDetail.hpp</code></a>). <code>ObjectKind</code> enumerates 181 kinds (1&ndash;181) plus <code>Unknown</code> and a test-only value. Second, every handle resolved through <code>Get&lt;T&gt;</code> or released through <code>Release</code> is creation-thread-affine, not only some; only the internal <code>GetKind</code> query skips the thread check. Third, the mutex makes registry bookkeeping coherent; it does not make any CNA object thread-safe, and the per-resource counters below are plain integers protected only by that thread affinity.</p>
+
+<h3 id="ownership-kinds">What a handle actually owns</h3>
+<p>A handle's existence does not imply that it owns the native object. The shapes that coexist at TARGET (declared in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiRuntimeDetail.hpp"><code>CnaCApiRuntimeDetail.hpp</code></a> and the family files):</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Shape</th><th scope="col">Example</th><th scope="col">Lifetime rule</th></tr></thead>
+<tbody>
+<tr><td>Owned resource with parent token</td><td><code>SoundEffectResource</code>, <code>Texture2DResource</code></td><td>Holds the native object by <code>shared_ptr</code> plus <code>parentGame</code>; destroyed by its own route; counted against <code>cna_game_destroy</code>.</td></tr>
+<tr><td>Owned child with parent reference</td><td><code>SoundEffectInstanceResource</code></td><td>Holds a <code>shared_ptr</code> to the parent resource and increments the parent's child count; the parent refuses destruction until it is zero.</td></tr>
+<tr><td>Borrowed game device</td><td><code>BorrowedGraphicsDevice</code></td><td>A raw <code>GraphicsDevice*</code> plus an owner token (the game handle). Created lazily during a lifecycle callback and released when that callback returns.</td></tr>
+<tr><td>Caller-created device</td><td><code>OwnedGraphicsDevice</code></td><td>A <code>unique_ptr&lt;GraphicsDevice&gt;</code> plus a <code>BorrowedGraphicsDevice</code> view whose owner token is the device's own handle, so resources on two standalone devices are as distinguishable as two games' resources. Not counted against game destruction.</td></tr>
+<tr><td>Game content-manager borrow</td><td><code>cna_game_get_content_manager_ext</code></td><td>One cached handle over the game's value-member <code>ContentManager</code> (a non-owning aliasing <code>shared_ptr</code>); <code>cna_content_manager_destroy</code> refuses it with <code>INVALID_STATE</code>; released with the game.</td></tr>
+<tr><td>Callback-scoped borrow</td><td><code>BorrowContentManagerForCallback</code></td><td>A fresh handle over whichever manager performs a <code>.cnb</code> load, wrapped with a no-op deleter and released by its creator before the loader callback returns.</td></tr>
+<tr><td>Resource-to-resource references</td><td><code>Texture2DResource</code> active batch/font/effect/model/scope counts</td><td><code>cna_texture2d_destroy</code> answers <code>INVALID_STATE</code> while a live sprite batch, font, effect, model or scope still references the texture.</td></tr>
+</tbody></table></div>
+<p>Resource routes copy the owner token and compare it to reject cross-device use. These wrappers cannot be treated interchangeably by a binding. Before adding a route, decide whether its result is owned, shared, borrowed from a parent, callback-scoped or a copied value, and write the exact destroy and parent rules into the public header. The whole-engine ownership picture is on <a href="../../takeover/ownership.html">Ownership and lifetime master map</a>.</p>
+
+<h2 id="game">Representative binding call: C game creation and one frame</h2>
+<pre class="diagram">language wrapper → cna_game_create(CNA_GameCreateInfo*, out handle)
+  → CallWithExceptionBarrier
+  → struct_size &gt;= sizeof, struct_version == 1; out handle cleared
+  → canonical is_fixed_time_step, ticks &gt; 0, callbacks table valid or null
+  → window title: valid UTF-8, embedded NUL refused, copied
+  → RuntimeState lock: refuse if hasActiveGame (INVALID_STATE)
+  → make_shared&lt;CGame&gt;(callbacks copied) → timing and title set
+  → HandleRegistry::Create(ObjectKind::Game) → hasActiveGame = true
+cna_game_run_one_frame(handle)            (also cna_game_run, cna_game_tick)
+  → GetCallableGame: kind + creation thread + not inside a callback
+  → Game::RunOneFrame → CGame overrides → C callbacks
+  → returns the recorded callback failure (or SUCCESS)
+cna_game_destroy(handle)
+  → GetCallableGame → owned-child gates → CGame::Shutdown
+  → adapter/state resets → Release handle → hasActiveGame = false</pre>
+<p><code>CGame</code> derives from the native <code>Game</code> and translates its virtuals into the C table <code>CNA_GameCallbacks</code> (<code>load_content</code>, <code>update</code>, <code>draw</code>, <code>unload_content</code>, <code>exiting</code>, one <code>context</code>) declared in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/runtime.h"><code>runtime.h</code></a>. Its <code>Update</code> and <code>Draw</code> call the C hook first and then <code>Game::Update</code> / <code>Game::Draw</code>, so game components still tick and draw and <code>FrameworkDispatcher</code> still advances (a comment in the source records that the base call was once missing). The optional frame hooks installed with <code>cna_game_set_frame_hooks_ext</code> (<code>initialize</code>, <code>begin_run</code>, <code>end_run</code>, <code>begin_draw</code>, <code>end_draw</code>) follow the canonical subclass shape: <code>initialize</code> runs <em>before</em> <code>Game::Initialize</code>, which is what ends by calling <code>LoadContent</code>, so a C game sees initialize before load_content as a ported XNA game expects; <code>begin_draw</code> can veto the frame through an out <code>CNA_Bool</code>.</p>
+<p>Every callback invocation is itself run inside <code>CallWithExceptionBarrier</code> with <code>isInsideCallback_</code> set. A non-success return (or a C++ exception from a C++-implemented callback) is recorded by <code>RecordCallbackFailure</code>: the optional <code>CNA_CallbackError</code> message (versioned, UTF-8, borrowed until the callback returns) becomes the thread's diagnostic with <code>CNA_RESULT_CALLBACK</code>, the failure is latched and <code>Exit()</code> is called. No C error code is thrown through native game execution; once latched, later callbacks and the base <code>Update</code>/<code>Draw</code> passes are skipped, and <code>cna_game_run</code>, <code>_run_one_frame</code> and even <code>cna_game_destroy</code> return the latched result.</p>
+<p>A lifecycle callback may borrow the graphics device with <code>cna_game_get_graphics_device</code>; outside a callback that route answers <code>INVALID_STATE</code>, and the borrowed handle is released when the callback returns. <code>GetCallableGame</code> refuses to re-enter <code>run</code>, <code>run_one_frame</code>, <code>tick</code> or <code>destroy</code> from inside a callback (<code>INVALID_STATE</code>), while <code>request_exit</code>, <code>clear</code>, <code>set_window_title</code> and <code>set_frame_hooks_ext</code> are allowed there. The process admits one C-owned active game at a time; standalone devices from <code>cna_graphics_device_create</code> are a separate rule and do not need a game.</p>
+
+<h3 id="destroy-order">What <code>cna_game_destroy</code> does, in order</h3>
+<ol>
+<li>Resolve the game through <code>GetCallableGame</code> (kind, thread, not inside a callback).</li>
+<li>Refuse with <code>INVALID_STATE</code> while any C-owned game graphics resource, owned content manager, owned audio resource or owned game component is still alive. The four counters live in the process-wide <code>RuntimeState</code>; graphics resources are counted only when their owner token is a game (<code>AddOwnedGraphicsResourceFor</code>).</li>
+<li><code>CGame::Shutdown</code>: the <code>exiting</code> callback (once), <code>unload_content</code> if content was loaded, then <code>Dispose()</code>, so subscribers still observe the native Disposing events.</li>
+<li>Drop the C-side state that referred into the game: graphics-device adapter state (event subscriptions, recorded sampler bindings), the platform override, game and window event registrations, the graphics device managers retained past their handles, and the borrowed game content-manager handle. The manager retention is deliberate: native <code>Game</code> caches a raw pointer to the graphics device service, so releasing a manager's handle cannot free the manager while the game lives.</li>
+<li>Release the game handle, clear <code>hasActiveGame</code> and return the latched callback result.</li>
+</ol>
+<p>A wrapper finalizer that destroys the game before its child handles violates this API even if the host garbage collector later frees the children. The native shutdown sequence the adapter drives is traced on <a href="../runtime/shutdown.html">Ownership and shutdown</a>.</p>
+
+<h2 id="audio">Representative child call: SoundEffect and instance</h2>
+<p><code>cna_sound_effect_create_pcm16</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiAudio.cpp"><code>CnaCApiAudio.cpp</code></a> clears its output, then validates the versioned <code>CNA_SoundEffectCreateInfo</code> (size, version 1, zero <code>reserved</code>, sample rate in 1..<code>INT32_MAX</code>, channels exactly mono or stereo), the pointer/count pair through <code>CheckedElementByteCount</code>, a byte count that is nonzero, at most <code>INT32_MAX</code> and a whole number of 16-bit frames, and finally the game handle (<code>ValidateActiveGameHandle</code>, which also enforces the creation thread). It copies the caller's bytes into a native <code>std::vector</code> (so the language buffer need not stay pinned), constructs the native <code>SoundEffect</code> (a <code>NoAudioHardwareException</code> becomes <code>NOT_SUPPORTED</code>), wraps it in <code>SoundEffectResource{value, parentGame, instanceCount = 0}</code>, creates a <code>SoundEffect</code>-kind handle and increments the process's owned-audio count. <code>cna_sound_effect_create_pcm16_range_ext</code>, the route the C#, Java and Python binding pages trace at their pinned revisions, adds signed offset/count/loop checks against the buffer before the same copy and publishes through the shared <code>PublishSoundEffect</code> helper; content-loaded effects are published by the same factory (<code>CreateOwnedSoundEffect</code>), so every path yields the same kind of owned game child.</p>
+<p><code>cna_sound_effect_create_instance</code> resolves the parent, constructs a native <code>SoundEffectInstance</code>, wraps it with a <code>shared_ptr</code> to the parent resource, and increments both the parent's <code>instanceCount</code> and the owned-audio count. <code>cna_sound_effect_destroy</code> refuses with <code>INVALID_STATE</code> while <code>instanceCount</code> is nonzero, otherwise calls native <code>Dispose</code>, releases the handle and decrements the count. <code>cna_sound_effect_instance_destroy</code> disposes, releases, decrements its parent's count (a streaming instance has no parent) and the owned-audio count. This is stronger ordering than &ldquo;<code>shared_ptr</code> keeps memory alive&rdquo;: it preserves the public lifecycle contract and feeds the game-destroy gate.</p>
+<p>Rules for a binding that wraps this sequence:</p>
+<ul>
+<li>Keep the exact <code>CNA_Handle</code> as a 64-bit integer; never reinterpret it as a native pointer.</li>
+<li>Do not destroy children from an arbitrary garbage-collector or finalizer thread: the route answers <code>CNA_RESULT_THREAD</code> and the handle stays live.</li>
+<li>Check the result before reading an output handle; a failed create leaves it <code>CNA_INVALID_HANDLE</code>.</li>
+<li>Map host exceptions from <code>CNA_Result</code> plus the <em>current thread's</em> last diagnostic, read immediately. The store is <code>thread_local</code>, so a reader on another host thread does not see the failure, and a later failure on the same thread replaces it.</li>
+<li>The message copy is size query followed by caller-owned buffer (<code>cna_error_get_last_message_size</code>, <code>cna_error_copy_last_message</code>); keep both calls on the failing thread and handle <code>BUFFER_TOO_SMALL</code>, which writes nothing and reports the required size.</li>
+</ul>
+<p>The pure-C test that pins this contract is <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/pure_c/AudioSmoke.c"><code>AudioSmoke.c</code></a> (<code>CApi_AudioSmoke</code>): with an instance alive it expects <code>cna_game_destroy</code> and <code>cna_sound_effect_destroy</code> to answer <code>INVALID_STATE</code>, from a second thread it expects <code>THREAD</code> for a query and for instance destruction, and afterwards child-first destruction, <code>INVALID_HANDLE</code> on a double destroy and on use of the destroyed game. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/pure_c/AudioSoundEffectSmoke.c"><code>AudioSoundEffectSmoke.c</code></a> (<code>CApi_AudioSoundEffectSmoke</code>) covers the extended creation routes (range, encoded, asset), process-wide 3D-audio settings and <code>cna_sound_effect_play</code>. The native voice and mixer path behind these handles is on <a href="../audio/engine.html">Audio engine internals</a>.</p>
+
+<h2 id="invariants">Validation, ABI evolution and tests</h2>
+<h3 id="conventions">Conventions every route enforces</h3>
+<ul>
+<li><strong>Versioned structures.</strong> The routes read here accept a structure when <code>struct_size &gt;= sizeof</code>(the current struct) and <code>struct_version == 1</code>; a smaller prefix is refused with <code>INVALID_ARGUMENT</code>, a larger future struct passes the check. Validators must check both before reading a new field.</li>
+<li><strong>Strings.</strong> <code>CNA_StringView</code> is a borrowed <code>{data, byte_length}</code> span valid for one call, not a NUL-terminated or long-lived string. <code>ValidateStringView</code> accepts <code>data == NULL</code> only with length 0, rejects overlong encodings, surrogates and code points above U+10FFFF (<code>ENCODING</code>), and optionally rejects embedded NUL; <code>CopyStringView</code> validates before copying. The rules are cross-checked by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/cpp/Utf8OracleTest.cpp"><code>Utf8OracleTest.cpp</code></a> (<code>CApi_Utf8Oracle</code>) and a libFuzzer source compiled but not registered as a test.</li>
+<li><strong>Booleans.</strong> Only <code>CNA_FALSE</code> (0) and <code>CNA_TRUE</code> (1) are valid; <code>ValidateCanonicalBool</code> names the offending parameter. Since ABI 0.3.0 every route taking one refuses other bytes; the generated <code>CApi_BoolContractSmoke</code> test and the <code>CApiBoolContractCurrent</code> gate keep that true.</li>
+<li><strong>Buffers.</strong> <code>CheckedElementByteCount</code> multiplies element count by element size with overflow checks against both <code>uint64_t</code> and <code>size_t</code> (<code>OVERFLOW</code>) before any caller memory is touched.</li>
+</ul>
+<p>Changing any of these conventions affects every consumer at once: C programs, the external C#, Java, Python, Rust, TypeScript, Swift, Go and Ruby projects, and wasm callers.</p>
+
+<h3 id="adding-a-route">Adding or changing a route</h3>
+<ol>
+<li>Decide whether the C++ addition belongs in the C ABI at all (CNA's coverage model records some public C++ symbols as not applicable to C).</li>
+<li>Declare it in the owning public header with its ownership, thread and result contract written out.</li>
+<li>Implement it in the owning <code>CnaCApi*.cpp</code> family: output cleared first, <code>CallWithExceptionBarrier</code>, handle kind and thread through the registry, validation as above, child counts if it creates a child.</li>
+<li>Apply the ABI version policy in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/c-api/ABI_VERSIONING.md"><code>ABI_VERSIONING.md</code></a>: while 0.x, an incompatible change needs a minor increment, release notes and a regenerated <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/c-api/abi_baseline.json"><code>abi_baseline.json</code></a> (the CMake package version is read out of <code>abi.h</code>).</li>
+<li>Audit the exported surface: <code>CApiDeclaredExports</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/c-api/check_declared_exports.py"><code>check_declared_exports.py</code></a>, declared vs exported in both directions), <code>CApi_Exports</code> (ELF export check), the generated wasm export list, and <code>CApiRouteTestCoverage</code>, whose budget of uncovered routes is 0, so the new route must be named by a test or example.</li>
+<li>Add pure-C tests under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/pure_c"><code>tests/pure_c</code></a> plus focused boundary or handle tests, then run the installed-consumer check.</li>
+<li>Only then update each external binding, at a recorded revision.</li>
+</ol>
+<p>A route added to the header and C++ but missing from the wasm export list is invisible to browser callers; the generator exists precisely because that failure produces no build diagnostic. Test the final artifacts, not just static compilation. The step-by-step maintainer recipe is <a href="../../handbook/update-the-c-api.html">I need to update the C API</a>.</p>
+
+<h3 id="tests">Tests and gates to know</h3>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Evidence</th><th scope="col">What it checks</th><th scope="col">Where it runs</th></tr></thead>
+<tbody>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/pure_c/AbiHeaderC.c"><code>AbiHeaderC.c</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/cpp/AbiHeaderCpp.cpp"><code>AbiHeaderCpp.cpp</code></a></td><td>Every public header compiles as C17 and as C++ under strict warnings (object libraries, not CTest entries)</td><td>C API builds</td></tr>
+<tr><td><code>CApi_HandleRegistry</code>, <code>CApi_BoundaryDetail</code>, <code>CApi_Utf8Oracle</code></td><td>Registry user tags, off-thread <code>THREAD</code> refusal, double release (<code>INVALID_HANDLE</code>) and slot reuse under a new generation; representative barrier mappings and the error-copy/string helpers; the UTF-8 oracle (C++ test programs, not GoogleTest)</td><td>C API builds</td></tr>
+<tr><td>85 pure-C programs (<code>CApi_*Smoke</code>, <code>CApi_TeardownLifetime_*</code>, <code>CApi_AudioSmoke</code>, <code>CApi_RuntimeGameSmoke</code>, <code>CApi_OwnedGraphicsDeviceSmoke</code> &hellip;)</td><td>Route behaviour, lifetime and refusal contracts from real C</td><td>C API builds</td></tr>
+<tr><td><code>CApi_InstalledConsumer</code></td><td>Install the <code>CNACApi</code> component, build <code>hello_cna</code> shared and static from outside the tree, run both</td><td>Local CTest, Linux/ELF only</td></tr>
+<tr><td><code>CApiAbiHeaderBaseline</code>, <code>CApiDeclaredExports</code>, <code>CApiRouteTestCoverage</code>, <code>CApiBoolContractCurrent</code>, <code>CApiReleaseGate</code> and the other header/JSON gates in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/ModuleProbes.cmake"><code>ModuleProbes.cmake</code></a></td><td>Recorded layouts and constants, export sets, route-test coverage, release verdict</td><td>Ordinary build (no C library needed for most)</td></tr>
+</tbody></table></div>
+<p>None of these was executed for this page; CNA's own records of a <code>ctest -R '^CApi'</code> run are summarised on the <a href="../../../docs/c-api.html#gates">C API guide's gates section</a>. The wider test layout is on <a href="../../testing/architecture.html">Test architecture</a>.</p>
+
+<h3 id="evidence-gaps">Known evidence gaps</h3>
+<ul>
+<li>This page establishes the in-tree ABI at source level. It does not establish that the library builds at <code>009d40f5</code>, nor binary compatibility of any external binding. The public bindings target ABI 0.21.x, while TARGET exports 0.29.0 after two incompatible steps (0.28.0, 0.29.0); see <a href="../../../docs/c-api.html#bindings">Bindings boundary</a> and the <a href="csharp.html">C#</a>, <a href="java.html">Java</a> and <a href="python.html">Python</a> binding internals, each pinned to its own revision.</li>
+<li>Some routes have callback, thread or borrowed-resource rules beyond this general model (event registrations, <code>.cnb</code> loader callbacks, streaming audio, storage). Read the route's header and implementation rather than extrapolating from the SoundEffect example.</li>
+<li><code>cna_graphics_device_destroy</code> for a caller-created device disposes and releases it without consulting a child count in its route body; the pure-C smoke destroys resources first. Treat child-first order as the caller's obligation there as well.</li>
+</ul>
+
+<h2 id="reading">Source reading order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/abi.h"><code>abi.h</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/core.h"><code>core.h</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/runtime.h"><code>runtime.h</code></a>: wire types, error queries and the game ownership statements before any implementation.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiDetail.hpp"><code>CnaCApiDetail.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiDetail.cpp"><code>CnaCApiDetail.cpp</code></a>: exception arms, <code>LastError</code>, string/bool/buffer checks, handle encoding, generation and thread enforcement.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiRuntime.cpp"><code>CnaCApiRuntime.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiRuntimeDetail.hpp"><code>CnaCApiRuntimeDetail.hpp</code></a>: <code>CGame</code>, callback latching, borrowed devices, the child counters and the destroy sequence.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiAudio.cpp"><code>CnaCApiAudio.cpp</code></a> with <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/pure_c/AudioSmoke.c"><code>AudioSmoke.c</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/pure_c/AudioSoundEffectSmoke.c"><code>AudioSoundEffectSmoke.c</code></a>: one owned parent/child family against its C-only tests.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiContent.cpp"><code>CnaCApiContent.cpp</code></a> (borrowed and callback-scoped content managers) and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiDisplay.cpp"><code>CnaCApiDisplay.cpp</code></a> (caller-created devices): the two ownership shapes that differ most from the audio example.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/CMakeLists.txt"><code>c-api CMakeLists.txt</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/cmake/CnaCApiExports.map"><code>CnaCApiExports.map</code></a>: the desktop, static and wasm artifacts and the test registrations before changing the exported surface.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/c-api.html#model">Native C API: programming model</a> &middot; <a href="../../../docs/tutorials/129-c-api-first-program.html">Tutorial 129: first C program</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/bindings.html">C API and bindings architecture</a> &middot; <a href="../../takeover/ownership.html">Ownership and lifetime master map</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="csharp.html">C# binding internals</a> &middot; <a href="java.html">Java binding internals</a> &middot; <a href="python.html">Python binding internals</a> &middot; <a href="../runtime/shutdown.html">Ownership and shutdown</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/update-the-c-api.html">I need to update the C API</a> &middot; <a href="../../takeover/threading.html">Thread and callback map</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../../docs/c-api.html#gates">C API gates and CI</a> &middot; <a href="../../testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/public-headers.html">Public header index</a> &middot; <a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-next" href="csharp.html" rel="next"><span>Next</span>C# binding internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

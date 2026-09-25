@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Python binding internals - CNA Development</title>
+  <meta name="description" content="How the external cna-python binding (pinned at f085bbb) loads CNA&#x27;s C ABI through ctypes: admission rules, route manifest, game callbacks, explicit ownership, a SoundEffect trace and the 0.29 migration path.">
+  <meta name="keywords" content="python, cna-python, ctypes, c abi, abi 0.21, native library loader, cna_native_library, ownership, callbacks, soundeffect, bindings, migration">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/bindings/python.html">
+  <meta property="og:title" content="Python binding internals - CNA Development">
+  <meta property="og:description" content="How the external cna-python binding (pinned at f085bbb) loads CNA&#x27;s C ABI through ctypes: admission rules, route manifest, game callbacks, explicit ownership, a SoundEffect trace and the 0.29 migration path.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/bindings/python.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Python binding internals","description":"How the external cna-python binding (pinned at f085bbb) loads CNA's C ABI through ctypes: admission rules, route manifest, game callbacks, explicit ownership, a SoundEffect trace and the 0.29 migration path.","url":"https://libcna.com/development/internals/bindings/python.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="c-api-internals.html" class="docs-nav-link is-group-active">C API &amp; bindings internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="csharp.html" class="docs-nav-link">C# binding</a></li>
+        <li><a href="java.html" class="docs-nav-link">Java binding</a></li>
+        <li><a href="python.html" class="docs-nav-link active" aria-current="page">Python binding</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="c-api-internals.html">C API &amp; bindings</a></li>
+        <li aria-current="page">Python binding</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Python binding internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#layers">Four concerns, physically separated</a></li>
+          <li><a href="#loader">Library admission and diagnostic failures</a></li>
+          <li><a href="#game">Game construction is a two-way callback contract</a></li>
+          <li><a href="#ownership">Ownership is explicit, not delegated to Python GC</a></li>
+          <li><a href="#sound">Representative SoundEffect route</a></li>
+          <li><a href="#testing">Evidence, gaps and migration procedure</a></li>
+          <li><a href="#reading">Read in this order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; C API &amp; bindings internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Binding claims were read from cna-python at f085bbb54c57bea553cff9b48898c11f3c49a77d (2026-09-02) and CNA claims from TARGET headers and sources; no build, test or native run was executed, and the binding's loader refuses a TARGET (ABI 0.29.0) library by design.</p></div>
+
+<p class="lede">This page explains how the external Python binding, <code>libcna/cna-python</code>, projects XNA-shaped Python objects onto CNA's C ABI: a measured <code>ctypes</code> manifest, an admission-checking loader, a two-way game callback contract and an explicit ownership state machine. It is written for maintainers who have to change that projection or migrate it to a newer ABI. Every statement about the binding was checked by reading <code>cna-python</code> at commit <code>f085bbb54c57bea553cff9b48898c11f3c49a77d</code> (2026-09-02); every statement about CNA was checked against the TARGET snapshot <code>009d40f5</code>. Nothing was built, installed or run.</p>
+
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Not a compatibility claim.</strong> At this revision the binding's loader admits exactly C ABI major 0, minor 21 (any patch). The TARGET snapshot exports ABI <strong>0.29.0</strong> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/abi.h"><code>abi.h</code></a>: <code>CNA_ABI_VERSION_MINOR</code> is 29), so the loader refuses a TARGET library before any game starts. Two of the eight minor steps after 0.21.0 are recorded by CNA as incompatible (0.28.0 and 0.29.0; see the <a href="../../../docs/c-api.html#version-history">ABI version history</a>). This page is evidence for <code>cna-python@f085bbb</code>, not for TARGET, and native compatibility between the two is not established.</p></div>
+
+<h2 id="layers">Four concerns, physically separated</h2>
+<pre class="diagram">Microsoft.Xna.Framework.*        XNA-shaped Python facade and values
+  → _cna_native.ownership       handle state machine, parent and borrow checks
+  → _cna_native.loader          library selection, admission, route manifest, errors
+  → _cna_native.abi + family *_abi.py / *_manifest.py   ctypes layouts, callbacks, prototypes
+  → ctypes.CDLL → libcna_c_api → CNA C++</pre>
+<p>The public Python hierarchy under <code>Microsoft.Xna.Framework</code> carries the XNA-shaped <code>Game</code>, graphics, input, audio, media, storage and content objects. CNA-specific extensions live in a separate package, <code>cna.extensions</code>, whose own docstring lists the families opened at this commit (renderer identity and selection in <code>cna.extensions.graphics</code>, CNB/CNJ content in <code>cna.extensions.content</code>, the engine layer in <code>cna.extensions.engine</code>) and states that nothing there is reachable from <code>Microsoft.Xna.Framework</code>. Extensions are not substitutes for the strict projection. <code>_cna_native</code> is an internal boundary, not application API: no raw handle and no <code>ctypes</code> object is meant to cross into the public packages.</p>
+<p><code>loader.FUNCTION_MANIFEST</code> is a tuple of <code>(symbol, restype, argtypes, ownership note)</code> rows. The core rows (ABI version, error diagnostics, game, window, renderer identity, graphics, audio, storage, …) live in <a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/src/_cna_native/loader.py"><code>loader.py</code></a> itself; the loader then appends the media manifest, the CNB/CNJ content manifest (plus a curve-codec slice and a native content-manager slice), and the engine, devices, input and online family manifests. The fourth column is the ownership contract the Python wrapper has to keep ("owned game", "borrowed game", "caller output", "consumes registration", …).</p>
+<p>Not every layout module is generated. The core <code>abi.py</code> and <code>cnb_abi.py</code> are reviewed, hand-maintained <code>ctypes</code> layouts whose size, alignment and used field offsets are measured against the C headers by <code>tools/audit_cna_abi.py</code>. <code>devices_abi.py</code>, <code>engine_abi.py</code>, <code>input_abi.py</code> and <code>online_abi.py</code> are generated by <code>tools/generate_family_abi.py</code>, and the devices, input and online manifests by <code>tools/generate_family_manifest.py</code>; both generators have a <code>--check</code> mode that fails when the checked-in copy differs from what the headers produce. The engine and CNB manifests are hand-maintained. Whatever their origin, every imported prototype is proven by <code>tools/verify_prototypes.py</code>, which renders each route from the <code>ctypes</code> manifest as a redundant C declaration in a translation unit that includes the canonical headers, so a C compiler rejects a wrong width, signedness, pointer depth, arity or callback signature. Shared plumbing for the families (checked width conversion, borrowed <code>CNA_StringView</code>, size/copy protocol, rooted callback trampolines) is in <code>_cna_native/family_support.py</code>. A Python feature class cannot safely invent a call signature ad hoc: a route that is not in a manifest is not callable.</p>
+<p><code>pyproject.toml</code> packages the <code>src/</code> tree with setuptools (&ge; 68), declares <code>requires-python = "&gt;=3.10"</code>, version <code>0.1.0.dev0</code> and the classifier <em>Development Status :: 2 - Pre-Alpha</em>. It builds no extension module and links no C++ symbols; the CNA shared library is an explicit runtime dependency selected by the loader. That is the first thing to remember when debugging "the package imports, but <code>Game</code> cannot start": a successful Python installation says nothing about C ABI availability.</p>
+
+<h2 id="loader">Library admission and diagnostic failures</h2>
+<p><code>loader._resolve</code> selects exactly one file, in this order, and never searches build directories on its own:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Step</th><th scope="col">Source</th><th scope="col">Rule</th><th scope="col">Failure</th></tr></thead>
+<tbody>
+<tr><td>1</td><td><code>CNA_NATIVE_LIBRARY</code></td><td>must be an absolute path to an existing file</td><td>relative path: <code>NativeLibraryError</code>; missing file: <code>NativeUnavailableError</code></td></tr>
+<tr><td>2</td><td><code>CNA_NATIVE_DIR</code></td><td>must be an absolute existing directory containing the platform name (<code>libcna_c_api.so</code>, <code>libcna_c_api.dylib</code> or <code>cna_c_api.dll</code>)</td><td>relative: <code>NativeLibraryError</code>; missing directory or no library in it: <code>NativeUnavailableError</code></td></tr>
+<tr><td>3</td><td>packaged <code>_cna_native/native/</code></td><td>the same platform name beside the installed package</td><td>nothing configured: <code>NativeUnavailableError</code> naming both variables and the 0.21.x generation</td></tr>
+</tbody></table></div>
+<p><code>NativeLibrary.__init__</code> opens the file with <code>ctypes.CDLL</code>, binds <code>cna_get_abi_version</code> first and decodes the result with the same <code>major&lt;&lt;16 | minor&lt;&lt;8 | patch</code> packing CNA uses. <code>abi_is_supported</code> requires <code>SUPPORTED_ABI_MAJOR == 0</code> and <code>SUPPORTED_ABI_MINOR == 21</code>; the patch may differ. A mismatch raises <code>NativeAbiMismatchError</code> carrying the expected encoding, the actual one and the path, with a message that a different 0.x minor is a different contract. The loader's module docstring explains the policy: a single <code>ctypes</code> manifest cannot be truthful for two 0.x minors that CNA permits to differ incompatibly, so the binding supports exactly the generation it qualifies against.</p>
+<p>Only after admission does the loader walk the rest of <code>FUNCTION_MANIFEST</code>, assigning <code>restype</code> and <code>argtypes</code> to every route. A missing export raises <code>NativeLibraryError</code> naming the exact symbol, so a drifted artifact is refused as a whole rather than failing on first use. The one exception is the <code>PENDING_ROUTES</code> table, which at this commit has a single entry: <code>cna_network_session_replace_session_properties</code>. Its recorded reason is that the route is declared in <code>net_sessions.h</code> but seven artifacts checked on 2026-09-02 exported 4,054 of the headers' 4,055 routes and lacked this one. The loader binds it to a <code>_PendingRoute</code> stub that raises <code>NativeUnavailableError</code> naming the route, the artifact and the reason when <em>called</em>, and records it in <code>NativeLibrary.pending_routes</code>. It is not a general allowance to mask absent symbols: <code>tools/audit_cna_abi.py</code> reports pending routes separately, fails if a pending route is not declared in the canonical headers, and fails if the artifact actually exports a route still listed as pending (a "stale" entry).</p>
+<div class="callout callout--note"><span class="callout-icon">&#8505;</span><p><strong>At TARGET the pending route exists in source.</strong> <code>cna_network_session_replace_session_properties</code> is declared in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/net_sessions.h"><code>net_sessions.h</code></a>, implemented behind <code>CallWithExceptionBarrier</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiNetSessions.cpp"><code>CnaCApiNetSessions.cpp</code></a>, listed among the 4,055 exports recorded in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/c-api/abi_baseline.json"><code>abi_baseline.json</code></a> and exercised by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/pure_c/NetSmoke.c"><code>NetSmoke.c</code></a>. CNA added it in commit <a href="https://github.com/libcna/cna/commit/7712534d3d22c7e284714e0e87afebba3f3cb472"><code>7712534d3</code></a> (2026-09-01). This is a source-level reading; no artifact was built here. For a maintainer it means the pending entry will turn into a <em>stale</em> audit failure against any artifact that exports the route, and must then be removed.</p></div>
+<p>Every normal C route returns <code>CNA_Result</code> (<code>uint32_t</code>). <code>NativeLibrary.check(result, operation)</code> returns on 0; otherwise it fills a <code>CNA_ErrorInfo</code> (<code>struct_version</code> 1) through <code>cna_error_get_last_info</code>, reads the message with the size-then-copy pair <code>cna_error_get_last_message_size</code> / <code>cna_error_copy_last_message</code>, and raises <code>NativeError</code> with <code>operation</code>, <code>result</code>, <code>category</code>, <code>native_message</code> and an optional <code>context</code>. Callers may translate that into a more XNA-shaped exception: audio creation maps result 6 (<code>CNA_RESULT_NOT_SUPPORTED</code>) to <code>NoAudioHardwareException</code>, and <code>SoundEffect.CreateInstance</code> maps result 3 (<code>CNA_RESULT_INVALID_STATE</code>) to <code>InstancePlayLimitException</code>. CNA keeps the last error per thread (<a href="../../../docs/c-api.html#model">programming model</a>), so a change to a failure path must keep the diagnostic read on the failing thread, immediately after the failing call; another call or another thread can replace it.</p>
+<p><code>get_library()</code> caches one <code>NativeLibrary</code> in a module global under an <code>RLock</code>. Changing <code>CNA_NATIVE_LIBRARY</code> after the first load does not switch the process to another CNA build; only the test hook <code>_reset_for_tests</code> clears the cache. When <code>CNA_PYTHON_ROUTE_LOG</code> names a file, every bound route is wrapped so the set of routes actually called is appended to that file at exit; the route-reachability gate uses that log as evidence (see <a href="#testing">Evidence</a>).</p>
+
+<h2 id="game">Game construction is a two-way callback contract</h2>
+<p><code>Microsoft.Xna.Framework._game._NativeGameHost</code> is created lazily by <code>Game._ensure_host</code> the first time the game needs a native handle (<code>Run</code>, <code>RunOneFrame</code>, <code>ResetElapsedTime</code>, <code>SuppressDraw</code>). It records <code>owner_thread = threading.get_ident()</code> at construction and builds two versioned tables with <code>ctypes</code> callback wrappers:</p>
+<ul>
+<li><code>CNA_GameCallbacks</code> (<code>struct_version</code> 1): <code>load_content</code>, <code>update</code>, <code>draw</code>, <code>unload_content</code>, <code>exiting</code>;</li>
+<li><code>CNA_GameFrameHooks</code> (<code>struct_version</code> 1): <code>initialize</code>, <code>begin_run</code>, <code>end_run</code>, <code>begin_draw</code> (the only one with an extra <code>CNA_Bool*</code> "should draw" output), <code>end_draw</code>.</li>
+</ul>
+<p><code>create()</code> fills <code>CNA_GameCreateInfo</code> with <code>is_fixed_time_step</code>, <code>target_elapsed_time_ticks</code>, the UTF-8 window title as a <code>CNA_StringView</code> and a pointer to the callback table; calls <code>cna_game_create</code>; registers the game with <code>runtime_context</code>; configures the title-storage root; installs the frame hooks with <code>cna_game_set_frame_hooks_ext</code>; pushes inactive-sleep time and mouse visibility; attaches launch parameters, the window and touch; subscribes to game activation/deactivation and window size, orientation and screen-device events; and finally attaches storage and media. <code>Game.Run</code> then calls <code>cna_game_run</code> with the host's C handle; <code>RunOneFrame</code> calls <code>cna_game_run_one_frame</code>.</p>
+<p>Every callback wrapper, including the event callbacks, is appended to <code>_callbacks_keepalive</code> for the lifetime of the host. Without that root, Python's garbage collector could free a trampoline while CNA still holds its C function pointer. Callback error messages are kept alive the same way in <code>_callback_buffers</code> until the next <code>run</code> or <code>destroy</code>, so the pointer CNA reads from <code>CNA_CallbackError.message</code> stays valid until CNA has copied it.</p>
+<p>The callback path (<code>_invoke</code>) first refuses re-entry after a failure: if <code>pending_exception</code> is already set it returns 9 (<code>CNA_RESULT_CALLBACK</code>) without calling Python. Otherwise it checks the owner thread (a non-owner thread becomes a <code>RuntimeError</code>), enters the graphics-device callback context, drains queued framework callbacks, translates <code>CNA_GameTime</code> into <code>GameTime</code> and calls the Python lifecycle method (<code>Draw</code> also advances the media runtime first). It catches <code>BaseException</code>, stores it as <code>pending_exception</code>, writes <code>"TypeName: message"</code> into the native callback error and returns 9 rather than unwinding a Python exception through C++ frames. <code>_finish_call</code> then re-raises the <em>original</em> Python exception at the <code>Game.Run</code> boundary instead of a generic <code>NativeError</code>; <code>destroy</code> likewise does not emit a second, less accurate error when CNA reports the already re-raised callback failure.</p>
+<p><code>Game.Run</code> may be called once; both <code>Run</code> and <code>RunOneFrame</code> set <code>runtime_context</code>'s thread-local current game for their duration and clear it afterwards. Static facades use that context: <code>current_game()</code> answers only on the thread that is inside <code>Run</code>, and <code>live_game()</code> falls back to the single live, undisposed game whose host owner thread is the calling thread, refusing when there is none or more than one. An input or audio call from an unrelated thread is therefore not associated with an arbitrary live <code>Game</code>. This is why callback lifetime and game-thread context belong in any public-API change review (see the <a href="../../takeover/threading.html">thread and callback map</a>). The native side of this contract, including the one-active-game rule and re-entry refusal, is traced in <a href="c-api-internals.html#game">C API internals: game creation</a>.</p>
+<p>Read against TARGET's <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/runtime.h"><code>runtime.h</code></a>, <code>CNA_GameCallbacks</code>, <code>CNA_GameFrameHooks</code>, <code>CNA_GameCreateInfo</code>, <code>CNA_CallbackError</code> and the two callback typedefs have the same members in the same order as the Python layouts at the pin. That is a header reading, not a compiler measurement, and it does not make the pair compatible: the loader refuses 0.29 before any of these structures is used.</p>
+
+<h2 id="ownership">Ownership is explicit, not delegated to Python GC</h2>
+<p><code>_cna_native.ownership.NativeResource</code> is the single handle state machine. Its <code>Ownership</code> enumeration has three modes: <code>OWNED</code>, <code>BORROWED</code> and <code>PARENT_OWNED</code>. The constructor rejects handle 0 with <code>ValueError</code> and, when given a parent, keeps only a weak reference to it and registers itself with the parent's child list if the parent has one.</p>
+<ul>
+<li><strong>Use.</strong> <code>_require_handle</code> refuses a disposed wrapper, runs an optional <code>set_use_validator</code> hook (a borrowed handle can be valid for less time than its wrapper) and refuses when the parent has been collected or disposed.</li>
+<li><strong>Release.</strong> <code>Dispose</code> runs an idempotent <code>set_before_release</code> hook (so a facade's child views are released on every path, including shutdown), calls the C releaser <em>only</em> for <code>OWNED</code>, then marks the wrapper disposed, zeroes the handle, drops rooted objects and unregisters from its parent. If the releaser raises, none of that happens: the wrapper keeps its handle for investigation or retry.</li>
+<li><strong>Callback roots.</strong> <code>retain_for_registration</code> roots a <code>ctypes</code> callback on the owning handle rather than on the facade, because the facade and its closure can form a cycle the collector reclaims while CNA still holds the raw trampoline.</li>
+<li><strong>No finalizer.</strong> No <code>__del__</code> calls CNA, because interpreter shutdown may already have unloaded the dynamic library. Context management (<code>with</code>) and explicit <code>Dispose</code> are the release mechanisms.</li>
+</ul>
+<p><code>Game.Dispose</code> releases in a fixed order: dispose every component and clear <code>Components</code>; dispose <code>Content</code>; release the game's microphone facades; enter the graphics-device callback context and unbind Python-side graphics resources; dispose registered native children; leave the context; dispose the graphics manager; finally destroy the native game host (unsubscribe events in reverse, detach touch and media, <code>cna_game_destroy</code>). Errors are collected and the first one is raised after every step has been attempted. The <code>Game</code>'s own child list holds <em>strong</em> references and releases in reverse registration order, so an unreachable Python wrapper cannot strand a CNA handle past its parent; the separate <code>ChildRegistry</code> helper in <code>ownership.py</code> keeps <em>weak</em> references for facades that are not ownership roots. An object that depends on another child still needs explicit ordering in its own facade.</p>
+<p>A Python object reference does not keep a native child valid after its parent is destroyed: CNA refuses to destroy a game while owned children are alive and invalidates borrowed handles with their owner. Trace the C API's parent/child rules in <a href="c-api-internals.html#handles">C API internals: handles and ownership</a> before adding a wrapper, and see <a href="../runtime/shutdown.html">ownership and shutdown</a> and the <a href="../../takeover/ownership.html">ownership and lifetime master map</a> for the native side.</p>
+
+<h2 id="sound">Representative SoundEffect route</h2>
+<pre class="diagram">Python SoundEffect(buffer, sampleRate, channels)          (or the 7-argument range form)
+  → validate rate, channels, PCM range and loop region; bytes(buffer)
+  → _active_native(): thread-local current Game → host → library, game handle
+  → CNA_SoundEffectCreateInfo(struct_size, struct_version=1, sample_rate, channels)
+  → (c_uint8 * n).from_buffer_copy(payload)
+  → cna_sound_effect_create_pcm16_range_ext(game, info, bytes, n, offset, count,
+                                             loop_start, loop_length, &amp;handle)
+  → NativeResource(OWNED, cna_sound_effect_destroy); game registers the facade as a child
+CreateInstance() → cna_sound_effect_create_instance → OWNED child, weakly listed in the effect
+Play()           → cna_sound_effect_play(handle, &amp;CNA_Bool) → check result, then read the bool
+Dispose()        → child instances in reverse → effect → unregister from Game</pre>
+<p><code>SoundEffect</code> copies the PCM payload into a contiguous <code>ctypes</code> array for the synchronous C call; it never asks native code to borrow a long-lived Python buffer (the C route copies the bytes again into a native vector). <code>_active_native</code> uses the thread-local current game from <code>runtime_context</code>, so a sound effect can be created only on the owner thread while <code>Run</code> or <code>RunOneFrame</code> is active, and only once the host has a native handle. The returned 64-bit handle is attached to an owned <code>NativeResource</code> whose releaser calls <code>cna_sound_effect_destroy</code> through <code>NativeLibrary.check</code>.</p>
+<p><code>CreateInstance</code> creates a native child with <code>cna_sound_effect_create_instance</code>, wraps it in an owned <code>NativeResource</code> released by <code>cna_sound_effect_instance_destroy</code>, and records a weak reference in the effect so <code>Dispose</code> can close live instances first. If any instance fails to dispose, <code>SoundEffect.Dispose</code> raises before releasing the effect, so the parent handle is retained rather than leaked into a state CNA would refuse. <code>Play()</code> checks the <code>CNA_Result</code> separately from the output <code>CNA_Bool</code>; the three-argument form uses <code>cna_sound_effect_play_with_settings</code> after narrowing volume, pitch and pan to <code>float32</code> and range-checking them. <code>FromStream</code> reads the whole stream, validates it in Python as a RIFF/WAVE file with a complete <code>fmt</code>/<code>data</code> pair, mono or stereo PCM16 and 8&ndash;48 kHz, and then passes the encoded bytes through a different route, <code>cna_sound_effect_create_from_encoded_ext</code>.</p>
+<p>At TARGET, every route in this trace is still declared in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/audio.h"><code>audio.h</code></a>, and the declared parameter list of <code>cna_sound_effect_create_pcm16_range_ext</code> and the members of <code>CNA_SoundEffectCreateInfo</code> match the Python manifest and layout by reading. The native half (validation, copy, parent/child counts, destroy refusal) is traced in <a href="c-api-internals.html#audio">C API internals: SoundEffect and instance</a>, and the mixer path in <a href="../audio/engine.html">audio engine internals</a>. Python implements no mixing.</p>
+
+<h2 id="testing">Evidence, gaps and migration procedure</h2>
+<p>The binding separates tests that need a live CNA library from gates that only need headers or a compiler. None of them was executed for this page; the table records what each is written to establish at the pinned commit.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Test or gate</th><th scope="col">Needs</th><th scope="col">What it exercises</th><th scope="col">What it does not prove</th></tr></thead>
+<tbody>
+<tr><td><code>tests/test_native.py</code></td><td><code>CNA_NATIVE_LIBRARY</code> naming an existing file; skipped otherwise</td><td>a 60-frame game with lifecycle events, <code>Texture2D.FromStream</code> of a PNG, <code>SpriteBatch</code>, viewport and input; every non-touch input route; callback exceptions re-raised at <code>Run</code> in several phases and from <code>Dispose</code> for <code>UnloadContent</code>; live resources disposed before their parent game</td><td>anything about a library it did not load (and it cannot load 0.29)</td></tr>
+<tr><td><code>tests/test_audio_backend.py</code></td><td>the same library gate; runs probes in a subprocess with <code>SDL_AUDIODRIVER=dummy</code></td><td>real mixer state transitions, dynamic buffers, capture plumbing and visualization without opening a physical device</td><td>audible output or physical microphone capture (the docstring says so)</td></tr>
+<tr><td><code>tests/test_loader.py</code></td><td>a C compiler (builds tiny fake libraries)</td><td>unconfigured and relative paths, rejection of 0.7.0, of a later minor and of a different major; a patch inside 0.21 accepted, then refused for a named missing symbol</td><td>behaviour of any real CNA build</td></tr>
+<tr><td><code>tests/test_pending_routes.py</code></td><td>no library</td><td>every pending route is imported, carries a reason, raises when called; an undeclared missing symbol still refuses the library</td><td>whether the route exists in a given artifact</td></tr>
+<tr><td><code>tools/audit_cna_abi.py --cna-root … --library …</code></td><td>CNA headers, <code>cc -std=c11</code>, <code>nm -D</code> on an ELF library</td><td>compiles <code>tools/abi_probe.c</code> against the headers and compares sizes, alignments, field offsets and constants with the <code>ctypes</code> side; lists missing, pending, undeclared-pending and stale-pending symbols; exits 1 on any of them</td><td>call behaviour or ownership semantics</td></tr>
+<tr><td><code>tools/verify_prototypes.py</code></td><td>CNA headers and a C compiler</td><td>every imported prototype as a redundant C declaration</td><td>that the route is exported or behaves as documented</td></tr>
+<tr><td><code>tools/verify_route_reachability.py</code></td><td>the package source (AST walk), plus the observed-route log and an admitted list</td><td>every bound route has a real call site in shipped code, was observed through <code>CNA_PYTHON_ROUTE_LOG</code>, or is explicitly admitted; names in comments, docstrings or manifests do not count</td><td>correctness of the call</td></tr>
+<tr><td><code>tools/native_ownership_stress.py</code>, <code>tools/audio_ownership_stress.py</code></td><td>a configured CNA library</td><td>repeated real game/resource create-dispose cycles</td><td>anything on a library the loader refuses</td></tr>
+</tbody></table></div>
+<p>The binding's README reports two qualified artifacts, both on Linux x86-64 with the SDL3 mixer (HEADLESS and OPENGLES3 renderers) and necessarily of the 0.21 generation, since the loader admits nothing else, and marks Windows, macOS, Android and iOS as not verified. Those are the binding's own claims for its own revision; they are not TARGET results. A passing pure-Python suite cannot substitute for the ABI, prototype and reachability gates.</p>
+<h3 id="after-021">What the post-0.21 ABI steps touch in this binding</h3>
+<ul>
+<li><strong>0.29.0</strong> removed <code>cna_sprite_batch_draw_mesh_ext</code> and <code>CNA_SpriteMeshEXT</code>. The binding's generated route census (<code>docs/generated/cna-route-census.json</code>: 4,055 canonical routes, 2,626 bound at this commit) classifies that route as a deliberate non-binding, and no source file at the pin calls it.</li>
+<li><strong>0.28.0</strong> retired 25 renderer identities and made their numeric values permanently reserved; TARGET's routes refuse a retired value with <code>CNA_RESULT_INVALID_ARGUMENT</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/graphics.h"><code>graphics.h</code></a>, comment above <code>CNA_GRAPHICS_RENDERER_MAXIMUM</code>). The <code>Renderer</code> enumeration in <code>cna.extensions.graphics</code> at the pin lists 39 identity values besides <code>Unknown</code>, 14 of which are among those retired values. That enumeration, and anything that selects or reports a renderer through it, is part of any migration.</li>
+<li><strong>0.22.0 to 0.27.0</strong> are described by CNA as additive, but "additive" does not mean "admitted": the loader refuses every minor other than 21 by design.</li>
+</ul>
+<p>To migrate to ABI 0.29, in this order:</p>
+<ol>
+<li>Diff the TARGET C headers and CNA's ABI versioning record against the 0.21 generation the binding was written for.</li>
+<li>Regenerate the generated family layouts and manifests (<code>generate_family_abi.py</code>, <code>generate_family_manifest.py</code>), and re-audit the hand-maintained <code>abi.py</code>, <code>cnb_abi.py</code>, core loader manifest, CNB and engine manifests: structures, callback types, enums (including the renderer identities above) and constants.</li>
+<li>Classify every changed ownership, thread and callback contract, and remove <code>PENDING_ROUTES</code> entries the new artifact exports.</li>
+<li>Only then change <code>SUPPORTED_ABI_MINOR</code>.</li>
+<li>Build or obtain exactly one TARGET library, select it by absolute path, and run <code>audit_cna_abi.py</code>, <code>verify_prototypes.py</code>, <code>verify_route_reachability.py</code>, the native lifecycle tests, the audio subprocess tests and the ownership stress tools against it.</li>
+</ol>
+<p>Do not skip from a constant edit to a green unit test. No Python integration run against 0.29 is recorded here; the loader rejects that library by design. The in-tree side of the same procedure is <a href="../../handbook/update-the-c-api.html">Update the C API</a>, and the ABI conventions any wrapper must mirror are summarised in <a href="c-api-internals.html#invariants">C API internals: validation and ABI evolution</a>.</p>
+
+<h2 id="reading">Read in this order</h2>
+<ol class="source-list">
+<li><a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/src/_cna_native/loader.py"><code>src/_cna_native/loader.py</code></a> and <a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/src/_cna_native/abi.py"><code>abi.py</code></a>: establish the exact ABI the projection admits, the resolution order, the route manifest and the wire types; then <a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/src/_cna_native/errors.py"><code>errors.py</code></a> for the exception hierarchy.</li>
+<li><a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/src/Microsoft/Xna/Framework/_game.py"><code>src/Microsoft/Xna/Framework/_game.py</code></a> and <a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/src/_cna_native/runtime_context.py"><code>runtime_context.py</code></a>: trace native <code>Game</code> creation, callback roots, exception re-raise and the owner-thread static API context.</li>
+<li><a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/src/_cna_native/ownership.py"><code>src/_cna_native/ownership.py</code></a>: learn dispose, borrow validity and callback retention before adding a resource facade.</li>
+<li><a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/src/Microsoft/Xna/Framework/Audio/_sound.py"><code>Audio/_sound.py</code></a> and <a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/tests/test_audio_backend.py"><code>tests/test_audio_backend.py</code></a>: compare Python's synchronous marshalling with the mixer evidence and its stated limits.</li>
+<li><a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/tools/audit_cna_abi.py"><code>tools/audit_cna_abi.py</code></a>, <a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/tools/verify_prototypes.py"><code>tools/verify_prototypes.py</code></a>, <a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/tools/verify_route_reachability.py"><code>tools/verify_route_reachability.py</code></a> and <a href="https://github.com/libcna/cna-python/blob/f085bbb54c57bea553cff9b48898c11f3c49a77d/tests/test_native.py"><code>tests/test_native.py</code></a>: learn which evidence is ABI-level and which requires a real runtime library.</li>
+<li>For the CNA side of every route above: <a href="c-api-internals.html">C API internals</a>, then the sibling projections <a href="csharp.html">C#</a> and <a href="java.html">Java</a>, and <a href="../../architecture/bindings.html">C API and bindings architecture</a> for where bindings sit relative to CNA. The user-facing binding table (status and admission rule of every public binding) is in the <a href="../../../docs/c-api.html#bindings">C API guide</a>.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/c-api.html#bindings">C API guide: bindings boundary</a> &middot; <a href="../../../docs/c-api.html#model">C API programming model</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/bindings.html">C API and bindings architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="c-api-internals.html">C API internals</a> &middot; <a href="csharp.html">C# binding internals</a> &middot; <a href="java.html">Java binding internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/update-the-c-api.html">Update the C API</a> &middot; <a href="../../takeover/ownership.html">Ownership and lifetime master map</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/public-headers.html">Public header index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="java.html" rel="prev"><span>Previous</span>Java binding internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
