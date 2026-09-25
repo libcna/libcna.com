@@ -14,7 +14,8 @@ Inputs (all under audit/data/adversarial/):
 Automatic (no decision needed): the `tests_present` flag, text corrections of CORRECTED / NARROWED entries and the evidence-basis label.
 Needs an explicit decision (listed by `plan`, applied only when decisions.json says so): a severity change, RECLASSIFIED, DUPLICATE, FIXED AT TARGET / NOT A BUG / INSUFFICIENT EVIDENCE (retirement),
 and every restored dismissal.  decisions.json:
-  {"issues": {"CNA-BUG-nnn": {"action": "accept" | "reject" | "override", "note": "...", "set": {...}, "severity": "...", "class": "...", "duplicate_of": "...", "retire": "NOT A BUG|...", "evidence": "..."}},
+  {"issues": {"CNA-BUG-nnn": {"action": "accept" | "reject" | "override", "note": "...", "set": {...}, "severity": "...", "class": "...", "duplicate_of": "...", "retire": "NOT A BUG|...", "evidence": "...",
+                             "fold_into": "CNA-BUG-mmm", "retire_as": "NOT A BUG|PROVEN FIXED|OBSOLETE|INSUFFICIENT EVIDENCE", "reclassify_to": "functional-gap"}},
    "dismissals": {"CNA-BUG-0nn": {"action": "accept" | "reject", "entry": {... complete entry with temp id NEW-AUDIT-nn ...}}},
    "new_findings": [{... complete entry, temp id NEW-AUDIT-nn, cand_ids [] and an origin starting "new finding" ...}]}
   reject = keep the entry exactly as published (the reviewer's proposal is dropped); accept = apply the proposal; override = apply `set` / `severity` / ... as written here instead.
@@ -196,6 +197,13 @@ def build(rv: dict[str, dict], dec: dict, files: set[str]) -> tuple[dict, list[s
             if d.get("severity"):
                 sets["severity"] = d["severity"]
             sets.update(d.get("set", {}))
+            # manual outcomes, independent of any reviewer verdict
+            if d.get("fold_into"):
+                patch["folded"][iid] = d["fold_into"]
+            if d.get("retire_as"):
+                patch["retired"][iid] = {"classification": d["retire_as"], "evidence": d.get("evidence") or d.get("note", "")}
+            if d.get("reclassify_to"):
+                patch["reclassified"][iid] = {"class": d["reclassify_to"], "set": {}}
             if verdict == "RECLASSIFIED" and (d.get("class") or r.get("class_after")):
                 patch["reclassified"][iid] = {"class": d.get("class") or r["class_after"], "set": {}}
             elif verdict == "DUPLICATE" and (d.get("duplicate_of") or r.get("duplicate_of")):

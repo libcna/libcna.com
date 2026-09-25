@@ -81,3 +81,12 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 74 | `docs/audio.html` (MIDI) | MIDI is switched off | the pinned SDL_mixer (3075d3ed) turns its Timidity MIDI decoder on by default and CNA's build does not turn it off (B11, read from CMake; nothing built) — re-verify | B11 | fixed — SDL_mixer `3075d3ed` CMake: `SDLMIXER_MIDI`/`SDLMIXER_MIDI_TIMIDITY` default ON, CNA sets only `SDLMIXER_MIDI_FLUIDSYNTH=OFF`; page says "probably compiled" (read, not built) |
 | 75 | `deep-dives/renderers/direct3d11-and-12-resources.html#mrt-finalization` (our page, WP10) | no MRT+mipMap fixture was identified | the fixture exists: `bound_target_lifetime_test` leg L1, registered for DIRECTX11/12 (B10) | B10 | fixed |
 | 76 | `deep-dives/renderers/windows-2d-renderers.html#d2d-formats` (our page, WP11) | advises setting `DepthFormat::None` for DIRECT2D | DIRECT2D never receives Depth24 on the Game path: `Reset` normalises it to None (B10) | B10 | fixed |
+
+## Post-Phase-3 adversarial audit additions
+
+Found by the independent adversarial audit (2026-09-25/26): statements the Phase-3 errata pass missed. Both are protected root pages, so only the sentence was changed.
+
+| # | Page#anchor | Statement | TARGET fact and evidence | Reported by | Status |
+|---|---|---|---|---|---|
+| 77 | `roadmap.html` (Experimental C API card) | "Its release gate has one unmet criterion: 468 public C++ symbols are still unmapped" | `python3 tools/c-api/check_release_gate.py --run` in the read-only TARGET tree prints two `NOT MET` criteria (`coverage-closed`, `limitations-matrix`: the scope model does not classify `modules/design`, `modules/diagnostics`, `modules/inspector`) and eight `met`; "one unmet" is what the committed report records (the same correction as errata 51 and 63 on `docs/c-api.html`) | adversarial audit | fixed |
+| 78 | `features.html` (C API status) | "its own release gate reads “Not ready” because of those 468" | same measurement: the gate stops earlier than the 468-row criterion; the 468 are the committed report's reason, not the measured one | adversarial audit | fixed |
