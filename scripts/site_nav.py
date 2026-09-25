@@ -132,7 +132,8 @@ def head_block(rel: str, title: str, description: str, root_prefix: str, kind: s
 def nav_block(root_prefix: str, active: str) -> str:
     items = [("index.html", "Home"), ("about.html", "About"), ("features.html", "Features"),
              ("architecture.html", "Architecture"), ("documentation.html", "Documentation"),
-             ("development/index.html", "Development"), ("tutorials.html", "Tutorials"), ("demos.html", "Demos"), ("showcase.html", "Showcase"),
+             ("development/index.html", "Development"), ("deep-dives/index.html", "Deep Dives"),
+             ("known-issues/index.html", "Known Issues"), ("tutorials.html", "Tutorials"), ("demos.html", "Demos"), ("showcase.html", "Showcase"),
              ("videos.html", "Videos"), ("roadmap.html", "Roadmap"), ("contact.html", "Contact"),
              ("network.html", "Network"), ("search.html", "Search")]
     links = "\n".join(

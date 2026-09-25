@@ -19,6 +19,11 @@ Phase 2 uses the same engine against the PHASE1_BASE inventory with a stricter s
         baseline    audit/data/phase2-baseline-inventory.json   (inventory of 94d758a)
         dispositions audit/data/phase2-dispositions.json
         page-shrink / block-shrink fire on a >10% reduction (Phase 1: 40% / 50%)
+
+Phase 3 does the same against the PHASE2_BASE inventory (2c4970c):
+    compare_presentation.py --phase3 [--report audit/phase3-presentation-comparison.md]
+        baseline    audit/data/phase3-baseline-inventory.json
+        dispositions audit/data/phase3-dispositions.json
 """
 
 from __future__ import annotations
@@ -37,6 +42,8 @@ BASELINE = ROOT / "audit" / "data" / "phase1-baseline-inventory.json"
 DISPOSITIONS = ROOT / "audit" / "data" / "phase1-dispositions.json"
 PHASE2_BASELINE = ROOT / "audit" / "data" / "phase2-baseline-inventory.json"
 PHASE2_DISPOSITIONS = ROOT / "audit" / "data" / "phase2-dispositions.json"
+PHASE3_BASELINE = ROOT / "audit" / "data" / "phase3-baseline-inventory.json"
+PHASE3_DISPOSITIONS = ROOT / "audit" / "data" / "phase3-dispositions.json"
 # fraction of the baseline size below which a block / page counts as shrunk
 BLOCK_KEEP = 0.5
 PAGE_KEEP = 0.6
@@ -203,10 +210,17 @@ def main() -> int:
     ap.add_argument("--quiet", action="store_true")
     ap.add_argument("--phase2", action="store_true",
                     help="compare against the PHASE1_BASE inventory with the strict 10%% shrink guard")
+    ap.add_argument("--phase3", action="store_true",
+                    help="compare against the PHASE2_BASE inventory with the strict 10%% shrink guard")
     args = ap.parse_args()
 
-    baseline_path, disp_path = (PHASE2_BASELINE, PHASE2_DISPOSITIONS) if args.phase2 else (BASELINE, DISPOSITIONS)
-    if args.phase2:
+    if args.phase3:
+        baseline_path, disp_path = PHASE3_BASELINE, PHASE3_DISPOSITIONS
+    elif args.phase2:
+        baseline_path, disp_path = PHASE2_BASELINE, PHASE2_DISPOSITIONS
+    else:
+        baseline_path, disp_path = BASELINE, DISPOSITIONS
+    if args.phase2 or args.phase3:
         BLOCK_KEEP = PAGE_KEEP = 0.9
     baseline_doc = json.loads(baseline_path.read_text(encoding="utf-8"))
     base = baseline_doc["pages"]
@@ -234,8 +248,8 @@ def main() -> int:
                 break
         (explained if loss.disposition else unexplained).append(loss)
 
-    phase = "Phase-2" if args.phase2 else "Phase-1"
-    if not args.phase2:
+    phase = "Phase-3" if args.phase3 else ("Phase-2" if args.phase2 else "Phase-1")
+    if not (args.phase2 or args.phase3):
         baseline_label = "be35902"
     lines = [f"# {phase} presentation comparison (baseline `{baseline_label}` vs working tree)", "",
              f"- baseline pages compared: {len(base) if not args.page else len(args.page)}",
