@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Diagnostics and profiler internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s diagnostics module works inside: build level versus runtime mode, one measured Game frame, lock and ring ownership, zone and recording rules, trace export and which tests compile at which level.">
+  <meta name="keywords" content="diagnostics, cna_diagnostics, cna_diagnostics_level, profiler, frame scope, zone, ring buffer, idiagnosticsprovider, resourcehandle, cnatrace, chrome trace, cnadiagnosticstests">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/modules/diagnostics.html">
+  <meta property="og:title" content="Diagnostics and profiler internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s diagnostics module works inside: build level versus runtime mode, one measured Game frame, lock and ring ownership, zone and recording rules, trace export and which tests compile at which level.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/modules/diagnostics.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Diagnostics and profiler internals","description":"How CNA's diagnostics module works inside: build level versus runtime mode, one measured Game frame, lock and ring ownership, zone and recording rules, trace export and which tests compile at which level.","url":"https://libcna.com/development/internals/modules/diagnostics.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="core.html" class="docs-nav-link is-group-active">Module internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="math.html" class="docs-nav-link">Math</a></li>
+        <li><a href="design.html" class="docs-nav-link">Design converters</a></li>
+        <li><a href="storage.html" class="docs-nav-link">Storage</a></li>
+        <li><a href="media.html" class="docs-nav-link">Media</a></li>
+        <li><a href="video-ffmpeg.html" class="docs-nav-link">FFmpeg video</a></li>
+        <li><a href="devices.html" class="docs-nav-link">Devices &amp; sensors</a></li>
+        <li><a href="devices-ext.html" class="docs-nav-link">Device host services</a></li>
+        <li><a href="diagnostics.html" class="docs-nav-link active" aria-current="page">Diagnostics</a></li>
+        <li><a href="inspector.html" class="docs-nav-link">Inspector</a></li>
+        <li><a href="phone.html" class="docs-nav-link">Phone</a></li>
+        <li><a href="gamer-services.html" class="docs-nav-link">Gamer services</a></li>
+        <li><a href="graphics-ext.html" class="docs-nav-link">Graphics extensions</a></li>
+        <li><a href="net.html" class="docs-nav-link">Network sessions</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="core.html">Modules</a></li>
+        <li aria-current="page">Diagnostics</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Diagnostics and profiler internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#build">Three build modes, then a runtime ceiling</a></li>
+          <li><a href="#frame">One measured Game frame</a></li>
+          <li><a href="#state">Ownership and concurrency of records</a></li>
+          <li><a href="#trace">Zones, recording and export failures</a></li>
+          <li><a href="#debug">A human investigation recipe</a></li>
+          <li><a href="#tests">What the diagnostics corpus proves</a></li>
+          <li><a href="#reading">Curated source route</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Module internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Checked by reading the TARGET sources and tests; no build or test was executed, and no CI lane builds STATS or FULL. Sizes quoted are computed from declared capacities, not measured. Renderer-specific diagnostics sources do not exist yet, and consumer UIs (the Inspector's browser page) remain unverified.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics"><code>modules/diagnostics/</code></a> is a bounded, process-wide measurement layer: compile-time instrumentation, counters, gauges, frame samples, CPU zones, markers, resource metadata, bounded recording and a pull-only provider. It does not own <code>Game</code>, render a profiler UI, start a thread or open a socket. This page is for maintainers who change the instrumentation, the frame path, the ring buffers or the trace formats, and for anyone who must tell &ldquo;the code ran&rdquo;, &ldquo;the work was counted&rdquo; and &ldquo;a trace captured it&rdquo; apart. The user-level guide, with the macro table, the built-in metric names and the limits table, is <a href="../../../docs/diagnostics.html">Diagnostics</a>; this page does not repeat those tables but explains the machinery behind them.</p>
+
+<h2 id="build">Three build modes, then a runtime ceiling</h2>
+<p>The root <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakeLists.txt"><code>CMakeLists.txt</code></a> defines the cache variable <code>CNA_DIAGNOSTICS</code>, default <code>OFF</code>. It is upper-cased, anything other than <code>OFF</code>, <code>STATS</code> or <code>FULL</code> is a <code>FATAL_ERROR</code>, and the value is mapped to <code>CNA_DIAGNOSTICS_LEVEL</code> 0, 1 or 2. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a> then puts <code>CNA_DIAGNOSTICS_LEVEL=${CNA_DIAGNOSTICS_LEVEL}</code> on the <code>cna_build_config</code> interface target, which <code>cna_add_module</code> links <code>PUBLIC</code> into every module and which reaches every consumer through the <code>CNA</code> umbrella. The level is therefore a build-configuration fact, not a per-target switch. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/include/CNA/Diagnostics/Diagnostics.hpp"><code>Diagnostics.hpp</code></a> defaults a missing definition to 0 and turns a value outside 0&ndash;2 into <code>#error</code>.</p>
+<p>The level must be identical in every translation unit for a reason stronger than macro consistency: it changes class layout. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsResource.hpp"><code>GraphicsResource.hpp</code></a> declares the member <code>CNA::Diagnostics::ResourceHandle diagnosticResource_</code> and the method <code>UpdateDiagnosticResourceEXT</code> only when the level is at least 1. A consumer compiled at a different level from the graphics library sees a different <code>GraphicsResource</code>, which is an ODR violation, not a missing feature.</p>
+<p>What each level removes is decided in two places:</p>
+<ul>
+<li><strong>Macros.</strong> <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/include/CNA/Diagnostics/Instrumentation.hpp"><code>Instrumentation.hpp</code></a> defines the counter, gauge, frame-counter and frame-scope macros at level 1 and above, and the zone and event macros only at level 2. A disabled macro expands to <code>CNA_DIAGNOSTICS_DETAIL_CHECK</code>, that is <code>do { (void) sizeof((args)); } while (false)</code>: the arguments are type-checked but never evaluated, so an argument with a side effect silently disappears in an <code>OFF</code> build. The disabled <code>CNA_DIAGNOSTICS_FRAME_SCOPE()</code> is an empty statement. Enabled macros declare a function-local <code>static const</code> handle whose name is made unique with <code>__COUNTER__</code> (or <code>__LINE__</code>), so registration happens once per call site under C++ thread-safe static initialisation.</li>
+<li><strong>Implementation.</strong> In <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/src/Diagnostics.cpp"><code>Diagnostics.cpp</code></a> the whole <code>State</code>, every registry and the frame logic sit under <code>#if CNA_DIAGNOSTICS_LEVEL &gt;= 1</code>; the name registry, thread contexts and event history sit under <code>&gt;= 2</code>. At level 0 the handle constructors are empty, <code>GetRuntimeMode</code> returns <code>Mode::Off</code>, and <code>GetProvider().CaptureSnapshot()</code> fills only <code>buildMode</code> and <code>runtimeMode</code>. The library is still linked; it simply holds no state.</li>
+</ul>
+<p>At run time <code>SetRuntimeMode</code> refuses any mode above the <code>constexpr</code> <code>GetBuildMode()</code>. When it accepts, it exchanges the atomic mode and, if the value actually changed, increments <code>modeGeneration</code>. <em>Every</em> change bumps the generation, not only a change out of <code>Off</code>: a <code>Full</code>&rarr;<code>Stats</code>&rarr;<code>Full</code> cycle also invalidates open zones (see <a href="#trace">zones</a>). A runtime <code>Off</code> in a <code>STATS</code> or <code>FULL</code> build keeps all storage allocated; it makes metric updates, resource registration, frame begins and event emission return early. It cannot create <code>FULL</code> events in a binary compiled at a lower level.</p>
+<p>Physically, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/CMakeLists.txt"><code>modules/diagnostics/CMakeLists.txt</code></a> globs <code>src/*.cpp</code> into the static <code>cna_diagnostics</code> (<code>CNA::Diagnostics</code>), which links only <code>cna_build_config</code>: standard library, no UI, renderer or platform dependency. It is linked <code>PUBLIC</code> by the four modules that publish into it or read it: <code>cna_audio</code> (voice metrics), <code>cna_graphics_core</code> (draw metrics and resource metadata), <code>cna_runtime</code> (the frame) and <code>cna_inspector</code> (the consumer), and it is listed in the <code>CNA</code> umbrella's runtime parts. A benchmark executable is added only when <code>CNA_BUILD_BENCHMARKS</code> is on. See <a href="../../reference/modules.html#inventory">the module index</a> for the module's place in the tree.</p>
+
+<h2 id="frame">One measured Game frame</h2>
+<pre class="diagram">Game::Tick()                       (native loop, RunOneFrame; Emscripten: EmscriptenMainLoopCallback)
+  FrameScope ctor -&gt; TryBeginFrame      [STATS+]  frameMutex; nested begin -&gt; malformedFrames++
+  ZoneScope "Game/Tick" (Core)          [FULL]
+    fixed-step sleep / yield, PollEvents
+    { ZoneScope "Game/Update" } Update  -&gt; Runtime/UpdateCount   (once per fixed step)
+    { ZoneScope "Game/Draw"   } Draw + EndDraw (Present) -&gt; Runtime/DrawCount
+  ~ZoneScope "Game/Tick"               zone event pushed to this thread's ring
+  ~FrameScope -&gt; FinishFrame(false)
+     thread_local completingFrame guard      re-entry -&gt; refused
+     lock frameCompletionMutex               (held to the end)
+       frameMutex: frame still active?       no -&gt; return
+       CollectDiagnosticsSources             copy shared_ptrs under sourceMutex, Collect() unlocked
+       frameMutex + metricMutex:             duration = now - start; frameActive = false
+          every FrameCounter: exchange(0) -&gt; lastFrameValue, first 64 into the 240-slot frame ring
+       [FULL] "Frame" event (correlation = frame number), CollectEvents()
+consumers, any thread: GetProvider().CaptureSnapshot() / ReadEvents(after, max)</pre>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a> declares <code>CNA_DIAGNOSTICS_FRAME_SCOPE()</code> first and the <code>Game/Tick</code> zone second in both <code>Game::Tick</code> and <code>Game::EmscriptenMainLoopCallback</code>. Destruction runs in reverse, so the <code>Game/Tick</code> zone is already in the thread ring when frame completion drains it. <code>RunOneFrame</code> reaches the same scopes through <code>Tick</code>; a suspended mobile game in <code>WaitWhileSuspended</code> publishes no frames at all.</p>
+<p>Two timing consequences follow from where the scope sits, and both matter when a number looks wrong:</p>
+<ul>
+<li>On native builds the frame covers the fixed-step pacing wait, <code>PollEvents</code> and the <code>Present</code> inside <code>EndDraw</code>. A fixed-step game's <code>FrameSample::durationNs</code> therefore sits near the target step even when the work is small; the <code>Game/Update</code> and <code>Game/Draw</code> zones isolate the work.</li>
+<li>On Emscripten, <code>Game::RunLoop</code> calls <code>CNA_WaitForAnimationFrame</code> <em>outside</em> the callback, so the frame measures the callback's work only. <code>framesPerSecond</code>, computed as 10<sup>9</sup>/<code>durationNs</code> of that single frame (pinned by <code>FrameHistoryIsBoundedOrderedAndReportsExactFps</code>), is a work rate there, not the display rate. This is read from the loop structure; it was not observed in a browser.</li>
+</ul>
+<p><code>TryBeginFrame</code> returns false in runtime <code>Off</code>; otherwise, under <code>frameMutex</code>, it refuses a second begin while a frame is active (counted in <code>malformedFrameCount</code>), records the start timestamp and increments <code>currentFrameNumber</code>. Events therefore carry the number of the frame in which they were emitted, and the frame number advances at begin, not at end. The measured duration ends <em>after</em> the sources have been collected, so a slow source lengthens the frame it reports on.</p>
+<p>The frame is one process-wide state, not per <code>Game</code> or per thread. <code>EndFrame</code> passes <code>reportMalformed = true</code>, while the <code>FrameScope</code> destructor passes <code>false</code>. Read together, this means application code that adds its own <code>BeginFrame</code>/<code>EndFrame</code> inside <code>Update</code> gets its begin counted as malformed, and its <code>EndFrame</code> completes <code>Game</code>'s frame early; <code>Game</code>'s own scope then finds no active frame and ends silently. No test covers this interaction; it follows from reading <code>FinishFrame</code>.</p>
+<p>The engine's other publishing sites are ordinary macro or handle calls, all renderer-neutral: the draw entry points of <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a> call <code>RecordGraphicsDraw</code> <em>after</em> the renderer call returns, so a rejected or throwing draw is not counted, and the same file counts effect and render-target changes; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/TextureCollection.cpp"><code>TextureCollection.cpp</code></a> counts texture-slot changes; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/SpriteBatch.cpp"><code>SpriteBatch.cpp</code></a> counts sprite submissions; both mixer engines, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/audio/src/Backend/CnaMixer/MixerEngine.cpp"><code>CnaMixer/MixerEngine.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/audio/src/Backend/Sdl3Mixer/MixerEngine.cpp"><code>Sdl3Mixer/MixerEngine.cpp</code></a>, maintain the voice gauge and creation counter. The names are listed in <a href="../../../docs/diagnostics.html#builtin">What the engine already measures</a>. For the surrounding frame, see the <a href="../runtime/frame.html">one-frame source trace</a>.</p>
+
+<h2 id="state">Ownership and concurrency of records</h2>
+<p><code>GetState()</code> allocates one <code>State</code> with <code>new</code> on first use and never deletes it: thread-local context destructors can publish their final events after ordinary namespace statics would already have been destroyed. Its fixed arrays dominate its size; computed from the declared capacities (not measured), that is roughly 0.3&nbsp;MiB in <code>STATS</code>, mostly the 240-frame ring with room for 64 metric values per frame, and about 2.5&nbsp;MiB in <code>FULL</code>, where the 32,768-entry event history of 72-byte records is added. Each producer thread in <code>FULL</code> adds a context of roughly 74&nbsp;KiB. <code>Snapshot::profilerOwnedBytes</code> reports exactly <code>sizeof(State)</code> plus one <code>sizeof(ThreadContext)</code> per live context, so it is a lower bound that ignores heap held by names, maps and resource records.</p>
+
+<h3 id="locks">Lock and thread map</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">Lock</th><th scope="col">Guards</th><th scope="col">Nesting observed in the source</th></tr></thead><tbody>
+<tr><td><code>metricMutex</code></td><td>metric slots' names and signatures, the name-to-id map, the metric count</td><td>innermost; taken inside <code>frameMutex</code> by frame completion and by the snapshot's frame copy</td></tr>
+<tr><td><code>frameCompletionMutex</code></td><td>serialises whole frame completions</td><td>outermost; held while sources run and, in <code>FULL</code>, while <code>threadMutex</code>/<code>historyMutex</code> are taken to drain</td></tr>
+<tr><td><code>frameMutex</code></td><td><code>frameActive</code>, start timestamp, the 240-slot frame ring</td><td>inside <code>frameCompletionMutex</code>; outside <code>metricMutex</code></td></tr>
+<tr><td><code>sourceMutex</code></td><td>the source-id &rarr; <code>shared_ptr</code> map</td><td>never held while a source runs</td></tr>
+<tr><td><code>resourceMutex</code></td><td>resource records and the saturating byte total</td><td>alone; resource events are emitted after it is released</td></tr>
+<tr><td><code>nameMutex</code> (FULL)</td><td>event-name table, capped at 65,536 entries and 16&nbsp;MiB</td><td>alone</td></tr>
+<tr><td><code>threadMutex</code> (FULL)</td><td>the list of live thread contexts</td><td>outside <code>historyMutex</code> (drain)</td></tr>
+<tr><td><code>historyMutex</code> (FULL)</td><td>the 32,768-event process ring, sequence counter, overwrite count</td><td>innermost of the event path</td></tr>
+</tbody></table></div>
+<p>Metric <em>updates</em> take no lock: a handle stores a slot id, and <code>AddMetric</code>/<code>SetMetric</code> do one relaxed load of the runtime mode and one relaxed atomic on the slot. Registration takes <code>metricMutex</code>, keys the slot by the UTF-8-sanitised name, and returns the existing id only if kind, unit and accuracy match; a conflicting signature, an empty or oversized name, a registration beyond the 512-metric cap or an exception all yield id 0, an inert handle. Ids are slot index + 1 and are never reused. See <a href="../../takeover/threading.html">the thread and callback map</a> for how these locks sit beside the rest of CNA's threads.</p>
+<p>In <code>FULL</code>, each producer thread lazily creates a <code>ThreadContext</code> on its first event or zone and registers it under <code>threadMutex</code>. The context is a single-producer/single-consumer ring of 1,024 events: the owning thread writes a slot only while <code>writeIndex - readIndex &lt; 1024</code> and publishes with a release store of <code>publishedWriteIndex</code>; any thread that holds <code>threadMutex</code> may drain it, copying events into the process history under <code>historyMutex</code> and advancing <code>readIndex</code> with a release store. The zone stack (64 entries), the correlation counter and the context's mode generation belong to the producer alone. Thread ids come from an atomic counter starting at 1 and are never reused; exhausting the 64-bit space would count a drop rather than wrap. A <code>thread_local</code> holder drains and deletes the context when its thread exits.</p>
+<p>Draining happens only at frame completion, in <code>CaptureSnapshot</code> and <code>ReadEvents</code>, in <code>StartRecording</code>/<code>StopRecording</code> and at thread exit. A worker thread that emits more than 1,024 events between two of those points drops the newest ones (<code>producerEventsDropped</code>), while the process history overwrites its <em>oldest</em> entries (<code>eventHistoryOverwrites</code>). The drainer is often not the producer: the Inspector agent's worker thread calls the provider from <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/Agent.cpp"><code>Agent.cpp</code></a>, so a <code>FULL</code> snapshot there drains the game thread's ring, and a long history copy under <code>historyMutex</code> can delay the game thread's frame completion. That is why <code>ReadEvents</code> starts at the first unseen sequence instead of scanning the ring.</p>
+<p>Sources are owned by the registry: <code>RegisterSource</code> stores a <code>shared_ptr&lt;IDiagnosticsSource&gt;</code> under a fresh id, and the move-only <code>SourceRegistration</code> erases it on <code>Reset</code> or destruction. Completion copies the owners first, so a source may unregister itself from <code>Collect</code> without deadlock and stays alive while it runs. The corollary is that <code>Reset</code> does not wait: a source can be called once more, on the frame-ending thread, after its registration was reset elsewhere. A throwing <code>Collect</code> increments <code>sourceCollectionFailures</code>. No production code registers a source at the snapshot, so this contract is exercised only by tests.</p>
+<p><code>ResourceHandle</code> owns a metadata id, not the resource. Ids are monotonically increasing and never reused; registration returns 0 in runtime <code>Off</code> and on exhaustion; <code>Update</code> replaces the record in place; move construction and assignment transfer the one live id; the byte total saturates at <code>UINT64_MAX</code> and is recomputed from the records once an update or removal happens while saturated. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsResource.cpp"><code>GraphicsResource.cpp</code></a> registers <em>every</em> <code>GraphicsResource</code> at construction with an empty descriptor (<code>ResourceKind::Unknown</code>, 0 bytes); textures, render targets and buffers then call <code>UpdateDiagnosticResourceEXT</code> with typed metadata built by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Graphics/DiagnosticResource.hpp"><code>DiagnosticResource.hpp</code></a> (estimated payload for textures, exact logical capacity for buffers). State objects and effects therefore appear as Unknown zero-byte records; an assignment that shares a resource identity drops the alias's registration so one identity has one record; <code>Dispose</code> resets the handle. A resource created during a runtime <code>Off</code> window is never registered, even after the mode returns. None of this is a GPU allocation census: compare it with real <code>GraphicsResource</code> and backend lifetime, as described in <a href="../../takeover/ownership.html">the ownership master map</a>.</p>
+<p><code>CaptureSnapshot</code> returns owned copies but is not one atomic transaction: in <code>FULL</code> it first drains all rings (a side effect), then copies metrics, frames, resources and counters under separate locks, one after another. Two sections of one snapshot can reflect different instants.</p>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Gauges maintained by deltas drift across a runtime <code>Off</code> window.</strong> <code>AddMetric</code> and <code>SetMetric</code> discard updates while the runtime mode is <code>Off</code>, and nothing resynchronises a gauge afterwards. <code>Audio/AllocatedVoices</code> is kept with <code>+1</code>/<code>-1</code> deltas, so voices created or destroyed while diagnostics were lowered to <code>Off</code> leave it wrong (possibly negative) until mixer-engine shutdown sets it back to 0. <code>OffStatsAndFullTransitionsPreserveMetricSemantics</code> covers a cumulative counter only. Derived from reading the source; not executed.</p></div>
+
+<h2 id="trace">Zones, recording and export failures</h2>
+<p><code>BeginZone</code> requires runtime <code>Full</code> and a registered name (id&nbsp;&ne;&nbsp;0). It resets the thread's zone stack if the global mode generation has moved on, refuses a 65th nested zone (counted as malformed, inactive token), and pushes an entry whose correlation id is derived from the thread id and a per-thread counter. Correlation ids are unique within a thread; a consumer that joins parent and child should key on the pair of thread id and correlation id. The returned <code>ZoneToken</code> carries correlation, thread id, generation and depth. <code>ZoneScope</code> is the RAII route and the one the macros use. <code>EndZone</code> distinguishes these cases:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Situation</th><th scope="col">Result</th></tr></thead><tbody>
+<tr><td>inactive token, or runtime mode not <code>Full</code></td><td>returns true; nothing recorded</td></tr>
+<tr><td>token from an older mode generation</td><td>returns true; the zone is silently discarded and the stack reset, with no malformed count</td></tr>
+<tr><td>other thread, empty stack, or correlation not on the stack (e.g. a double end)</td><td>returns false; <code>malformedZoneCount</code>++ and a <code>Diagnostics/MalformedZone</code> event</td></tr>
+<tr><td>token found on the stack, but not as the top entry at its recorded depth</td><td>returns false; the stack is unwound: inner zones are emitted as <code>Zone</code> events ending now, the token's own zone as <code>EventKind::Malformed</code>, and the count is incremented</td></tr>
+<tr><td>token is the top entry at its recorded depth</td><td>returns true; a <code>Zone</code> event with start timestamp and duration</td></tr>
+</tbody></table></div>
+<p>Zone events are appended when the zone <em>ends</em>, so in sequence order an inner zone precedes its parent. Markers from <code>MarkEvent</code>, the <code>Frame</code> event (correlation = frame number) and the <code>Diagnostics/ResourceCreated</code>/<code>ResourceDestroyed</code> events (value = resource id) go through <code>EmitRawEvent</code>, which adds the thread id and current frame number and counts any exception as a producer drop.</p>
+<p><code>StartRecording(maximumEvents)</code> returns an inactive session unless the runtime mode is <code>Full</code> and the request is non-zero. It is a cursor, not a writer: it drains, stores the last assigned sequence, clamps the capacity to 32,768 and remembers the producer-drop count. Sessions are move-only and independent; two may be open at once. <code>StopRecording</code> drains again, counts the sequences that the history already overwrote since the start, keeps only the newest <code>maximumEvents</code> of the rest (the older excess is also counted), adds the process-wide producer drops since the start, and copies <em>every</em> registered event name into the trace. A mode change during a recording does not end it; events are simply not produced while the mode is below <code>Full</code> (<code>RuntimeModesBeforeAndDuringRecordingFailSafely</code>).</p>
+<p>The <code>CNATRACE</code> binary layout is in <a href="../../../docs/diagnostics.html#recording">the user guide</a>. The details that matter when changing it: <code>ReadBinary</code> rejects bad magic, a version other than <code>Trace::FormatVersion</code> (1), truncation, name or event counts above the live bounds, oversized names and out-of-range <code>EventKind</code>/<code>Category</code> bytes, each with <code>std::runtime_error</code>; it re-sanitises every name to valid UTF-8, because a trace file need not come from this process. <code>WriteChromeTrace</code> streams without building a document; it writes a constant <code>"cat":"cna"</code> and <code>"pid":1</code>, uses CNA's diagnostic thread id (not the OS id) as <code>tid</code>, exports zones and frames as <code>"X"</code> and everything else as thread-scoped <code>"i"</code>, puts <code>value</code> and <code>frame</code> in <code>args</code>, and truncates <code>ts</code> and <code>dur</code> to whole microseconds. The <code>Category</code> and the correlation ids are not exported to JSON (the viewer nests by time on one <code>tid</code>), and a sub-microsecond zone exports with <code>dur</code> 0 although the binary trace keeps nanoseconds. Both writers return the stream state rather than throwing.</p>
+<p>The failure model is deliberately quiet. Handles, <code>BeginZone</code>, <code>EndZone</code>, <code>MarkEvent</code>, <code>BeginFrame</code>/<code>EndFrame</code>, <code>RegisterSource</code>, <code>StartRecording</code> and <code>GetProvider</code> are <code>noexcept</code> and return an invalid id, an inactive token or an empty registration on exhaustion or allocation failure. The provider calls, <code>StopRecording</code> and the <code>Trace</code> members allocate and are not <code>noexcept</code>; <code>ReadBinary</code> throws by design. A missing metric is therefore not proof of a missing code path, and a trace with missing events is not proof that the operations never happened.</p>
+
+<h2 id="debug">A human investigation recipe</h2>
+<ol>
+<li>Record the exact CNA build and configure <code>-DCNA_DIAGNOSTICS=STATS</code> for frame and counter questions or <code>FULL</code> for zone and event ordering. The level is a compile definition, so switching needs a reconfigure and a rebuild; a runtime switch cannot upgrade an <code>OFF</code> binary.</li>
+<li>Start from the existing <code>Game/Tick</code>, <code>Game/Update</code> and <code>Game/Draw</code> zones. Remember that <code>Game/Tick</code> includes pacing waits and event polling, and that on the web the frame excludes the wait for the next animation frame. For a renderer question, place a name at the neutral-to-native boundary and compare the same build on a second renderer. Keep every instrumentation argument free of side effects.</li>
+<li>Take <code>GetProvider().CaptureSnapshot()</code> for metrics, the recent frames and resource metadata; consume <code>FULL</code> events incrementally with <code>ReadEvents(lastSequence, max)</code>. Read <code>producerEventsDropped</code>, <code>eventHistoryOverwrites</code>, <code>eventsDroppedBeforeStart</code>, <code>malformedZoneCount</code>, <code>malformedFrameCount</code> and <code>sourceCollectionFailures</code> alongside the value being diagnosed. Do not add a private <code>BeginFrame</code>/<code>EndFrame</code> pair inside a running <code>Game</code>.</li>
+<li>For a suspected leak, correlate resource metadata with explicit construct and dispose cycles and with native backend evidence; an Unknown zero-byte record is usually a state object or effect, and a diagnostics id is not proof of native bytes. For timing, the source contract says a GPU source may only publish results that are already available, so any future GPU metric may describe an earlier frame; <code>Collect</code> must never stall to make it current.</li>
+<li>To look at the same data from outside the process, use the Inspector, which reads this provider on its own thread; its transport is described in <a href="inspector.html#request">Inspector transport internals</a>. General tactics are in the <a href="../../debugging.html">debugging cookbook</a>.</li>
+<li>After adding an instrumented call site, build the <code>OFF</code>, <code>STATS</code> and <code>FULL</code> variants at least once, then run the diagnostics tests plus the changed subsystem's tests. <code>OFF</code> must still compile and must not evaluate the expression; <code>FULL</code> must keep zone nesting and the bounded history behaviour.</li>
+</ol>
+
+<h2 id="tests">What the diagnostics corpus proves</h2>
+<p>Three test files cover the module and its producers. Most of each file is behind a level gate, so what a build compiles depends on <code>CNA_DIAGNOSTICS</code>:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">File</th><th scope="col">OFF</th><th scope="col">STATS</th><th scope="col">FULL</th><th scope="col">Test group (focused target)</th></tr></thead><tbody>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/tests/CNA/Diagnostics/DiagnosticsTests.cpp"><code>DiagnosticsTests.cpp</code></a></td><td>2</td><td>16</td><td>40</td><td>diagnostics (<code>CnaDiagnosticsTests</code>)</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/tests/Microsoft/Xna/Framework/Graphics/GraphicsDiagnosticsTests.cpp"><code>GraphicsDiagnosticsTests.cpp</code></a></td><td>0</td><td>6</td><td>6</td><td>graphics (<code>CnaGraphicsTests</code>)</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/audio/tests/CNA/AudioDiagnosticsTests.cpp"><code>AudioDiagnosticsTests.cpp</code></a></td><td>0</td><td>1</td><td>1</td><td>audio (<code>CnaAudioTests</code>); also needs <code>SOUND_ENABLED</code></td></tr>
+</tbody></table></div>
+<p>The counts are static <code>TEST</code> definitions per level, counted from the preprocessor gates; none was executed for this page. What they pin, by suite:</p>
+<ul>
+<li><code>DiagnosticsBuildModeTest</code> (every level): the published build mode equals the compile definition, the provider interface version is 1, a mode above the build is refused, and <code>DisabledMacrosDoNotEvaluateArguments</code> (0 evaluations at <code>OFF</code>, 3 at <code>STATS</code> and <code>FULL</code>).</li>
+<li><code>DiagnosticsMetricsTest</code>, <code>DiagnosticsFrameTest</code>, <code>DiagnosticsResourceTest</code>, <code>DiagnosticsSourceTest</code>, <code>DiagnosticsRuntimeModeTest</code> (<code>STATS</code>+): counter versus gauge semantics and signature conflicts, frame-counter reset, malformed frame transitions, the bounded ordered frame history and its exact FPS, one stable resource id across update and move, byte-total saturation and recovery, snapshots concurrent with a registering thread, sources collected only at valid frame ends, <code>ASourceEndingAFrameFromCollectIsRefusedNotDeadlocked</code>, invalid UTF-8 names stored as U+FFFD.</li>
+<li><code>DiagnosticsZonesTest</code>, <code>DiagnosticsEventsTest</code>, <code>DiagnosticsRecordingTest</code>, <code>DiagnosticsTraceTest</code> (<code>FULL</code>): parent/child correlation, malformed manual ends, mode-generation invalidation (including a worker waiting across five mode changes), 256 sequential and 64 concurrent threads with distinct ids, context release at thread exit, per-thread overflow and history overwrite, cursor exactness without phantom gaps, bounded recordings that drop the oldest excess, move-only sessions, binary and Chrome round trips, JSON escaping, rejected malformed input, and 3,000 deterministically mutated binary traces, each of which must be rejected or read back into valid UTF-8.</li>
+<li>Graphics: estimated texture bytes and unregistration, the byte-estimate formula and its saturation, one record per shared state identity, no transient registrations from <code>SpriteBatch::Begin</code>, exact draw, effect, texture-binding, render-target and sprite counters. Audio: the voice gauge and creation counter across two mixer tracks.</li>
+</ul>
+<p>Registration: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>cmake/UnitTests.cmake</code></a> globs every module's <code>tests/</code> into <code>CnaTests</code> and groups sources by module. <code>CnaDiagnosticsTests</code> is a focused developer executable, <code>EXCLUDE_FROM_ALL</code>, linking only <code>cna_diagnostics</code> (plus the test build configuration and <code>gtest_main</code>); it is not a CTest registration. CTest discovers the same tests from <code>CnaTests</code> with <code>gtest_discover_tests(... DISCOVERY_MODE PRE_TEST)</code>, which runs each discovered test in its own process. Running a focused executable directly runs them all in one process against the one global <code>State</code>, which is why the tests measure against captured baselines and restore the runtime mode with a <code>RuntimeModeGuard</code>; a new test must do the same rather than rely on case order. No CI workflow and no configure preset sets <code>CNA_DIAGNOSTICS</code>, so a CI build compiles only the two level-independent <code>DiagnosticsTests</code> and none of the graphics or audio diagnostics tests; see <a href="../../../docs/diagnostics.html#tests">Tests and CI</a>.</p>
+<p>With <code>CNA_BUILD_BENCHMARKS=ON</code>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/benchmarks/DiagnosticsBenchmark.cpp"><code>DiagnosticsBenchmark.cpp</code></a> builds <code>cna_diagnostics_benchmark</code>. It drains the event history every 512 zones so that the 1,024-event ring never overflows, which is itself a reminder of the draining rule. CNA's recorded results are in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/diagnostics-benchmark.md"><code>docs/diagnostics-benchmark.md</code></a>; they measure instrumentation primitives on one machine, not a <code>Game</code> frame or GPU work.</p>
+<p>Not proven by this corpus: any renderer-specific source (none exists at the snapshot, and every renderer's future diagnostics source remains unverified), the behaviour of a consumer UI such as the Inspector's browser page, and mixed-level builds, which are unsupported rather than tested.</p>
+
+<h2 id="reading">Curated source route</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakeLists.txt"><code>CMakeLists.txt</code></a> (the <code>CNA_DIAGNOSTICS</code> option), <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a> (<code>cna_build_config</code>) and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/include/CNA/Diagnostics/Instrumentation.hpp"><code>Instrumentation.hpp</code></a>: separate compile-time absence from runtime mode before interpreting a missing metric or event.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a> (<code>Tick</code>, <code>EmscriptenMainLoopCallback</code>, <code>RunLoop</code>) and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/src/Diagnostics.cpp"><code>Diagnostics.cpp</code></a> (<code>TryBeginFrame</code>, <code>FinishFrame</code>, <code>CollectDiagnosticsSources</code>): follow one frame through source collection and publication.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/include/CNA/Diagnostics/Diagnostics.hpp"><code>Diagnostics.hpp</code></a> for the handles and the provider, then <code>State</code>, <code>ThreadContext</code>, <code>DrainContextLocked</code> and <code>ProcessProvider</code> in <code>Diagnostics.cpp</code>: identify which ids and owners live for the process, a registration, a resource or one thread, and under which lock.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsResource.cpp"><code>GraphicsResource.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Graphics/DiagnosticResource.hpp"><code>DiagnosticResource.hpp</code></a>: how engine objects become resource records and why the level changes class layout.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/tests/CNA/Diagnostics/DiagnosticsTests.cpp"><code>DiagnosticsTests.cpp</code></a>: check the capacity and failure contracts before changing ring sizes, trace encoding or lock order, and compare each test's <code>#if CNA_DIAGNOSTICS_LEVEL</code> gate with the build being run.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/diagnostics.md"><code>docs/diagnostics.md</code></a>: CNA's own design note, including the rules it sets for an Inspector-style consumer.</li>
+</ol>
+<p>Related: the <a href="../../handbook/index.html">Maintainer Handbook</a> for task-oriented change routes and <a href="../../testing/architecture.html">test architecture</a> for how groups and focused targets are assembled.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/diagnostics.html">Diagnostics user guide</a> &middot; <a href="../../../docs/diagnostics.html#limits">Diagnostics limits</a> &middot; <a href="../../../docs/tutorials/155-diagnostics-stats.html">Tutorial: diagnostics statistics</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/runtime.html">Runtime lifecycle</a> &middot; <a href="../../architecture/overview.html">Architecture overview</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="inspector.html">Inspector transport internals (the consumer)</a> &middot; <a href="../runtime/frame.html">One frame source trace</a> &middot; <a href="../graphics/resources.html">Textures and render targets</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../takeover/ownership.html">Ownership and lifetime master map</a> &middot; <a href="../../takeover/threading.html">Thread and callback map</a> &middot; <a href="../../debugging.html">Debugging cookbook</a> &middot; <a href="../../handbook/index.html">Maintainer Handbook</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture and change recipes</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/modules.html#inventory">Module index</a> &middot; <a href="../../reference/cmake-options.html#options">CMake option index</a> &middot; <a href="../../reference/test-targets.html#targets">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="devices-ext.html" rel="prev"><span>Previous</span>Device extensions and host services</a><a class="dev-pager-next" href="inspector.html" rel="next"><span>Next</span>Inspector transport internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

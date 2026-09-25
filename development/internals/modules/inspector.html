@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inspector transport internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s opt-in Inspector agent authenticates, negotiates and serves bounded diagnostics requests on one thread, how protocol v1 is framed, and how the loopback-only browser bridge and its tests are built.">
+  <meta name="keywords" content="inspector, cna_build_inspector, cna::inspector::agent, cna-inspector, iresourcepreviewprovider, protocolcodec, webbridge, diagnostics provider, authentication token, loopback, cnainspectortests, rate limit">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/modules/inspector.html">
+  <meta property="og:title" content="Inspector transport internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s opt-in Inspector agent authenticates, negotiates and serves bounded diagnostics requests on one thread, how protocol v1 is framed, and how the loopback-only browser bridge and its tests are built.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/modules/inspector.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Inspector transport internals","description":"How CNA's opt-in Inspector agent authenticates, negotiates and serves bounded diagnostics requests on one thread, how protocol v1 is framed, and how the loopback-only browser bridge and its tests are built.","url":"https://libcna.com/development/internals/modules/inspector.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="core.html" class="docs-nav-link is-group-active">Module internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="math.html" class="docs-nav-link">Math</a></li>
+        <li><a href="design.html" class="docs-nav-link">Design converters</a></li>
+        <li><a href="storage.html" class="docs-nav-link">Storage</a></li>
+        <li><a href="media.html" class="docs-nav-link">Media</a></li>
+        <li><a href="video-ffmpeg.html" class="docs-nav-link">FFmpeg video</a></li>
+        <li><a href="devices.html" class="docs-nav-link">Devices &amp; sensors</a></li>
+        <li><a href="devices-ext.html" class="docs-nav-link">Device host services</a></li>
+        <li><a href="diagnostics.html" class="docs-nav-link">Diagnostics</a></li>
+        <li><a href="inspector.html" class="docs-nav-link active" aria-current="page">Inspector</a></li>
+        <li><a href="phone.html" class="docs-nav-link">Phone</a></li>
+        <li><a href="gamer-services.html" class="docs-nav-link">Gamer services</a></li>
+        <li><a href="graphics-ext.html" class="docs-nav-link">Graphics extensions</a></li>
+        <li><a href="net.html" class="docs-nav-link">Network sessions</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="core.html">Modules</a></li>
+        <li aria-current="page">Inspector</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Inspector transport internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#build">Opt-in composition and host scope</a></li>
+          <li><a href="#agent">Agent ownership, negotiation and shutdown</a></li>
+          <li><a href="#threads">Threads, locks and what the Game thread can feel</a></li>
+          <li><a href="#request">Demand-driven data path and bounded work</a></li>
+          <li><a href="#wire">Wire envelope and compatibility rules</a></li>
+          <li><a href="#bridge">Separate browser bridge and its trust boundary</a></li>
+          <li><a href="#failure">Failure model and human debugging route</a></li>
+          <li><a href="#tests">What the tests cover, and what they do not</a></li>
+          <li><a href="#reading">Curated implementation route</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Module internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Checked by reading modules/inspector, the diagnostics provider and the CMake registration at the snapshot; the 27 tests were located, not executed. A live browser session, any renderer-side preview provider (none exists at the snapshot), macOS runtime behaviour and remote (non-loopback) deployment are not established by this page.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector"><code>modules/inspector/</code></a> is not part of the <code>Game</code> loop or of the <code>CNA</code> umbrella. It is three things a game opts into explicitly: an application-side agent (<code>CNA::Inspector::Agent</code>) that answers an authenticated, versioned binary protocol on one background thread; a synchronous protocol client; and a separate <code>cna-inspector</code> process that turns that protocol into a loopback-only HTTP API and an embedded browser UI. This page is for maintainers who change the agent, the wire format, the bridge or the preview seam, or who have to explain why the Inspector shows nothing. The user guide is <a href="../../../docs/inspector.html">Inspector</a>; the data it transports comes from <a href="diagnostics.html">Diagnostics and profiler internals</a>.</p>
+
+<h2 id="build">Opt-in composition and host scope</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/CMakeLists.txt"><code>modules/inspector/CMakeLists.txt</code></a> is always entered by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a> (right after <code>diagnostics</code>), but it defines nothing unless <code>CNA_BUILD_INSPECTOR</code> is ON; the option is declared in the root <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakeLists.txt"><code>CMakeLists.txt</code></a> with default OFF, and no CMake preset or CI workflow at this snapshot turns it on. With the option ON it creates:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Target</th><th scope="col">What it is</th><th scope="col">Condition</th></tr></thead>
+<tbody>
+<tr><td><code>cna_inspector</code> / <code>CNA::Inspector</code></td><td>Static library made by <code>cna_add_module</code> from every <code>src/*.cpp</code> except <code>InspectorMain.cpp</code>; links <code>cna_diagnostics</code> and <code>cna_core_headers</code> publicly, <code>Threads::Threads</code> privately, plus <code>ws2_32</code> and <code>bcrypt</code> on Windows</td><td><code>CNA_BUILD_INSPECTOR=ON</code></td></tr>
+<tr><td><code>cna-inspector</code></td><td>The bridge executable (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/InspectorMain.cpp"><code>InspectorMain.cpp</code></a>); no output-directory override, so it lands in the module's build directory</td><td><code>CNA_BUILD_INSPECTOR=ON</code></td></tr>
+<tr><td><code>cna_inspector_demo</code></td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/examples/inspector_demo.cpp"><code>inspector_demo.cpp</code></a>, linked with <code>CNA CNA::Inspector SHARP_RUNTIME</code>; output directory forced to the build root</td><td>plus <code>CNA_BUILD_EXAMPLES</code> (default ON)</td></tr>
+<tr><td><code>cna_inspector_benchmark</code></td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/benchmarks/InspectorBenchmark.cpp"><code>InspectorBenchmark.cpp</code></a></td><td>plus <code>CNA_BUILD_BENCHMARKS</code> (default OFF)</td></tr>
+<tr><td><code>cna_inspector_compiled_out_benchmark</code></td><td>A control loop with no Inspector include or link (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/benchmarks/InspectorCompiledOutBenchmark.cpp"><code>InspectorCompiledOutBenchmark.cpp</code></a>)</td><td><code>CNA_BUILD_BENCHMARKS</code> alone, with or without the Inspector</td></tr>
+</tbody>
+</table></div>
+<p>The option is a configure-time <code>FATAL_ERROR</code> on Emscripten, Android and iOS; desktop Windows, Linux, macOS and other POSIX desktops are the declared scope. <code>cna_inspector</code> is absent from the list of runtime parts that make up the <code>CNA</code> interface target in <code>modules/CMakeLists.txt</code>, so a game gets Inspector code only by naming <code>CNA::Inspector</code> on its own link line, and the agent exists only after that game calls <code>Agent::Start</code>. There is no static initializer, environment hook or <code>Game</code> integration. The session identity it reports uses the project-wide <code>CNA_PLATFORM_&lt;NAME&gt;</code> definition from <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/PlatformSelection.cmake"><code>PlatformSelection.cmake</code></a> and <code>NDEBUG</code> (<code>Release</code>/<code>Debug</code>) unless the configuration overrides them.</p>
+<pre class="diagram">game process (explicitly links CNA::Inspector)
+  Diagnostics process provider (v1)      &lt;- pulled only on request
+  Agent::Start(configuration, error)     -&gt; one worker thread, one TCP listener
+        ^  binary protocol v1.0, 24-byte header, token in ClientHello
+        |  plaintext TCP, loopback unless allowRemote=true
+cna-inspector process
+  Client (one connection, serialized by a mutex)
+  WebBridge: HTTP/1.1 on 127.0.0.1 only, one detached thread per connection (max 32)
+        ^  x-cna-inspector-ui-token header on /api/*, exact Host header
+browser: embedded HTML/CSS/JS; never receives the agent token</pre>
+<p>This boundary is the first thing to check when &ldquo;the Inspector does not appear&rdquo;: <code>CNA_DIAGNOSTICS=FULL</code> alone starts no agent, <code>CNA_BUILD_INSPECTOR=ON</code> alone links nothing into a game, and a game that links the module but never calls <code>Agent::Start</code> has no thread and no listener. <a href="../../../architecture.html#build-time">Architecture: build-time pieces outside the runtime closure</a> places the module among the optional development pieces.</p>
+
+<h2 id="agent">Agent ownership, negotiation and shutdown</h2>
+<h3 id="agent-start">Start validates everything before a socket exists</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/include/CNA/Inspector/Agent.hpp"><code>Agent.hpp</code></a> offers two factories. <code>Agent::Start(configuration, error)</code> forwards to the second with <code>Diagnostics::GetProvider()</code>, a function-static provider over diagnostics state that is deliberately allocated once and never freed, so the borrowed reference cannot dangle. <code>Agent::Start(provider, configuration, error)</code> takes any version-1 <code>IDiagnosticsProvider&amp;</code>, which must outlive the agent; the tests use it with a fake. <code>Agent::Impl::Start</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/Agent.cpp"><code>Agent.cpp</code></a> then runs, in order:</p>
+<ol>
+<li>rejects an empty <code>bindAddress</code>, and a non-loopback one unless <code>allowRemote</code> is true. &ldquo;Loopback&rdquo; is a literal string test in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/InternalSocket.cpp"><code>InternalSocket.cpp</code></a> (<code>IsLoopbackAddress</code>): exactly <code>127.0.0.1</code>, <code>::1</code> or <code>localhost</code>; any other spelling, <code>127.0.0.2</code> included, counts as remote;</li>
+<li>rejects more than 64 metadata entries and a token longer than 256 bytes, then generates a missing token: 32 bytes from <code>BCryptGenRandom</code> or <code>/dev/urandom</code>, hex-encoded to 64 characters;</li>
+<li>clamps <code>maximumRequestsPerSecond</code> to 1&ndash;1024, <code>maximumPendingPreviews</code> to 1&ndash;16 and <code>previewCooldownMilliseconds</code> to 50&ndash;60,000;</li>
+<li>encodes a throw-away <code>HelloRequest</code> and <code>HelloResponse</code>, so an application name over 4,096 bytes, a metadata key over 128 or value over 1,024 bytes, or invalid UTF-8 fails here as &ldquo;invalid Inspector identity configuration&rdquo; rather than later on the wire;</li>
+<li>creates the listener (<code>SO_REUSEADDR</code>, listen backlog 4, ephemeral port when <code>port</code> is 0) and only then starts the worker <code>std::thread</code>. A thread-creation failure closes the listener again.</li>
+</ol>
+<p>Every failure returns <code>nullptr</code> with <code>error</code> set; nothing is left running. The returned <code>std::unique_ptr&lt;Agent&gt;</code> owns the implementation, the listener socket and the worker. It also co-owns the optional <code>previewProvider</code> through its <code>std::shared_ptr</code>, but not anything that provider refers to.</p>
+<h3 id="agent-stop">Stop, destruction and the order relative to the Game</h3>
+<p><code>Stop</code> is idempotent and <code>noexcept</code>: it clears <code>running_</code>, sets <code>stopping_</code>, shuts down the active client socket under <code>socketMutex_</code> so that a blocked receive returns, joins the worker, and closes the listener. The destructor calls it. Three consequences matter to a maintainer:</p>
+<ul>
+<li>The idle worker waits in <code>AcceptTcp</code> with a 200 ms timeout and re-checks <code>stopping_</code>, so stopping an idle agent takes at most about that long. A provider call already in progress is not interrupted: <code>join</code> waits for it to return.</li>
+<li>There is a narrow window in which the worker has accepted a connection but not yet published it as <code>activeClient_</code>; a <code>Stop</code> landing there shuts down nothing, and the join then waits for that connection's handshake reads to finish or time out (3 s each for header and payload).</li>
+<li>In the demo the agent is created in <code>main</code> before the <code>Game</code> and destroyed after it, so it keeps serving requests while the game tears down. That is harmless for the process provider, whose state is never freed, but a future preview provider that touches a <code>GraphicsDevice</code> needs the opposite order or its own teardown guard, because the worker may call <code>PollPreview</code> until <code>Stop</code> returns.</li>
+</ul>
+<p><a href="../../takeover/ownership.html">The ownership and lifetime master map</a> records the agent as an application-owned object outside the <code>Game</code>'s service graph.</p>
+<h3 id="agent-handshake">Handshake: authenticate first, then look at the provider</h3>
+<p>The worker serves one connection at a time. The first packet is read with a 3 s timeout, and the checks run in this order: a header that fails <code>ProtocolCodec::DecodeHeader</code> ends the connection silently (no Error packet); an envelope whose major version is not 1 or whose minor version is above 0 gets <code>UnsupportedVersion</code>; anything other than a decodable <code>ClientHello</code> gets <code>InvalidRequest</code>; a hello whose <code>[minimumMajorVersion, maximumMajorVersion]</code> range excludes 1 gets <code>UnsupportedVersion</code>; a token mismatch gets <code>Unauthorized</code>. The token comparison (<code>TokensEqual</code>) walks the longer of the two strings and ORs byte differences, so it does not stop at the first mismatch. Each rejection closes the connection.</p>
+<p>Only after authentication does the agent call <code>provider_.CaptureSnapshot()</code>, once, to derive capabilities. Malformed, wrong-version and unauthenticated clients therefore cause no diagnostics collection at all, which two tests pin down (<code>RejectsBadAuthenticationWithoutProviderAccess</code>, <code>InvalidIdentityStringsFailBeforeProviderAccess</code>).</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Capability bit</th><th scope="col">Granted when</th></tr></thead>
+<tbody>
+<tr><td><code>Snapshots</code>, <code>Accuracy</code>, <code>Discontinuities</code> (bits 0, 4, 5)</td><td>always</td></tr>
+<tr><td><code>ResourceMetadata</code> (bit 2)</td><td><code>snapshot.buildMode &gt;= Stats</code></td></tr>
+<tr><td><code>Events</code>, <code>CpuZones</code> (bits 1, 3)</td><td><code>snapshot.buildMode &gt;= Full</code></td></tr>
+<tr><td><code>ResourcePreviews</code> (bit 6)</td><td>a <code>previewProvider</code> was configured</td></tr>
+</tbody>
+</table></div>
+<p>The result is ANDed with the client's <code>requestedCapabilities</code> (all bits by default) and enforced per request afterwards. Note that the derivation reads <code>buildMode</code>, the compile-time <code>CNA_DIAGNOSTICS</code> level, not <code>runtimeMode</code>: a FULL build whose runtime mode was lowered still advertises <code>Events</code>, and the runtime mode is visible only inside each snapshot. The <code>ServerHello</code> also carries the three wire limits, <code>localOnly</code>, the application name and metadata, and the identity strings described under <a href="#failure">the failure model</a>.</p>
+
+<h2 id="threads">Threads, locks and what the Game thread can feel</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Thread</th><th scope="col">Created by</th><th scope="col">Runs</th><th scope="col">Shares state with</th></tr></thead>
+<tbody>
+<tr><td>Agent worker (one)</td><td><code>Agent::Impl::Start</code></td><td>accept loop, handshake, every provider call, every preview-provider call, all socket I/O</td><td>diagnostics internals through the provider; <code>Stop</code> through <code>socketMutex_</code> and two atomics</td></tr>
+<tr><td>Game and instrumented threads</td><td>the application</td><td>instrumentation macros, frame completion</td><td>the same diagnostics mutexes; never the agent itself</td></tr>
+<tr><td>Bridge accept loop</td><td><code>WebBridge::Run</code> in <code>cna-inspector</code></td><td>accepts, counts, spawns</td><td><code>connectionMutex_</code></td></tr>
+<tr><td>Bridge connection threads (&le; 32, detached)</td><td>the accept loop</td><td>one HTTP request each</td><td><code>clientMutex_</code> around the single <code>Client</code></td></tr>
+</tbody>
+</table></div>
+<p>No Game, render or instrumentation thread ever calls into the agent, and the agent never touches a GPU object. The coupling is lock contention inside the diagnostics module: the process provider's <code>CaptureSnapshot</code> takes the metric, frame, resource, thread and history mutexes (in FULL it first drains every thread's producer ring into the history under <code>threadMutex</code> and <code>historyMutex</code>), and the frame-completion path on the Game thread takes the frame and metric mutexes. A large snapshot copied on the agent thread can therefore delay a frame end by the length of the copy, but a slow browser or a stalled socket cannot, because network backpressure stops at the agent thread. The diagnostics side of this is described in <a href="diagnostics.html#state">Diagnostics internals: ownership and concurrency of records</a>; the process-wide map is <a href="../../takeover/threading.html">the thread and callback map</a>.</p>
+
+<h2 id="request">Demand-driven data path and bounded work</h2>
+<p>After the <code>ServerHello</code>, the worker loops on <code>ReceivePacket</code> with a 30 s socket timeout, so an authenticated client that goes silent for 30 s is dropped. Each packet's envelope version is re-checked (a change ends the session), then a fixed one-second window counts requests: once <code>maximumRequestsPerSecond</code> is exceeded (default 64) the request is answered with <code>Busy</code> and skipped, but the connection stays open. The window is reset, not sliding, and the <code>Busy</code> reply itself is still sent, so the limit bounds provider work rather than network traffic. <code>RequestRateBackpressureIsBounded</code> checks exactly this with a limit of 2.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Request</th><th scope="col">Provider work on the agent thread</th><th scope="col">Notes</th></tr></thead>
+<tbody>
+<tr><td><code>SnapshotRequest</code></td><td>one full <code>CaptureSnapshot()</code>, then unrequested parts are cleared</td><td>parts: <code>Metrics</code>, <code>Frames</code> (default), <code>Resources</code>; asking for <code>Resources</code> without the negotiated capability is <code>Unavailable</code>. The response carries total metric, frame and resource counts even for omitted parts.</td></tr>
+<tr><td><code>EventsRequest</code></td><td><code>ReadEvents(afterSequence, maximumEvents)</code>, then <code>ResolveName</code> per event</td><td><code>maximumEvents</code> must be 1&ndash;4,096 (default 512); the response keeps <code>oldestAvailableSequence</code>, <code>newestAvailableSequence</code>, <code>eventsDroppedBeforeStart</code> and <code>producerEventsDropped</code> so loss is reported, not hidden</td></tr>
+<tr><td><code>PreviewRequest</code> / <code>PreviewPollRequest</code></td><td>one <code>CaptureSnapshot()</code> plus the preview provider</td><td>see <a href="#previews">Resource previews</a></td></tr>
+<tr><td><code>Ping</code></td><td>none</td><td>payload must be empty; answered with <code>Pong</code></td></tr>
+</tbody>
+</table></div>
+<p>Selecting parts therefore reduces bytes on the wire, not the in-process copy: even a metrics-only request copies the whole resource registry inside the provider, as the user guide's <a href="../../../docs/inspector.html#performance">performance notes</a> say. Nothing is pushed: an agent with a connected but idle client, or with no client, makes no provider calls. <code>EnabledWithoutClientDoesNotPollProvider</code> observes 75 ms after start; the guarantee itself is structural, because <code>Run</code> calls the provider only inside <code>HandleClient</code>. A capture is a point-in-time copy, not a recording, and a client must advance its event cursor and read the loss fields.</p>
+<h3 id="bounds">Where the bounds live and what exceeding them does</h3>
+<p>All limits are constants in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/include/CNA/Inspector/Protocol.hpp"><code>Protocol.hpp</code></a> and the anonymous namespace of <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/Protocol.cpp"><code>Protocol.cpp</code></a>: payload 8 MiB; 4,096 events per response; 4 MiB of encoded preview data; strings 4,096 bytes unless a field says otherwise (client name 128, token 256, metadata key 128 and value 1,024, error and preview messages 1,024, MIME type 64); 512 metrics; frames up to <code>Diagnostics::FrameHistoryCapacity</code> (240) with at most 64 metrics each; 65,536 resource records; 64 metadata entries; preview dimensions 1&ndash;4,096. The encoder enforces the same bounds by throwing <code>std::length_error</code> (or <code>std::invalid_argument</code> for invalid UTF-8), and <code>HandleRequest</code> maps a <code>length_error</code> to <code>LimitExceeded</code> and anything else to <code>InternalError</code>, keeping the connection open.</p>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Maintainer note: the two modules bound names differently.</strong> Diagnostics sanitizes names and resource labels to valid UTF-8 but accepts metric and event names up to 1 MiB (<code>MaximumTraceNameBytes</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/src/Diagnostics.cpp"><code>Diagnostics.cpp</code></a>) and does not bound label length, while the protocol caps every such string at 4,096 bytes. One oversized metric name therefore makes every snapshot that includes metrics or frames (frame samples repeat the metric names) fail with <code>LimitExceeded</code>, one oversized resource label does the same for resource snapshots, and an oversized event name fails the events batch that contains it. Nothing truncates. The metric (512) and per-frame metric (64) limits do match on both sides.</p></div>
+<h3 id="previews">Resource previews: an extension seam, not GPU access</h3>
+<p><code>IResourcePreviewProvider</code> has two methods, <code>RequestPreview</code> and <code>PollPreview</code>, whose documented contract is to start or poll asynchronous readback and return promptly, never waiting for a device or queue. The agent cannot enforce that; it only calls them on its worker thread. No renderer or other module implements the interface at this snapshot (only the benchmark does), so real sessions never negotiate <code>ResourcePreviews</code>. <code>HandlePreviewRequest</code> checks, in this order: capability and provider present (else <code>Unavailable</code>); request decodes, with resource id non-zero, dimensions 1&ndash;4,096 and byte limit 1&ndash;4 MiB (else <code>InvalidRequest</code>); fewer than <code>maximumPendingPreviews</code> tickets outstanding (else <code>Busy</code>); cooldown since the previous accepted request elapsed (else <code>Busy</code>); the id is present in a fresh snapshot and is a <code>Texture2D</code>, <code>TextureCube</code>, <code>RenderTarget2D</code> or <code>RenderTargetCube</code> (else <code>Unavailable</code>). Only then is the provider called and its answer validated: a pending result needs a non-zero ticket, a non-ready result may carry no image fields, and a ready result needs non-zero dimensions within the request, 1 byte to the request's byte limit, and a PNG, JPEG or WebP MIME type. A ticket the provider reuses is an <code>InternalError</code>.</p>
+<p>Pending tickets are kept in <code>pendingPreviews_</code> together with the original request, and every poll is validated against those original bounds rather than the defaults (<code>PreviewPollHonorsTheOriginalRequestBounds</code>). A ticket that ends (ready, failed, unavailable or invalid) is erased. When a client disconnects, the whole map is cleared without telling the provider; the interface has no cancel call, so a provider must bound its own outstanding readbacks. On the client side, <code>Client::RequestPreview</code> turns an <code>Unavailable</code> error into a normal response with <code>PreviewStatus::Unavailable</code>, which is why <code>OptionalPreviewUnavailableIsANormalResponse</code> expects success. Writing a real provider is a renderer and threading project: resource lifetime, render-thread or queue affinity and device teardown all have to hold while the network worker calls in. A synchronous readback in <code>RequestPreview</code> would put GPU latency on the agent thread and, through the diagnostics locks, near the frame loop.</p>
+
+<h2 id="wire">Wire envelope and compatibility rules</h2>
+<p>Every packet is a 24-byte little-endian header &mdash; magic <code>0x49414E43</code> (&ldquo;CNAI&rdquo;), major, minor, message type, flags, payload length, request id &mdash; followed by the payload. <code>DecodeHeader</code> rejects a wrong magic, an unknown message type, non-zero flags and a payload length above 8 MiB; the receive path allocates the payload buffer from that length before reading, so even an unauthenticated peer can make the agent allocate at most 8 MiB. Payload decoders reject truncation, trailing bytes, out-of-range enumerations, Booleans other than 0 or 1, over-long strings and collections, and invalid UTF-8 (overlong forms, surrogates and code points above U+10FFFF).</p>
+<p>The version rule is effectively &ldquo;exactly 1.0 at both ends&rdquo;. The agent refuses any envelope with a minor version above 0; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/Client.cpp"><code>Client.cpp</code></a> refuses any response envelope with a minor above 0 or a mismatched request id, and refuses a session whose <code>providerInterfaceVersion</code> differs from <code>IDiagnosticsProvider::InterfaceVersion</code>. A new message type is not a compatible addition either: an older peer's <code>DecodeHeader</code> treats the unknown type as a malformed header and drops the connection. Any change to a message layout, a bound or a type therefore has to move the agent, the client and the bridge together, and a new JSON field in the bridge does not by itself change the binary contract.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Outcome</th><th scope="col">Connection</th><th scope="col">Examples</th></tr></thead>
+<tbody>
+<tr><td>Structured <code>Error</code> during handshake</td><td>closed by the agent</td><td><code>UnsupportedVersion</code>, <code>InvalidRequest</code>, <code>Unauthorized</code>, <code>InternalError</code> (provider threw during negotiation)</td></tr>
+<tr><td>Structured <code>Error</code> after negotiation</td><td>kept</td><td><code>InvalidRequest</code>, <code>Unavailable</code>, <code>LimitExceeded</code>, <code>Busy</code>, <code>InternalError</code></td></tr>
+<tr><td>Transport failure, undecodable header, 30 s silence, send failure</td><td>closed; the agent returns to accept</td><td><code>MalformedClientDoesNotPreventReconnect</code> sends 24 zero bytes and then connects normally</td></tr>
+<tr><td>Client: protocol error in a response</td><td>kept; the call returns false with the message</td><td>rate limit, unavailable capability</td></tr>
+<tr><td>Client: envelope, type or decode mismatch, transport error</td><td>client disconnects itself</td><td>next bridge request reconnects</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="bridge">Separate browser bridge and its trust boundary</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/InspectorMain.cpp"><code>InspectorMain.cpp</code></a> parses <code>--agent-host</code> (default <code>127.0.0.1</code>), <code>--agent-port</code> (required, non-zero), <code>--http-port</code> (0 means ephemeral), <code>--token</code>, <code>--token-file</code> and <code>--allow-remote-agent</code>. The token precedence is: a token file (at most 256 bytes, trailing CR/LF stripped, empty refused) overrides <code>--token</code>, and <code>CNA_INSPECTOR_TOKEN</code> is read only when neither gave one. A non-loopback agent host, by the same literal test as the agent, needs <code>--allow-remote-agent</code>. The URL line is flushed explicitly because <code>Run</code> never returns.</p>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/WebBridge.cpp"><code>WebBridge.cpp</code></a> binds its HTTP listener to <code>127.0.0.1</code> unconditionally; there is no option to change that, whatever the agent does. Beyond the size and time limits the user guide lists, the parser accepts only an <code>HTTP/1.1</code> request line with a target of at most 2,048 bytes, refuses any request with a non-zero <code>Content-Length</code> (preview ids travel in the query string), and compares the <code>Host</code> header with <code>127.0.0.1:&lt;bound port&gt;</code> byte for byte, so a page opened as <code>localhost:&lt;port&gt;</code> gets 400 &ldquo;invalid Inspector Host header&rdquo;. That exact-Host rule is the DNS-rebinding defence. Every response is sent with <code>Connection: close</code>, so each request is its own TCP connection.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Route</th><th scope="col">Needs UI token</th><th scope="col">Agent call</th></tr></thead>
+<tbody>
+<tr><td><code>GET /</code>, <code>/style.css</code>, <code>/app.js</code></td><td>no</td><td>none; assets are embedded strings in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/WebAssets.cpp"><code>WebAssets.cpp</code></a>, and <code>/</code> has the per-process UI token substituted for <code>__CNA_UI_TOKEN__</code></td></tr>
+<tr><td><code>GET /api/session</code></td><td>yes</td><td>none if already connected (cached <code>ServerHello</code>), else <code>Connect</code></td></tr>
+<tr><td><code>GET /api/snapshot</code> [<code>?resources=1</code>]</td><td>yes</td><td><code>CaptureSnapshot</code>: metrics and frames, or resources only</td></tr>
+<tr><td><code>GET /api/events?after=&amp;max=</code></td><td>yes</td><td><code>ReadEvents</code>, <code>max</code> clamped to 4,096</td></tr>
+<tr><td><code>POST /api/preview?id=</code>, <code>GET /api/preview?ticket=</code></td><td>yes</td><td><code>RequestPreview</code>, <code>PollPreview</code></td></tr>
+</tbody>
+</table></div>
+<p>An <code>/api/</code> request without the exact <code>x-cna-inspector-ui-token</code> value is answered 404 &ldquo;not found&rdquo;, not 401: a browser tab kept from an earlier bridge run (with a fixed <code>--http-port</code>) has a stale token and sees only 404s until it is reloaded. API handlers take <code>clientMutex_</code>, so however many tabs or connections exist, the agent sees one request at a time; static assets do not take the lock. <code>EnsureConnected</code> reconnects lazily on the next API call after the client dropped its connection; a client failure becomes HTTP 503 with the message, which the UI's 500 ms poll loop shows as &ldquo;reconnecting&rdquo; (it then refetches <code>/api/session</code>).</p>
+<p>Connections are counted under <code>connectionMutex_</code>; the 33rd concurrent one receives a 503 and is closed rather than queued, and each accepted one is served on a detached thread that decrements the count when done. <code>WebBridge::Impl::~Impl</code> waits on a condition variable until that count reaches zero before closing the listener, because the detached threads reference the object. In the shipped <code>cna-inspector</code>, however, <code>Run</code> is an endless accept loop and <code>InspectorMain.cpp</code> installs no signal handler, so the process ends by termination (Ctrl+C) and that destructor path is not reached; it matters only to code that embeds <code>WebBridge</code> differently.</p>
+<p>The trust boundary is therefore &ldquo;processes on this machine that can open the loopback port&rdquo;: the UI token is in the page served at <code>/</code>, which needs no token. The agent token never leaves the bridge process. See <a href="../../../docs/inspector.html#security">the Inspector security model</a> for the user-facing summary; enabling a remote agent sends that token over plaintext TCP, and remote deployment behaviour is not established by anything on this page.</p>
+
+<h2 id="failure">Failure model and human debugging route</h2>
+<p><code>Agent::Start</code> reports configuration, token-generation, identity-encoding, bind/listen and thread-creation failures as <code>nullptr</code> plus an error string. After that, nothing in the module mutates the <code>Game</code>: protocol problems become one of the seven <code>ErrorCode</code> values (<code>InvalidRequest</code>, <code>UnsupportedVersion</code>, <code>Unauthorized</code>, <code>Unavailable</code>, <code>LimitExceeded</code>, <code>Busy</code>, <code>InternalError</code>), every handler is wrapped so a provider exception becomes <code>InternalError</code>, and transport errors end one connection and return the worker to <code>accept</code>. A blank Inspector view has several possible layers, and they are worth testing in this order before touching rendering code:</p>
+<ol>
+<li><strong>Build data.</strong> Was the game compiled with <code>CNA_DIAGNOSTICS=STATS</code> or <code>FULL</code> (<a href="../../../docs/diagnostics.html#modes">Diagnostics modes</a>)? With OFF the session negotiates but snapshots are nearly empty; events and CPU zones need FULL.</li>
+<li><strong>Agent.</strong> Is <code>CNA::Inspector</code> linked, did <code>Agent::Start</code> return non-null, and is the returned pointer still alive? A temporary that is destroyed immediately stops the agent.</li>
+<li><strong>Handshake.</strong> Same port, same token (regenerated on every start unless configured), protocol 1.0 on both sides. Only one client is served at a time: a second bridge connects at TCP level but, with the client's default 3 s timeout, its <code>Connect</code> fails with a receive timeout while the first session lasts.</li>
+<li><strong>Capability.</strong> Does <code>/api/session</code> show the capability the view needs? Resources need STATS, events and zones FULL, previews an installed provider.</li>
+<li><strong>Provider or wire limits.</strong> A persistent <code>LimitExceeded</code> or <code>InternalError</code> on snapshots points at the provider or at an oversized name or label (see <a href="#bounds">the bounds note</a>).</li>
+<li><strong>Bridge.</strong> 400 on every request means the Host header (use <code>127.0.0.1</code>, not <code>localhost</code>); 404 on <code>/api/</code> means a missing or stale UI token; 503 carries the agent-side message.</li>
+<li><strong>Actual loss.</strong> Only after all of the above, read <code>producerEventsDropped</code>, <code>eventsDroppedBeforeStart</code> and the history-overwrite counters.</li>
+</ol>
+<div class="callout callout--note"><span class="callout-icon">&#8505;</span><p><strong>The session's renderer is the compiled default.</strong> <code>ServerHello::graphicsRenderer</code> is <code>CNA::getCurrentGraphicsRendererName()</code> from <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/GraphicsRendererType.hpp"><code>GraphicsRendererType.hpp</code></a>, a compile-time constant. In a multi-renderer build only the default identity's macros are defined project-wide (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>RendererSelection.cmake</code></a>), so the Session view names the default even when the game selected, or fell back to, another renderer at run time. The runtime answer is <code>GraphicsRendererSelection::GetActive</code> (see <a href="../../../docs/runtime-renderer-selection.html#identity">default, selected and active renderers</a> and <a href="core.html#selection">Core: renderer selection</a>). <code>targetPlatform</code> is <code>getCurrentPlatformName()</code> from <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/TargetPlatform.hpp"><code>TargetPlatform.hpp</code></a> (&ldquo;Linux&rdquo;, &ldquo;Windows&rdquo;, &ldquo;macOS&rdquo;, &hellip;), which is the OS target, not the platform backend.</p></div>
+<p>The general tools for the process side (debuggers, sanitizers, logging) are in <a href="../../debugging.html">the debugging cookbook</a>.</p>
+
+<h2 id="tests">What the tests cover, and what they do not</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/tests/CNA/Inspector/InspectorTests.cpp"><code>InspectorTests.cpp</code></a> holds 27 <code>TEST</code> definitions, all against a <code>FakeProvider</code> and an optional <code>FakePreviewProvider</code> over real loopback sockets. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>UnitTests.cmake</code></a> drops the file from the test sources unless <code>CNA_BUILD_INSPECTOR</code> is ON; when it is, the tests are compiled into <code>CnaTests</code>, whose cases CTest discovers, and into the focused <code>CnaInspectorTests</code> executable, which is an iteration target and not a separate CTest registration. No CI workflow enables the option. The list below was checked by reading the source at <code>009d40f5</code>; none of it was executed for this page.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Suite</th><th scope="col">Tests</th><th scope="col">What they establish</th></tr></thead>
+<tbody>
+<tr><td><code>InspectorProtocolTests</code> (7)</td><td><code>HeaderRoundTripsExactly</code>, <code>RejectsInvalidAndOversizedHeaders</code>, <code>SnapshotRoundTripPreservesAccuracyAndLossCounters</code>, <code>EventRoundTripPreservesCursorDiscontinuity</code>, <code>MutatedPayloadsAreRejectedOrDecodeIntoEncodableValues</code>, <code>RandomHeadersNeverAdmitAnOversizedPayload</code>, <code>RejectsTruncationTrailingBytesAndInvalidBounds</code></td><td>codec round trips; seeded mutation of 7,000 payloads (every accepted value must re-encode) and 20,000 headers (no decoded header above 8 MiB or with flags set); truncation, trailing bytes, unknown parts, image data on a pending preview</td></tr>
+<tr><td><code>InspectorFrontendTests</code> (1)</td><td><code>AssetsAreOfflineBoundedAndDemandDriven</code></td><td>string checks on the embedded assets: token placeholder, no external URLs or CDN, no WebSocket, 1,000-event retention, the UI-token header and POST for previews</td></tr>
+<tr><td><code>InspectorAgentTests</code> (19)</td><td><code>EnabledWithoutClientDoesNotPollProvider</code>, <code>GeneratesA256BitAuthenticationTokenWhenOmitted</code>, <code>NegotiatesProviderVersionAndCapabilities</code>, <code>EnforcesTheNegotiatedResourceCapability</code>, <code>InvalidIdentityStringsFailBeforeProviderAccess</code>, <code>RejectsUnsupportedProtocolVersion</code>, <code>RejectsBadAuthenticationWithoutProviderAccess</code>, <code>SnapshotAndEventRequestsUseProviderVersionOne</code>, <code>ReconnectsAfterAClientDisconnects</code>, <code>MalformedClientDoesNotPreventReconnect</code>, <code>RequestRateBackpressureIsBounded</code>, <code>ResourceLifetimeChangesAreObservedOnlyOnRequest</code>, <code>OptionalPreviewUnavailableIsANormalResponse</code>, <code>PreviewIsExplicitAsynchronousAndBounded</code>, <code>InvalidPreviewSourceCannotBreakTheConnection</code>, <code>PreviewPollHonorsTheOriginalRequestBounds</code>, <code>PendingPreviewCountIsBounded</code>, <code>ServesClientsWhenSocketsExceedTheDescriptorSetLimit</code>, <code>NonLoopbackBindingRequiresExplicitAuthorization</code></td><td>the agent contract end to end over loopback. The descriptor test is compiled only off Windows and skips itself when the process cannot open descriptors past <code>FD_SETSIZE</code>; it guards the <code>poll()</code>-based wait in <code>InternalSocket.cpp</code></td></tr>
+</tbody>
+</table></div>
+<p>Gaps a maintainer should know before relying on the suite: no test drives <code>WebBridge</code> at all, so the Host check, UI-token enforcement, the 32-connection cap, request parsing and response headers have no automated coverage; no test calls <code>Agent::Stop</code> directly, stops an agent with a client attached, or restarts one (each test's agent is simply destroyed); nothing exercises a real preview provider, a live browser, macOS, or a remote bind. CNA's own <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/inspector.md"><code>docs/inspector.md</code></a> records a Linux end-to-end run with Chrome and a native MSVC run on Windows and lists macOS runtime validation as pending; those are CNA's records and were not reproduced here.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">If you change&hellip;</th><th scope="col">Run at least</th><th scope="col">Then also</th></tr></thead>
+<tbody>
+<tr><td>the agent loop, handshake or <code>Stop</code></td><td>all <code>InspectorAgentTests</code>, especially bad authentication, malformed-client reconnect, rate backpressure</td><td>a manual start/stop with a client attached; there is no automated Stop test</td></tr>
+<tr><td>the codec or a bound</td><td>all <code>InspectorProtocolTests</code> (the seeded mutation tests reproduce from their seed)</td><td>the agent tests, because <code>Client</code> and agent share the codec</td></tr>
+<tr><td>preview limits or ticket handling</td><td><code>PendingPreviewCountIsBounded</code>, <code>PreviewPollHonorsTheOriginalRequestBounds</code>, <code>OptionalPreviewUnavailableIsANormalResponse</code>, <code>InvalidPreviewSourceCannotBreakTheConnection</code></td><td>a real renderer with asynchronous readback, if one is ever installed</td></tr>
+<tr><td>the bridge or the UI</td><td><code>AssetsAreOfflineBoundedAndDemandDriven</code></td><td>a local browser smoke against <code>cna_inspector_demo</code>; HTTP security has no automated test</td></tr>
+</tbody>
+</table></div>
+<p>Where these tests fit in the wider suite is covered by <a href="../../testing/architecture.html">test architecture and change recipes</a> and the <a href="../../reference/test-targets.html#targets">test target index</a>; the general procedure for adding one is <a href="../../handbook/add-a-regression-test.html">I need to add a regression test</a>.</p>
+
+<h2 id="reading">Curated implementation route</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/CMakeLists.txt"><code>modules/inspector/CMakeLists.txt</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/examples/inspector_demo.cpp"><code>inspector_demo.cpp</code></a>: the opt-in targets, the refused hosts, and how a game links, starts and orders the agent relative to its <code>Game</code>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/include/CNA/Inspector/Agent.hpp"><code>Agent.hpp</code></a> then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/Agent.cpp"><code>Agent.cpp</code></a>: provider borrowing, <code>Start</code> validation order, the worker and <code>Stop</code>, authentication before provider access, capability derivation, the rate window and preview validation.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/include/CNA/Inspector/Protocol.hpp"><code>Protocol.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/Protocol.cpp"><code>Protocol.cpp</code></a>: message types, capability and error enumerations, every bound, strict UTF-8, and the decoder/encoder symmetry the mutation tests rely on.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/InternalSocket.cpp"><code>InternalSocket.cpp</code></a>: loopback test, secure random, listener and connect, <code>poll()</code>-based waits that survive descriptors past <code>FD_SETSIZE</code>, and exact send/receive with deadlines.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/include/CNA/Inspector/Client.hpp"><code>Client.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/Client.cpp"><code>Client.cpp</code></a>: request ids, envelope checks, which failures disconnect, and the <code>Unavailable</code>-to-status mapping for previews.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/InspectorMain.cpp"><code>InspectorMain.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/WebBridge.cpp"><code>WebBridge.cpp</code></a>: option and token precedence, the loopback HTTP listener, Host and UI-token checks, the client mutex, detached connections and JSON translation; then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/WebAssets.cpp"><code>WebAssets.cpp</code></a> for the UI's polling and event-cursor logic.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/include/CNA/Diagnostics/Diagnostics.hpp"><code>Diagnostics.hpp</code></a> (<code>IDiagnosticsProvider</code>) and the <code>ProcessProvider</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/diagnostics/src/Diagnostics.cpp"><code>Diagnostics.cpp</code></a>: what one provider call copies and which locks it takes.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/tests/CNA/Inspector/InspectorTests.cpp"><code>InspectorTests.cpp</code></a>: which of the claims above are pinned by deterministic tests and which still need a live application, browser or renderer.</li>
+</ol>
+<p>For the module's place among its siblings see the <a href="../../reference/modules.html#inventory">module index</a>; for choosing a first subsystem to own and the general maintainer workflow, start from <a href="../../handbook/index.html">the Maintainer Handbook</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/inspector.html#architecture">Inspector: architecture</a> &middot; <a href="../../../docs/inspector.html#security">Inspector: security model</a> &middot; <a href="../../../docs/inspector.html#protocol">Inspector: wire protocol v1</a> &middot; <a href="../../../docs/diagnostics.html#modes">Diagnostics: modes</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../../architecture.html#build-time">Architecture: pieces outside the runtime closure</a> &middot; <a href="../../architecture/overview.html">Architecture overview</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="diagnostics.html">Diagnostics and profiler internals</a> &middot; <a href="core.html">Core module internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../takeover/threading.html">Thread and callback map</a> &middot; <a href="../../takeover/ownership.html">Ownership and lifetime master map</a> &middot; <a href="../../debugging.html">Debugging cookbook</a> &middot; <a href="../../handbook/index.html">Maintainer Handbook</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture and change recipes</a> &middot; <a href="../../handbook/add-a-regression-test.html">I need to add a regression test</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/modules.html#inventory">Module index</a> &middot; <a href="../../reference/test-targets.html#targets">Test target index</a> &middot; <a href="../../reference/cmake-options.html#options">CMake option index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="diagnostics.html" rel="prev"><span>Previous</span>Diagnostics and profiler internals</a><a class="dev-pager-next" href="phone.html" rel="next"><span>Next</span>Phone compatibility internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

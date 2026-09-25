@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Phone compatibility internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s opt-in Microsoft::Phone module maps Game lifecycle events to phone events and runs a loopback-only HTTP push channel: ownership, threads, parser limits, Windows gaps and tests.">
+  <meta name="keywords" content="phone, cna_phone, microsoft::phone, phoneapplicationservice, attachext, httpnotificationchannel, dispatchpendingnotificationsext, rawpushnotificationmessage, toastpushnotificationmessage, push notification, lifecycle, loopback listener">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/modules/phone.html">
+  <meta property="og:title" content="Phone compatibility internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s opt-in Microsoft::Phone module maps Game lifecycle events to phone events and runs a loopback-only HTTP push channel: ownership, threads, parser limits, Windows gaps and tests.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/modules/phone.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Phone compatibility internals","description":"How CNA's opt-in Microsoft::Phone module maps Game lifecycle events to phone events and runs a loopback-only HTTP push channel: ownership, threads, parser limits, Windows gaps and tests.","url":"https://libcna.com/development/internals/modules/phone.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="core.html" class="docs-nav-link is-group-active">Module internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="math.html" class="docs-nav-link">Math</a></li>
+        <li><a href="design.html" class="docs-nav-link">Design converters</a></li>
+        <li><a href="storage.html" class="docs-nav-link">Storage</a></li>
+        <li><a href="media.html" class="docs-nav-link">Media</a></li>
+        <li><a href="video-ffmpeg.html" class="docs-nav-link">FFmpeg video</a></li>
+        <li><a href="devices.html" class="docs-nav-link">Devices &amp; sensors</a></li>
+        <li><a href="devices-ext.html" class="docs-nav-link">Device host services</a></li>
+        <li><a href="diagnostics.html" class="docs-nav-link">Diagnostics</a></li>
+        <li><a href="inspector.html" class="docs-nav-link">Inspector</a></li>
+        <li><a href="phone.html" class="docs-nav-link active" aria-current="page">Phone</a></li>
+        <li><a href="gamer-services.html" class="docs-nav-link">Gamer services</a></li>
+        <li><a href="graphics-ext.html" class="docs-nav-link">Graphics extensions</a></li>
+        <li><a href="net.html" class="docs-nav-link">Network sessions</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="core.html">Modules</a></li>
+        <li aria-current="page">Phone</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Phone compatibility internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#composition">Where it sits in the build and execution graph</a></li>
+          <li><a href="#lifecycle">Lifecycle translation and ownership</a></li>
+          <li><a href="#notification">Notification path, threads and limits</a></li>
+          <li><a href="#sender">Sender semantics and failure boundaries</a></li>
+          <li><a href="#tests">What the tests pin down</a></li>
+          <li><a href="#change">Worked maintainer route: notification never reaches a handler</a></li>
+          <li><a href="#reading">Source-reading order and evidence</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Module internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The 18 tests named here were located and their CTest route read; none was executed. The native Windows notification path, shutdown against a hostile or stalled peer and SIGPIPE exposure remain unverified; the Winsock branches have no test on any host.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone"><code>modules/phone/</code></a> supplies the small <code>Microsoft::Phone</code> surface that Windows Phone 7 XNA titles were written against. <code>PhoneApplicationService</code> re-expresses <code>Game</code>'s lifecycle events as the phone's Launching, Activated, Deactivated and Closing, and <code>HttpNotificationChannel</code> with two push-message classes implements a loopback-only HTTP notification path. Nothing installs either adapter automatically, and inside the repository nothing but the test executables links the module. This page is for maintainers porting a phone title, changing <code>Game</code>'s activation or exit semantics, or touching the socket code; the user-level context is the <code>Microsoft.Devices</code> row of <a href="../../../docs/xna-compatibility.html#coverage-at-a-glance">XNA compatibility, namespace by namespace</a>. Treat the module as a compatibility boundary: it is not a platform backend, a general network stack, an operating-system push service or persistent storage.</p>
+
+<h2 id="composition">Where it sits in the build and execution graph</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/CMakeLists.txt"><code>modules/phone/CMakeLists.txt</code></a> globs <code>src/*.cpp</code> (three translation units at this snapshot) into <code>cna_add_module(cna_phone Phone …)</code>, the helper in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a> that makes a <code>STATIC</code> library <code>cna_phone</code> with the alias <code>CNA::Phone</code>. It links <code>cna_runtime</code> and <code>cna_core_headers</code> publicly (the lifecycle it reports is the one <code>Game</code> already receives) and the Sharp Runtime components <code>Core.Base</code>, <code>Collections.Core</code> and <code>Uri</code>. CNA's own module table in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/physical-modules.md"><code>docs/physical-modules.md</code></a> lists only the first two components; the CMake file is the authority.</p>
+<p><code>modules/CMakeLists.txt</code> adds the directory unconditionally (no CMake option gates it, so CNA's own build compiles it in every configuration) but leaves <code>cna_phone</code> out of the <code>_cna_runtime_parts</code> list that defines the <code>CNA</code> umbrella. Everything else follows from that one omission:</p>
+<ul>
+<li><strong>Games opt in by name.</strong> Linking <code>CNA</code> gives a game neither the phone symbols nor a listener thread; a port names <code>CNA::Phone</code> itself (the <a href="../../../architecture.html#modules">module layout table</a> says &ldquo;linked when a game names it&rdquo;).</li>
+<li><strong>Not inside <code>libcna.so</code>.</strong> With <code>CNA_SHARED_LIBRARY</code> the shared runtime is assembled from the same parts list, so the phone module stays a separate static archive.</li>
+<li><strong>Only tests link it.</strong> The focused <code>CnaPhoneTests</code> gets it from <code>CNA_TEST_GROUP_DEPENDENCY_phone</code> (<code>cna_phone cna_runtime</code>, because the tests construct a <code>Game</code>), and the aggregate <code>CnaTests</code> names it explicitly in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>cmake/UnitTests.cmake</code></a>, since it consumes every group's objects. No example, tool or other module links it.</li>
+<li><strong>No C routes.</strong> CNA's C coverage inventory records <code>Microsoft::Phone</code> as out of runtime C scope by owner decision (CBIND-117, in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/c-api/generate_coverage_inventory.py"><code>generate_coverage_inventory.py</code></a>), which is what <a href="../../../docs/c-api.html#coverage">the C API page's measured coverage</a> reports.</li>
+<li><strong>The port-facing calls are extensions.</strong> <code>AttachEXT</code>, <code>DetachEXT</code> and <code>DispatchPendingNotificationsEXT</code> carry the <code>CNAEXT</code> marker from <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/CNAHelper.hpp"><code>CNAHelper.hpp</code></a>. Under <code>CNA_STRICT_XNA_API</code> that marker expands to <code>[[deprecated]]</code>, so a strict build warns on exactly the three calls a phone port cannot avoid.</li>
+</ul>
+<pre class="diagram">Game (modules/runtime)                                  PhoneApplicationService (borrowed Game*)
+  BeforeLoop, FocusGained, DidEnterForeground
+      -&gt; Game::Activated   ---------------------------&gt;  ignored until a Deactivated, then
+                                                           phone Activated(preserved = true)
+  FocusLost, WillEnterBackground
+      -&gt; Game::Deactivated ---------------------------&gt;  phone Deactivated
+  loop ends (Exit(), Terminating -&gt; Exit())
+      -&gt; Game::Exiting     ---------------------------&gt;  phone Closing
+  explicit AttachEXT(game) ---------------------------&gt;  phone Launching, immediately
+
+Sender (caller's thread)       channel worker thread          thread that calls dispatch
+  SendAsync(uri)                 accept (one at a time)
+    connect, POST, recv  ----&gt;   ReadRequestBody
+                                 reply 200 / 400, close
+                                 pending_.push_back [mutex_] -&gt; DispatchPendingNotificationsEXT
+                                                                 swap under mutex_, then raise
+                                                                 HttpNotificationReceived</pre>
+<p>A source directory does not imply runtime integration: this is the clearest case in the tree. Compare the Devices module, which the <code>CNA</code> umbrella does include (<a href="devices.html">Devices and sensor lifetime</a>), and the full list in the <a href="../../reference/modules.html#inventory">module index</a>.</p>
+
+<h2 id="lifecycle">Lifecycle translation and ownership</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/include/Microsoft/Phone/Shell/PhoneApplicationService.hpp"><code>PhoneApplicationService.hpp</code></a> declares the four events, the <code>State</code> dictionary and the two extension calls; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/src/PhoneApplicationService.cpp"><code>PhoneApplicationService.cpp</code></a> is about ninety lines. <code>getCurrentProperty</code> returns a function-local static instance, but the constructor is public, so tests and applications can also build their own. Copying is deleted, and because a copy constructor is declared the class is not movable either: the handlers it installs capture <code>this</code>, so the object must stay where it was created.</p>
+<p><code>AttachEXT(Game&amp;)</code> first calls <code>DetachEXT</code>, then stores a <em>borrowed</em> <code>Game*</code>, resets its &ldquo;has been deactivated&rdquo; flag, subscribes three lambdas to the game's <code>Deactivated</code>, <code>Activated</code> and <code>Exiting</code> events (keeping the three tokens), and finally raises <code>Launching</code> synchronously on the calling thread. Every phone event is raised with a null sender. The mapping, including where <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a> raises each <code>Game</code> event, is:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Game event</th><th scope="col">Raised by the runtime when</th><th scope="col">Phone event</th></tr></thead><tbody>
+<tr><td><code>Activated</code></td><td><code>setIsActiveProperty(true)</code>: <code>BeforeLoop</code> at the start of <code>Run</code>, a <code>FocusGained</code> window event, or an <code>AppLifecycleKind::DidEnterForeground</code> event. Raised only on a change of <code>IsActive</code>.</td><td>Ignored until the first <code>Deactivated</code> since the attach; after that, <code>Activated</code> with <code>IsApplicationInstancePreserved</code> = true on every activation.</td></tr>
+<tr><td><code>Deactivated</code></td><td><code>setIsActiveProperty(false)</code>: <code>FocusLost</code>, or <code>WillEnterBackground</code> (which also parks the loop on mobile targets).</td><td><code>Deactivated</code>, every time; sets the flag.</td></tr>
+<tr><td><code>Exiting</code></td><td><code>OnExiting</code> after the native loop ends (or in the Emscripten frame callback when <code>RunApplication</code> clears); <code>AppLifecycleKind::Terminating</code> reaches it through <code>Exit()</code>.</td><td><code>Closing</code>.</td></tr>
+<tr><td>(none)</td><td>The application calls <code>AttachEXT</code>.</td><td><code>Launching</code>, once per attach.</td></tr>
+</tbody></table></div>
+<p>Four consequences are easy to miss:</p>
+<ul>
+<li><strong>On desktop a focus loss is a phone deactivation.</strong> Switching to another window and back produces <code>Deactivated</code> then <code>Activated(preserved)</code>: <code>Game</code> reports a window focus change and a mobile backgrounding through the same property, and the adapter cannot tell them apart. A title that saves from <code>Deactivated</code> (as the header says it should) therefore saves on every task switch.</li>
+<li><strong><code>Activated</code> always says the instance was preserved.</strong> The handler runs in the process that went away, so it passes <code>true</code>; the default-constructed <code>ActivatedEventArgs</code> (preserved = false) is never produced by the adapter. A CNA process that was killed comes back as a new process and a new <code>Launching</code>.</li>
+<li><strong><code>Launching</code> is per attach, not per process.</strong> Re-attaching, or attaching a second game, raises it again. A host driven by <code>RunOneFrame</code> never calls <code>BeforeLoop</code>, so its first activation comes from a focus event; the flag makes the adapter ignore that one as well.</li>
+<li><strong><code>Closing</code> comes early in teardown.</strong> <code>Exiting</code> fires before <code>Dispose</code> and <code>UnloadContent</code> (see the <a href="../../../docs/game-loop.html#lifecycle-diagram">Game lifecycle diagram</a>), so content is still loaded in a <code>Closing</code> handler.</li>
+</ul>
+<p><code>DetachEXT</code> returns at once when nothing is attached. Otherwise it removes the three tokens from the attached game's events, then clears the pointer, the tokens and the flag. The destructor calls it. The service may therefore die before the game (the test <code>DestroyingTheServiceUnsubscribesFromTheGame</code> pins that order), but the game must not die first, because <code>DetachEXT</code> dereferences the stored pointer.</p>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>The process-wide <code>Current</code> is the risky case.</strong> The obvious port, <code>PhoneApplicationService::getCurrentProperty().AttachEXT(game)</code> with the <code>Game</code> on <code>main</code>'s stack, leaves the function-static service attached to a game that is destroyed when <code>main</code> returns. The static's destructor then runs <code>DetachEXT</code> against a dead object during static destruction. Nothing in <code>Game</code> or the runtime detaches it. Call <code>DetachEXT</code> after <code>Run</code> returns, or from the game's destructor, before the <code>Game</code> goes away. This is a source-level finding: every test uses a local service, and none covers this order.</p></div>
+<p><code>getStateProperty</code> returns a member <code>Dictionary&lt;std::string, std::shared_ptr&lt;System::Object&gt;&gt;</code>. It is plain memory: it is not serialized, it does not touch the storage module, and <code>DetachEXT</code> does not clear it. It &ldquo;survives&rdquo; a deactivate and reactivate only because the process never went away. A title that must survive process loss writes to storage from <code>Deactivated</code>, as the header advises; see <a href="storage.html">Storage internals</a> and the <a href="../../../docs/storage.html#storage-root">storage root chain</a>.</p>
+<p>Threading: the phone events run synchronously on whichever thread raises the <code>Game</code> event, normally the thread inside <code>Game::Run</code>. <code>Launching</code> runs on the thread that calls <code>AttachEXT</code>. The service has no lock, so attaching or detaching while another thread raises <code>Game</code> events is unsynchronized. The <a href="../../takeover/threading.html">thread and callback map</a> and <a href="../../takeover/ownership.html">ownership map</a> give the runtime-wide picture; <a href="../../architecture/runtime.html">Runtime lifecycle</a> and <a href="../runtime/module.html">Runtime module internals</a> explain where the <code>Game</code> events come from.</p>
+
+<h2 id="notification">Notification path, threads and limits</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/include/Microsoft/Phone/Notification/HttpNotificationChannel.hpp"><code>HttpNotificationChannel.hpp</code></a> states the design: on Windows Phone the channel URI pointed at Microsoft's push relay, which is retired, so here the channel <em>is</em> the endpoint. What goes with the relay is the ability to reach a device that is not directly addressable and to deliver to an application that is not running. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/src/HttpNotificationChannel.cpp"><code>HttpNotificationChannel.cpp</code></a> implements <code>Open</code> as follows:</p>
+<ol>
+<li>If <code>listening_</code> (an <code>std::atomic&lt;bool&gt;</code>) is already set, return. The check is a plain load, not a compare-exchange, so two concurrent <code>Open</code> calls are not guarded against each other.</li>
+<li>Create an IPv4 <code>SOCK_STREAM</code> socket, set <code>SO_REUSEADDR</code>, bind <code>INADDR_LOOPBACK</code> on port 0 (the system picks the port), and <code>listen</code> with a backlog of 4. A failure to create the socket, or a failed bind or listen, logs a <code>Logger::Warn</code> and returns with no URI. A failed <code>getsockname</code> returns silently.</li>
+<li>Store the socket and build <code>http://127.0.0.1:&lt;port&gt;/&lt;channelName&gt;/</code>. The name is spliced in unescaped; how <code>System::Uri</code> treats a name that is not a valid path segment is Sharp Runtime behaviour that no phone test covers. Then set <code>listening_</code>.</li>
+<li>Under the registry mutex, assign <code>Registry()[channelName] = this</code>. This is an assignment, so a duplicate name silently replaces the earlier entry.</li>
+<li>Start one <code>std::thread</code> running <code>Listen</code>.</li>
+<li>Raise <code>ChannelUriUpdated</code> on the calling thread. The worker is already running, so a notification can be queued before the handler learns the URI. That is harmless, because it waits in the queue.</li>
+</ol>
+<p><code>Listen</code> loops while <code>listening_</code> is set. It accepts one connection at a time, reads it with <code>ReadRequestBody</code>, sends a fixed response, closes the connection, and queues the body under <code>mutex_</code> if it is non-empty. The worker never raises an event. The parser only looks for the header terminator and a <code>content-length:</code> substring in the lower-cased header block (the first occurrence wins). It never inspects the method or the path, so any request to the port reaches the channel, whatever its path.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">What the peer sends</th><th scope="col">Response</th><th scope="col">Queued</th></tr></thead><tbody>
+<tr><td>Headers, <code>Content-Length: N</code>, then N bytes</td><td>200</td><td>Exactly N bytes; anything after them is dropped</td></tr>
+<tr><td>No <code>Content-Length</code> (including a chunked body)</td><td>200</td><td>Nothing: the length is taken as 0 and empty bodies are never queued</td></tr>
+<tr><td><code>Content-Length: N</code>, then the peer closes after fewer bytes</td><td>200</td><td>The truncated body</td></tr>
+<tr><td>Connection closed or failed before <code>\r\n\r\n</code>, or a header block over 1 MiB</td><td>400</td><td>Nothing</td></tr>
+</tbody></table></div>
+<div class="callout callout--note"><span class="callout-icon">&#128161;</span><p><strong>The parser's comment promises more than the code does.</strong> The comment above <code>ReadRequestBody</code> says unsupported encodings are &ldquo;refused visibly&rdquo; rather than &ldquo;delivered truncated&rdquo;. In the source, a chunked push is acknowledged with 200 and dropped, and a short body is acknowledged with 200 and queued truncated. Only an unreadable header block gets a 400. The body size is not bounded either: the worker keeps reading until <code>Content-Length</code> bytes arrive or the peer stops. A 200 means the socket received the bytes, never that a handler ran.</p></div>
+<p>The listener has no receive timeout: no <code>SO_RCVTIMEO</code>, no <code>poll</code>. A peer that connects and sends nothing parks the only worker in <code>recv</code>, later connections wait in the backlog of 4, and <code>Close</code> cannot wake it, because <code>Close</code> shuts down only the listening socket. The source therefore suggests that <code>Close</code>, and the destructor, can wait on such a peer indefinitely. Shutdown behaviour against a hostile or stalled peer remains unverified: no test exercises it. Two smaller hazards are also visible in the source. A persistent <code>accept</code> error while listening loops again at once, with no backoff. And responses are sent with flags 0, without the <code>MSG_NOSIGNAL</code>/<code>SO_NOSIGPIPE</code> handling that the Inspector's socket layer uses (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/inspector/src/InternalSocket.cpp"><code>InternalSocket.cpp</code></a>), so whether a peer that resets the connection can raise <code>SIGPIPE</code> depends on the process's signal disposition. That has not been exercised either.</p>
+<p>The trust boundary is the loopback bind and nothing else. There is no authentication and no channel secret. A remote service cannot reach the advertised URI, but any local process that finds the port can post to it. Offline delivery, retries and a remote relay do not exist.</p>
+<p><code>DispatchPendingNotificationsEXT</code> swaps <code>pending_</code> into a local vector under <code>mutex_</code>, releases the lock, and raises <code>HttpNotificationReceived</code> once per body, in arrival order, on the <em>caller's</em> thread. No production code calls it; an application chooses its dispatch point, typically once per frame on the game thread. Calling it from a worker moves the handlers to that worker, because the API does not enforce thread affinity. Sharp Runtime's <code>System::EventHandler::Raise</code> iterates a snapshot of the handlers and does not catch, so a handler that throws propagates out of the dispatch call, and the rest of that swapped-out batch is lost.</p>
+<p><code>Close</code> returns early if the channel is not listening. Otherwise it clears <code>listening_</code>, calls <code>shutdown</code> (<code>SHUT_RDWR</code>, or <code>SD_BOTH</code> on Windows) and then closes the listening socket; the code comments that closing alone can leave the worker parked in <code>accept</code>. It then joins the worker, erases the registry entry only if that entry still points at this channel, and resets the URI. The destructor calls <code>Close</code>. Some state deliberately survives <code>Close</code>: <code>pending_</code> is not cleared, so bodies received before the close can still be dispatched (and a reopened channel still holds them), and <code>shellToastBound_</code> keeps its value. A reopened channel gets a new port, and so a new URI and a new <code>ChannelUriUpdated</code>; the sending service has to be told.</p>
+<p><code>Find</code> looks the name up under the registry mutex and returns the raw pointer after releasing it. That pointer is not a lease: a concurrent <code>Close</code> or destruction can invalidate it. Duplicate names are not rejected. With two open channels of one name, the second <code>Open</code> overwrites the entry. The first channel's <code>Close</code> leaves that entry alone (the identity check), but the second channel's <code>Close</code> erases the name while the first is still open, so <code>Find</code> then returns null for a live channel.</p>
+<p>Concurrency: only <code>listening_</code> (atomic) and <code>pending_</code> (under <code>mutex_</code>) are synchronized. <code>channelUri_</code>, <code>shellToastBound_</code>, the thread object and <code>listenSocket_</code>, a plain <code>int</code> that the worker reads and <code>Close</code> resets, are not. Keep <code>Open</code>, <code>Close</code>, the property getters and <code>BindToShellToast</code> on one owning thread, and treat only the queue as a cross-thread structure. The constructor's <code>serviceName</code> is stored and never read.</p>
+
+<h2 id="sender">Sender semantics and failure boundaries</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/include/Microsoft/Phone/Notification/PushNotificationSender.hpp"><code>PushNotificationSender.hpp</code></a> declares <code>MessageSendPriority</code> (<code>Low</code>, <code>Normal</code>, <code>High</code>) and two classes: <code>RawPushNotificationMessage</code>, which sends its <code>RawData</code> bytes, and <code>ToastPushNotificationMessage</code>, which sends <code>Title</code> and <code>SubTitle</code>. No class is called <code>PushNotificationSender</code>; that is only the file name. In <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/src/PushNotificationSender.cpp"><code>PushNotificationSender.cpp</code></a> both <code>SendAsync</code> methods call one internal <code>Post</code>:</p>
+<ol>
+<li>Take <code>clientUri.ToString()</code> and split it by string search into <code>host[:port]</code> and a path. It returns false only if <code>//</code> is missing. The port defaults to 80 and the scheme is never checked, so an <code>https</code> URI would be sent as plain HTTP to port 80.</li>
+<li>Call <code>getaddrinfo</code> with <code>AF_INET</code> (IPv4 only), then create a socket and do a blocking <code>connect</code>. A lookup, socket or connect failure returns false.</li>
+<li>Build the request and write it with <em>one</em> <code>send</code> call. The length is narrowed to <code>int</code> for the Windows signature, and a short write is not retried: the method returns false.</li>
+<li>Do one blocking <code>recv</code> of up to 512 bytes, discard it, close the socket, and return whether the whole request was sent.</li>
+</ol>
+<div class="table-wrap"><table><thead><tr><th scope="col">Request element</th><th scope="col">Raw message</th><th scope="col">Toast message</th></tr></thead><tbody>
+<tr><td><code>X-NotificationClass</code></td><td>High 3, Normal 13, Low 23</td><td>High 2, Normal 12, Low 22</td></tr>
+<tr><td><code>X-WindowsPhone-Target</code></td><td>absent</td><td><code>toast</code></td></tr>
+<tr><td><code>Content-Type</code></td><td><code>text/xml</code> (even for arbitrary bytes)</td><td><code>text/xml</code></td></tr>
+<tr><td>Body</td><td><code>RawData</code> verbatim</td><td><code>&lt;wp:Notification xmlns:wp="WPNotification"&gt;&lt;wp:Toast&gt;&lt;wp:Text1&gt;</code>Title<code>&lt;/wp:Text1&gt;&lt;wp:Text2&gt;</code>SubTitle&hellip;, with an XML declaration</td></tr>
+<tr><td>Always</td><td colspan="2"><code>POST &lt;path&gt; HTTP/1.1</code>, <code>Host</code>, <code>Content-Length</code>, <code>Connection: close</code></td></tr>
+</tbody></table></div>
+<p>Three semantic points matter to anyone changing reliability or security. First, &ldquo;Async&rdquo; is synchronous: name resolution, connect, send and the response wait all block the caller, without timeouts, so a send from the game thread stalls that frame. Second, the header documents the return value as &ldquo;true when the receiver accepted it&rdquo;, but the code returns true whenever the bytes were written; a 400 still yields true, and nothing parses the status line. Third, the toast body concatenates <code>Title</code> and <code>SubTitle</code> without XML escaping, so an <code>&amp;</code> or <code>&lt;</code> in a title produces malformed XML. The channel does not parse the XML and delivers the bytes anyway. <code>BindToShellToast</code> on the receiving channel only records a flag; nothing is ever drawn over another application. Both halves of this local protocol have to change together; do not promise internet push delivery or non-blocking sends on top of them.</p>
+<h3 id="windows">The Windows path</h3>
+<p>Both source files carry Winsock branches (<code>closesocket</code>, <code>SD_BOTH</code>). CNA's native-Windows validation plan (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/plans/plan_win32_native_validation.md"><code>plan_win32_native_validation.md</code></a>, rows F11 and F16) records two compile fixes in these files. F11 undefines the <code>ERROR</code> macro that <code>&lt;windows.h&gt;</code> defines, which collided with <code>CNA::LogLevel::ERROR</code>. F16 replaced a use of <code>ssize_t</code>, which MSVC does not define. What the source does <em>not</em> show:</p>
+<ul>
+<li>No <code>WSAStartup</code> call exists in the module (the only one in CNA's tree is in the Inspector's socket layer). Whether Winsock is initialized when <code>Open</code> or <code>SendAsync</code> runs therefore depends on what else the process has done, and nothing establishes it.</li>
+<li>The checks <code>listener &lt; 0</code> and <code>connection &lt; 0</code> compare an unsigned <code>SOCKET</code>, so they never detect <code>INVALID_SOCKET</code>. Failure still surfaces, later, through the bind, listen or connect paths.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/tests/Microsoft/Phone/Notification/HttpNotificationChannelTests.cpp"><code>HttpNotificationChannelTests.cpp</code></a>, which also holds the <code>PushNotificationSenderTest</code> cases, is removed from the test sources under <code>WIN32</code> because its test-side client uses POSIX socket headers. The exclusion removes the tests, not the feature.</li>
+</ul>
+<p>The native Windows notification path therefore has no test and remains unverified; only the lifecycle tests are in a Windows <code>CnaTests</code>.</p>
+
+<h2 id="tests">What the tests pin down</h2>
+<p>The module has 18 GoogleTest definitions in two files. They were located and read at <code>009d40f5</code>; none was executed for this page.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Suite</th><th scope="col">Cases</th><th scope="col">What they assert</th></tr></thead><tbody>
+<tr><td><code>PhoneApplicationServiceTest</code> (9, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/tests/Microsoft/Phone/Shell/PhoneApplicationServiceTests.cpp"><code>PhoneApplicationServiceTests.cpp</code></a>)</td><td><code>AttachingReportsAFreshStart</code>, <code>TheFirstActivationOfARunIsNotAReturnFromTheBackground</code>, <code>GoingAwayAndComingBackIsDeactivatedThenActivated</code>, <code>ExitingTheGameClosesTheApplication</code>, <code>DetachingStopsTheServiceFollowingTheGame</code>, <code>AttachingASecondGameLeavesTheFirstOneBehind</code>, <code>DestroyingTheServiceUnsubscribesFromTheGame</code>, <code>StateKeepsWhatTheApplicationPutsThere</code>, <code>CurrentIsOneServiceForTheWholeProcess</code></td><td>The recorded event sequence for attach, first activation, deactivate/activate, exit, detach, re-attach and service destruction; <code>State</code> storage; <code>Current</code> identity. The tests construct a <code>Game</code> and call <code>Raise</code> on its events directly; no platform, window or OS lifecycle is involved.</td></tr>
+<tr><td><code>HttpNotificationChannelTest</code> (6)</td><td><code>AClosedChannelHasNoUri</code>, <code>OpeningReportsAnAddressAServiceCanPushTo</code>, <code>WhatAServicePostsArrivesAsANotification</code>, <code>NothingIsRaisedUntilTheGameAsksForIt</code>, <code>AnOpenChannelCanBeFoundByName</code>, <code>ShellToastBindingIsRecorded</code></td><td>The URI shape and reset, delivery of a well-formed POST from a bare POSIX client, queue-until-dispatch (checked by a 100 ms sleep), single-channel <code>Find</code>, and the toast flag.</td></tr>
+<tr><td><code>PushNotificationSenderTest</code> (3)</td><td><code>WhatTheSenderPostsIsWhatTheChannelReceives</code>, <code>AToastCarriesItsTitleToTheReceiver</code>, <code>SendingToAnAddressNobodyIsListeningOnFails</code></td><td>Sender against channel for raw and toast messages; a refused connection on loopback port 1 returns false.</td></tr>
+</tbody></table></div>
+<p>Registration: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>cmake/UnitTests.cmake</code></a> puts both files in the <code>phone</code> group, whose object library feeds the aggregate <code>CnaTests</code>. CTest sees the cases only through <code>gtest_discover_tests(CnaTests … DISCOVERY_MODE PRE_TEST)</code>. <code>CnaPhoneTests</code> is an <code>EXCLUDE_FROM_ALL</code> iteration target, which the file states is &ldquo;not additional CTest registrations&rdquo;, and unlike core and math it has no build preset. The Windows exclusion is described above.</p>
+<p>No test covers the following: malformed, chunked, truncated or oversized requests; the 400 path; duplicate channel names; <code>Close</code> with bodies still pending or with a stalled peer; concurrent <code>Open</code>/<code>Close</code>; a handler that throws during dispatch; the static <code>Current</code> outliving its game; or a real focus or mobile lifecycle driving the adapter. See <a href="../../testing/architecture.html">Test architecture and change recipes</a> for where a new case belongs.</p>
+
+<h2 id="change">Worked maintainer route: notification never reaches a handler</h2>
+<ol>
+<li><strong>Is the module linked and the channel open?</strong> Check that the executable links <code>CNA::Phone</code> (<code>CNA</code> alone does not bring it in) and that <code>getChannelUriProperty()</code> is non-null after <code>Open</code>. If it is null, look for the <code>HttpNotificationChannel:</code> warnings from socket, bind or listen failure (a <code>getsockname</code> failure is silent) before touching <code>Game</code> or renderer code.</li>
+<li><strong>Does the sender use the reported URI?</strong> The port changes on every <code>Open</code>, so a URI cached across a <code>Close</code>/<code>Open</code> is stale. A <code>true</code> from <code>SendAsync</code> proves only that the bytes were written: it does not prove HTTP acceptance, and it does not prove that a handler ran.</li>
+<li><strong>Did the worker queue it?</strong> Break at the <code>pending_.push_back</code> in <code>Listen</code>. If it is never reached, check what the client sent against the response table above: no <code>Content-Length</code> and an empty body both end here silently.</li>
+<li><strong>Does anything dispatch?</strong> Break in <code>DispatchPendingNotificationsEXT</code>. If bytes are pending but no handler runs, find the application's dispatch call; the runtime installs none. A handler that throws also discards the rest of its batch.</li>
+<li><strong>Wrong thread?</strong> If a callback runs on an unsafe thread, trace who calls dispatch rather than moving work onto the listener thread. Keep the mutex-protected queue and the rule that events are raised outside the lock.</li>
+<li><strong>Pin it.</strong> Add a focused case reproducing the exact boundary (open, POST, queue, dispatch or close), then run the notification suites on a POSIX host and the lifecycle suite for any <code>Game</code> event change. A real application shutdown and a Windows build and host still need separate checks, because the listener tests do not compile there.</li>
+</ol>
+<p>A focused iteration loop, as the CMake files define it (not executed for this page):</p>
+<pre><code class="language-bash">cmake --preset unit                                   # STUB renderer, CNA_BUILD_TESTS=ON
+cmake --build cmake-build-unit --target CnaPhoneTests
+./cmake-build-unit/CnaPhoneTests --gtest_filter='PhoneApplicationServiceTest.*'
+./cmake-build-unit/CnaPhoneTests --gtest_filter='HttpNotificationChannelTest.*:PushNotificationSenderTest.*'</code></pre>
+<p>For lifetime bugs around <code>Exiting</code> and destruction, <a href="../../handbook/debug-shutdown-and-lifetime.html">I need to debug shutdown and lifetime behavior</a> and <a href="../runtime/shutdown.html">Ownership and shutdown</a> cover the <code>Game</code> side. For a new regression case, see <a href="../../handbook/add-a-regression-test.html">I need to add a regression test</a>; the <a href="../../handbook/index.html">Maintainer Handbook</a> lists the other routes.</p>
+
+<h2 id="reading">Source-reading order and evidence</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/CMakeLists.txt"><code>phone/CMakeLists.txt</code></a>, the umbrella list in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a> and the phone lines of <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>UnitTests.cmake</code></a>: establish the link opt-in, the two test consumers and the <code>WIN32</code> exclusion before assuming any coverage.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/include/Microsoft/Phone/Shell/PhoneApplicationService.hpp"><code>PhoneApplicationService.hpp</code></a>, then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/src/PhoneApplicationService.cpp"><code>PhoneApplicationService.cpp</code></a>: trace the borrowed <code>Game*</code>, token removal, the first-activation flag and the in-process <code>State</code>. Then read <code>setIsActiveProperty</code>, <code>BeforeLoop</code> and the window-event and lifecycle cases of <code>PollEvents</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a> to see which platform events become which phone events.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/include/Microsoft/Phone/Notification/HttpNotificationChannel.hpp"><code>HttpNotificationChannel.hpp</code></a>, then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/src/HttpNotificationChannel.cpp"><code>HttpNotificationChannel.cpp</code></a>: draw the worker, queue, dispatch and <code>Close</code>/join order, and check what <code>ReadRequestBody</code> actually accepts.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/include/Microsoft/Phone/Notification/PushNotificationSender.hpp"><code>PushNotificationSender.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/src/PushNotificationSender.cpp"><code>PushNotificationSender.cpp</code></a>: compare the synchronous send and its return value with the channel's acknowledgement and handler dispatch.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/tests/Microsoft/Phone/Shell/PhoneApplicationServiceTests.cpp"><code>PhoneApplicationServiceTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/phone/tests/Microsoft/Phone/Notification/HttpNotificationChannelTests.cpp"><code>HttpNotificationChannelTests.cpp</code></a>: separate the deterministic adapter tests from the missing native OS, network and Windows coverage.</li>
+</ol>
+<p>Evidence level: everything above was checked by reading the TARGET sources at <code>009d40f5</code>; nothing was built or executed. The <code>Game</code> event sources were read in the runtime module, and the two Sharp Runtime behaviours mentioned (<code>EventHandler::Raise</code>, <code>System::Uri</code>) belong to that sibling repository rather than to CNA.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/xna-compatibility.html#coverage-at-a-glance">XNA compatibility: namespace by namespace</a> &middot; <a href="../../../docs/game-loop.html#lifecycle-diagram">Game lifecycle diagram</a> &middot; <a href="../../../docs/c-api.html#coverage">C API measured coverage (phone is out of C scope)</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/runtime.html">Runtime lifecycle</a> &middot; <a href="../../../architecture.html#modules">Module layout</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../runtime/module.html">Runtime module internals</a> &middot; <a href="../runtime/shutdown.html">Ownership and shutdown</a> &middot; <a href="devices.html">Devices and sensor lifetime</a> &middot; <a href="inspector.html">Inspector transport internals (the other socket layer)</a> &middot; <a href="storage.html">Storage internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/debug-shutdown-and-lifetime.html">I need to debug shutdown and lifetime behavior</a> &middot; <a href="../../handbook/add-a-regression-test.html">I need to add a regression test</a> &middot; <a href="../../takeover/ownership.html">Ownership and lifetime master map</a> &middot; <a href="../../takeover/threading.html">Thread and callback map</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture and change recipes</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/modules.html#inventory">Module index</a> &middot; <a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="inspector.html" rel="prev"><span>Previous</span>Inspector transport internals</a><a class="dev-pager-next" href="gamer-services.html" rel="next"><span>Next</span>Gamer services internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

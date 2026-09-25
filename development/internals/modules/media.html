@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Media internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s media module builds a snapshot library graph, plays music through a static queue and mixer callbacks, and orchestrates video decode, texture and audio: ownership, threads, failure modes and tests.">
+  <meta name="keywords" content="media, medialibrary, mediaplayer, videoplayer, frameworkdispatcher, audiotagparser, savepicture, mediaqueue, visualization, sound_enabled, cna_media, getvisualizationdata">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/modules/media.html">
+  <meta property="og:title" content="Media internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s media module builds a snapshot library graph, plays music through a static queue and mixer callbacks, and orchestrates video decode, texture and audio: ownership, threads, failure modes and tests.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/modules/media.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Media internals","description":"How CNA's media module builds a snapshot library graph, plays music through a static queue and mixer callbacks, and orchestrates video decode, texture and audio: ownership, threads, failure modes and tests.","url":"https://libcna.com/development/internals/modules/media.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="core.html" class="docs-nav-link is-group-active">Module internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="math.html" class="docs-nav-link">Math</a></li>
+        <li><a href="design.html" class="docs-nav-link">Design converters</a></li>
+        <li><a href="storage.html" class="docs-nav-link">Storage</a></li>
+        <li><a href="media.html" class="docs-nav-link active" aria-current="page">Media</a></li>
+        <li><a href="video-ffmpeg.html" class="docs-nav-link">FFmpeg video</a></li>
+        <li><a href="devices.html" class="docs-nav-link">Devices &amp; sensors</a></li>
+        <li><a href="devices-ext.html" class="docs-nav-link">Device host services</a></li>
+        <li><a href="diagnostics.html" class="docs-nav-link">Diagnostics</a></li>
+        <li><a href="inspector.html" class="docs-nav-link">Inspector</a></li>
+        <li><a href="phone.html" class="docs-nav-link">Phone</a></li>
+        <li><a href="gamer-services.html" class="docs-nav-link">Gamer services</a></li>
+        <li><a href="graphics-ext.html" class="docs-nav-link">Graphics extensions</a></li>
+        <li><a href="net.html" class="docs-nav-link">Network sessions</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="core.html">Modules</a></li>
+        <li aria-current="page">Media</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Media internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#composition">Physical boundary and the deliberate audio/media cycle</a></li>
+          <li><a href="#library">The library is a construction-time, value-owning snapshot</a></li>
+          <li><a href="#music">Music queue, audio callback and dispatcher</a></li>
+          <li><a href="#video">Video is an orchestration layer over decode, graphics and audio</a></li>
+          <li><a href="#testing">Human change and validation map</a></li>
+          <li><a href="#reading">Source-reading order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Module internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Test names were located by reading the sources and none was executed. Specialised tag formats, every picture decoder and live audio and video hosts remain unverified, and the hazards listed as source-read maintainer notes have no named test.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media"><code>modules/media/</code></a> implements three things that share a namespace but not a lifetime: <code>MediaLibrary</code>, a snapshot graph of the music and pictures a folder scan found; <code>MediaPlayer</code>, one process-wide music player with its own queue; and <code>Video</code>/<code>VideoPlayer</code>, which orchestrate a decoder, a texture and an audio stream for one playback. This page is for maintainers who change the scan, the graph, the player state machine, the audio-thread callbacks or the video hand-off, and for anyone who has to explain why a song does not play or a frame stays black. The user-level view is in <a href="../../../docs/video-playback.html">Video Playback</a>, <a href="../../../docs/audio.html#tier-1-implemented-sdl3mixer">Audio</a> and the Media section of <a href="../../../docs/xna-compatibility.html#microsoftxnaframeworkmedia">XNA compatibility</a>. Do not treat the library as the live music queue, and do not treat the optional FFmpeg archive as the public media module: <a href="video-ffmpeg.html">the FFmpeg boundary</a> only supplies a decoder.</p>
+
+<h2 id="composition">Physical boundary and the deliberate audio/media cycle</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/CMakeLists.txt"><code>modules/media/CMakeLists.txt</code></a> builds <code>cna_media</code> with <code>cna_add_module</code> from every <code>src/*.cpp</code>. It links <code>cna_audio</code> and <code>cna_graphics_core</code> publicly and the Sharp Runtime components <code>Core.Base</code>, <code>IO</code> and <code>Uri</code> publicly too (<code>Song::FromUri(string, System::Uri)</code> puts <code>System/Uri.hpp</code> in a public header). <code>cna_input</code> is a private link that only states a real compile dependency: <code>MediaPlayer.cpp</code> includes the <code>FrameworkDispatcher</code> declarations, and those reach into <code>TouchPanel</code>. The CMake comments call the resulting audio-to-media edge an accepted pump cycle, and it is a real one. <code>FrameworkDispatcher::Update</code> lives in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/audio/src/Xna/FrameworkDispatcher.cpp"><code>modules/audio/src/Xna/FrameworkDispatcher.cpp</code></a>, because its implementation state is the audio stream list, yet it calls <code>MediaPlayer::Update</code> and raises the deferred media events; in the other direction <code>MediaPlayer</code> calls the audio mixer facade. Changing an entry point on one side means reviewing the other.</p>
+<p>The decoder is the one part that varies. <code>VideoDecoder</code> and <code>AudioDurationProbe</code> are declared here (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/include/CNA/Internal/Media/VideoDecoder.hpp"><code>VideoDecoder.hpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/include/CNA/Internal/Media/AudioDurationProbe.hpp"><code>AudioDurationProbe.hpp</code></a>); the public <code>Video</code> and <code>VideoPlayer</code> implementations always live in <code>cna_media</code>. When <code>CNA_FFMPEG_AVAILABLE</code> is set, the module's CMake file filters out <code>AudioDurationProbeUnavailable.cpp</code> and <code>VideoDecoderUnavailable.cpp</code>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a> adds the <code>video-ffmpeg</code> subdirectory, and <code>cna_media</code> links <code>cna_video_ffmpeg</code> privately, so the FFmpeg archive supplies the same symbols. Otherwise the two fallback translation units keep the API link-complete without any FFmpeg header. <code>cna_media</code> is one of the runtime parts of the <code>CNA</code> umbrella target, so a game that links <code>CNA</code> gets the module, and the decoder question is settled at configure time, not at run time.</p>
+<pre class="diagram">Platform filesystem service (SDL_GetUserFolder | Win32 known folder | XDG user-dirs.dirs)
+  -&gt; MediaLibraryPaths (process-wide override strings)
+  -&gt; MediaLibraryIndex / PictureLibraryIndex / PlaylistParser      [caller thread, at construction]
+  -&gt; MediaLibrary-owned Song / Album / Artist / Genre / Playlist / Picture graph
+
+MediaPlayer static queue [its own Song copies]                     [caller thread]
+  -&gt; audio MixerTrack + MixerAudio (streaming)                     [audio thread: stopped + post-mix callbacks]
+  &lt;- FrameworkDispatcher::Update -&gt; MediaPlayer::Update -&gt; event flags   [caller thread, normally Game::Update]
+
+VideoPlayer -&gt; VideoDecoder [FFmpeg or unavailable]                [caller thread, inside Play and GetTexture]
+  -&gt; RGBA Texture2D::SetDataRGBA  +  float audio -&gt; MixerStream</pre>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Lifecycle</th><th scope="col">Owner and lifetime</th><th scope="col">What it owns</th><th scope="col">Threads that touch it</th></tr></thead>
+<tbody>
+<tr><td><code>MediaLibrary</code></td><td>One instance per caller; the scan runs in the constructor and the graph never refreshes</td><td>Every <code>Song</code>, <code>Album</code>, <code>Artist</code>, <code>Genre</code>, <code>Playlist</code>, <code>Picture</code>, <code>PictureAlbum</code> and every collection over them, as <code>unique_ptr</code> members</td><td>The constructing thread; no locking anywhere in the class</td></tr>
+<tr><td><code>MediaPlayer</code></td><td>Static service: a static <code>MediaQueue</code>, static state, volume, timer and events; released only by <code>ProgramExit</code></td><td>The queue's own <code>Song</code> copies, one mixer track and one mixer audio handle</td><td>The caller thread for every public call; the audio thread for two callbacks that only set an atomic flag or write a lock-free ring</td></tr>
+<tr><td><code>VideoPlayer</code></td><td>One instance per playback session; <code>Dispose</code> or destruction closes it</td><td>A <code>unique_ptr&lt;VideoDecoder&gt;</code>, a <code>unique_ptr&lt;Texture2D&gt;</code> and one mixer stream</td><td>The caller thread only; there is no worker</td></tr>
+</tbody>
+</table></div>
+<h3 id="sound-enabled">Which builds have a mixer at all</h3>
+<p>Music and video audio both go through <code>MixerEngine.hpp</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/audio/include/CNA/Internal/Audio/MixerEngine.hpp"><code>MixerEngine.hpp</code></a>), and that header only has an implementation where a mixer exists. <code>modules/CMakeLists.txt</code> defines <code>SOUND_ENABLED</code> on the shared build-config target only when <code>CNA_AUDIO_PLATFORM</code> is <code>SDL3</code> (SDL3_mixer) or <code>ALSA</code> (CNA's own mixer); <code>SDL2</code> and <code>NULL</code> transport audio but compile the facade without one. The user-facing statement of the same split is the <a href="../../../docs/audio.html#implementations">audio implementation table</a>. Two consequences are easy to miss when reading this module:</p>
+<ul>
+<li><code>MediaPlayer</code> still has a full state machine without a mixer. <code>PlaySong</code> skips loading, track creation, the play count and the mixer-reported duration, and only drives the timer and the state; song end is then detected by comparing elapsed time with the song's known duration (<code>DetectSongEndedByElapsedTime</code>), which never fires for a zero duration.</li>
+<li><code>VideoPlayer</code> wraps every audio call in a small shim. Without a mixer, <code>OpenAudioStream</code> returns null and every other call is a no-op, so a video plays with its audio silent while decoding and presentation are unaffected.</li>
+</ul>
+
+<h2 id="library">The library is a construction-time, value-owning snapshot</h2>
+<h3 id="roots">Where the roots come from</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/MediaLibraryPaths.cpp"><code>MediaLibraryPaths.cpp</code></a> resolves the Music and Pictures roots through the current platform's filesystem service (<code>GetCurrentPlatform().GetFileSystem()->GetUserFolder</code>), strips trailing separators, and returns an empty string when the service is absent. Two static override strings (<code>SetMusicRootOverride</code>, <code>SetPictureRootOverride</code>) win over the platform when non-empty; they are process-global and unsynchronized, and tests restore them by passing an empty string. What the platform answers depends on the selected backend, read at 009d40f5:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Platform</th><th scope="col">Music / Pictures root</th></tr></thead>
+<tbody>
+<tr><td><code>SDL3</code></td><td><code>SDL_GetUserFolder(SDL_FOLDER_MUSIC / SDL_FOLDER_PICTURES)</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3SystemServices.cpp"><code>Sdl3SystemServices.cpp</code></a>; empty when SDL returns null</td></tr>
+<tr><td><code>WIN32</code></td><td>The Windows known folders (<code>FOLDERID_Music</code>, <code>FOLDERID_Pictures</code>) in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Win32/Win32SystemServices.cpp"><code>Win32SystemServices.cpp</code></a></td></tr>
+<tr><td><code>SDL2</code>, <code>X11</code>, <code>WAYLAND</code>, <code>HEADLESS</code>, <code>TERMINAL</code></td><td>The shared <code>StandardFileSystem</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Common/StandardFileSystem.cpp"><code>StandardFileSystem.cpp</code></a>, which reads <code>XDG_MUSIC_DIR</code> and <code>XDG_PICTURES_DIR</code> from <code>$XDG_CONFIG_HOME/user-dirs.dirs</code> (or <code>~/.config/user-dirs.dirs</code>) and returns empty when <code>HOME</code> is unset or the entry is missing</td></tr>
+</tbody>
+</table></div>
+<p>An empty root is not an error: the scan simply produces an empty library. This is why a library that is empty on a CI host, a container or a bare compositor session says nothing about the scanner.</p>
+
+<h3 id="scan">What the scan indexes and what it costs</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/MediaLibraryIndex.cpp"><code>MediaLibraryIndex.cpp</code></a> runs once, in the constructor. It recurses through the music root, tracks the <code>weakly_canonical</code> path of every directory it enters so a symlink cycle terminates, opens directories with <code>skip_permission_denied</code>, and sorts each directory's entries by path before processing them, so the result (including which spelling wins a case-insensitive artist or genre) does not depend on filesystem enumeration order. It indexes only the extensions the bundled mixer can actually play: <code>.ogg</code>, <code>.oga</code>, <code>.mp3</code>, <code>.wav</code>, <code>.flac</code> and <code>.opus</code>. <code>.aac</code> and <code>.m4a</code> are left out on purpose, because the mixer ships no AAC decoder and a library entry that <code>MediaPlayer::Play</code> could never play is worse than no entry. The class comment in <code>MediaLibraryIndex.hpp</code> still lists only four extensions; the source is authoritative. The song path becomes a key in generic (forward-slash) UTF-8 form, because the playlist side looks songs up with a path that also comes out in generic form.</p>
+<p>Tags come from <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/AudioTagParser.cpp"><code>AudioTagParser.cpp</code></a>, a from-scratch reader with no tag-library dependency. <code>ReadTags</code> selects a reader by extension, then fills any field that is still empty from the path:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Extension</th><th scope="col">Reader</th><th scope="col">Also read</th></tr></thead>
+<tbody>
+<tr><td><code>.ogg</code>, <code>.oga</code></td><td>Vorbis comments (<code>TryReadVorbisComments</code>)</td><td>track number, <code>RATING</code></td></tr>
+<tr><td><code>.opus</code></td><td><code>OpusTags</code> header (<code>TryReadOpusTags</code>)</td><td>same comment list</td></tr>
+<tr><td><code>.flac</code></td><td>Native FLAC <code>VORBIS_COMMENT</code> block (<code>TryReadFlacComments</code>)</td><td>embedded art from <code>METADATA_BLOCK_PICTURE</code></td></tr>
+<tr><td><code>.mp3</code></td><td>ID3v2.3/2.4 text frames (<code>TryReadId3v2</code>: title, artist, album, genre, track) with Latin-1, UTF-16 and UTF-8 encodings</td><td><code>POPM</code> rating; embedded art from <code>APIC</code></td></tr>
+<tr><td><code>.wav</code></td><td>none</td><td>filename and folder fallback only</td></tr>
+</tbody>
+</table></div>
+<p>The fallback (<code>ApplyFilenameFallback</code>) fills an empty title with the file stem, an empty album with the parent directory name and an empty artist with the grandparent directory name; a genre is never invented. Ratings have no standard source scale, so the mapping to XNA's 0 to 10 range is a documented CNA decision: <code>POPM</code> is 0 to 255 with 0 meaning unrated, and a Vorbis <code>RATING</code> is read as 0 to 100. <code>hasRating</code> is true only when a real rating tag exists, which is what <code>Song.IsRated</code> reports, and is not the same as a non-zero rating. Artists and genres are normalised case-insensitively (a trimmed, lower-cased key; first spelling seen wins), albums are keyed by the exact <code>(artist, album)</code> pair.</p>
+<p>Two costs follow from the code and matter for large libraries; neither was measured. <code>ReadTags</code> reads each file completely into memory before parsing (<code>ReadFileBytes</code>), and <code>MediaLibrary</code> then calls <code>AudioDurationProbe::ProbeDurationMS</code> once per song. With the FFmpeg backend that is <code>avformat_open_input</code> plus <code>avformat_find_stream_info</code> and a container-duration read, with no decoding; without it the probe is a stub that returns zero. A zero duration is treated as unknown: the <code>Song</code> is built without one, and album and playlist durations become sums of whatever durations exist. Only a build with FFmpeg gives library songs a duration at scan time.</p>
+
+<h3 id="graph">Graph ownership and construction order</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Xna/MediaLibrary.cpp"><code>MediaLibrary.cpp</code></a> builds the graph in one function, <code>MediaLibrary::BuildFromRoots</code>, and the order is part of the design:</p>
+<ol>
+<li>Every indexed file becomes a <code>Song</code> owned by <code>ownedSongs_</code>; a <code>SongCollection</code> of raw pointers exposes them.</li>
+<li>Songs are grouped by genre, artist and <code>(artist, album)</code> in first-seen order (the scan is already deterministic). A song with an empty artist joins no artist and no album; one with an empty genre joins no genre.</li>
+<li>Genres, then artists, then albums are created. An album's duration is the sum of its songs' durations, its genre is the first song's genre, and its art path comes from a folder search.</li>
+<li>The genre and artist album collections are patched in once albums exist.</li>
+<li>A final pass writes the <code>Song</code> back-references (<code>Album</code>, <code>Artist</code>, <code>Genre</code>) and copies the real track number, rating and <code>IsRated</code> that the index had parsed.</li>
+<li>Playlists, then pictures and picture albums, are built.</li>
+</ol>
+<p>Every group object is a <code>unique_ptr</code> in a member vector, and every collection and back-reference is a raw pointer to a heap object those vectors own. Growing a vector of <code>unique_ptr</code> moves the pointers, never the pointees, so the raw pointers stay valid for as long as the library owns the graph. The public getters return borrowed pointers into that graph: do not cache them past the library's destruction. <code>MediaLibrary::Dispose</code> currently only sets a flag; it neither frees the graph nor reloads it. A maintainer who changes construction must keep the delayed back-reference pass and the collection ownership, and must not take a reference into a temporary vector.</p>
+<p>The library is a snapshot, not a media database: it never rescans, so files added after construction are invisible to that instance. Two other places take the same snapshot-time decisions. Album art is looked up per album by scanning the first song's directory case-insensitively for <code>cover</code>, <code>folder</code>, <code>front</code>, <code>album</code> or <code>albumart</code> images (in that precedence, <code>.jpg</code>/<code>.jpeg</code>/<code>.png</code> variants), and when there is no folder image the first member song with embedded art is remembered by path only. <code>Album::GetAlbumArt</code> and <code>GetThumbnail</code> then read the image on demand and return a heap-allocated <code>FileStream</code> or <code>MemoryStream</code> that the caller owns; folder art wins over embedded art, and thumbnails of folder art are box-filtered PNGs no larger than 128 pixels on the long edge (<code>ThumbnailGenerator</code>), falling back to the original file when the source cannot be thumbnailed, and embedded art is returned as extracted. Playlists are <code>.m3u</code> and <code>.m3u8</code> files found directly in the music root (not recursively); <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/PlaylistParser.cpp"><code>PlaylistParser.cpp</code></a> skips comment lines, resolves each entry with <code>ResolveContainedPath</code> against the playlist's own directory so absolute and escaping entries are dropped, and skips missing files. <code>MediaLibrary</code> then keeps only entries that match an indexed song path.</p>
+
+<h3 id="pictures">Pictures and the one write path</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/PictureLibraryIndex.cpp"><code>PictureLibraryIndex.cpp</code></a> recurses through the pictures root with the same cycle guard, permission handling and sorting as the music scan. Every directory becomes a picture-album node, including empty ones; files with <code>.png</code>, <code>.jpg</code>, <code>.jpeg</code> or <code>.bmp</code> extensions are loaded through <code>ImageLoader::Load</code> to read their dimensions, and a file that fails to load is skipped without aborting the scan. <code>MediaLibrary::BuildPictureAlbumTree</code> turns the index into owned <code>PictureAlbum</code> and <code>Picture</code> objects.</p>
+<p><code>SavePicture</code> is the only place the library writes to disk, and it does so lazily. Merely constructing or browsing a library never creates <code>Saved Pictures</code>. On the first save, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/SavedPictureStore.cpp"><code>SavedPictureStore.cpp</code></a> creates <code>Pictures/Saved Pictures</code> under the pictures root, reduces the caller's name to its last path segment (backslashes are normalised first, and <code>.</code>, <code>..</code> or an empty result become <code>picture</code>), chooses an extension from magic bytes (PNG, JPEG or BMP, defaulting to <code>.png</code>), appends it to the sanitized name even if the name already had one, and writes the bytes with an <code>ofstream</code>. A failed write returns an empty path and <code>MediaLibrary::SavePicture</code> throws <code>IOException</code>. On success the library tries to load the dimensions (a load failure records 0 by 0), creates the <code>Picture</code>, and appends it to the owned list, the all-pictures collection, the saved-pictures collection and its album, creating the <code>Saved Pictures</code> album node (and a root node, when the pictures root did not exist at construction) through <code>EnsureSavedPicturesAlbum</code> if the scan had not found one. This is another filesystem-authority boundary: tests must use isolated roots and the traversal cases must be re-run before sanitization changes. The code creates or overwrites a filename; it is neither a transactional save nor a race-proof sandbox, and two saves of the same name overwrite each other on disk while both stay in the in-memory collections.</p>
+
+<h2 id="music">Music queue, audio callback and dispatcher</h2>
+<h3 id="queue">A static service with its own copies</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Xna/MediaPlayer.cpp"><code>MediaPlayer.cpp</code></a> is a static service, not an object owned by each <code>Game</code>. <code>Play(Song*)</code> clears the static <code>MediaQueue</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Xna/MediaQueue.cpp"><code>MediaQueue.cpp</code></a>), which owns <code>unique_ptr&lt;Song&gt;</code> copies made by <code>LoadSong</code> from the source song's handle and name. A copy is built with the two-argument <code>Song</code> constructor, so it carries no duration, no track number, no rating and no album, artist or genre links, and that constructor throws <code>FileNotFoundException</code> when the file no longer exists. The queue therefore never aliases the library: the test <code>PlayEnqueuesADuplicateNotTheOriginalInstance</code> pins that the queued song is a different instance with the same name and handle, and that changing the original's play count does not reach the copy. Which song receives the duration and play-count that <code>PlaySong</code> writes depends on the entry point, and is easy to get wrong: <code>Play(Song*)</code> passes the caller's song to <code>PlaySong</code>, so under a mixer build the mixer-reported duration and the incremented play count land on the caller's (for example the library's) song, while <code>Play(const SongCollection&amp;, index)</code>, <code>MoveNext</code>, <code>MovePrevious</code> and automatic advance play queue entries, so there they land on the copies. <code>Stop</code> resets play counts only on the queue's copies. The queue's raw <code>Song*</code> getters are borrowed, and <code>Clear</code> destroys what they point at. <code>Play(const SongCollection&amp;, index)</code> copies every song of the collection, sets the active index and plays it; an out-of-range index leaves the queue filled, the active song null and nothing playing.</p>
+<h3 id="state">PlaySong, Stop and the end of a song</h3>
+<p><code>PlaySong</code> first tears down any previous music: it stops and destroys the mixer track, then releases the mixer audio, and clears the ended flag. It then loads the file as streaming audio (<code>LoadMixerAudioFile(handle, predecode=false)</code>), creates a track, attaches the audio, applies volume and mute, installs the stopped callback, records the duration reported by the decoded audio on the song it was given, starts the track, increments that song's play count, and only then resets and starts a <code>steady_clock</code> timer and sets <code>MediaState::Playing</code>. If loading, track creation, attachment or start fails, it cleans up the mixer objects and returns before touching the timer or the state, so the caller must look at <code>getStateProperty()</code> rather than assume a request reached the hardware; a failed <code>Play</code> on a stopped player leaves it stopped, and a failed request while playing leaves the state as it was. <code>Stop</code> is a no-op when already stopped; otherwise it destroys the track before the audio, clears the ended flag, resets the timer and every queued song's play count, and marks the player stopped. <code>Pause</code> and <code>Resume</code> pause and resume the track and the timer. <code>ProgramExit</code> releases any remaining track and audio if a song was ever played. No runtime call site invokes it: within the module tree the only non-test caller is the C API route <code>cna_media_player_program_exit_ext</code>, so a C++ game that wants deterministic release must call it itself.</p>
+<p>Ending is a hand-off from the audio thread to the caller thread. <code>OnMusicTrackStopped</code> runs on the audio thread and only stores <code>true</code> into an atomic <code>g_songEnded</code>. <code>MediaPlayer::Update</code>, called from the dispatcher, exchanges the flag back to false on the caller thread; when it was set it counts the finished song and either stops (last song, repeat off) or calls <code>MoveNext</code>. <code>NextSong</code> stops first, then picks the next index: repeat at the last index wraps to zero, shuffle picks uniformly among all indices including the current one (<code>ShuffleCanRepeatTheSameSongIndex</code>), and otherwise the index is clamped to the queue, so a manual <code>MoveNext</code> on the last song replays it rather than stopping. Because <code>Stop</code> and <code>PlaySong</code> clear the flag only after destroying the old track and audio, a flag raised by that teardown is discarded and cannot advance the queue. In a build with no mixer the same <code>Update</code> asks <code>DetectSongEndedByElapsedTime</code> instead.</p>
+<h3 id="dispatcher">The dispatcher pump and deferred events</h3>
+<p><code>FrameworkDispatcher::Update</code> does six things in a fixed order: it updates every registered <code>DynamicSoundEffectInstance</code> from a snapshot taken under <code>StreamsMutex</code> (so an instance may dispose itself from its own <code>BufferNeeded</code> handler), checks microphone buffers, calls <code>MediaPlayer::Update</code>, raises <code>ActiveSongChanged</code> if its flag is set, then <code>MediaStateChanged</code> if its flag is set, and finally updates the touch panel when a touch device exists. The two flags are plain booleans that <code>MediaPlayer</code> sets from <code>setStateProperty</code> and the play paths, so the events are coalesced (one raise per pump, however many transitions happened) and are never raised from the mixer callback. The pump runs once during <code>Game</code> construction and at the end of the base <code>Game::Update(GameTime&amp;)</code> (see <a href="../../../docs/game-loop.html#frameworkdispatcherupdate">the dispatcher note in the game-loop guide</a>): a derived <code>Update</code> that never calls the base class never advances the queue, ends a song or raises these events unless the program pumps the dispatcher itself. <code>MediaPlayer::ActiveSongChanged</code> and <code>MediaStateChanged</code> are static process-wide handlers, so a subscriber that captures locals must unsubscribe before they die; the dispatcher test uses <code>Add</code> and <code>Remove</code> for that reason.</p>
+<h3 id="visualization">The visualization tap</h3>
+<p>Enabling visualization installs a post-mix callback on the mixer. That callback runs on the audio thread for every mixed buffer and must not allocate, lock or throw; <code>VisualizationCapture::Push</code> honours this with a 2,048-sample ring of <code>std::atomic&lt;float&gt;</code> written with relaxed stores and two release-published counters, downmixing to mono by averaging. <code>GetVisualizationData</code> zero-fills the 256 sample and 256 frequency values when disabled or when nothing has been captured, otherwise reads the newest 256 samples and runs a Hann-windowed radix-2 FFT over the newest 512 (<code>VisualizationFFT</code>). The setter separates two facts that can disagree: <code>g_visualizationEnabled</code> is the flag callers see, <code>g_visualizationTapInstalled</code> records whether a callback is really installed. The audio facade documents replacement or removal of the callback as a barrier (the old callback has returned when the call succeeds), and the module relies on it: on disable it clears the ring only after a confirmed uninstall, and on enable it clears the ring before installing. If an uninstall fails, the flag reads false but the tap stays marked installed, the ring is not touched (zeroing a buffer another thread is writing was a real race), and a later disable retries. Enabling with no working mixer leaves both false. A change here must preserve the callback's no-allocation, no-lock, no-exception contract, the reset-after-uninstall barrier and the dispatcher's event timing.</p>
+<h3 id="music-sharp-edges">Sharp edges recorded from the source</h3>
+<p>None of the global queue, settings and timer fields carries a synchronization guarantee, so treat game-thread calls as the supported pattern unless a specific guarantee is proven; the two audio-thread callbacks are the only cross-thread traffic and each communicates through an atomic. The following were read from the source at 009d40f5 and are not covered by a named test; they are recorded as maintainer notes, not as verified failures.</p>
+<ul>
+<li><code>Play(Song*)</code> clears the queue, then reads the song it was given. Passing a <code>Song*</code> that the queue itself owns (for example <code>getQueueProperty().getActiveSongProperty()</code>) would read a song that <code>Clear</code> has just destroyed.</li>
+<li><code>Play(Song*)</code> compares the queue's previous first song with the caller's pointer to decide whether to flag <code>ActiveSongChanged</code>. The queue holds copies, so for any library or standalone song the pointers differ and the flag is raised on every call, even when the same song is replayed.</li>
+<li><code>Play(const SongCollection&amp;, index)</code> never sets the <code>ActiveSongChanged</code> flag; playing a collection raises only the state-change event, through <code>PlaySong</code>. <code>Play(Song*)</code>, <code>NextSong</code> and the end-of-queue path do set it.</li>
+<li>A <code>Song</code> copy that fails to construct (the file vanished after the scan) throws out of <code>Play</code> after the queue was already cleared and possibly partly filled.</li>
+<li>The mixer-less profile never sets a duration on queue copies, and the elapsed-time fallback ignores zero durations, so playback in that profile never auto-advances.</li>
+</ul>
+
+<h2 id="video">Video is an orchestration layer over decode, graphics and audio</h2>
+<h3 id="video-construction">Two ways to make a Video</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Xna/Video/Video.cpp"><code>Video.cpp</code></a> has two constructors with different obligations. The raw-file constructor (<code>Video(fileName, device)</code>, reached by <code>FromUriEXT</code> and by the loose-file content reader for <code>.mp4</code>, <code>.ogv</code>, <code>.webm</code>, <code>.mkv</code>, <code>.avi</code> and <code>.mov</code>) first requires the file to exist (<code>FileNotFoundException</code>), then calls <code>RequireVideoDecoderAvailable</code> (<code>NotSupportedException</code> without a backend), then probes the file with a throwaway <code>VideoDecoder</code> for width, height, frame rate and duration; if the probe cannot open the file the dimensions simply stay zero, with no exception. The seven-argument constructor takes trusted metadata and never touches the file or the decoder, which is what the XNB and CNB video readers use, so metadata-only <code>Video</code> objects exist in every build. Neither <code>Video</code> nor <code>VideoPlayer</code> has any synchronization, and the decoder header states that a <code>VideoDecoder</code> must be driven from one thread.</p>
+<h3 id="video-play">Play, OpenDecoder and GetTexture</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Xna/Video/VideoPlayer.cpp"><code>VideoPlayer.cpp</code></a> owns a <code>unique_ptr&lt;VideoDecoder&gt;</code>. <code>Play</code> checks disposal, returns for a null video, and calls <code>RequireVideoDecoderAvailable</code> before assigning anything, so a failed <code>Play</code> in a build without a backend leaves the player stopped with no video. <code>VideoPlayer::OpenDecoder</code> then closes any previous session, opens the file (a decoder that cannot open returns quietly, leaving the player stopped and no exception), and compares the <code>Video</code>'s declared width, height and frame rate with what the file reports, throwing <code>InvalidOperationException</code> on a mismatch (frame-rate tolerance one frame per second). Stored track preferences are applied before any output exists, so the texture and the audio stream are built for the track that will actually play. Inside one <code>try</code> block it then creates the frame <code>Texture2D</code> (only when the <code>Video</code> has a graphics device), reopens the audio stream at the active track's sample rate and channel count, decodes the first frame, uploads it with <code>Texture2D::SetDataRGBA</code> and bumps the frame generation, and drains the first audio; any exception calls <code>CloseDecoder</code> and rethrows, so a failed <code>Play</code> does not leave a playing half-state.</p>
+<p><code>GetTexture</code> is what advances playback. There is no worker: decoding, audio feeding, looping and end-of-stream detection all happen inside <code>Play</code> and <code>GetTexture</code> on the caller's thread, and a game that stops calling <code>GetTexture</code> stops feeding audio. The play position is a <code>steady_clock</code> offset, not the audio device's clock. <code>GetTexture</code> returns the current texture without decoding while stopped or paused, otherwise it decodes frames until the last decoded frame is no more than half a frame behind the play position, uploading every decoded frame (skipped frames included), and drains decoded audio into the mixer stream after every <code>NextFrame</code> call, including the one that returns no frame, because the decoder can read trailing audio packets while looking for end of file. At end of stream a looped video seeks to the start and resets the clock; a non-looped video keeps returning the last texture while the mixer stream still has queued bytes, and only when the queue is empty sets the state to <code>Stopped</code> and pauses the stream. It does not close the decoder at that point, so the texture and decoder live until <code>Stop</code>, another <code>Play</code> or disposal. <code>GetFrameGenerationEXT</code> counts frames actually decoded into the texture and is monotonic for the player's whole life (never reset by <code>Stop</code> or a new video), which lets the C API distinguish a repeated frame from a new one. A decode error thrown by the decoder (see <a href="video-ffmpeg.html#failures">the failure table</a>) propagates out of <code>GetTexture</code> uncaught; only <code>OpenDecoder</code> cleans up after an exception.</p>
+<p><code>CloseDecoder</code> destroys the audio stream first, clears the audio buffer (so stale samples cannot reach a later playback), resets the video's back-pointer, and then discards the texture and the decoder. Mid-playback <code>SetAudioTrackEXT</code> and <code>SetVideoTrackEXT</code> reconfigure only the affected output and only when the decoder reports a real switch, so re-selecting the current track or an out-of-range one does nothing.</p>
+<h3 id="video-lifetime">Ownership and lifetime</h3>
+<p>A <code>VideoPlayer</code> stores a borrowed <code>Video*</code>, and the <code>Video</code> stores a borrowed <code>VideoPlayer*</code> parent so per-video track selection can reach the live player. Neither owns the other and <code>Play</code> extends no lifetime. The header does not state the ordering rule, but the source implies it: <code>CloseDecoder</code> writes through the stored <code>Video*</code>, so the <code>Video</code> must stay alive and unmoved until the player has been stopped, disposed or destroyed. That is a hazard read from source, not a tested guarantee. Content loading returns <code>Video</code> by value, so callers that keep a <code>Video</code> in a container should hold it where it will not move while playing.</p>
+<p>When frames go black, check the boundaries in this order: the decoder's RGBA output, the upload into the texture, the renderer's sampling of that texture, then timing. A decoder unit test proves none of the later boundaries, and a video with no graphics device on its <code>Video</code> yields no texture at all. The decode-side detail is on the <a href="video-ffmpeg.html">FFmpeg boundary page</a>.</p>
+
+<h2 id="testing">Human change and validation map</h2>
+<p>The module's tests are split by owner, and the names below are as registered in source at 009d40f5; none were executed for these pages. By file: <code>MediaLibraryIndexTests</code>, <code>AudioTagParserTests</code>, <code>PlaylistParserTests</code>, <code>PictureLibraryIndexTests</code> and <code>SavedPictureStoreTests</code> establish scanning, parsing and write behaviour; <code>MediaLibraryTests</code> and the album, artist, genre, picture and playlist tests establish graph ownership and relationships; <code>MediaQueueTests</code> and <code>MediaPlayerTests</code> establish queue, state and dispatcher behaviour; <code>VisualizationTests</code> cover capture and the FFT; the video tests distinguish backend availability from real decode and player behaviour.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Changing</th><th scope="col">Tests that pin it</th><th scope="col">What they do not show</th></tr></thead>
+<tbody>
+<tr><td>Roots and scan</td><td><code>MediaLibraryPathsTest.*</code> (override redirects, platform folders with trailing separators stripped), <code>MediaLibraryIndexTest.*</code> (every fixture song, case-variant artists merged, symlink cycle, unreadable subdirectory)</td><td>A real user profile; large libraries; non-ASCII filesystems beyond the fixtures</td></tr>
+<tr><td>Tag parsing</td><td><code>AudioTagParserTest.*</code>: Vorbis, ID3v2.3 and 2.4, all four ID3 encodings, FLAC, Opus, untagged WAV fallback, malformed and truncated input, overflow-inducing frame sizes, POPM and Vorbis ratings, embedded art</td><td>Specialized tag formats beyond these; real-world tagger quirks</td></tr>
+<tr><td>Playlists, pictures</td><td><code>PlaylistParserTest.*</code>, <code>PictureLibraryIndexTest.*</code>, <code>SavedPictureStoreTest.*</code> (traversal, absolute, backslash and dot names; empty root), <code>ThumbnailGeneratorTest.*</code></td><td>Every image decoder; concurrent saves</td></tr>
+<tr><td>Graph ownership</td><td><code>MediaLibraryTestFixture.ObjectGraphIsInternallyConsistent</code>, <code>SongsPointBackAtTheirOwningAlbumArtistAndGenre</code>, the <code>MediaLibrarySavePictureTest</code> cases and <code>MediaLibrarySavePictureNoPreexistingRootTest</code> (a pictures root that did not exist at construction) and album, artist, genre, picture and playlist suites</td><td>Use after <code>Dispose</code>; graph lifetime under other threads</td></tr>
+<tr><td>Queue and player</td><td><code>MediaQueueTest.*</code>, <code>MediaPlayerTest.*</code> (duplicate-not-original, shuffle repeat, state transitions, dispatcher events), <code>MediaPlayerNoSoundFallbackTest.*</code> (four cases of the pure elapsed-time function)</td><td>The failure and hazard cases listed above; the mixer-less profile at run time</td></tr>
+<tr><td>Visualization</td><td><code>VisualizationFFTTest.*</code>, <code>VisualizationCaptureTest.*</code>, four <code>MediaPlayerTest</code> visualization cases</td><td>The no-mixer or failed-install branch (see below)</td></tr>
+<tr><td>Video</td><td><code>VideoBackendAvailabilityTest.*</code>, <code>VideoTest.*</code>, <code>VideoPlayerTest.*</code>, <code>VideoDecoderTest.*</code></td><td>Real texture upload and audible output on every backend</td></tr>
+</tbody>
+</table></div>
+<p>Configuration decides what is even compiled. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>cmake/UnitTests.cmake</code></a> drops <code>VideoDecoderTests.cpp</code>, <code>VideoTests.cpp</code>, <code>VideoPlayerTests.cpp</code> and the content video XNB suite when <code>CNA_FFMPEG_AVAILABLE</code> is off, and keeps <code>VideoBackendAvailabilityTests.cpp</code>, which compiles exactly one of two mutually exclusive tests: <code>EnabledBuildReportsDecoderAvailable</code> when <code>CNA_VIDEO_AVAILABLE</code> is defined, <code>DisabledBuildRetainsMetadataApiAndRejectsDecoding</code> otherwise. When FFmpeg is available the same file defines <code>CNA_TEST_HAS_AUDIO_DURATION_PROBE</code> for the media test objects so the two suites that assert a probed duration sum (<code>AlbumTests.cpp</code>, <code>PlaylistTests.cpp</code>) know which probe they are linked against. Check the configured test list before claiming playback coverage. Other facts that decide whether a run means anything:</p>
+<ul>
+<li>Fixtures are addressed relative to the repository root (<code>tests/assets/media/...</code>), and the discovered tests run with that working directory. <code>MediaLibraryTestFixture</code> redirects both roots to the checked-in trees and clears the overrides in <code>TearDown</code>; the save-picture tests use scratch copies so the fixture tree gains no <code>Saved Pictures</code> folder. When changing library code, check that any override is still restored.</li>
+<li>The focused executable is <code>CnaMediaTests</code>, an <code>EXCLUDE_FROM_ALL</code> developer target; it is not a separate CTest registration, so CTest reaches these cases only through <code>CnaTests</code>.</li>
+<li><code>MediaPlayerTest</code> sets <code>SDL_AUDIODRIVER=dummy</code>. Its own comments state that the mixer always exists in that run, so the no-mixer or failed-install visualization branch is correct by construction and not by test. The one test that plays MP3 and FLAC songs to their natural end (<code>Mp3AndFlacSongsPlayThroughCnasOwnMixerToTheirEnd</code>) is compiled only under <code>CNA_AUDIO_PLATFORM_ALSA</code>; no test of the natural-end path under SDL3_mixer is named in this module.</li>
+<li>The Linux workflows install the FFmpeg development packages, so their default <code>AUTO</code> configuration would select the backend; the <code>dev</code>, <code>unit</code> and <code>release-modules</code> presets set <code>CNA_ENABLE_VIDEO=OFF</code>. A green preset build is therefore not evidence that video decodes; see <a href="video-ffmpeg.html#validation">the FFmpeg validation section</a>.</li>
+</ul>
+<p>For a library change, run the index and graph tests against a disposable music and picture root. For a music change, run <code>MediaPlayerTest</code> plus the dispatcher and audio mixer tests, and a real audio host if the bug concerns audible output. For video, test both an FFmpeg-enabled and a disabled configuration, then texture and audio output on a capable host. For all three, check shutdown and repeated construction or <code>Play</code>, which is how stale static state shows up. The shape of a focused run, not executed here:</p>
+<pre><code class="language-bash"># from the repository root, so tests/assets/media/... resolves
+cmake --build &lt;build-dir&gt; --target CnaMediaTests
+&lt;build-dir&gt;/CnaMediaTests --gtest_filter='MediaPlayerTest.*:MediaQueueTest.*:MediaLibrary*'</code></pre>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p>What remains unverified. The specialised tag formats beyond ID3v2, Vorbis, Opus and FLAC, every picture decoder, and host-specific sound behaviour still need separate audits; live audio and video output hosts were not exercised for these pages, and nothing here claims the module complete. The findings above come from reading the sources and test files at 009d40f5.</p></div>
+
+<h2 id="reading">Source-reading order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/CMakeLists.txt"><code>media/CMakeLists.txt</code></a>, then the decoder block in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a>: fix the physical boundary and which decoder implementation entered the build.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/MediaLibraryPaths.cpp"><code>MediaLibraryPaths.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/MediaLibraryIndex.cpp"><code>MediaLibraryIndex.cpp</code></a>: roots, the scan, the extension list and normalisation; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/AudioTagParser.cpp"><code>AudioTagParser.cpp</code></a> only when a tag format is in question.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Xna/MediaLibrary.cpp"><code>MediaLibrary.cpp</code></a>: graph ownership, the back-reference pass and the saved-picture mutation, with <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/SavedPictureStore.cpp"><code>SavedPictureStore.cpp</code></a> for the write itself.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Xna/MediaQueue.cpp"><code>MediaQueue.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Xna/MediaPlayer.cpp"><code>MediaPlayer.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/audio/src/Xna/FrameworkDispatcher.cpp"><code>FrameworkDispatcher.cpp</code></a>: queue ownership, the audio callbacks and the event pump, with the mixer facade contract in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/audio/include/CNA/Internal/Audio/MixerEngine.hpp"><code>MixerEngine.hpp</code></a>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Xna/Video/VideoPlayer.cpp"><code>VideoPlayer.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Xna/Video/Video.cpp"><code>Video.cpp</code></a>: the hand-off, then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/tests/Microsoft/Xna/Framework/Media/MediaPlayerTests.cpp"><code>MediaPlayerTests.cpp</code></a> to compare the player path against what the tests actually assert.</li>
+</ol>
+<p>Cross-cutting rules live in <a href="../../takeover/ownership.html">the ownership and lifetime master map</a> and <a href="../../takeover/threading.html">the thread and callback map</a>; the module's place among its siblings is in <a href="../../reference/modules.html#inventory">the module index</a>, and the general change procedure starts at <a href="../../handbook/index.html">the Maintainer Handbook</a>. For the audio side of the mixer see <a href="../audio/engine.html">Audio engine internals</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/video-playback.html#videoplayer-class">Video Playback: VideoPlayer</a> &middot; <a href="../../../docs/audio.html#tier-1-implemented-sdl3mixer">Audio: implemented playback tier</a> &middot; <a href="../../../docs/xna-compatibility.html#microsoftxnaframeworkmedia">XNA compatibility: Media</a> &middot; <a href="../../../docs/game-loop.html#frameworkdispatcherupdate">Game loop: FrameworkDispatcher::Update</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/audio-input.html">Audio and input architecture</a> &middot; <a href="../../architecture/runtime.html">Runtime lifecycle</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="video-ffmpeg.html">FFmpeg video boundary</a> &middot; <a href="../audio/engine.html">Audio engine internals</a> &middot; <a href="../content/runtime.html">Content runtime internals</a> &middot; <a href="../platforms/sdl3.html">SDL3 platform internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/debug-shutdown-and-lifetime.html">I need to debug shutdown and lifetime behavior</a> &middot; <a href="../../handbook/add-a-regression-test.html">I need to add a regression test</a> &middot; <a href="../../takeover/ownership.html">Ownership and lifetime master map</a> &middot; <a href="../../takeover/threading.html">Thread and callback map</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture and change recipes</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/modules.html#inventory">Module index</a> &middot; <a href="../../reference/test-targets.html">Test target index</a> &middot; <a href="../../reference/cmake-options.html">CMake option index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="storage.html" rel="prev"><span>Previous</span>Storage internals</a><a class="dev-pager-next" href="video-ffmpeg.html" rel="next"><span>Next</span>FFmpeg video boundary</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Storage internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s storage module works inside: fake-async Begin/End, the process-wide root and application name, container and delete authority through the shared path helpers, ownership, the C ABI adapter and the test fixture.">
+  <meta name="keywords" content="storage, storagedevice, storagecontainer, setappnameext, deletecontainer, resolvecontainedpath, cna_storage, xdg_data_home, isolated storage, fake async, cnastoragetests">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/modules/storage.html">
+  <meta property="og:title" content="Storage internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s storage module works inside: fake-async Begin/End, the process-wide root and application name, container and delete authority through the shared path helpers, ownership, the C ABI adapter and the test fixture.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/modules/storage.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Storage internals","description":"How CNA's storage module works inside: fake-async Begin/End, the process-wide root and application name, container and delete authority through the shared path helpers, ownership, the C ABI adapter and the test fixture.","url":"https://libcna.com/development/internals/modules/storage.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="core.html" class="docs-nav-link is-group-active">Module internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="math.html" class="docs-nav-link">Math</a></li>
+        <li><a href="design.html" class="docs-nav-link">Design converters</a></li>
+        <li><a href="storage.html" class="docs-nav-link active" aria-current="page">Storage</a></li>
+        <li><a href="media.html" class="docs-nav-link">Media</a></li>
+        <li><a href="video-ffmpeg.html" class="docs-nav-link">FFmpeg video</a></li>
+        <li><a href="devices.html" class="docs-nav-link">Devices &amp; sensors</a></li>
+        <li><a href="devices-ext.html" class="docs-nav-link">Device host services</a></li>
+        <li><a href="diagnostics.html" class="docs-nav-link">Diagnostics</a></li>
+        <li><a href="inspector.html" class="docs-nav-link">Inspector</a></li>
+        <li><a href="phone.html" class="docs-nav-link">Phone</a></li>
+        <li><a href="gamer-services.html" class="docs-nav-link">Gamer services</a></li>
+        <li><a href="graphics-ext.html" class="docs-nav-link">Graphics extensions</a></li>
+        <li><a href="net.html" class="docs-nav-link">Network sessions</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="core.html">Modules</a></li>
+        <li aria-current="page">Storage</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Storage internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#boundary">Module boundary and acquisition path</a></li>
+          <li><a href="#root">Root selection and global identity</a></li>
+          <li><a href="#authority">Container authority, UTF-8 and destructive operations</a></li>
+          <li><a href="#c-abi">The C ABI storage routes</a></li>
+          <li><a href="#tests">Testing and safe human changes</a></li>
+          <li><a href="#gaps">Current gaps at this snapshot</a></li>
+          <li><a href="#reading">Curated source route</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Module internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Checked by reading the TARGET sources, tests and CMake files and, for the Sharp Runtime coupling, a sibling Sharp Runtime checkout (next at 41b918c9, 2026-09-20; not pinned by TARGET). No build or test was executed. Remaining unverified: non-ASCII paths on a real Windows host, concurrent root or application-name changes, and race-resistant filesystem confinement.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage"><code>modules/storage/</code></a> owns CNA's policy for persisted user data: where the per-application root lives, how XNA's <code>StorageDevice</code> and <code>StorageContainer</code> names map onto directories, and which caller-supplied names may reach the filesystem at all. Its most important maintenance contract is authority: no title, container or file name supplied by a game may escape the chosen root, and the one recursive delete must stay below it. The public Begin/End API looks asynchronous but completes synchronously on the caller's thread. This page is for maintainers changing storage, the shared path helpers in core, or the C ABI storage routes; the game-facing contract is the <a href="../../../docs/storage.html">Storage guide</a>.</p>
+
+<h2 id="boundary">Module boundary and acquisition path</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/CMakeLists.txt"><code>storage/CMakeLists.txt</code></a> creates the static archive <code>cna_storage</code> with the alias <code>CNA::Storage</code> through <code>cna_add_module</code>, globbing exactly its own <code>src/*.cpp</code>: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/src/StorageDevice.cpp"><code>StorageDevice.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/src/StorageContainer.cpp"><code>StorageContainer.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/src/StorageDeviceNotConnectedException.cpp"><code>StorageDeviceNotConnectedException.cpp</code></a>. Its edges are deliberately few:</p>
+<ul>
+<li><strong>Core, headers only.</strong> <code>cna_core_headers</code> is linked <code>PUBLIC</code> because the public headers name <code>PlayerIndex</code> and the <code>CNAEXT</code> marker and the sources use core's header-only path helpers. No core symbol is referenced, so the core archive itself stays off the link line.</li>
+<li><strong>Sharp Runtime.</strong> <code>Core.Base</code>, <code>IO</code>, <code>Runtime</code> and <code>Threading</code> are <code>PUBLIC</code>: the public headers expose <code>System::IAsyncResult</code> and its wait handle, <code>System::EventHandler</code>, <code>System::IO::Stream</code> with <code>FileMode</code>/<code>FileAccess</code>/<code>FileShare</code>, and <code>System::Runtime::InteropServices::ExternalException</code> with the serialization types. <code>Storage</code> is <code>PRIVATE</code>: <code>SharpRuntime::Storage::StoragePaths</code> is used only inside <code>StorageDevice.cpp</code>.</li>
+<li><strong>No platform edge.</strong> There is no <code>cna_platform</code> link and no platform include. The root is chosen from filesystem and environment policy, so the same save location logic runs under every <code>CNA_PLATFORM</code> value, including <code>HEADLESS</code> and <code>TERMINAL</code>.</li>
+</ul>
+<p>The closure is enforced, not merely intended. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/ModuleProbes.cmake"><code>ModuleProbes.cmake</code></a> builds <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tests/modules/probe_storage.cpp"><code>probe_storage.cpp</code></a> against <code>CNA::Storage</code> alone and registers <code>ModuleProbe_probe_storage</code> plus <code>ModuleLinkClosure_probe_storage</code>, which fails when any other <code>libcna_</code> archive, <code>libCNA_</code>, enet, FFmpeg or renderer library appears on the probe's link line (native test builds only, not Emscripten or Android; the closure check also needs Python 3). Upward, games receive storage through the <code>CNA</code> umbrella in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a> (<code>cna_storage</code> is one of its runtime parts, and part of <code>libcna.so</code> when <code>CNA_SHARED_LIBRARY</code> is on), <code>CNA_GamerServices</code> links it <code>PUBLIC</code>, and the C API links it privately. The module's place in the whole graph is on the <a href="../../repository/module-graph.html">physical module dependency map</a>.</p>
+<p>The public surface is the three XNA types plus two extensions. <code>StorageDevice</code> is <code>final</code> with a private constructor, so <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/include/Microsoft/Xna/Framework/Storage/StorageDevice.hpp"><code>StorageDevice.hpp</code></a>'s <code>EndShowSelector</code> is the only way to obtain one. <code>StorageContainer</code> (a <code>System::Object</code> and <code>System::IDisposable</code>) also has a private constructor, with <code>StorageDevice</code> as its friend. <code>StorageDeviceNotConnectedException</code> derives from <code>ExternalException</code> and implements <code>GetObjectData</code> plus the protected serialization constructor through core's header-only <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/Internal/ExceptionSerialization.hpp"><code>ExceptionSerialization.hpp</code></a>. The static <code>SetAppNameEXT</code> and <code>GetStorageRootEXT</code> are the CNA extensions. <code>&lt;windows.h&gt;</code> is confined to <code>StorageDevice.cpp</code> (with <code>WIN32_LEAN_AND_MEAN</code> and <code>NOMINMAX</code>, after the storage headers); the source comment records <code>ERROR</code>/<code>min</code>/<code>max</code> macro collisions from an earlier header inclusion, and <code>StorageContainer</code>'s own <code>CreateFile</code>, <code>DeleteFile</code> and <code>CreateDirectory</code> are Win32 macro names too, which is one more reason never to include it from a storage header.</p>
+
+<h3 id="fake-async">Begin/End completes before Begin returns</h3>
+<pre class="diagram">StorageDevice::BeginShowSelector(...)          caller thread; no UI, no worker, no future
+  -&gt; SelectorResult { optional player, std::any state, EventWaitHandle (already signalled) }
+  -&gt; callback(result.get())                     runs BEFORE Begin returns
+StorageDevice::EndShowSelector(result)         dynamic_cast check -&gt; unique_ptr&lt;StorageDevice&gt;(player)
+device-&gt;BeginOpenContainer(name, cb, state)    stores name + state only; callback inline
+device-&gt;EndOpenContainer(result)               EnsureStorageRoot()   (may create the root, may throw)
+  -&gt; new StorageContainer(*this, name, root, player)   containment check + create_directories
+container-&gt;CreateFile / OpenFile / ...         ResolveNativePath -&gt; std::filesystem / Sharp Runtime FileStream</pre>
+<p>The four <code>BeginShowSelector</code> overloads funnel into two implementations. The <code>sizeInBytes</code> and <code>directoryCount</code> parameters are unnamed and ignored; the <code>PlayerIndex</code> overloads record the player, the others record none. <code>SelectorResult</code> and <code>ContainerResult</code> are internal classes in <code>StorageDevice.cpp</code>: both answer <code>true</code> for <code>IsCompleted</code> and <code>CompletedSynchronously</code>, keep the caller's <code>void*</code> state in a <code>std::any</code>, and own a manual-reset <code>EventWaitHandle</code> constructed signalled, so waiting on the handle returns at once. The callback receives a raw pointer to the result that the caller is about to own through the returned <code>unique_ptr</code>; calling <code>End</code> inside the callback works (the usual XNA pattern), keeping that pointer beyond the owner's lifetime does not.</p>
+<p>The <code>End</code> methods check only the dynamic type: a null or foreign <code>IAsyncResult</code> throws <code>std::invalid_argument</code>. They do not mark a result as consumed, so calling <code>End</code> twice yields two independent objects. A <code>ContainerResult</code> carries only the name and state, not the device that began the operation: <code>EndOpenContainer</code> opens the container for the player of the device it is called on. The consequence for diagnosis matters most. <code>BeginOpenContainer</code> validates nothing, so for an empty, absolute or escaping name the completion callback has already run successfully when <code>EndOpenContainer</code> throws; the root is also resolved (and possibly created) inside <code>End</code>, so <code>StorageDeviceNotConnectedException</code> surfaces there as well. Start at <code>End</code>, not at <code>Begin</code>. Do not add a worker thread because a method is called <code>Begin</code>: the process-global root state below has no synchronization to offer one.</p>
+
+<h2 id="root">Root selection and global identity</h2>
+<p>The resolution order for game authors is the table in <a href="../../../docs/storage.html#storage-root">the persistence-path chain</a>. This section is about how <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/src/StorageDevice.cpp"><code>StorageDevice.cpp</code></a> holds that answer. Three process statics carry it: <code>appName_</code>, <code>storageRoot_</code> and <code>storageRootInitialized_</code>, all read and written by the private <code>StorageDevice::EnsureStorageRoot</code>.</p>
+<ul>
+<li><strong>Desktop, web and every non-Android build.</strong> <code>EnvironmentVariableUtf8</code> reads <code>XDG_DATA_HOME</code>, then <code>LOCALAPPDATA</code>, then <code>HOME</code>; an unset or empty variable is skipped. On Windows it calls <code>GetEnvironmentVariableW</code> and converts through <code>PathToUtf8</code>, because <code>std::getenv</code> reads the ANSI environment block, where every character the code page cannot spell is already <code>?</code> before any later conversion could recover it. Elsewhere it returns the <code>std::getenv</code> bytes. Each piece becomes a native path through <code>PathFromUtf8</code>; <code>HOME</code> gains <code>Library/Application Support</code> on Apple targets and <code>.local/share</code> otherwise; the last resort is <code>std::filesystem::current_path()</code>. The order is the same on every host, so an <code>XDG_DATA_HOME</code> present in a Windows environment wins over <code>LOCALAPPDATA</code>. Emscripten takes this branch too, which is why browser saves land in the in-memory file system (see <a href="../../../docs/tutorials/141-save-data-portably.html#web">Tutorial 141: the web</a>).</li>
+<li><strong>Android.</strong> The code first clears Sharp Runtime's isolated-storage override, then uses the parent of <code>StoragePaths::GetIsolatedStorageRoot()</code> plus the application name. Clearing first keeps a second <code>SetAppNameEXT</code> from nesting the new game's root below the old one; it also means the first lazy storage access on Android resets any override set earlier.</li>
+<li><strong>Creation.</strong> <code>create_directories(root, error_code)</code> runs; a failure throws <code>StorageDeviceNotConnectedException("Unable to create the storage directory.")</code> with the <code>filesystem_error</code> as inner exception. On success the root is stored as <code>PathToGenericUtf8</code>, so <code>GetStorageRootEXT</code> returns forward slashes on every host.</li>
+</ul>
+<p><code>SetAppNameEXT</code> stores the name (empty means <code>game</code>), clears the flag and the cached root, and immediately calls <code>EnsureStorageRoot</code>, so it creates the new directory and can throw. Only then does it point Sharp Runtime's isolated storage at <code>&lt;root&gt;/.cna_isolated_storage</code> through <code>StoragePaths::SetIsolatedStorageRootOverride</code>. That call is the only place the coupling is established. On a desktop build a game that never calls <code>SetAppNameEXT</code> leaves System.IO isolated storage at Sharp Runtime's own default, which is not below the CNA root (in the sibling Sharp Runtime checkout read alongside the snapshot, <code>next</code> at <code>41b918c9</code> of 2026-09-20 and not pinned by it, that default is <code>.cna_isolated_storage</code> in the working directory; on Emscripten it is <code>/save/.cna_isolated_storage</code>, where its source comment expects the application's own startup code to have mounted persistent storage, which CNA does not do, and on Android it is under the package's internal files directory). Nothing in the runtime sets the name automatically: outside tests, the only callers at the snapshot are games and the C ABI. The name is treated as trusted configuration: it is joined with <code>operator/</code> and never passes through the containment helpers, so an absolute name replaces the base and <code>..</code> climbs out of the data directory.</p>
+<p>The statics are unsynchronized, and the source makes no promise about a concurrent first use or a concurrent name switch. The supported rule is the header's: set the name once at startup (the header suggests the <code>Game</code> constructor) before any storage activity, and do not switch it while containers are open or other threads persist data. A switch affects the three kinds of holder differently. A <code>StorageDevice</code> holds only its optional player and calls <code>EnsureStorageRoot</code> on every operation, so a device obtained before the switch opens later containers under the new root. A <code>StorageContainer</code> captured <code>storagePath_</code> at construction and keeps using the old directory. The gamer-services local store in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/gamer-services/src/Internal/LocalGamerServicesStore.cpp"><code>LocalGamerServicesStore.cpp</code></a> recomputes <code>&lt;root&gt;/GamerServices/</code> from <code>GetStorageRootEXT</code> on each access and follows the switch.</p>
+<p>The device-level XNA surface is thin. <code>DeviceChanged</code> is a static event that nothing in the snapshot raises (the C ABI only lets callers subscribe and unsubscribe). <code>getIsConnectedProperty</code> ensures the root, walks up to the nearest existing ancestor and swallows every exception as <code>false</code>; it is not removable-media detection. <code>getFreeSpaceProperty</code> and <code>getTotalSpaceProperty</code> return <code>std::filesystem::space</code> of the root, <code>LLONG_MAX</code> when the root does not exist, and wrap other failures in <code>StorageDeviceNotConnectedException</code>.</p>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>A failed root resolution latches an empty root.</strong> <code>EnsureStorageRoot</code> sets <code>storageRootInitialized_</code> before it resolves anything. When resolution throws (directory creation fails, <code>current_path</code> throws, or on Windows a malformed name makes <code>PathFromUtf8</code> throw), the first call throws, but <code>storageRoot_</code> stays empty and every later call returns the empty string without retrying. Core's helpers treat an empty root as <code>.</code> (<code>PathContainmentTest.EmptyBaseDirTreatsCurrentDirectoryAsBase</code> pins that), so a later <code>EndOpenContainer</code> creates <code>&lt;working directory&gt;/&lt;name&gt;/AllPlayers</code> and <code>DeleteContainer</code> removes <code>&lt;working directory&gt;/&lt;title&gt;</code>, while <code>getIsConnectedProperty</code> reports <code>false</code>. Only another <code>SetAppNameEXT</code> resets it; after a failed <code>SetAppNameEXT</code> the Sharp Runtime override still points at the previous name's directory. Found by reading the source at <code>009d40f5</code>; no test exercises this path and it was not executed.</p></div>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Three properties narrow the root.</strong> <code>getFreeSpaceProperty</code>, <code>getTotalSpaceProperty</code> and <code>getIsConnectedProperty</code> hand the UTF-8 <code>std::string</code> root to <code>fs::exists</code>, <code>fs::space</code> and <code>fs::path</code> through the narrow constructor, which the core path model says reads through the ANSI code page on Windows. Every other storage path goes through <code>PathFromUtf8</code>. With a non-ASCII root these three can query a different path (for example, report <code>LLONG_MAX</code> free space). Source-level observation; not exercised on Windows.</p></div>
+
+<h2 id="authority">Container authority, UTF-8 and destructive operations</h2>
+<p><code>EndOpenContainer</code> passes the device, the display name, the root and a player index to the private constructor in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/src/StorageContainer.cpp"><code>StorageContainer.cpp</code></a>: <code>-1</code> becomes the folder <code>AllPlayers</code>, a <code>PlayerIndex</code> becomes <code>Player1</code> to <code>Player4</code> (<code>PlayerIndex::One</code> is 0). The constructor rejects an empty display name, then calls <code>CNA::Internal::ResolveContainedPath(root, displayName + "/" + playerFolder)</code>, throws <code>std::invalid_argument</code> if that is not contained, stores the resolved generic UTF-8 text as <code>storagePath_</code>, and creates it with the throwing <code>create_directories</code> overload (an I/O failure here is a <code>filesystem_error</code>, not a <code>StorageDeviceNotConnectedException</code>). The source comment records why the creation is widened with <code>PathFromUtf8</code>: a narrow version created a mojibake-named sibling on Windows while every other member used the correct directory, so the container stayed permanently empty.</p>
+<p>Because the check covers the name and the player folder together, a display name is a relative path, not a single component. <code>Saves/Slot1</code> nests; backslashes are normalised to <code>/</code> before parsing on every host, so <code>a\b</code> nests on POSIX too; <code>.</code> or <code>x/..</code> places the container directly at <code>&lt;root&gt;/AllPlayers</code>. Only names that escape the root are refused. <code>DeleteContainer</code> is stricter because it validates the title alone.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Entry point</th><th scope="col">Accepted</th><th scope="col">Refused with <code>std::invalid_argument</code></th></tr></thead><tbody>
+<tr><td><code>EndOpenContainer</code> (display name)</td><td>relative names, nested names, internal <code>..</code>, <code>.</code></td><td>empty; <code>/</code>-rooted, drive-letter or UNC spellings on either host; <code>..</code> escapes; an existing symlink leading out; text that cannot name a path on this host</td></tr>
+<tr><td>container file and directory methods (path)</td><td>relative paths, normalised internal paths such as <code>saves/../profiles</code></td><td>empty (checked first, per method); rooted spellings; <code>..</code> escapes; the container root itself (<code>.</code>, <code>a/..</code>); symlink escapes; malformed text</td></tr>
+<tr><td><code>StorageDevice::DeleteContainer</code> (title)</td><td>a non-root descendant of the storage root</td><td>empty; rooted spellings; <code>..</code> escapes; <code>.</code> and every other root-equal title; symlink escapes</td></tr>
+</tbody></table></div>
+<p>Every container method that takes a path calls the private <code>ResolveNativePath</code>, which calls <code>ResolveContainedNativePathFromBase(storagePath, storagePath, relative)</code> from <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/Internal/PathContainment.hpp"><code>PathContainment.hpp</code></a> with canonical checking on. In order: backslashes become <code>/</code>; empty text and any <code>IsDisallowedAbsolutePath</code> spelling (leading separator or drive letter) are rejected on the string, before a path is built; <code>TryPathFromUtf8</code> turns text that cannot name a path here into a refusal instead of an exception; the join is lexically normalised; root and candidate are passed through <code>weakly_canonical</code> for the check only; the relative remainder must be non-empty, not <code>.</code>, and must not start with <code>..</code>. The returned path is the lexical join, not the canonical one. The full helper contract and its tests belong to core: see <a href="core.html#paths">Core: path conversion and containment</a>. After resolution the methods are thin:</p>
+<ul>
+<li><code>CreateDirectory</code> calls <code>create_directories</code>; <code>DirectoryExists</code> is <code>is_directory</code>; <code>FileExists</code> is <code>is_regular_file</code>.</li>
+<li><code>DeleteFile</code> and <code>DeleteDirectory</code> both call <code>std::filesystem::remove</code>, which does not check the entry type: <code>DeleteFile</code> removes an empty directory and <code>DeleteDirectory</code> removes a file. A missing entry is a silent no-op and a non-empty directory throws <code>filesystem_error</code>.</li>
+<li><code>GetFileNames</code> and <code>GetDirectoryNames</code> take no untrusted path: they iterate the container root only (non-recursive), return <code>PathToUtf8</code> of each file name, and filter with the file-local <code>GlobMatch</code>. That matcher is byte-wise and case-sensitive, so <code>?</code> matches one byte, not one non-ASCII character. An empty pattern throws.</li>
+<li><code>CreateFile</code> and <code>OpenFile</code> convert the resolved path back to generic UTF-8 (<code>ResolvePath</code>) and construct <code>System::IO::FileStream</code> from that string; <code>CreateFile</code> uses <code>FileMode::Create</code>. The two- and three-argument <code>OpenFile</code> overloads forward to the four-argument one with <code>ReadWrite</code> defaults, and the four-argument overload ignores its <code>FileShare</code>. The Sharp Runtime checkout read alongside has no share parameter on <code>FileStream</code> at all (it opens a <code>std::fstream</code> on the native form of the UTF-8 string), so real sharing semantics are a lower-layer, cross-host change, not a one-line header edit.</li>
+</ul>
+<p>UTF-8 handling follows the core model in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/Internal/PathUtf8.hpp"><code>PathUtf8.hpp</code></a>: API strings are UTF-8, <code>PathFromUtf8</code> widens them to UTF-16 on Windows (throwing on malformed text) and keeps the bytes unchanged on POSIX, and untrusted names go through <code>TryPathFromUtf8</code>. The C++ surface does not validate UTF-8 up front or reject an embedded NUL; the C ABI does both before it calls in. Whether non-ASCII roots, titles and file names behave on a real Windows host remains unverified: no storage test uses a non-ASCII name, and core's Unicode path tests cover the helpers, not this module.</p>
+<h3 id="deletion">The recursive delete</h3>
+<p><code>StorageDevice::DeleteContainer(titleName)</code> is the high-risk entry. It is an instance method but ignores the device's player: it removes <code>&lt;root&gt;/&lt;title&gt;</code> with every <code>AllPlayers</code> and <code>PlayerN</code> folder beneath it and anything else stored there. It checks for an empty title, calls <code>ResolveContainedPath(EnsureStorageRoot(), titleName)</code>, throws <code>std::invalid_argument</code> when that is not contained, and then calls the throwing <code>std::filesystem::remove_all(PathFromUtf8(resolved))</code>, so an I/O error arrives as <code>filesystem_error</code>. The source comment (tagged <code>REMED-CONTENT-002</code>) records the defect this closed: an unchecked join let an absolute or <code>..</code>-climbing title recursively delete anything the process could reach. It also notes that FNA's own <code>DeleteContainer</code> throws <code>NotImplementedException</code>, so no FNA behaviour constrains this code. Historically, an earlier revision handed the UTF-8 string to <code>remove_all</code>'s narrow overload, which on Windows could silently delete nothing for a non-ASCII root; the snapshot converts first. The reconstruction of that fix is the <a href="../../takeover/case-study-storage.html">storage containment case study</a>.</p>
+<p>Two facts bound the blast radius further. A title that is itself a symbolic link leading out of the root is refused by the canonical check, and <code>std::filesystem::remove_all</code> removes symbolic links it meets inside the tree rather than following them. But the root is shared: the gamer-services local store writes <code>&lt;root&gt;/GamerServices/achievements</code> and <code>/leaderboards</code>, so a save container titled <code>GamerServices</code> shares that directory and <code>DeleteContainer("GamerServices")</code> deletes the local achievements and leaderboards.</p>
+<div class="callout callout--note"><span class="callout-icon">&#8505;</span><p><strong>Containment is path-based, not race-resistant.</strong> Validation and use are separate steps on path text: the check canonicalises the components that exist at that moment, and the operation (or <code>FileStream</code>) resolves the lexical path again afterwards. A symbolic link swapped in between is not shown to be defeated by this code, and neither is a concurrent root change. Do not describe storage as a race-proof sandbox; race-resistant filesystem confinement remains unverified.</p></div>
+<h3 id="ownership">Ownership, lifetime and threads</h3>
+<div class="table-wrap"><table><thead><tr><th scope="col">Object</th><th scope="col">Created by</th><th scope="col">Owned by</th><th scope="col">Holds</th></tr></thead><tbody>
+<tr><td><code>SelectorResult</code>, <code>ContainerResult</code></td><td><code>Begin*</code></td><td>caller, <code>unique_ptr&lt;IAsyncResult&gt;</code></td><td>player or name, <code>std::any</code> state, signalled wait handle</td></tr>
+<tr><td><code>StorageDevice</code></td><td><code>EndShowSelector</code></td><td>caller, <code>unique_ptr</code></td><td>an optional <code>PlayerIndex</code>; nothing else</td></tr>
+<tr><td><code>StorageContainer</code></td><td><code>EndOpenContainer</code></td><td>caller, <code>unique_ptr</code></td><td>borrowed <code>const StorageDevice*</code>, display name, <code>storagePath_</code> snapshot, disposed flag</td></tr>
+<tr><td><code>System::IO::Stream</code></td><td><code>CreateFile</code>, <code>OpenFile</code></td><td>caller, <code>unique_ptr</code></td><td>its own path and file handle; no reference to the container</td></tr>
+<tr><td>application name and root</td><td><code>SetAppNameEXT</code>, first use</td><td>process statics</td><td>see <a href="#root">root selection</a></td></tr>
+</tbody></table></div>
+<p>The only use of the borrowed device pointer is <code>getStorageDeviceProperty</code>; every file operation uses <code>storagePath_</code>. Keep the device alive while that getter can be called. <code>Dispose</code> is idempotent: it sets the flag and raises <code>Disposing</code> once, with the container as sender, on the thread that disposes; the destructor calls it when needed. The destructor is not declared <code>noexcept(false)</code>, so a <code>Disposing</code> handler that throws during destructor-driven disposal ends in <code>std::terminate</code>. Disposal does not close streams, and no file or directory method checks the disposed flag: operations after <code>Dispose</code> still work, and streams stay valid after both container and device are gone. The module has no mutex, no worker and no thread-affinity check; every callback runs on the calling thread before <code>Begin</code> returns. How these rules sit among the engine's other lifetimes and callbacks is on the <a href="../../takeover/ownership.html">ownership and lifetime master map</a> and the <a href="../../takeover/threading.html">thread and callback map</a>.</p>
+
+<h2 id="c-abi">The C ABI storage routes</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiStorage.cpp"><code>CnaCApiStorage.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/include/CNA/C/storage.h"><code>storage.h</code></a> expose storage through the experimental C ABI (built only with <code>CNA_BUILD_C_API=ON</code>, default <code>OFF</code>; ABI 0.29.0; source-level, not build-verified here). The adapter repairs at its boundary what the C++ surface leaves to the caller:</p>
+<ul>
+<li>Each selector route runs <code>Begin</code> and <code>End</code> in one call, and refuses a player above <code>Four</code> and a negative size or directory count, which the C++ overloads accept and ignore.</li>
+<li>A container resource keeps a <code>shared_ptr</code> to its device resource and a stream resource keeps its container, so the borrowed pointer cannot dangle; <code>cna_storage_device_destroy</code> returns <code>CNA_RESULT_INVALID_STATE</code> while containers are open, <code>cna_storage_container_destroy</code> does the same while streams are open, and container destruction calls <code>Dispose</code>.</li>
+<li>Names and paths are validated as UTF-8 with embedded NUL refused before they reach storage; a failure is reported as an encoding result, not as an exception from the container.</li>
+<li>The share route (<code>cna_storage_container_open_file_share</code>) validates that only known <code>FileShare</code> bits are set and then passes the value to the C++ overload, which ignores it, so a share mask has no filesystem effect through either surface.</li>
+<li><code>Disposing</code> registrations hold a weak reference to their container; <code>DeviceChanged</code> registrations target the static event.</li>
+</ul>
+<p>A change to C++ storage semantics therefore needs the matching route and its smoke test reviewed too; the adapter's general machinery is described in <a href="../bindings/c-api-internals.html">C API internals</a>.</p>
+
+<h2 id="tests">Testing and safe human changes</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/tests/Microsoft/Xna/Framework/Storage/StorageDeviceTests.cpp"><code>StorageDeviceTests.cpp</code></a> is the module's only test source: 14 GoogleTest definitions in two suites. The fixture <code>StorageDeviceDeleteContainerTest</code> has ten:</p>
+<ul>
+<li><code>EmptyTitleNameThrowsInvalidArgument</code>, <code>AbsoluteTitleNameThrowsAndDeletesNothing</code>, <code>EscapingTitleNameThrowsAndDeletesNothing</code> and <code>DotTitleNameThrowsAndDoesNotDeleteTheWholeRoot</code> pin the refusals, each with a sentinel file that must survive.</li>
+<li><code>SimpleTitleNameDeletesOnlyThatContainer</code> deletes one title and keeps a sibling.</li>
+<li><code>AppNameAlsoScopesSharpRuntimeIsolatedStorage</code> pins the <code>.cna_isolated_storage</code> coupling.</li>
+<li><code>ContainerOpenRejectsPathsOutsideStorageRoot</code>, <code>ContainerOperationsRejectLexicalEscapes</code> (all seven path-taking operations) and <code>ContainerOperationsRejectSymlinkEscapes</code> pin container authority; the symlink case calls <code>GTEST_SKIP</code> when the host cannot create directory symlinks.</li>
+<li><code>ContainerAllowsNormalizedPathsThatRemainContained</code> proves that normalisation does not over-refuse.</li>
+</ul>
+<p><code>StorageDeviceNotConnectedExceptionSerializationTest</code> has four: <code>TheBaseStateSurvivesARoundTrip</code>, <code>TheInnerCauseTravelsWithIt</code>, <code>AnEmptyStoreStillConstructs</code> and <code>TheRestoredExceptionIsStillItsOwnType</code>. The source is compiled into the focused <code>CnaStorageTests</code> executable (an <code>EXCLUDE_FROM_ALL</code> developer target, not a separate CTest registration) and into the aggregate <code>CnaTests</code>, whose cases <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>UnitTests.cmake</code></a> registers with <code>gtest_discover_tests(DISCOVERY_MODE PRE_TEST)</code> and the source tree as working directory. Related coverage lives elsewhere: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/tests/CNA/Internal/PathContainmentTests.cpp"><code>PathContainmentTests.cpp</code></a> (30 definitions) and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/tests/CNA/Internal/UnicodePathResolutionTests.cpp"><code>UnicodePathResolutionTests.cpp</code></a> (19) in <code>CnaCoreTests</code>; the two <code>probe_storage</code> CTests above; and <code>CApi_StorageSmoke</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/pure_c/StorageSmoke.c"><code>StorageSmoke.c</code></a>, C ABI builds only), which counts selector callbacks, copies the root, writes eight bytes through a container stream and reads them back, and checks deletion and escape refusals. None was executed for this page.</p>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Read the fixture before running it.</strong> <code>SetUp</code> calls <code>SetAppNameEXT("CnaTestsContent002StorageDevice")</code>, which resolves a directory under the real per-user data root; <code>TearDown</code> recursively removes that directory and then calls <code>SetAppNameEXT("")</code>, which recreates <code>&lt;data root&gt;/game</code> as a side effect. The fixture comment calls this an isolated, disposable root, but it is isolated by name only, and the <code>CnaTests</code> registration sets no storage environment. <code>CApi_StorageSmoke</code> shows the safe pattern: its CTest properties point <code>XDG_DATA_HOME</code> into the build tree. Because <code>XDG_DATA_HOME</code> is first in the chain on every host, the same override isolates the C++ suite.</p></div>
+<pre><code class="language-bash"># shown for reference; not executed for this page
+cmake --preset unit
+cmake --build cmake-build-unit --target CnaStorageTests
+XDG_DATA_HOME="$PWD/cmake-build-unit/storage-test-home" ./cmake-build-unit/CnaStorageTests</code></pre>
+<p>The suite does not establish: <code>Begin</code>/<code>End</code> callback order, <code>CompletedSynchronously</code>, the wait handle or wrong-result rejection at the C++ level; the <code>Player1</code>..<code>Player4</code> layout; <code>Dispose</code>, <code>Disposing</code> or use after disposal; the device properties; glob matching; the type-blind deletes; a C++ write and read round trip; the empty-root latch; <code>FileShare</code>; concurrent name switching or multi-threaded container use; device-change signalling; race-resistant confinement; or non-ASCII paths on Windows.</p>
+<p>Change routes that keep the authority contract intact:</p>
+<ol>
+<li><strong>A path fix.</strong> Reproduce under a disposable root (<code>XDG_DATA_HOME</code>), add a failing test in the style of <code>AbsoluteTitleNameThrowsAndDeletesNothing</code> with a sentinel outside the intended target, then change the narrowest resolver or operation. Run <code>CnaStorageTests</code> and <code>CnaCoreTests</code>, then the full suite, plus a Windows check with a non-ASCII root for any native-path change. For every destructive call, write down the validated root and the exact resolved target before merging. A change to <code>PathContainment.hpp</code> also reaches content's external references and media's playlist parsing: see <a href="../content/runtime.html">content runtime internals</a>.</li>
+<li><strong>A Begin/End change.</strong> Test callback ordering, <code>CompletedSynchronously</code>, the wait handle, wrong-result rejection and ownership; do not add a worker merely because the method is called <code>Begin</code>. Update the C ABI selector route and its smoke test with it.</li>
+<li><strong>An application-name or root change.</strong> Test Sharp Runtime isolated storage as well as CNA containers and the gamer-services store. Static state leaks between tests that share one <code>CnaTests</code> process: both this fixture and <code>GamerServicesStoreGuard</code> set their own name first, and a new test must do the same.</li>
+<li><strong>A new container method.</strong> Route every caller-supplied path through <code>ResolveNativePath</code>, keep the empty check, hand native paths to the filesystem, and add the method to both escape tests.</li>
+</ol>
+<p>Where such a test belongs in the tree and how to register it is covered by <a href="../../handbook/add-a-regression-test.html">I need to add a regression test</a> and <a href="../../testing/architecture.html">test architecture and change recipes</a>.</p>
+
+<h2 id="gaps">Current gaps at this snapshot</h2>
+<p>Each item was found by reading the source at <code>009d40f5</code>; none was reproduced by running code.</p>
+<ul>
+<li>A failed root resolution latches an empty root, after which storage silently works in the process working directory (<a href="#root">root selection</a>).</li>
+<li>The three device properties build narrow paths from the UTF-8 root (<a href="#root">root selection</a>).</li>
+<li><code>DeleteFile</code> and <code>DeleteDirectory</code> do not check the entry type, and <code>GlobMatch</code>'s <code>?</code> matches a byte, not a character (<a href="#authority">container authority</a>).</li>
+<li>A save container titled <code>GamerServices</code> collides with the gamer-services local store (<a href="#deletion">the recursive delete</a>).</li>
+<li>Container methods keep working after <code>Dispose</code>, and <code>FileShare</code> is ignored (<a href="#ownership">ownership</a>).</li>
+<li>The storage tests write to the real per-user data root (<a href="#tests">testing</a>).</li>
+<li>Several source comments still describe <code>StorageDevice</code> as reaching the platform or the SDL preference path: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/include/CNA/Platform/CurrentPlatform.hpp"><code>CurrentPlatform.hpp</code></a>, <code>IPlatformFileSystem::GetPreferencesPath</code> ("Backs <code>StorageDevice</code>"), the <code>Game::GetPlatformEXT</code> and <code>X11Platform</code> constructor documentation, a comment in the escape test and one in the <code>CApi_StorageSmoke</code> registration. At the snapshot, storage has no platform dependency; trust the code and the link-closure probe.</li>
+</ul>
+
+<h2 id="reading">Curated source route</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/CMakeLists.txt"><code>storage/CMakeLists.txt</code></a>, then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/ModuleProbes.cmake"><code>ModuleProbes.cmake</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tests/modules/probe_storage.cpp"><code>probe_storage.cpp</code></a>: the intentionally absent platform edge, the Sharp Runtime boundary, and the probe that enforces both.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/include/Microsoft/Xna/Framework/Storage/StorageDevice.hpp"><code>StorageDevice.hpp</code></a>, then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/src/StorageDevice.cpp"><code>StorageDevice.cpp</code></a>: static root policy and its latch, the synchronous result types, construction in <code>End</code>, the recursive delete and the <code>SetAppNameEXT</code> coupling.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/include/Microsoft/Xna/Framework/Storage/StorageContainer.hpp"><code>StorageContainer.hpp</code></a>, then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/src/StorageContainer.cpp"><code>StorageContainer.cpp</code></a>: borrowed device lifetime, <code>Dispose</code> semantics, each path entry, <code>GlobMatch</code> and the stream handoff.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/include/Microsoft/Xna/Framework/Storage/StorageDeviceNotConnectedException.hpp"><code>StorageDeviceNotConnectedException.hpp</code></a>: the <code>ExternalException</code> base and serialization through core's helper.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/Internal/PathContainment.hpp"><code>PathContainment.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/Internal/PathUtf8.hpp"><code>PathUtf8.hpp</code></a>, with their tests <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/tests/CNA/Internal/PathContainmentTests.cpp"><code>PathContainmentTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/tests/CNA/Internal/UnicodePathResolutionTests.cpp"><code>UnicodePathResolutionTests.cpp</code></a>: the shared security and encoding contract, to understand before changing storage alone.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/storage/tests/Microsoft/Xna/Framework/Storage/StorageDeviceTests.cpp"><code>StorageDeviceTests.cpp</code></a>: read the fixture's real-directory teardown before executing it, then map each claim on this page to its oracle.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/src/CnaCApiStorage.cpp"><code>CnaCApiStorage.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/pure_c/StorageSmoke.c"><code>StorageSmoke.c</code></a>: how the C boundary repairs ownership and validates text.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/gamer-services/src/Internal/LocalGamerServicesStore.cpp"><code>LocalGamerServicesStore.cpp</code></a>: the other writer below the same root.</li>
+</ol>
+<p>For where storage sits among all modules, see the <a href="../../reference/modules.html#inventory">module index</a>; for the maintainer task routes, the <a href="../../handbook/index.html">Maintainer Handbook</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/storage.html">Storage guide</a> &middot; <a href="../../../docs/storage.html#storage-root">Storage: the persistence-path chain</a> &middot; <a href="../../../docs/storage.html#path-containment">Storage: path containment</a> &middot; <a href="../../../docs/tutorials/141-save-data-portably.html#web">Tutorial 141: saving on the web</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/overview.html">Architecture overview</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="core.html#paths">Core: path conversion and containment</a> &middot; <a href="../content/runtime.html">Content runtime internals</a> &middot; <a href="gamer-services.html">Gamer services internals</a> &middot; <a href="../bindings/c-api-internals.html">C API internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../takeover/case-study-storage.html">Case study: storage containment</a> &middot; <a href="../../takeover/ownership.html">Ownership and lifetime master map</a> &middot; <a href="../../takeover/threading.html">Thread and callback map</a> &middot; <a href="../../handbook/add-a-regression-test.html">I need to add a regression test</a> &middot; <a href="../../handbook/index.html">Maintainer Handbook</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture and change recipes</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/modules.html#inventory">Module index</a> &middot; <a href="../../reference/test-targets.html#targets">Test target index</a> &middot; <a href="../../repository/module-graph.html">Physical module dependency map</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="design.html" rel="prev"><span>Previous</span>Design converter internals</a><a class="dev-pager-next" href="media.html" rel="next"><span>Next</span>Media internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

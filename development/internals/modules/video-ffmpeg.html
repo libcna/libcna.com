@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FFmpeg video boundary - CNA Development</title>
+  <meta name="description" content="How the optional FFmpeg backend satisfies CNA&#x27;s video decoder and duration-probe contracts: the CNA_ENABLE_VIDEO switch, decoder ownership, packet state, seek, failure modes and what the tests do and do not cover.">
+  <meta name="keywords" content="ffmpeg, cna_enable_video, cna_video_ffmpeg, videodecoder, audiodurationprobe, libavcodec, pkg-config, notsupportedexception, nextframe, seektostart, cna_ffmpeg_available">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/modules/video-ffmpeg.html">
+  <meta property="og:title" content="FFmpeg video boundary - CNA Development">
+  <meta property="og:description" content="How the optional FFmpeg backend satisfies CNA&#x27;s video decoder and duration-probe contracts: the CNA_ENABLE_VIDEO switch, decoder ownership, packet state, seek, failure modes and what the tests do and do not cover.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/modules/video-ffmpeg.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"FFmpeg video boundary","description":"How the optional FFmpeg backend satisfies CNA's video decoder and duration-probe contracts: the CNA_ENABLE_VIDEO switch, decoder ownership, packet state, seek, failure modes and what the tests do and do not cover.","url":"https://libcna.com/development/internals/modules/video-ffmpeg.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="core.html" class="docs-nav-link is-group-active">Module internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="math.html" class="docs-nav-link">Math</a></li>
+        <li><a href="design.html" class="docs-nav-link">Design converters</a></li>
+        <li><a href="storage.html" class="docs-nav-link">Storage</a></li>
+        <li><a href="media.html" class="docs-nav-link">Media</a></li>
+        <li><a href="video-ffmpeg.html" class="docs-nav-link active" aria-current="page">FFmpeg video</a></li>
+        <li><a href="devices.html" class="docs-nav-link">Devices &amp; sensors</a></li>
+        <li><a href="devices-ext.html" class="docs-nav-link">Device host services</a></li>
+        <li><a href="diagnostics.html" class="docs-nav-link">Diagnostics</a></li>
+        <li><a href="inspector.html" class="docs-nav-link">Inspector</a></li>
+        <li><a href="phone.html" class="docs-nav-link">Phone</a></li>
+        <li><a href="gamer-services.html" class="docs-nav-link">Gamer services</a></li>
+        <li><a href="graphics-ext.html" class="docs-nav-link">Graphics extensions</a></li>
+        <li><a href="net.html" class="docs-nav-link">Network sessions</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="core.html">Modules</a></li>
+        <li aria-current="page">FFmpeg video</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>FFmpeg video boundary</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#selection">Configure-time selection, not runtime codec discovery</a></li>
+          <li><a href="#decoder">Decoder ownership and an actual frame path</a></li>
+          <li><a href="#seek">Seek, track switching and failure invariants</a></li>
+          <li><a href="#validation">What tests prove, and what they do not</a></li>
+          <li><a href="#reading">Source-reading order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Module internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Test names and fixtures were located by reading and none was executed. Every codec and pixel format beyond the synthetic fixtures, a real output host and the platforms where the backend is never built remain unverified.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/video-ffmpeg"><code>modules/video-ffmpeg/</code></a> is a small physical target with a large stateful responsibility: two source files that implement the <code>VideoDecoder</code> and <code>AudioDurationProbe</code> interfaces declared in <a href="media.html">modules/media</a>. The public <code>Video</code> and <code>VideoPlayer</code> types stay in <code>cna_media</code> whether or not this target exists, and FFmpeg is optional at this snapshot: a build without it links and runs, and playback throws <code>NotSupportedException</code>. A maintainer therefore has to decide which implementation the configured build actually linked before debugging any video behaviour. This page covers the configure-time switch, the decoder's ownership and packet state machine, seek and track switching, and what the tests can and cannot show; the user guide is <a href="../../../docs/video-playback.html#ffmpeg-setup">FFmpeg setup in Video Playback</a>.</p>
+
+<h2 id="selection">Configure-time selection, not runtime codec discovery</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a> interprets <code>CNA_ENABLE_VIDEO</code>, declared in the root <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakeLists.txt"><code>CMakeLists.txt</code></a> with the default <code>AUTO</code> (the value is upper-cased and anything other than <code>OFF</code>, <code>AUTO</code> or <code>ON</code> is a configure error). The value is one of <code>CNA_ENABLE_VIDEO=OFF|AUTO|ON</code>. The switch is a link-time implementation choice: it is not a renderer or platform selection and it is not a deferred run-time fallback.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Value</th><th scope="col">Where FFmpeg is supported by the integration</th><th scope="col">Windows, MinGW, Emscripten, Android, iOS</th></tr></thead>
+<tbody>
+<tr><td><code>OFF</code></td><td>No probe, no link; the unavailable implementation is compiled</td><td>Same</td></tr>
+<tr><td><code>AUTO</code> (default)</td><td>Enabled only when pkg-config finds all of <code>libavcodec</code>, <code>libavformat</code>, <code>libavutil</code> and <code>libswresample</code>; otherwise falls back quietly</td><td>Falls back; nothing is probed</td></tr>
+<tr><td><code>ON</code></td><td>All four are required and configure fails when one is missing</td><td>Configure fails with a <code>FATAL_ERROR</code> saying the toolchain is not supported</td></tr>
+</tbody>
+</table></div>
+<p>The excluded platforms are deliberate: a cross-build must never resolve the build host's pkg-config files and poison its own include and library paths, so <code>AUTO</code> falls back there and <code>ON</code> fails instead of silently changing the request. The outcome is published three ways: the variable <code>CNA_FFMPEG_AVAILABLE</code> (exported to the parent scope because the root-level test registration keys its exclusions on it, and would silently drop the fixture suites on a capable host if it were not), the compile definitions <code>CNA_VIDEO_AVAILABLE</code> and <code>CNA_FFMPEG_AVAILABLE</code> on the shared build-config target, and a configure status line that reads either <code>video enabled (…; FFmpeg backend cna_video_ffmpeg)</code> or <code>video disabled (…); Video playback reports NotSupportedException</code>. That line is the first thing to read in a bug report.</p>
+<p>When the backend is available, <code>modules/CMakeLists.txt</code> adds the subdirectory and links <code>cna_video_ffmpeg</code> privately to <code>cna_media</code>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/video-ffmpeg/CMakeLists.txt"><code>modules/video-ffmpeg/CMakeLists.txt</code></a> makes a static library (alias <code>CNA::VideoFfmpeg</code>), reaches the media headers through a private include path, links Sharp Runtime <code>Core.Base</code> privately and owns every FFmpeg imported target (<code>PkgConfig::LIBAVCODEC</code>, <code>LIBAVFORMAT</code>, <code>LIBAVUTIL</code>, <code>LIBSWRESAMPLE</code>). No public media header exposes an FFmpeg header or symbol; <code>VideoDecoder.hpp</code> only forward-declares the FFmpeg structs. The probe states no minimum FFmpeg version; the sources use <code>swr_alloc_set_opts2</code> and the <code>ch_layout</code> channel-layout API, so an old FFmpeg that pkg-config can see would presumably fail at compile time rather than at configure time (not tried).</p>
+<p>Otherwise <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/VideoDecoderUnavailable.cpp"><code>VideoDecoderUnavailable.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/AudioDurationProbeUnavailable.cpp"><code>AudioDurationProbeUnavailable.cpp</code></a> satisfy the same symbols. <code>IsVideoDecoderAvailable</code> returns false, <code>RequireVideoDecoderAvailable</code> throws <code>NotSupportedException</code> with a message that names <code>-DCNA_ENABLE_VIDEO=ON</code>, <code>Open</code>, <code>SeekToStart</code>, <code>SetAudioStream</code>, <code>SetVideoStream</code>, <code>NextFrame</code> and <code>DrainAudio</code> all throw it, <code>Close</code> does nothing, and the duration probe reports zero. In the enabled build the roles are reversed: <code>IsVideoDecoderAvailable</code> returns true and <code>RequireVideoDecoderAvailable</code> is empty.</p>
+<pre class="diagram">Video / VideoPlayer                       [cna_media, public XNA layer, always built]
+  -&gt; CNA::Internal::Media::VideoDecoder     [contract in the media header]
+       -&gt; FFmpeg implementation             [cna_video_ffmpeg, optional]
+       OR unavailable implementation        [cna_media]
+  -&gt; RGBA CPU buffer -&gt; Texture2D::SetDataRGBA -&gt; selected graphics renderer
+  -&gt; float audio buffer -&gt; VideoPlayer audio-stream submission
+
+MediaLibrary -&gt; AudioDurationProbe contract
+  -&gt; FFmpeg container metadata  OR  unavailable, always zero (unknown)</pre>
+<h3 id="selection-around">Neighbouring switches and what actually runs</h3>
+<ul>
+<li><strong>Content pipeline.</strong> <code>CNA_ENABLE_MEDIA_PIPELINE</code> (MP3, WMA and WMV sources at content build time) reuses the same <code>CNA_FFMPEG_AVAILABLE</code> probe but links the four pkg-config targets into <code>cna_content_pipeline</code> itself, and only <code>cna_content_compiler</code> links that module. It is separate from the runtime backend described here, and with <code>CNA_ENABLE_VIDEO=OFF</code> it cannot find FFmpeg either.</li>
+<li><strong>Packaging.</strong> The C API install deliberately does not ship the FFmpeg libraries: with the backend enabled they remain a system dependency, and an explicit <code>CNA_ENABLE_VIDEO=OFF</code> package has no FFmpeg edge at all (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/CMakeLists.txt"><code>modules/c-api/CMakeLists.txt</code></a>).</li>
+<li><strong>Presets and workflows.</strong> In <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakePresets.json"><code>CMakePresets.json</code></a> the <code>dev</code>, <code>unit</code> and <code>release-modules</code> presets (and the presets that inherit from them) set <code>CNA_ENABLE_VIDEO=OFF</code>; the remaining configure presets (the sanitizer, <code>tests</code>, <code>multi-renderer</code>, <code>cnaext</code> and platform presets) do not set it, so <code>AUTO</code> or the platform exclusion applies. The Linux workflows install the four FFmpeg development packages and the Apple workflows <code>brew install ffmpeg</code>, so <code>AUTO</code> would select the backend there; the only workflow that names the option explicitly, <code>content-pipeline-windows-ci.yml</code>, passes <code>OFF</code>. Which workflow exercises the disabled branch on a host where FFmpeg would otherwise have been found was not traced.</li>
+</ul>
+
+<h2 id="decoder">Decoder ownership and an actual frame path</h2>
+<h3 id="decoder-open">Open and Close own the native state</h3>
+<p><code>VideoPlayer</code> uniquely owns a <code>VideoDecoder</code>; the decoder owns raw FFmpeg pointers: the <code>AVFormatContext</code>, one video and one optional audio <code>AVCodecContext</code>, a <code>SwrContext</code> resampler, one reusable <code>AVFrame</code> and one reusable <code>AVPacket</code>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/video-ffmpeg/src/VideoDecoder.cpp"><code>VideoDecoder.cpp</code></a> <code>Open</code> starts by calling <code>Close</code>, opens the demuxer, reads stream information, and picks the best video and best audio stream. Video is mandatory: no video stream, no decoder for it, or a failure allocating or opening its context closes the format context and returns false. Width and height come from the opened video context, the frame rate from the stream's average frame rate (24 when the denominator is zero), and the duration from the container in seconds when it is known.</p>
+<p>Audio is optional and degrades to video-only. The audio context is opened, and a resampler is built and initialised transactionally; if either step fails, the audio context is freed, the audio stream index reset and the decoder carries on without audio. That resampler converts sample format to interleaved 32-bit float and keeps the source sample rate and channel layout unchanged; nothing in the decoder changes the rate or remixes channels, so the player opens its mixer stream at the file's own rate and channel count. <code>HasAudio</code> is true only when both the audio context and the resampler exist, because a decoded audio frame is silently dropped without a working resampler. Finally the frame and packet are allocated; an allocation failure closes everything and returns false. Every codec context is created with strict error recognition (<code>AV_EF_CRCCHECK | AV_EF_BITSTREAM | AV_EF_BUFFER | AV_EF_EXPLODE</code>), so detected corruption becomes a hard decode error instead of a concealed glitch.</p>
+<p><code>Close</code> clears the retained-packet flag, then frees, in order, the packet, frame, resampler, audio codec, video codec and format context, resets the stream indices and metadata, and clears the queued decoded audio. The destructor calls it. A cleanup refactor must preserve the retry-packet reset and the pending-audio reset, not only the pointer frees: a reused decoder would otherwise resend a stale packet or return the previous file's samples from its first <code>DrainAudio</code>.</p>
+<h3 id="decoder-frame">NextFrame is a packet state machine</h3>
+<p><code>NextFrame</code> loops until it can return one converted frame, and its order matters:</p>
+<ol>
+<li>It first tries to receive a decoded frame from the video codec. Success sets the presentation time to the frame's best-effort timestamp times the stream time base (0 when there is none), converts the frame and returns true. <code>AVERROR_EOF</code> returns false as a clean end of stream. Any other error except <code>EAGAIN</code> throws <code>std::runtime_error</code>.</li>
+<li>If a packet is being retained (<code>havePendingVideoPacket_</code>), it is sent again now that the receive has had a chance to drain the codec. Success releases it; <code>EAGAIN</code> loops back to receive; any other error releases it, clears the flag and throws.</li>
+<li>Otherwise it reads packets. An error other than end of file throws an I/O error. At end of file it flushes the video codec (sending a null packet, tolerating <code>AVERROR_EOF</code>) and flushes the audio codec and the resampler through <code>ProcessAudioPacket(nullptr)</code>, then returns to step 1 to drain what the flush produced. An audio packet goes to <code>ProcessAudioPacket</code> and reading continues; a video packet is sent to the codec, where <code>EAGAIN</code> keeps the packet alive and sets the flag and any other failure throws, and then the loop returns to step 1; packets of other streams are released and reading continues.</li>
+</ol>
+<p>The retained-packet flag is a class member, not a function local, on purpose. After a send returns <code>EAGAIN</code> the next receive almost always yields a buffered frame at once and returns to the caller before the retained packet is resent, so a local flag would lose the packet across calls and silently drop a frame. <code>DecodesTheFullFileWithoutSilentlyDroppingAnyFrame</code> pins the observable result (50 frames, strictly increasing timestamps) on one fixture. The decoder file contains no thread, mutex or atomic; decode, resample and conversion run on whichever thread calls <code>NextFrame</code>, and the header states that all methods of one decoder must be called from the same thread.</p>
+<h3 id="decoder-convert">Conversion to RGBA</h3>
+<p>Converted video is always an 8-bit RGBA vector with opaque alpha. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/include/CNA/Internal/Media/VideoDecoder.hpp"><code>VideoDecoder.hpp</code></a> declares the converters and the implementation chooses by the frame's pixel format:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Frame format</th><th scope="col">Path</th></tr></thead>
+<tbody>
+<tr><td><code>YUV420P</code>, <code>YUV422P</code>, <code>YUV444P</code> and the <code>YUVJ</code> variants (8-bit)</td><td>Planar converter with per-axis chroma shift (4:2:0 is 1/1, 4:2:2 is 1/0, 4:4:4 is 0/0)</td></tr>
+<tr><td><code>YUV420P</code>, <code>YUV422P</code>, <code>YUV444P</code> at 10 and 12 bits, little-endian</td><td>16-bit planar converter that shifts each sample down to 8 bits first, then reuses the same integer math</td></tr>
+<tr><td><code>RGBA</code>, <code>RGB24</code>, <code>NV12</code></td><td>Generic converter: line copy, expansion with opaque alpha, or NV12 luma plus interleaved chroma</td></tr>
+<tr><td>Anything else</td><td>Filled with opaque magenta so the failure is obvious</td></tr>
+</tbody>
+</table></div>
+<p>The colour math is one BT.601 integer matrix for every planar format: it uses no range expansion and has no BT.709 branch, so the <code>YUVJ</code> and non-<code>J</code> formats take the same coefficients. The 10- and 12-bit route drops precision to 8 bits before converting; it is not an HDR-preserving pipeline. The planar converters size their output from the width and height captured at <code>Open</code> (or at a video-track switch), while the generic converter uses the frame's own dimensions. A new pixel format is a code change in this table, not something FFmpeg falls back to automatically.</p>
+<h3 id="decoder-audio">Audio packets and the drain</h3>
+<p><code>ProcessAudioPacket</code> sends the packet to the audio codec, retrying the same packet while the codec reports <code>EAGAIN</code> (the audio-side equivalent of the video retention), receives every available frame, converts each through the resampler, and appends the interleaved floats to <code>pendingAudio_</code>. A failing send, receive or convert throws; nothing is skipped silently. The end-of-file flush sends a null packet and additionally drains the resampler's internal delay, which is a separate buffer from the codec's. <code>DrainAudio</code> appends everything accumulated to the caller's vector and clears it. The player drains after every <code>NextFrame</code> call, including the one that returns false, because audio packets read while looking for the next video packet or the end of file would otherwise be stranded.</p>
+<p>How the player consumes this is described on <a href="media.html#video-play">the media page</a>: <code>VideoPlayer::OpenDecoder</code> verifies the file's metadata against the <code>Video</code>, applies track preferences before creating the output texture and audio stream, and decodes the first frame inside a catch that calls <code>CloseDecoder</code>; <code>VideoPlayer::GetTexture</code> then advances by play position, uploads through <code>Texture2D::SetDataRGBA</code>, and either loops via <code>SeekToStart</code> or waits for queued audio at end of file. A blank video can be decode, CPU conversion, texture upload, renderer sampling or timing; the first boundary that fails identifies the owner.</p>
+
+<h2 id="seek">Seek, track switching and failure invariants</h2>
+<h3 id="seek-start">SeekToStart</h3>
+<p><code>SeekToStart</code> returns at once when nothing is open. It seeks the demuxer to the start (backward flag); if that seek fails it changes nothing at all, and the next <code>NextFrame</code> simply carries on from wherever the stream was, because flushing on top of an unmoved position would build a wrong assumption. After a successful seek it flushes both codecs' buffers, clears <code>pendingAudio_</code> (samples decoded before the seek must not be spliced onto post-seek audio), discards a retained pre-seek video packet and clears its flag, and replaces the resampler with a fresh one so its internal delay cannot surface after the seek. If that resampler cannot be rebuilt, audio becomes unavailable (<code>HasAudio</code> turns false) rather than the looping path gaining a new throw. Audio that the player already submitted to the mixer before the loop point is not discarded by the seek.</p>
+<h3 id="seek-tracks">SetAudioStream and SetVideoStream</h3>
+<p>Both enumerate the streams of the requested kind by zero-based index among that kind. They return false for a negative or out-of-range index and for the already active stream, and otherwise return the result of opening the replacement, so the return value tells the caller whether a real switch happened; <code>VideoPlayer</code> uses it to skip needless output reconfiguration. An audio switch builds the replacement codec context and its resampler first and only then frees the old pair and clears <code>pendingAudio_</code>, so a failed switch leaves the previous working audio path intact. A video switch opens the replacement codec context before freeing the current one and then updates dimensions, frame rate and time base. Re-selecting the current video track is a deliberate no-op for a decode reason: a freshly created context has no reference frame, and the demuxer is already past the first keyframe, so recreating it mid-stream would make the next non-keyframe fail. Neither switch seeks the demuxer, so a genuine switch to a different video stream continues from the current position; how that decodes depends on the new stream's keyframes at that point, and no fixture exercises it (see below).</p>
+<h3 id="failures">What throws, what returns false, what is silent</h3>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Situation</th><th scope="col">Result</th></tr></thead>
+<tbody>
+<tr><td>Missing file, unopenable container, no video stream or codec, codec open or allocation failure at <code>Open</code></td><td><code>Open</code> returns false; the player then stays stopped with no exception</td></tr>
+<tr><td>Audio codec or resampler failure at <code>Open</code> or at a track switch</td><td>Video-only playback; a switch returns false and the old audio path stays</td></tr>
+<tr><td>Decode, send, receive, resample or I/O error mid-stream</td><td><code>std::runtime_error</code> from <code>NextFrame</code>, which <code>GetTexture</code> does not catch</td></tr>
+<tr><td>End of stream</td><td><code>NextFrame</code> returns false after flushing and draining both codecs</td></tr>
+<tr><td>Trailing truncation of a Matroska file</td><td>Clean end of stream: the demuxer reports <code>AVERROR_EOF</code>, not an I/O error (the test pins this)</td></tr>
+<tr><td>Corrupted bitstream data under the strict flags</td><td>Hard error surfaced as an exception (pinned by <code>CorruptedMidStreamDataThrowsRatherThanSilentlyEndingCleanly</code>)</td></tr>
+<tr><td>Seek failure</td><td>Silent no-op; state unchanged</td></tr>
+<tr><td>Resampler rebuild failure after a seek</td><td>Audio quietly becomes unavailable</td></tr>
+<tr><td>Unsupported pixel format</td><td>Magenta frame, not an error</td></tr>
+</tbody>
+</table></div>
+<p>Changing these methods needs tests for the same-track no-op, a failed switch, a post-switch frame and the <code>VideoPlayer</code> output reconfiguration; the returned bool is the contract that tells the caller whether anything changed.</p>
+<h3 id="probe">The duration probe</h3>
+<p><code>AudioDurationProbe::ProbeDurationMS</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/video-ffmpeg/src/AudioDurationProbe.cpp"><code>AudioDurationProbe.cpp</code></a> opens the container, reads stream information and returns the container duration in whole milliseconds, or zero when the file cannot be opened, stream information fails, the duration is unset or it is not positive. It does not decode audio, so computing a duration never decodes an album, but every indexed song costs one open and one stream-information read at library construction. The library consumes it to give songs a duration; the unavailable implementation returns zero on purpose. The decoder and the probe have different consumers and different failure behaviour, so review them separately when changing FFmpeg version requirements or error handling.</p>
+
+<h2 id="validation">What tests prove, and what they do not</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>cmake/UnitTests.cmake</code></a> excludes the decoder suite (<code>VideoDecoderTests.cpp</code>), the real <code>Video</code> and <code>VideoPlayer</code> suites (<code>VideoTests.cpp</code>, <code>VideoPlayerTests.cpp</code>) and the content video XNB suite when <code>CNA_FFMPEG_AVAILABLE</code> is off, while <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/tests/Microsoft/Xna/Framework/Media/Video/VideoBackendAvailabilityTests.cpp"><code>VideoBackendAvailabilityTests.cpp</code></a> and the reader and containment suites still build. That file compiles one of two exclusive tests. <code>EnabledBuildReportsDecoderAvailable</code> asserts the availability functions in an enabled build. <code>DisabledBuildRetainsMetadataApiAndRejectsDecoding</code> asserts, in a disabled build, that a missing file still throws <code>FileNotFoundException</code> first, that the raw-file constructor and <code>FromUriEXT</code> throw <code>NotSupportedException</code>, that a metadata-only <code>Video</code> keeps its values, that <code>Play</code> throws and leaves the player stopped with no video, that <code>Pause</code>, <code>Resume</code> and <code>Stop</code> are harmless, that every decoder operation except <code>Close</code> throws, and that the duration probe returns zero. A green disabled or fallback build is therefore not evidence that video decodes: inspect the configured <code>ctest -N</code> list and the test binary's filters rather than assuming <code>AUTO</code> selected FFmpeg.</p>
+<p>In an enabled build, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/tests/CNA/Internal/Media/VideoDecoderTests.cpp"><code>VideoDecoderTests.cpp</code></a> (21 tests) covers dimensions and frame rate, 4:2:0, 4:2:2 and 4:4:4 conversion, 10- and 12-bit conversion, audio presence and draining, AV1 with its audio track, audio-track selection and the same-video-stream no-op, truncated and corrupted input, full-file frame count, seek reset, close reset and the pending-audio resets. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/tests/Microsoft/Xna/Framework/Media/Video/VideoPlayerTests.cpp"><code>VideoPlayerTests.cpp</code></a> (29 tests) covers orchestration beyond the decoder: metadata mismatch, real-fixture texture size, audio stream resume and pause, end-of-stream behaviour with an audio tail, looping, track preferences and mid-playback track changes, first-frame failure leaving the player closed, the audio buffer not growing without a device, and the frame generation never restarting. The suites and counts are as registered in source, not executed.</p>
+<p>Read the fixtures before generalising. Per the fixture manifest they are synthetic 160 by 90, 25 fps SMPTE colour-bar clips produced with ffmpeg: FFV1 (lossless) MKV files for 4:2:0, 4:2:2, 4:4:4, 10-bit and 12-bit and a FLAC audio-tail case, one AV1 plus FLAC file, a two-audio-track file whose audio tracks differ in sample rate, and one H.264 MP4 that is only ever used as a base for byte corruption. Colour checks compare seven bar samples on the first frame with a tolerance of 20 per channel against values sampled at authoring time, which shows the frame is neither clipped nor magenta and not that colours are accurate. The multi-track fixture has a single video stream, so no test switches to a second video stream. No fixture uses H.265, VP8, VP9, Theora, NV12 or RGB output, the <code>YUVJ</code> formats, or 10- and 12-bit 4:2:2 and 4:4:4, and the user guide's list of supported containers and codecs describes what FFmpeg can be asked to decode, not what these tests decode. Player tests that exercise audio depend on the mixer available in that configuration, and a CPU decoder fixture does not prove texture upload or audible playback on every graphics and audio backend.</p>
+<p>For a bug fix, record the selected <code>CNA_ENABLE_VIDEO</code> and the configure status line first. Reproduce at the narrowest boundary: the decoder for packet, colour or seek problems, <code>VideoPlayer</code> for timing, texture or audio hand-off, <code>MediaLibrary</code> for metadata. Preserve the <code>Open</code>/<code>Close</code> and <code>EAGAIN</code> invariants, add a fixture for the exact troublesome stream, and run enabled and disabled configurations so the unavailable implementation is not removed by accident. A new FFmpeg dependency or a public-header include is a build and packaging change, not merely a decoder edit; see <a href="../../handbook/change-build-configuration.html">I need to change build configuration</a>.</p>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p>What remains unverified. Every codec and pixel format beyond the fixtures above, a real audio and graphics output host, and the platforms where the backend is never built (Windows, MinGW, Emscripten, Android, iOS: a configure-time exclusion, so nothing here runs there) were not exercised. CNA's own notes say the optional split has not been run on macOS by its author. This page reports what the source and the test files at 009d40f5 say; nothing was built or run for it.</p></div>
+
+<h2 id="reading">Source-reading order</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/CMakeLists.txt"><code>media/CMakeLists.txt</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/video-ffmpeg/CMakeLists.txt"><code>video-ffmpeg/CMakeLists.txt</code></a>: prove which implementation and which native libraries entered this build.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/include/CNA/Internal/Media/VideoDecoder.hpp"><code>VideoDecoder.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Internal/VideoDecoderUnavailable.cpp"><code>VideoDecoderUnavailable.cpp</code></a>: establish the media-owned contract before reading the optional native implementation.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/video-ffmpeg/src/VideoDecoder.cpp"><code>video-ffmpeg/VideoDecoder.cpp</code></a>: follow <code>Open</code> and <code>Close</code>, the <code>NextFrame</code> packet state, conversion, audio drain, seek and the track-switch transaction, in that order.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/media/src/Xna/Video/VideoPlayer.cpp"><code>VideoPlayer.cpp</code></a>: connect decoder results to texture and audio output, error cleanup and timing.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/video-ffmpeg/src/AudioDurationProbe.cpp"><code>AudioDurationProbe.cpp</code></a> and the tests named above: separate metadata indexing from video playback, and confirm which fixture exercises each claim.</li>
+</ol>
+<p>Related pages: <a href="media.html">Media internals</a> for the player and library, <a href="../../reference/cmake-options.html">the CMake option index</a>, <a href="../../build/architecture.html">CMake architecture</a>, <a href="../../takeover/ownership.html">the ownership map</a> and <a href="../../takeover/threading.html">the thread and callback map</a>. The module's place among its siblings is in <a href="../../reference/modules.html#inventory">the module index</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/video-playback.html#ffmpeg-setup">Video Playback: FFmpeg setup</a> &middot; <a href="../../../docs/video-playback.html#platform-availability">Video Playback: platform availability</a> &middot; <a href="../../../docs/building.html#cmake-options">Building: CMake options</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/audio-input.html">Audio and input architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="media.html">Media internals</a> &middot; <a href="../content/pipeline.html">Content pipeline internals</a> &middot; <a href="../../build/architecture.html">CMake architecture</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/change-build-configuration.html">I need to change build configuration</a> &middot; <a href="../../takeover/ownership.html">Ownership and lifetime master map</a> &middot; <a href="../../takeover/threading.html">Thread and callback map</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture and change recipes</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/cmake-options.html">CMake option index</a> &middot; <a href="../../reference/modules.html#inventory">Module index</a> &middot; <a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="media.html" rel="prev"><span>Previous</span>Media internals</a><a class="dev-pager-next" href="devices.html" rel="next"><span>Next</span>Devices and sensor lifetime</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

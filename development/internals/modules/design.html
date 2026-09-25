@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Design converter internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s Framework.Design module works inside: header-triggered converter registration, boxed property descriptors, culture-aware parsing, InstanceDescriptor construction and string-input asymmetries.">
+  <meta name="keywords" content="cna_design, framework.design, mathtypeconverter, typedescriptor, instancedescriptor, supportstringconvert, propertydescriptions, registration, culture, cnadesigntests">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/modules/design.html">
+  <meta property="og:title" content="Design converter internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s Framework.Design module works inside: header-triggered converter registration, boxed property descriptors, culture-aware parsing, InstanceDescriptor construction and string-input asymmetries.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/modules/design.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Design converter internals","description":"How CNA's Framework.Design module works inside: header-triggered converter registration, boxed property descriptors, culture-aware parsing, InstanceDescriptor construction and string-input asymmetries.","url":"https://libcna.com/development/internals/modules/design.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="core.html" class="docs-nav-link is-group-active">Module internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="math.html" class="docs-nav-link">Math</a></li>
+        <li><a href="design.html" class="docs-nav-link active" aria-current="page">Design converters</a></li>
+        <li><a href="storage.html" class="docs-nav-link">Storage</a></li>
+        <li><a href="media.html" class="docs-nav-link">Media</a></li>
+        <li><a href="video-ffmpeg.html" class="docs-nav-link">FFmpeg video</a></li>
+        <li><a href="devices.html" class="docs-nav-link">Devices &amp; sensors</a></li>
+        <li><a href="devices-ext.html" class="docs-nav-link">Device host services</a></li>
+        <li><a href="diagnostics.html" class="docs-nav-link">Diagnostics</a></li>
+        <li><a href="inspector.html" class="docs-nav-link">Inspector</a></li>
+        <li><a href="phone.html" class="docs-nav-link">Phone</a></li>
+        <li><a href="gamer-services.html" class="docs-nav-link">Gamer services</a></li>
+        <li><a href="graphics-ext.html" class="docs-nav-link">Graphics extensions</a></li>
+        <li><a href="net.html" class="docs-nav-link">Network sessions</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="core.html">Modules</a></li>
+        <li aria-current="page">Design converters</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Design converter internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#boundary">Boundary and build graph</a></li>
+          <li><a href="#registration">Registration is process-global, not a Game lifecycle step</a></li>
+          <li><a href="#conversion">How a boxed value is read, edited and recreated</a></li>
+          <li><a href="#exceptions">Compatibility asymmetries to preserve</a></li>
+          <li><a href="#change">A human change: add or alter a converter</a></li>
+          <li><a href="#evidence">What the tests prove, and what they do not</a></li>
+          <li><a href="#reading">Curated source and evidence route</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Module internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Checked by reading the TARGET sources, tests and CMake files and, for the component-model substrate, a sibling Sharp Runtime checkout (next at 41b918c9, 2026-09-20; not pinned by TARGET). No build or test was executed and no automated oracle exists for this module. Behaviour in a consuming editor or property grid, cross-thread use, lookup from another translation unit's static initialiser and Windows hosts remain unverified.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design"><code>modules/design/</code></a> is not the <code>Game</code> component scheduler. It is CNA's opt-in implementation of the XNA <code>Microsoft::Xna::Framework::Design</code> namespace: twelve type converters that let Sharp Runtime's <code>System::ComponentModel</code> describe, format, parse and rebuild the math value types. A maintainer who changes a math type's fields, property names or constructors has to treat this module as a second public surface of <a href="math.html">math</a>. The user-level guide, with the converter table and a worked example, is <a href="../../../docs/design-converters.html">Framework.Design</a>; this page explains the machinery behind it. Everything below was checked by reading the TARGET snapshot and, for the component-model substrate, a sibling Sharp Runtime checkout; nothing was built or run for it.</p>
+
+<h2 id="boundary">Boundary and build graph</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/CMakeLists.txt"><code>design/CMakeLists.txt</code></a> builds <code>cna_design</code> (alias <code>CNA::Design</code>) through <code>cna_add_module</code> from a <code>CONFIGURE_DEPENDS</code> glob of <code>src/*.cpp</code>: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/src/Converters.cpp"><code>Converters.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/src/MathTypeConverter.cpp"><code>MathTypeConverter.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/src/Registration.cpp"><code>Registration.cpp</code></a>. It links Sharp Runtime's <code>ComponentModel</code> component and <code>cna_math</code>, both <code>PUBLIC</code>, and nothing else. It is deliberately outside the <code>CNA</code> umbrella: the comment above the umbrella in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a> says tooling-only <code>CNA::Design</code> stays opt-in so converter registration and ComponentModel code do not enter games that never use them, and there is no option to disable the subdirectory, so a consumer opts in by linking the target. The aggregate test executable <code>CnaTests</code> names <code>cna_design</code> explicitly in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>UnitTests.cmake</code></a>. The module defines no window, device or service owner and does no per-frame work.</p>
+<p>The closure is a checked contract: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/ModuleProbes.cmake"><code>ModuleProbes.cmake</code></a> registers <code>probe_design</code> with a link-closure check whose forbidden pattern rejects any CNA archive other than design and math and any SDL3, enet, FFmpeg or renderer library. The public headers are under <code>modules/design/include/Microsoft/Xna/Framework/Design/</code> (one per converter plus <code>MathTypeConverter.hpp</code>) and the umbrella <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/include/Microsoft/Xna/Framework/Design.hpp"><code>Design.hpp</code></a>; two internal headers under <code>CNA/Internal/Design/</code> hold the boxed-property adapters (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/include/CNA/Internal/Design/PropertyDescriptors.hpp"><code>PropertyDescriptors.hpp</code></a>) and the registration trigger (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/include/CNA/Internal/Design/Registration.hpp"><code>Registration.hpp</code></a>). The dependency direction matters: design observes and reconstructs math values, never the reverse. A change to a math field, property name or constructor can require a converter change; a design-time tweak must not change numeric math or a renderer. The converters, at TARGET:</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Converter (value type)</th><th scope="col">Descriptors, in order (boxed type)</th><th scope="col">String input</th><th scope="col">Constructor arguments of the <code>InstanceDescriptor</code></th></tr></thead><tbody>
+<tr><td><code>PointConverter</code> (<code>Point</code>)</td><td><code>X</code>, <code>Y</code> (fields, <code>intcs</code>)</td><td>yes</td><td><code>x</code>, <code>y</code></td></tr>
+<tr><td><code>RectangleConverter</code> (<code>Rectangle</code>)</td><td><code>X</code>, <code>Y</code>, <code>Width</code>, <code>Height</code> (fields, <code>intcs</code>)</td><td>no</td><td><code>x</code>, <code>y</code>, <code>width</code>, <code>height</code></td></tr>
+<tr><td><code>Vector2Converter</code> (<code>Vector2</code>)</td><td><code>X</code>, <code>Y</code> (fields, <code>float</code>)</td><td>yes</td><td><code>x</code>, <code>y</code></td></tr>
+<tr><td><code>Vector3Converter</code> (<code>Vector3</code>)</td><td><code>X</code>, <code>Y</code>, <code>Z</code></td><td>yes</td><td><code>x</code>, <code>y</code>, <code>z</code></td></tr>
+<tr><td><code>Vector4Converter</code> (<code>Vector4</code>), <code>QuaternionConverter</code> (<code>Quaternion</code>)</td><td><code>X</code>, <code>Y</code>, <code>Z</code>, <code>W</code></td><td>yes</td><td><code>x</code>, <code>y</code>, <code>z</code>, <code>w</code></td></tr>
+<tr><td><code>MatrixConverter</code> (<code>Matrix</code>)</td><td><code>Translation</code> (accessor, <code>Vector3</code>), then <code>M11</code> to <code>M44</code> (fields, <code>float</code>), seventeen in all</td><td>no</td><td>the sixteen elements <code>m11</code> to <code>m44</code></td></tr>
+<tr><td><code>BoundingBoxConverter</code> (<code>BoundingBox</code>)</td><td><code>Min</code>, <code>Max</code> (<code>Vector3</code>)</td><td>no</td><td><code>min</code>, <code>max</code></td></tr>
+<tr><td><code>BoundingSphereConverter</code> (<code>BoundingSphere</code>)</td><td><code>Center</code> (<code>Vector3</code>), <code>Radius</code> (<code>float</code>)</td><td>no</td><td><code>center</code>, <code>radius</code></td></tr>
+<tr><td><code>PlaneConverter</code> (<code>Plane</code>)</td><td><code>Normal</code> (<code>Vector3</code>), <code>D</code> (<code>float</code>)</td><td>no</td><td><code>normal</code>, <code>d</code></td></tr>
+<tr><td><code>RayConverter</code> (<code>Ray</code>)</td><td><code>Position</code>, <code>Direction</code> (<code>Vector3</code>)</td><td>no</td><td><code>position</code>, <code>direction</code></td></tr>
+<tr><td><code>ColorConverter</code> (<code>Color</code>)</td><td><code>R</code>, <code>G</code>, <code>B</code>, <code>A</code> (getter and setter pairs, <code>bytecs</code>)</td><td>yes</td><td><code>r</code>, <code>g</code>, <code>b</code>, <code>alpha</code> (bytes)</td></tr>
+</tbody></table></div>
+<p>Most collections are built and then reordered with <code>PropertyDescriptorCollection::Sort</code> using an explicit name list; the <code>Rectangle</code> and <code>Matrix</code> collections are simply declared in the order shown. The tests assert that order, and it is part of the compatibility contract: a property grid shows properties in it. The probe, the build and the tests together are described under <a href="#evidence">what the tests prove</a>.</p>
+
+<h2 id="registration">Registration is process-global, not a Game lifecycle step</h2>
+<pre class="diagram">consumer includes a Design/*Converter.hpp (or Design.hpp)
+  -&gt; it includes CNA/Internal/Design/Registration.hpp
+  -&gt; inline const bool FrameworkDesignConvertersRegistered = [] { Ensure...(); return true; }();
+  -&gt; EnsureFrameworkDesignConvertersRegistered()
+  -&gt; std::call_once(once, register twelve mappings)
+  -&gt; TypeDescriptor::RegisterType&lt;TValue&gt;({TypeConverterAttribute::Of&lt;TConverter&gt;()})   (per type)
+consumer, later
+  -&gt; TypeDescriptor::GetConverter(Type::From&lt;TValue&gt;())   creates the converter on first use, then caches it</pre>
+<p>Every concrete converter header includes the internal registration header, whose inline variable runs the initialiser during static initialisation of any program that links a translation unit including a converter header (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/src/Registration.cpp"><code>Registration.cpp</code></a> includes <code>Design.hpp</code> itself). <code>EnsureFrameworkDesignConvertersRegistered</code> is idempotent through a function-local <code>std::once_flag</code>, and registers all twelve mappings together with the private template <code>registerConverter&lt;TValue, TConverter&gt;</code>. Three properties of this design follow from reading it:</p>
+<ul>
+<li><strong>Both an include and a link are needed.</strong> The initialiser is what references the registration function, and that reference is what makes the linker keep <code>Registration.cpp</code> (and, through it, <code>Converters.cpp</code>) out of the static archive. A program that links <code>CNA::Design</code> but includes no Design header in any linked translation unit registers nothing, and a lookup then quietly returns the default converter.</li>
+<li><strong>Only the converter is registered, not the property descriptors.</strong> Each registration passes one <code>TypeConverterAttribute</code> and no property collection, so Sharp Runtime's <code>TypeDescriptor::GetProperties(Type)</code> has nothing registered for these types; the descriptors are reachable through the converter's own <code>GetProperties</code>. A consumer that expects the type-level query to list them will see an empty collection. No CNA test makes that query.</li>
+<li><strong>Nothing orders this initialiser against other static initialisers</strong>, and nothing unregisters at shutdown. A lookup issued from another translation unit's static initialiser is not guaranteed to see the registration. The language leaves the relative order of dynamic initialisation across translation units unspecified for this kind of variable, and no test covers the case.</li>
+</ul>
+<p>The registry itself belongs to Sharp Runtime, and CNA's source does not define its lifetime. In the sibling checkout read alongside this snapshot (<code>next</code> at <code>41b918c9</code> of 2026-09-20, not pinned by TARGET) the registry is a function-local static behind a mutex, so registering from any translation unit's static initialiser is safe regardless of link order; converters are created lazily by the attribute's factory on the first <code>GetConverter</code> and then cached, so all callers share one converter instance per type; registering a type again replaces its cached converter; and asking for a type nothing registered returns a plain default <code>TypeConverter</code> rather than throwing. That last point is why the module's tests find out whether registration worked with <code>dynamic_cast</code> on the result. Do not promise more than that: the exact storage and locking of a newer Sharp Runtime is outside CNA's source.</p>
+
+<h2 id="conversion">How a boxed value is read, edited and recreated</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/include/Microsoft/Xna/Framework/Design/MathTypeConverter.hpp"><code>MathTypeConverter.hpp</code></a> derives from <code>ExpandableObjectConverter</code>. It declares the two documented XNA protected fields, <code>propertyDescriptions</code> (the ordered descriptor collection) and <code>supportStringConvert</code> (default <code>true</code>), spelled as XNA spells them because a subclass outside CNA fills them in its constructor. There is one copy of that state, not an alias pair. Its virtual surface is small: <code>GetPropertiesSupported</code> and <code>GetCreateInstanceSupported</code> always answer true; <code>GetProperties</code> returns a copy of <code>propertyDescriptions</code> whatever value or attributes it is given; <code>CanConvertFrom</code> is true for a string source (<code>std::string</code>, <code>const char*</code>, <code>char*</code>, <code>std::string_view</code>) only while <code>supportStringConvert</code> is set, and otherwise defers to the base, which accepts an <code>InstanceDescriptor</code>; <code>CanConvertTo</code> is true for the string type while the flag is set and otherwise defers to the base, which is <em>also</em> true for a string, and each concrete converter adds <code>InstanceDescriptor</code> to its destinations.</p>
+<p>The descriptors are two small templates in <code>PropertyDescriptors.hpp</code>, created with <code>MakeFieldProperty</code> and <code>MakeAccessorProperty</code>. <code>FieldPropertyDescriptor&lt;TComponent, TValue&gt;</code> wraps a pointer-to-member and <code>AccessorPropertyDescriptor</code> wraps a getter and an optional setter (read-only when the setter is null). Both work on a boxed value in a <code>std::any</code>: <code>GetValue</code> reads through <code>std::any_cast&lt;const TComponent&amp;&gt;</code>, and <code>SetValue</code> casts the box to <code>TComponent&amp;</code>, writes the member in place and then calls <code>OnValueChanged</code>. Four consequences are easy to miss:</p>
+<ul>
+<li><strong>Types are exact.</strong> A component boxed as anything but <code>TComponent</code>, or a new value boxed as anything but <code>TValue</code> (<code>float</code> for the vector fields, <code>intcs</code> for <code>Point</code> and <code>Rectangle</code>, <code>bytecs</code> for <code>Color</code>), throws <code>std::bad_any_cast</code>. Passing a <code>double</code> or an <code>int</code> for a float field fails; it is not converted.</li>
+<li><strong>An edit changes a boxed copy.</strong> <code>SetValue</code> mutates the value inside that <code>std::any</code>, so other copies of the math value are untouched. The property-grid workflow for a value type recreates the whole value from the edited components through <code>CreateInstance</code>.</li>
+<li><strong>No change notification is delivered.</strong> The descriptors are <code>final</code> and do not override <code>OnValueChanged</code>; in the sibling Sharp Runtime checkout the base implementation of that protected hook does nothing and the class declares no handler list, because a <code>std::any</code> has no identity to key handlers on. The call is therefore a no-op at that revision, whatever a consumer registers.</li>
+<li><strong>Descriptors are otherwise inert.</strong> Every descriptor answers that it has no reset value (<code>CanResetValue</code> is false and <code>ResetValue</code> does nothing) and that it should be serialised. Field descriptors are never read-only; an accessor descriptor is read-only only when built without a setter, which no in-tree descriptor is.</li>
+</ul>
+<p><code>CreateInstance(context, hashtable)</code> reads each named entry with <code>Hashtable::at</code> and <code>std::any_cast</code>, then returns a newly boxed value; an absent name throws at the lookup and a wrongly boxed entry throws <code>bad_any_cast</code>. <code>MatrixConverter</code> exposes <code>Translation</code> as an accessor pair over <code>M41</code> to <code>M43</code>, but <code>CreateInstance</code> and its constructor descriptor use only the sixteen elements in row-major field order; <code>Translation</code> is an alternate, editable view, not a seventeenth constructor parameter. <code>Vector3Converter</code> exposes <code>X</code>, <code>Y</code> and <code>Z</code> float descriptors, formats and parses through the selected <code>CultureInfo</code>, and emits an <code>InstanceDescriptor</code> carrying the three constructor arguments.</p>
+<p>The shared string parser is <code>ConvertToValues&lt;T&gt;</code> in the base header. It takes the text of a string-typed value (any other value type returns nothing and falls through to the base <code>ConvertFrom</code>, which invokes an <code>InstanceDescriptor</code> or throws <code>NotSupportedException</code>), uses the current culture when the culture is null, trims whitespace at both ends of the whole string only, splits on the culture's list separator, and converts each part with the converter <code>TypeDescriptor::GetConverter</code> returns for the component type (the built-in float, 32-bit integer and byte converters). Any failure while converting a part is caught and rethrown as <code>System::ArgumentException</code> carrying the original exception and a message naming the value and its components; a correct parse with the wrong number of parts throws a separate <code>ArgumentException</code> stating the expected count. <code>ConvertFromValues</code> formats with the culture's list separator followed by one space. A Czech locale uses a decimal comma and a semicolon separator, so the same <code>Vector3</code> formats as <code>1,5; 2,25; -3,75</code> and comma-separated input is rejected there; the tests cover the invariant, <code>en-US</code> and <code>cs-CZ</code> cultures.</p>
+<p><code>tryInstanceDescriptor</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/src/Converters.cpp"><code>Converters.cpp</code></a> builds the <code>InstanceDescriptor</code>: it returns nothing unless the destination is <code>InstanceDescriptor</code> and the value really holds the expected type, and otherwise binds a <code>ConstructorInfo::Of&lt;T, Args...&gt;</code> (created once per instantiation as a function-local static) with the parameter names in the table above and the boxed argument values. The base <code>TypeConverter</code> can then rebuild a value from the descriptor. <code>ConvertTo</code> with an empty <code>System::Type</code> throws <code>ArgumentNullException</code>, and an unsupported destination (for example <code>int</code>) reaches the base and throws <code>NotSupportedException</code>. The module owns no native resource: descriptors and converters are <code>shared_ptr</code>-owned, and the only dynamic type contract is the exact <code>std::any</code> types and property names above (see the <a href="../../takeover/ownership.html">ownership and lifetime master map</a> for how that sits among CNA's other owners).</p>
+
+<h2 id="exceptions">Compatibility asymmetries to preserve</h2>
+<p><code>supportStringConvert</code> describes string <em>input</em>. String output is always available, because the base converter's <code>CanConvertTo</code> accepts a string regardless of the flag, and the tests assert that all twelve converters can convert to a string. Six converters clear the flag in their constructors: <code>Rectangle</code>, <code>Matrix</code>, <code>BoundingBox</code>, <code>BoundingSphere</code>, <code>Plane</code> and <code>Ray</code>. Their <code>ConvertTo</code> still returns the value's own <code>ToString()</code>, and there is no string parser for them. <code>BoundingBox</code>, <code>BoundingSphere</code> and <code>Ray</code> additionally declare a <code>ConvertFrom</code> override that forwards to the base, as the Microsoft implementation does, so they accept an <code>InstanceDescriptor</code> and refuse a string; <code>Rectangle</code>, <code>Matrix</code> and <code>Plane</code> declare no override and behave the same through inheritance. Do not add symmetric parsing just because the output is printable.</p>
+<div class="callout callout--note"><span class="callout-icon">&#8505;</span><p><strong>A stale comment.</strong> The comment on <code>supportStringConvert</code> in <code>MathTypeConverter.hpp</code> says that only <code>BoundingBox</code>, <code>BoundingSphere</code> and <code>Ray</code> clear the flag and that the matrix and rectangle converters leave it set. The constructors in <code>Converters.cpp</code> say otherwise and the tests follow the constructors: <code>Rectangle</code>, <code>Matrix</code> and <code>Plane</code> clear it too.</p></div>
+<p><code>ColorConverter</code> uses byte components <code>R</code>, <code>G</code>, <code>B</code>, <code>A</code> rather than the packed integer, and parses each component with the byte converter, so <code>"0, 1, 2, 256"</code> and <code>"0, 1, -1, 2"</code> throw <code>ArgumentException</code> (<code>ColorConverterTests.RejectsComponentsOutsideTheByteRange</code>); <code>PointConverter</code> parses integers. These choices are compatibility behaviour checked by the module tests and are not to be harmonised casually.</p>
+<p>The module adds no lock around a converter's protected descriptor collection or around a boxed value being edited. Registration uses <code>std::call_once</code>, which says nothing about later component-model operations. In the sibling Sharp Runtime checkout registry lookups take a mutex and converters are shared and cached, and <code>GetProperties</code> hands out copies of the collection, but no CNA test uses a converter from two threads, so concurrent conversion is not established here. If a binding or editor calls into the converters from a foreign thread, check the Sharp Runtime revision it links and see the <a href="../../takeover/threading.html">thread and callback map</a>.</p>
+
+<h2 id="change">A human change: add or alter a converter</h2>
+<ol>
+<li><strong>Decide what changes.</strong> Is the request about the math value itself or only its design-time representation? If only the latter, keep math's numeric and ABI contract untouched.</li>
+<li><strong>Read the closest converter</strong> end to end: header, constructor, <code>ConvertFrom</code>, <code>ConvertTo</code> and <code>CreateInstance</code>. Choose a field descriptor or an accessor descriptor deliberately (<code>Color</code> and <code>Matrix::Translation</code> use accessors because the C++ type has no such public field). Keep property names, order and boxed types stable unless a compatibility change is intended.</li>
+<li><strong>A new converter</strong> needs its public header (including <code>Registration.hpp</code>), an entry in <code>Design.hpp</code>, its implementation in <code>Converters.cpp</code> or a new source under <code>src/</code> (the glob is <code>CONFIGURE_DEPENDS</code>, so a reconfigure picks it up), and a <code>registerConverter</code> line in <code>Registration.cpp</code>. Verify the registration from a separate consumer with <code>TypeDescriptor::GetConverter</code> and a <code>dynamic_cast</code>; constructing the converter directly can pass while the type-level lookup still returns the default converter.</li>
+<li><strong>Add tests</strong> for the boxed property shape, descriptor read and write, <code>CreateInstance</code>, the <code>InstanceDescriptor</code> round trip, culture-specific parsing, unsupported destinations, and missing or wrongly boxed inputs. The shared helper <code>expectCommonBehavior</code> in <code>FrameworkDesignTests.cpp</code> already checks registration, string capability flags, property shape, recreation, descriptor arguments and the two exception types for a new type.</li>
+<li><strong>Run the focused target and then the aggregate.</strong> The CMake test-group mechanism produces the focused executable <code>CnaDesignTests</code> from <code>modules/design/tests/</code> (<code>EXCLUDE_FROM_ALL</code>, not a separate CTest registration); no build preset names it, so it is built by target name after configuring with tests on, and the same sources are part of <code>CnaTests</code>. Run the module link probe when a public header or a dependency changed. Command shape, shown for reference and not executed here: <code>cmake --preset unit</code>, <code>cmake --build cmake-build-unit --target CnaDesignTests</code>, then run <code>cmake-build-unit/CnaDesignTests</code>.</li>
+</ol>
+<p>Self-review: is the new converter discoverable through <code>TypeDescriptor</code>, not only by direct construction? Does a property-grid edit reconstruct the whole value? Does the culture's list separator still keep decimal commas distinct? Is string input advertised accurately by <code>supportStringConvert</code>? Did a math field, property name or C ABI representation change unintentionally? Does registration depend on static-initialisation order that a consuming binary exercises? See also <a href="../../handbook/add-a-regression-test.html">I need to add a regression test</a> and <a href="../../testing/architecture.html">Test architecture</a>.</p>
+
+<h2 id="evidence">What the tests prove, and what they do not</h2>
+<p>The module has two test files with 25 static definitions. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/tests/Microsoft/Xna/Framework/Design/FrameworkDesignTests.cpp"><code>FrameworkDesignTests.cpp</code></a> (17) has one case per converter (<code>ImplementsXnaConversionDescriptorAndCreationBehavior</code>) built on <code>expectCommonBehavior</code>, <code>expectInvariantStringRoundTrip</code> and <code>expectStringInputDisabled</code>: registration through <code>TypeDescriptor::GetConverter</code>, string capability in both directions, property names and boxed types in order, recreation from a hashtable, <code>InstanceDescriptor</code> completeness, argument count and <code>Invoke</code> round trip, and the two exception types. Extra cases cover the base class alone (<code>MathTypeConverterTests.ImplementsTheExpandableXnaBaseContract</code>), the Czech decimal comma and semicolon (<code>Vector3ConverterTests.UsesCultureDecimalAndListSeparators</code>), <code>Matrix</code> element order and the <code>Translation</code> descriptor (<code>MatrixConverterTests.CreateInstanceUsesEveryElementInRowMajorOrder</code>, <code>TranslationDescriptorEditsTheTranslationRowButIsNotAConstructorArgument</code>) and byte-range rejection for <code>Color</code>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/tests/Microsoft/Xna/Framework/Design/MathTypeConverterProtectedSurfaceTests.cpp"><code>MathTypeConverterProtectedSurfaceTests.cpp</code></a> (8) pins the protected surface: a subclass reaching <code>supportStringConvert</code> and <code>propertyDescriptions</code> by their XNA names (a rename or an alias pair would not compile), that the flag is one source of truth for <code>CanConvertFrom</code>, that the three forwarding <code>ConvertFrom</code> overrides forward and refuse a string, and that they are reached through the base interface.</p>
+<p>Scope of the evidence: these are source-verified unit tests that were not executed for this page. CNA's design notes (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/framework-design.md"><code>docs/framework-design.md</code></a>) record that the rules were recovered from the genuine Microsoft assembly, and there is no automated oracle test for this module. No workflow names <code>CnaDesignTests</code>; the automatic <code>general-tests-ci</code> workflow builds the default targets with tests on and runs an unfiltered <code>ctest</code>, which would discover these cases through <code>CnaTests</code> (definition read, not its runs). Still unproved: behaviour in a consuming editor or property grid, use from a second thread, lookup from another translation unit's static initialiser, other cultures, and Windows hosts. Whether Sharp Runtime's <code>TypeDescriptor</code> keeps the properties described above at a newer revision is likewise unverified.</p>
+
+<h2 id="reading">Curated source and evidence route</h2>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/CMakeLists.txt"><code>design/CMakeLists.txt</code></a>, then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/include/Microsoft/Xna/Framework/Design.hpp"><code>Design.hpp</code></a>: the opt-in target and the public converter set.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/include/CNA/Internal/Design/Registration.hpp"><code>Registration.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/src/Registration.cpp"><code>Registration.cpp</code></a>: header-triggered, once-only mapping of all twelve value types; check each mapping against the converter list.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/include/Microsoft/Xna/Framework/Design/MathTypeConverter.hpp"><code>MathTypeConverter.hpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/src/MathTypeConverter.cpp"><code>MathTypeConverter.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/include/CNA/Internal/Design/PropertyDescriptors.hpp"><code>PropertyDescriptors.hpp</code></a>: culture parsing, the protected fields and how boxed values are read and written.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/src/Converters.cpp"><code>Converters.cpp</code></a>: compare <code>Vector3</code>, <code>Matrix</code> and <code>BoundingBox</code> rather than assuming every converter handles strings alike.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/tests/Microsoft/Xna/Framework/Design/FrameworkDesignTests.cpp"><code>FrameworkDesignTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/design/tests/Microsoft/Xna/Framework/Design/MathTypeConverterProtectedSurfaceTests.cpp"><code>MathTypeConverterProtectedSurfaceTests.cpp</code></a>: what is proved (discovery, descriptor shape, culture, negative paths, protected surface) and what still needs a consuming-editor or cross-thread test.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/framework-design.md"><code>docs/framework-design.md</code></a>: CNA's own statement of the namespace inventory, the reference audit and the compatibility boundary.</li>
+</ol>
+<p>For where the module sits among the others see the <a href="../../reference/modules.html#inventory">module index</a>; for task routes, the <a href="../../handbook/index.html">Maintainer Handbook</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/design-converters.html">Framework.Design guide</a> &middot; <a href="../../../docs/design-converters.html#behaviour">Framework.Design: behaviour, rule by rule</a> &middot; <a href="../../../docs/design-converters.html#subclassing">Framework.Design: subclassing MathTypeConverter</a> &middot; <a href="../../../docs/tutorials/140-type-converters.html">Tutorial 140: type converters</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/overview.html">Architecture overview</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="math.html">Math module internals</a> &middot; <a href="core.html">Core module internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../takeover/threading.html">Thread and callback map</a> &middot; <a href="../../handbook/add-a-regression-test.html">I need to add a regression test</a> &middot; <a href="../../handbook/index.html">Maintainer Handbook</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture and change recipes</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/modules.html#inventory">Module index</a> &middot; <a href="../../reference/test-targets.html#targets">Test target index</a> &middot; <a href="../../repository/module-graph.html">Physical module dependency map</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="math.html" rel="prev"><span>Previous</span>Math module internals</a><a class="dev-pager-next" href="storage.html" rel="next"><span>Next</span>Storage internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

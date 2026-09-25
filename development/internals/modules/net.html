@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Network session internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s NetworkSession, ENet backend and LAN discovery stay valid from Create to Dispose: one session per process, gamer ownership, the Update pump, join handshake, teardown order and the tests that cover them.">
+  <meta name="keywords" content="networksession, enet, systemlink, cna_net, enetbackend, enetdiscoveryservice, cna_enable_net, localnetworkgamer, host migration, wire id, discovery, twoprocessloopbacktest">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/modules/net.html">
+  <meta property="og:title" content="Network session internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s NetworkSession, ENet backend and LAN discovery stay valid from Create to Dispose: one session per process, gamer ownership, the Update pump, join handshake, teardown order and the tests that cover them.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/modules/net.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Network session internals","description":"How CNA's NetworkSession, ENet backend and LAN discovery stay valid from Create to Dispose: one session per process, gamer ownership, the Update pump, join handshake, teardown order and the tests that cover them.","url":"https://libcna.com/development/internals/modules/net.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="core.html" class="docs-nav-link is-group-active">Module internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="math.html" class="docs-nav-link">Math</a></li>
+        <li><a href="design.html" class="docs-nav-link">Design converters</a></li>
+        <li><a href="storage.html" class="docs-nav-link">Storage</a></li>
+        <li><a href="media.html" class="docs-nav-link">Media</a></li>
+        <li><a href="video-ffmpeg.html" class="docs-nav-link">FFmpeg video</a></li>
+        <li><a href="devices.html" class="docs-nav-link">Devices &amp; sensors</a></li>
+        <li><a href="devices-ext.html" class="docs-nav-link">Device host services</a></li>
+        <li><a href="diagnostics.html" class="docs-nav-link">Diagnostics</a></li>
+        <li><a href="inspector.html" class="docs-nav-link">Inspector</a></li>
+        <li><a href="phone.html" class="docs-nav-link">Phone</a></li>
+        <li><a href="gamer-services.html" class="docs-nav-link">Gamer services</a></li>
+        <li><a href="graphics-ext.html" class="docs-nav-link">Graphics extensions</a></li>
+        <li><a href="net.html" class="docs-nav-link active" aria-current="page">Network sessions</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="core.html">Modules</a></li>
+        <li aria-current="page">Network sessions</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Network session internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#composition">Build and type policy</a></li>
+          <li><a href="#create">Construction, handshake and caller ownership</a></li>
+          <li><a href="#pump">One Update and one application packet</a></li>
+          <li><a href="#discovery">Discovery is a synchronous, host-specific service</a></li>
+          <li><a href="#shutdown">Teardown order and error boundaries</a></li>
+          <li><a href="#tests">Change-driven evidence and source route</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Module internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Checked by reading modules/net, the two harnesses and the CMake gates at the snapshot; the 18 test files (316 test-macro definitions) were located, none executed. Host migration under real network conditions, packet protocol field details and cross-version compatibility, simulated-loss scheduling and Emscripten behaviour remain unverified, as does Windows socket behaviour and any live-host validation.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net"><code>modules/net/</code></a> contains the XNA-shaped session, gamer, packet and discovery APIs plus CNA's ENet implementation of them. <code>NetworkSession</code> is the public state machine; ENet is the transport, and at this snapshot real transport is gated to <code>NetworkSessionType::SystemLink</code>. Every other session type keeps a synthetic behaviour or is refused: there is no hidden online matchmaking service. This page is for maintainers who need to know how a caller-owned session, its gamer objects, the ENet host and peer maps, the discovery advertisement and the queued events stay mutually valid from <code>Create</code> to <code>Dispose</code>, and where the pump, the wire messages and the tests sit. The user view is <a href="../../../docs/tutorials/97-networking.html">Tutorial 97</a> and the Net row of <a href="../../../docs/xna-compatibility.html#microsoftxnaframeworkaudio">XNA compatibility</a>.</p>
+
+<h2 id="composition">Build and type policy</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/CMakeLists.txt"><code>modules/CMakeLists.txt</code></a> enters <code>gamer-services</code> and <code>net</code> only under <code>CNA_ENABLE_NET</code>, which defaults to <strong>ON</strong> in the root file and is switched off by several presets (see <a href="gamer-services.html#build">the GamerServices page</a>). <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/CMakeLists.txt"><code>modules/net/CMakeLists.txt</code></a> builds a <code>STATIC</code> library <code>CNA_Net</code> (alias <code>CNA::Net</code>, 25 sources and 29 headers at this snapshot) and links <code>CNA_GamerServices</code> and the target <code>enet</code> publicly, plus the Sharp Runtime components <code>Core.Base</code>, <code>IO</code>, <code>Collections.Core</code>, <code>Runtime</code> and <code>Threading</code>. ENet is vendored in the CNA tree (<a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/third_party/enet"><code>third_party/enet</code></a>) and added by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/ThirdPartyENet.cmake"><code>cmake/ThirdPartyENet.cmake</code></a> with <code>EXCLUDE_FROM_ALL</code>; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakeLists.txt"><code>the root file</code></a> notes that sanitiser instrumentation stays outside the vendored SDL and ENet sub-builds. Neither library is in the <code>CNA</code> umbrella; a game links <code>CNA_GamerServices</code> and <code>CNA_Net</code> itself, and every session is created for <code>SignedInGamer</code> objects that come from the GamerServices layer. In a <code>CNA_ENABLE_NET=OFF</code> build <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>cmake/UnitTests.cmake</code></a> removes the Net and GamerServices test sources from the aggregate <code>CnaTests</code>, so a green NET=OFF run says nothing about the transport.</p>
+<p>The policy lives in two places. <code>ENetBackend::RealNetworkingEnabled</code> returns true only for <code>SystemLink</code>. The public overloads add a second gate, <code>ThrowIfSessionTypeNeedsMatchmakingService</code>, which makes <code>Create</code> and <code>Find</code> throw <code>GamerServicesNotAvailableException</code> for <code>PlayerMatch</code> and <code>Ranked</code>; <code>JoinInvited</code> is refused unconditionally. An API name such as <code>JoinInvited</code> is therefore not evidence of an invitation service.</p>
+<div class="table-wrap"><table><thead><tr><th scope="col">Session type</th><th scope="col"><code>Create</code></th><th scope="col"><code>Find</code></th><th scope="col">Transport</th></tr></thead><tbody>
+<tr><td><code>SystemLink</code></td><td>Accepted; starts an ENet host and registers it for discovery</td><td>Broadcast plus loopback UDP query (native); empty on Emscripten</td><td>Real ENet over UDP</td></tr>
+<tr><td><code>Local</code></td><td>Accepted; no socket</td><td>Throws <code>ArgumentException</code></td><td>None. <code>PacketSend</code> is a no-op in <code>Update</code>, so packets sent through a Local session are not delivered, not even to its own gamers</td></tr>
+<tr><td><code>LocalWithLeaderboards</code></td><td>Accepted, synthetic like <code>Local</code></td><td>Returns an empty collection</td><td>None</td></tr>
+<tr><td><code>PlayerMatch</code>, <code>Ranked</code></td><td>Throws <code>GamerServicesNotAvailableException</code></td><td>Throws the same</td><td>None; <code>Join</code> takes the type from the <code>AvailableNetworkSession</code> it is given</td></tr>
+</tbody></table></div>
+<pre class="diagram">caller owns NetworkSession* returned by Create / Join
+  -&gt; session owns the LocalNetworkGamer objects it creates          [ownedGamers_, unique_ptr registry]
+  -&gt; ENetBackend::SessionState owns every REMOTE NetworkGamer        [OwnedRemoteGamers; AddRemoteGamer never takes ownership]
+  -&gt; the four public GamerCollection views borrow both kinds
+  -&gt; ENetBackend Sessions() map: per-session ENetHostHandle, peers, wire-id maps, queues
+  -&gt; ENetHostHandle owns the ENetHost; ENetDiscoveryService holds a process-static UDP socket
+
+one live session per process:  static activeAction_ / activeSession_; every Begin* refuses if either is set
+
+NetworkSession::Update   [caller thread; nothing else pumps]
+  -&gt; ENetBackend::PumpSession -&gt; service(0): connect / receive / disconnect -&gt; handshake, app-data
+       -&gt; direct-peer round-trip times -&gt; release delayed deliveries -&gt; publish property changes
+  -&gt; ENetDiscoveryService::Poll (answer queries)
+  -&gt; drain the NetworkEvent queue -&gt; PacketSend delivery / public gamer and state events</pre>
+<p>Two invariants shape everything below. First, <strong>one session per process</strong>: the action and session pointers are class statics, and every <code>BeginCreate</code>, <code>BeginFind</code>, <code>BeginJoin</code> and <code>BeginJoinInvited</code> throws <code>InvalidOperationException</code> while either is non-null. A game cannot browse for sessions while it is hosting one, and tests that need two peers use two processes. Second, <strong>one thread</strong>: the header of <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/include/CNA/Internal/Net/ENetBackend.hpp"><code>ENetBackend.hpp</code></a> states that the backend and its process-wide session map are single-threaded by contract, and the module contains no <code>std::mutex</code> or <code>std::atomic</code>. See the <a href="../../takeover/threading.html">thread and callback map</a> for the process-wide picture.</p>
+
+<h2 id="create">Construction, handshake and caller ownership</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/src/Xna/NetworkSession.cpp"><code>NetworkSession::Create</code></a> and <code>Join</code> return raw pointers documented as caller-owned. Every overload is a <code>Begin*</code>/<code>End*</code> pair wrapped in a polling loop. <code>BeginCreate</code> validates its arguments (<code>maxLocalGamers</code> 1&ndash;4 (the explicit-gamer-list overload has no such argument), <code>maxGamers</code> 2&ndash;<code>MaxSupportedGamers</code>, which is 31, and <code>privateGamerSlots</code> 0&ndash;<code>maxGamers</code>), refuses matchmaking types, refuses a second live action or session, and allocates a <code>NetworkSessionAction</code> stored in <code>activeAction_</code>. The action is <em>marked complete at construction</em> and its callback is invoked once, right after <code>activeAction_</code> is installed, so a re-entrant callback sees consistent state and the <code>Begin*</code> still returns the action it made. The constructor comment records this as a deliberate deviation from FNA, where the action only completes through <code>GamerServicesDispatcher::Update</code>; that method is empty in both code bases, so once a <code>GamerServicesComponent</code> exists the polling loop would spin forever; the deviation is pinned by the out-of-process hang tests in <a href="#tests">the test section</a>. <code>EndCreate</code> builds the session inside a <code>try</code>, deletes the action either way (leaving <code>activeAction_</code> null even when the constructor throws) and returns <code>activeSession_</code>.</p>
+<p>The constructor gathers the local gamers. With an explicit <code>std::vector&lt;SignedInGamer*&gt;</code> it uses those. Without one it walks <code>Gamer::getSignedInGamersProperty()</code> up to <code>maxLocalGamers</code> and takes each <em>non-guest</em> gamer, which with the stub dispatcher means the first stub only. If that list is empty (no <code>Initialize</code> and nothing published) <code>host_ = localGamers_[0]</code> throws from inside <code>EndCreate</code>; the cleanup path keeps the process usable (test <code>FailedCreateDoesNotPermanentlyStrandActiveAction</code>). Each gamer becomes a heap <code>LocalNetworkGamer</code>, is stored in <code>ownedGamers_</code> and added by pointer to the public local and all-gamer collections. It receives a provisional id from a monotonic counter (never derived from a live collection's size, so remove-then-add cannot collide), an <code>IsHost</code> flag from the factory that built the session, and the first local gamer becomes the placeholder <code>Host</code>. A host starts in <code>Lobby</code> with <code>AllowHostMigration</code> and <code>AllowJoinInProgress</code> false. <code>GamerJoined</code> gets a <em>replay hook</em>: whenever a handler subscribes, it is invoked immediately for every gamer already in <code>AllGamers</code>, which is why a late subscriber is caught up (<code>GamerJoinedReplaysImmediatelyOnSubscriptionForConstructionTimeGamers</code>, <code>GamerJoinedReplaysForALateSubscriber</code>). Later joins are different: <code>AddRemoteGamer</code> and <code>AddLocalGamer</code> enqueue a <code>GamerJoin</code> event delivered from <code>Update</code>. Reading the two paths together, a handler subscribed after a remote gamer has been added but before the next <code>Update</code> would receive that gamer once from the replay and once from the queued event; no test covers that window, so treat it as a caution rather than a proven behaviour. No extra <code>Update</code> call is needed to see the construction-time gamers.</p>
+<p>For a <code>SystemLink</code> session the constructor ends by calling <code>ENetBackend::StartHosting</code>. That creates an RAII <code>ENetHostHandle</code> (31 peers, 2 channels, an OS-assigned ephemeral port on native hosts, a fixed port 61191 on Emscripten), reads back the bound port and registers the session with discovery <em>before</em> committing the state to the process map. If UDP registration throws, the half-created host unwinds through the handle's destructor and the map never learns of it (<code>StartHostingRollsBackCleanlyOnDiscoveryRegistrationFailure</code>). <code>ENetLibrary::EnsureInitialized</code> guards <code>enet_initialize</code> with a function-local static; no <code>enet_deinitialize</code> call exists. Note that <em>every</em> <code>SystemLink</code> session starts hosting in its constructor, including one created by <code>Join</code>; a joining session therefore owns an accepting ENet host and is registered for discovery as well, which the REMED-NET-001 comment in the backend acknowledges (&ldquo;even a client role peer owns a real accepting ENetHost here&rdquo;).</p>
+
+<h3 id="create-join">Join</h3>
+<p><code>BeginJoin</code> copies the connect address and port out of the <code>AvailableNetworkSession</code> and takes the session type from it (an earlier FIXME hardcoded <code>PlayerMatch</code>, which would have disabled the transport). <code>EndJoin</code> constructs the joining session with <code>isHost = false</code>, <code>MaxSupportedGamers</code> and four private slots, then, for <code>SystemLink</code> with a non-empty address, calls <code>ENetBackend::ConnectToHost</code> (start hosting if needed, then <code>enet_host_connect</code> and remember the peer as <code>HostPeer</code>). On native builds it then pumps <code>Update</code> on the same thread, sleeping one millisecond per loop, until the host pointer stops being the construction-time placeholder (the server welcome arrived), the session state becomes <code>Ended</code>, or five seconds pass. Expiry disposes and deletes the half-joined session and throws <code>NetworkSessionJoinException</code> with <code>SessionNotFound</code>; any other exception during that phase is wrapped with its cause in the same type. On Emscripten that wait loop is compiled out, so <code>Join</code> returns before the handshake and the caller must pump <code>Update</code> itself; that path was not traced against a browser. <code>BeginJoinInvited</code> validates <code>maxLocalGamers</code> and the single-session rule, then throws <code>GamerServicesNotAvailableException</code>; <code>EndJoinInvited</code> always throws <code>ArgumentException</code>, so it cannot be used to slip past the refusal. <code>NetworkSession::InviteAccepted</code> is declared and never raised. A successful <code>Create</code> or <code>Join</code> does not start background work: everything after that depends on the caller invoking <code>NetworkSession::Update</code>.</p>
+
+<h3 id="create-handshake">Handshake and host-only messages</h3>
+<p>A client sends <code>ClientHello</code> (its local gamertags) when ENet reports the connect to its <code>HostPeer</code>. The host answers with <code>ServerWelcome</code>: the wire ids it assigned to the client's gamers, a snapshot of the current roster (with each gamer's real host flag) and the current <code>NetworkSessionProperties</code>. It then adds the new gamers as remote gamers of its own session, so <code>GamerJoined</code> is raised for them only after the welcome was sent, and announces them to already-connected peers with <code>GamerJoinBroadcast</code>. Wire ids are single bytes assigned by whichever side hosts the connection; ids reclaimed from departed peers are reused before the counter advances, which stops the byte from wrapping after 256 cumulative joins. The client's <code>HandleServerWelcome</code> overwrites the provisional local ids with the assigned ones, creates remote gamers for the roster, and establishes the welcomed host as <code>Host</code> silently (no <code>HostChanged</code> for an initial join). Every gamer the transport creates goes into <code>OwnedRemoteGamers</code>. The receive path applies these rules, each with a test: a host in <code>Playing</code> with join-in-progress disallowed disconnects a new <code>ClientHello</code> peer; a duplicate <code>ClientHello</code> from an already-handshaked peer disconnects it; the five host-authoritative messages (<code>ServerWelcome</code>, <code>GamerJoinBroadcast</code>, <code>GamerLeaveBroadcast</code>, <code>StateChangeBroadcast</code>, <code>SessionPropertiesBroadcast</code>) are accepted only from the peer this side connected out to, and otherwise the sender is logged and disconnected (<code>HostRejectsForgedServerWelcomeFromNonHostPeer</code> and its siblings); and a payload that fails to decode is dropped inside a <code>try</code> block so a single truncated packet cannot throw out of <code>Update</code> (<code>HostSurvivesTruncatedClientHelloAndContinuesFunctioningAfterward</code>). The full field layout of each message and compatibility between builds are not established by this page.</p>
+
+<h2 id="pump">One Update and one application packet</h2>
+<p><code>NetworkSession::Update</code> throws <code>ObjectDisposedException</code> on a disposed session. For <code>SystemLink</code> it calls <code>ENetBackend::PumpSession</code> and then <code>ENetDiscoveryService::Poll</code>. <code>PumpSession</code> services ENet with a zero timeout in a loop, dispatching connect, receive and disconnect; a received packet is wrapped in a guard that destroys it after handling. It then copies ENet's round-trip time into <code>NetworkGamer::RoundtripTime</code> for the gamers of directly connected peers (the host's view of its clients only; every other gamer stays at zero), releases any delayed deliveries whose release time has passed, and, on the transport host, compares the session properties with the last published snapshot and broadcasts a change (the get-only XNA property is a mutable collection, so polling is the only way to notice edits). The session then drains its <code>NetworkEvent</code> queue: a <code>PacketSend</code> whose target is a local gamer is enqueued into that gamer's packet queue with the sender remapped; a remote target goes to <code>ENetBackend::SendAppData</code>; gamer joins and leaves, host changes and state changes raise the public events on the thread that called <code>Update</code>. There is no per-session network worker, but neither the queue nor the backend's process map is safe for concurrent use, so treat <code>Create</code>, <code>Update</code>, <code>Dispose</code> and gameplay sends as a single-owner execution model.</p>
+<p>A packet leaves in two steps. <code>LocalNetworkGamer::SendData</code> does not touch the transport: every overload only appends a <code>PacketSend</code> event to the session's queue (the broadcast overloads add one event per gamer in <code>AllGamers</code>, which includes the sender and any other local gamers; the recipient overloads add one). The bytes reach ENet during the next <code>Update</code>. In that loop the transport branch is gated on <code>RealNetworkingEnabled</code>, which is why <code>LocalNetworkGamerTest.SendDataThenReceiveDataRoundtrip</code>, despite its name, asserts that <em>no</em> data becomes available on a <code>Local</code> session. <code>ReceiveData</code> dequeues one packet per call, copies at most <code>data.size()</code> bytes and reports the sender by matching the packet's gamer pointer against the current gamers (FNA's own &ldquo;bad equality check&rdquo;, kept). The overload that takes a <code>PacketReader</code> returns 0 as the length while still writing the data, a preserved FNA quirk (<code>ReceiveDataIntoPacketReaderReturnsZero</code>).</p>
+<p>Before a client handshake has assigned wire ids, or before a target gamer is known, <code>SendAppData</code> cannot address the packet. The backend queues such sends in a bounded per-session vector (64 entries; when full it evicts the oldest) and delivers them, in order for each sender and target pair, when <code>HandleClientHello</code>, <code>HandleServerWelcome</code> or <code>HandleGamerJoinBroadcast</code> makes both ends resolvable. Every entry that turns out never to be deliverable increments a process-wide counter exposed as <code>GetDroppedAppDataCount</code>: overflow eviction, purge when a named gamer leaves or disconnects, and the whole queue being cleared by host migration or by the client's own session ending. Because <code>SendData</code> itself only queues, this path is reached when a send is drained before its ends are wired (for example after <code>ConnectToHost</code> without waiting, on Emscripten where <code>EndJoin</code> does not wait, or for a gamer introduced later), not after a native <code>Join</code> that already waited for the welcome. Preserve this state transition when changing <code>Join</code> or <code>SendData</code>.</p>
+<p>Delivery options map onto ENet flags in <code>NetPacketCodec::SendDataOptionsToEnetFlags</code>: <code>None</code> is unsequenced, <code>InOrder</code> is a plain sequenced unreliable send, and <code>Reliable</code>, <code>ReliableInOrder</code> and <code>Chat</code> are all reliable (ENet has no reliable-unordered primitive). The host is created with two channels, but every send in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/src/Internal/ENetBackend.cpp"><code>ENetBackend.cpp</code></a> uses the default control channel 0. The topology is a star: a client sends everything to the host, which relays to the peer that owns the target's wire id and never echoes a packet back to its origin. <code>NetPacketCodec</code> and <code>NetDiscoveryProtocol</code> are two different wire contracts (session and application messages on a connected channel, versus a LAN query and announcement on a raw UDP socket, protocol version 1); a codec change needs tests with malformed and truncated bytes and a real two-process exchange, not only an in-process send.</p>
+
+<h3 id="pump-conditions">Host migration and simulated conditions</h3>
+<p>The source contains both features; this page records only where they sit. <code>AllowHostMigration</code> is off by default. When a client loses its connection to the host and the flag is set, <code>AttemptHostMigration</code> lets every survivor compute the same successor, the lowest remaining wire id, from its cached roster. The successor promotes itself (marks its local gamers as host, re-registers for discovery, establishes itself as host with <code>HostChanged</code>); the others discard their roster, reset the wire-id maps and pending sends, rediscover the new host through <code>ENetDiscoveryService::FindSessions</code> (up to three attempts, matching by gamertag) and reconnect. There is no wire message for it (tag 0x05 is reserved and unused), it is best effort, and it returns false, ending the session, when disabled or when no reachable host is found. <code>SimulatedLatency</code> and <code>SimulatedPacketLoss</code> are applied in <code>HandleAppData</code> to application data addressed to one of this session's own local gamers only: session-management traffic and a host's relay hop for two other peers are untouched; a loss of exactly 0 or 1 never consults the random generator, and delayed packets wait in a per-session queue until <code>PumpSession</code> observes the release time. Tests exist for all of it in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/tests/CNA/Internal/Net/ENetBackendTests.cpp"><code>ENetBackendTests.cpp</code></a> (the tie-break cases run in one process; <code>HostMigrationPromotesOneSurvivorAndTheOtherReconnectsAcrossRealProcesses</code> uses three). Real multi-machine migration behaviour, the statistical behaviour of loss, and every Emscripten path remain unverified by this page.</p>
+
+<h2 id="discovery">Discovery is a synchronous, host-specific service</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/src/Internal/ENetDiscoveryService.cpp"><code>ENetDiscoveryService</code></a> holds file-static state: one UDP socket, a single <code>registeredHost_</code> pointer with its connect port, and a temporary result vector that exists only while <code>FindSessions</code> runs. On native builds the socket is bound to port 61190 with <code>SO_REUSEADDR</code>, broadcast and non-blocking options, so several processes on one machine can each bind it; which of them receives a given datagram is up to the operating system, and that is why results are de-duplicated by connect port. <code>FindSessions</code> returns an empty list at once for any type but <code>SystemLink</code>; otherwise it sends the query by broadcast and by loopback, then polls on the calling thread for a 150 ms window, so a single <code>NetworkSession::Find</code> blocks for roughly that long (the work happens in <code>EndFind</code>). Each reply becomes an <code>AvailableNetworkSession</code> whose quality of service carries the measured delay between the query and that reply. <code>ReplyToQuery</code> answers only when the querying filter equals the registered host's session type, and announces the host gamertag (taken from the underlying <code>SignedInGamer</code>, because <code>LocalNetworkGamer::getGamertagProperty</code> always reports the FNA default <code>Stub Gamer</code>), the connect port and slot counts; private slots are reported open because nothing tracks occupancy. <code>NetworkSession::Update</code> calls <code>Poll</code> so a hosting session keeps answering.</p>
+<p>Registration and unregistration are explicit, and an unregistered host must not stay advertised. Because the state holds one host pointer, a process that hosted more than one session would advertise only the last registered one; the single-session rule keeps that from arising today. Malformed datagrams are dropped, and a guard object resets the result pointer even when a decode throws, so no dangling result sink survives (<code>MalformedAnnounceDuringSearchIsIgnoredAndDoesNotLeaveADanglingResultsPointer</code>). Emscripten has no raw UDP: the same functions are empty stubs and <code>FindSessions</code> returns nothing, so a browser build compiling proves nothing about LAN discovery. Windows behaviour of the shared-port bind is not established by the Linux two-process tests; the source comments say so themselves.</p>
+
+<h2 id="shutdown">Teardown order and error boundaries</h2>
+<p><code>NetworkSession::Dispose</code> is idempotent and runs in a fixed order. It clears each local gamer's receive queue; for <code>SystemLink</code> it calls <code>ENetBackend::TeardownSession</code>, which sends a disconnect to every known peer (and to the host peer), flushes so the packets actually leave, erases the per-session state (destroying the <code>ENetHostHandle</code> and freeing <code>OwnedRemoteGamers</code>) and unregisters discovery; it then destroys <code>ownedGamers_</code>, clears all four public gamer collections, nulls the host and the static active-session pointer and marks the session disposed. The destructor falls back to <code>Dispose</code> when a caller used <code>delete</code> directly; without that, the process-static session pointer would dangle and, because every later <code>Begin*</code> refuses while it is set, one mismanaged delete would block session creation for the rest of the process (<code>DeletingWithoutDisposeStillAllowsCreatingANewSession</code>, <code>DeletingWithoutDisposeTearsDownRealTransport</code>). Reordering gamer destruction before transport teardown would leave the wire-id maps holding freed gamer pointers. The early return and the clearing of the views are both load-bearing: repeating <code>Dispose</code> once exposed a use-after-free, and the views can otherwise keep pointers into just-freed gamers (<code>DisposeCalledTwiceDirectlyIsSafeAndIdempotent</code>, <code>DisposeClearsPreviousGamersSoNoDanglingPointerIsObservable</code>).</p>
+<p>Errors surface as typed XNA exceptions at the session layer (argument validation, <code>InvalidOperationException</code> for state, <code>ObjectDisposedException</code>), as <code>NetworkSessionJoinException</code> for a failed join, and as <code>std::runtime_error</code> from ENet initialisation, host creation, unresolvable addresses and UDP socket creation. <code>ENetHostHandle::Send</code> returns <code>void</code> and silently drops a packet whose allocation or <code>enet_peer_send</code> fails, so not every transport failure can be inferred from the event stream. A departed gamer is moved to <code>PreviousGamers</code> (capped at <code>MaxPreviousGamers</code>, 100, oldest evicted) and the departure raises <code>GamerLeft</code>, or a session-wide <code>SessionEnded</code> when the departing gamer is local. A human debugging &ldquo;packet never arrives&rdquo; should check, in order: the type is <code>SystemLink</code>; <code>Update</code> runs on both processes; the handshake finished and wire ids exist; the pre-handshake queue and drop counter; codec decode; local-versus-remote target routing; the receive queue. There is no dedicated receiving thread to blame.</p>
+
+<h2 id="tests">Change-driven evidence and source route</h2>
+<p><code>CnaNetTests</code> is the focused target when networking is enabled. It is an <code>EXCLUDE_FROM_ALL</code> executable built from the module's 18 test files (316 test-macro definitions by a line-anchored count; not executed for this page) and linked against <code>CNA_Net</code>; the same files feed <code>CnaTests</code>. <code>cmake --preset unit</code> configures with networking off and therefore has neither. The suites:</p>
+<ul>
+<li><code>NetworkSessionTests</code> (58 macros): construction, state, factories, events, replay hook, dispose and delete-without-dispose, disposal idempotency, no action leak, and callback re-entrancy. <code>NetworkSessionTypePolicyTests</code> (11): the synthetic types never bind a port and the matchmaking types are refused. <code>LocalNetworkGamerTests</code>, <code>NetworkGamerMachineTests</code>, <code>AvailableNetworkSessionTests</code>, <code>NetworkSessionPropertiesTests</code>, <code>PacketReaderWriterTests</code> and the enum, event-argument and exception suites cover the value types.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/tests/CNA/Internal/Net/ENetBackendTests.cpp"><code>ENetBackendTests.cpp</code></a> (46): handshake, delivery and relay, the pre-handshake queue and every drop case, gamer leave and session end, migration bookkeeping, state and property broadcasts, forged-message rejection, wire-id reuse, prompt disconnect on dispose, ownership of remote gamers, measured round-trip time, and the latency and loss cases. It shares one session per process, so it uses a raw ENet host to stand in for the second machine.</li>
+<li><code>ENetDiscoveryServiceTests</code> (8), <code>ENetHostHandleTests</code> (8), <code>ENetLibraryTests</code> (2), <code>NetPacketCodecTests</code> (25) and <code>NetDiscoveryProtocolTests</code> (10) cover discovery, the RAII handle, initialisation and both wire formats.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/tests/CNA/Internal/Net/TwoProcessLoopbackTest.cpp"><code>TwoProcessLoopbackTest.cpp</code></a> (3): genuine separate OS processes running <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/net/net_two_process_harness.cpp"><code>net_two_process_harness.cpp</code></a> as host, client, migration host and migration survivor, plus the discovery-failure rollback. <code>GamerServicesDispatcherHangRegressionTest</code> (4) spawns the dispatcher harness described on the <a href="gamer-services.html#tests">GamerServices page</a>.</li>
+</ul>
+<p>The process-spawning tests use POSIX <code>posix_spawn</code>, so <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>UnitTests.cmake</code></a> filters their sources out of <code>CnaTests</code> on Windows, Emscripten, Android and iOS, and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Harnesses.cmake"><code>Harnesses.cmake</code></a> does not build the two-process harness on the first three. On those hosts the cases do not exist; they are not skipped at run time and must not be counted as passing.</p>
+<p>Recipes. For a lifetime change, repeat <code>Create</code> and <code>Dispose</code> under AddressSanitizer in addition to the transport tests. For a wire change, test peers built from the same revision and, if compatibility is claimed, the previous one, with malformed and truncated bytes. For a discovery change, test real multi-process bind, announce and find, and the firewall and socket behaviour of the native host. For a pre-handshake or migration change, extend the existing drop-counter cases rather than adding timing-dependent ones; the tests inject a clock and a seeded generator through <code>SetClockForTesting</code> and <code>SeedPacketLossRngForTesting</code>.</p>
+<h3 id="reading">Source-reading route</h3>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/src/Xna/NetworkSession.cpp"><code>NetworkSession.cpp</code></a>: read the constructor, <code>Dispose</code>, <code>Update</code>, <code>Create</code>/<code>EndCreate</code> and <code>Join</code>/<code>EndJoin</code> first, and draw the raw and owned pointers and the event queue.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/src/Internal/ENetBackend.cpp"><code>ENetBackend.cpp</code></a> with <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/src/Internal/ENetHostHandle.cpp"><code>ENetHostHandle.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/src/Internal/ENetLibrary.cpp"><code>ENetLibrary.cpp</code></a>: trace the session map, handshake, packet queue, peer destruction and RAII native ownership.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/src/Internal/ENetDiscoveryService.cpp"><code>ENetDiscoveryService.cpp</code></a>: map the process-static socket, host and result state and the host-specific branches before editing <code>Find</code>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/src/Xna/LocalNetworkGamer.cpp"><code>LocalNetworkGamer.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/src/Internal/NetPacketCodec.cpp"><code>NetPacketCodec.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/src/Internal/NetDiscoveryProtocol.cpp"><code>NetDiscoveryProtocol.cpp</code></a>: the send and receive queues and the two wire contracts.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/tests/CNA/Internal/Net/ENetBackendTests.cpp"><code>ENetBackendTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/net/tests/CNA/Internal/Net/TwoProcessLoopbackTest.cpp"><code>TwoProcessLoopbackTest.cpp</code></a>: separate in-process state-machine evidence from genuine OS-process transport evidence.</li>
+</ol>
+<h3 id="reading-uncertainty">What this page does not establish</h3>
+<p>This tour reconstructs ownership, the pump, discovery, join and teardown. It does not fully reconstruct host migration under real network conditions, the scheduling behaviour of simulated loss and latency, every field of every packet, compatibility between protocol versions, or the Emscripten relay and client-only host paths; those need separate source and test audits before the module can be declared complete. Nothing here was executed. The module list is in the <a href="../../reference/modules.html#inventory">module index</a>, ownership across the tree in the <a href="../../takeover/ownership.html">ownership map</a>, and the <a href="../../handbook/index.html">Maintainer Handbook</a> has the change routes. Evidence level: everything above was checked by reading the TARGET sources at <code>009d40f5</code>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/tutorials/97-networking.html">Tutorial 97: networking and multiplayer basics</a> &middot; <a href="../../../docs/xna-compatibility.html#microsoftxnaframeworkaudio">XNA compatibility: Audio, Net and Storage</a> &middot; <a href="../../../docs/building.html#cmake-options">Building: CMake options reference</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../../architecture.html#modules">Architecture: module layout</a> &middot; <a href="../../architecture/overview.html">Architecture overview</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="gamer-services.html">Gamer services internals (the other half of CNA_ENABLE_NET)</a> &middot; <a href="storage.html">Storage internals</a> &middot; <a href="inspector.html">Inspector transport internals (the other socket layer)</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../takeover/ownership.html">Ownership and lifetime master map</a> &middot; <a href="../../takeover/threading.html">Thread and callback map</a> &middot; <a href="../../handbook/debug-shutdown-and-lifetime.html">I need to debug shutdown and lifetime behavior</a> &middot; <a href="../../handbook/add-a-regression-test.html">I need to add a regression test</a> &middot; <a href="../../handbook/index.html">Maintainer Handbook</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture and change recipes</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/modules.html#inventory">Module index</a> &middot; <a href="../../reference/test-targets.html">Test target index</a> &middot; <a href="../../reference/cmake-options.html">CMake option index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="graphics-ext.html" rel="prev"><span>Previous</span>Graphics extension pipeline internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
