@@ -22,7 +22,7 @@
   "description": "CNA game loop and lifecycle: subclassing Game, the order of Initialize/LoadContent/Update/Draw/UnloadContent, XNA's game clock (the first Update has zero elapsed time), GameTime, GraphicsDeviceManager, GameWindow, components and fixed versus variable timestep, with code that compiles against this snapshot.",
   "url": "https://libcna.com/docs/game-loop.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-09-24",
+  "dateModified": "2026-09-25",
   "author": {
     "@type": "Organization",
     "name": "libcna",
@@ -181,9 +181,9 @@ int main() {
         <li>&darr;</li>
         <li><strong>OnExiting</strong> &mdash; the <code>Exiting</code> event is raised as the loop ends <em>(once)</em></li>
         <li>&darr;</li>
-        <li><strong>Dispose(bool)</strong> &mdash; teardown: components and the <code>ContentManager</code> are disposed first, then the graphics device, whose <em>device-disposing</em> event invokes <strong>UnloadContent()</strong> <em>(once)</em></li>
+        <li><strong>Dispose(bool)</strong> &mdash; teardown, but only when your code calls <code>Dispose()</code> (<code>Run()</code> does not, and the destructor's <code>Dispose(false)</code> does not reach <code>UnloadContent()</code>): components and the <code>ContentManager</code> are disposed first, then the registered graphics device service, whose <em>device-disposing</em> event invokes <strong>UnloadContent()</strong> <em>(once, and only when a graphics device service such as <code>GraphicsDeviceManager</code> is registered)</em></li>
       </ol>
-      <p>Two consequences are easy to miss. <code>Exiting</code> fires <em>before</em> <code>UnloadContent()</code>, and by the time <code>UnloadContent()</code> runs the <code>ContentManager</code> has already been disposed, so it is a place to release resources <em>you</em> own, not to touch content. And on the very first <code>Update()</code>, <code>ElapsedGameTime</code> is zero (see <a href="#gametime">GameTime</a>).</p>
+      <p>Two consequences are easy to miss. <code>Exiting</code> fires <em>before</em> <code>UnloadContent()</code>, and by the time <code>UnloadContent()</code> runs (when it runs at all) the <code>ContentManager</code> has already been disposed, so it is a place to release resources <em>you</em> own, not to touch content. And on the very first <code>Update()</code>, <code>ElapsedGameTime</code> is zero (see <a href="#gametime">GameTime</a>).</p>
 
       <div class="callout callout--note">
         <span class="callout-icon">&#128161;</span>
@@ -191,7 +191,7 @@ int main() {
       </div>
 
       <h2 id="constructor">Constructor</h2>
-      <p>The constructor is where you create the <code>GraphicsDeviceManager</code> and perform any pre-initialization configuration. The graphics device is not yet created at this point, so no GPU calls are valid here. Set window dimensions and title through the manager and the <code>Window</code> property respectively.</p>
+      <p>The constructor is where you create the <code>GraphicsDeviceManager</code> and perform any pre-initialization configuration. In CNA the base <code>Game</code> constructor has already built the <code>GraphicsDevice</code> (the renderer and, for a windowed renderer, the window) before your constructor body runs, but the manager's preferences (size, profile, presentation mode) are only applied later, when the game initialises just before <code>Initialize()</code>, so do not rely on them being in effect in the constructor. Set window dimensions and title through the manager and the <code>Window</code> property respectively.</p>
       <pre><code class="language-cpp">class MyGame : public Game {
     GraphicsDeviceManager graphics_;
 public:
@@ -244,7 +244,7 @@ public:
 }</code></pre>
 
       <h2 id="drawgametime">Draw(GameTime)</h2>
-      <p><code>Draw()</code> is called once per visual frame, immediately after <code>Update()</code>. With fixed timestep enabled, <code>Draw</code> may be skipped if the game is running behind, but it is never called more than once between two <code>Update</code> calls. Begin every <code>Draw()</code> with <code>getGraphicsDeviceProperty().Clear(...)</code> to erase the previous frame. Finish with the swap that the framework handles automatically — you do not call a present or swap-buffers function yourself.</p>
+      <p><code>Draw()</code> is called once per visual frame, immediately after <code>Update()</code>. With fixed timestep enabled, a frame that is running behind runs extra <code>Update</code> calls to catch up (the accumulated time is clamped to 500 ms) and still draws once; <code>Draw</code> is skipped only when <code>SuppressDraw()</code> or <code>Exit()</code> was called or <code>BeginDraw()</code> returns <code>false</code>, and it is never called more than once between two <code>Update</code> calls. Begin every <code>Draw()</code> with <code>getGraphicsDeviceProperty().Clear(...)</code> to erase the previous frame. Finish with the swap that the framework handles automatically — you do not call a present or swap-buffers function yourself.</p>
       <pre><code class="language-cpp">void Draw(const GameTime&amp; gameTime) override {
     getGraphicsDeviceProperty().Clear(Color::CornflowerBlue);
 
@@ -257,7 +257,7 @@ public:
 }</code></pre>
 
       <h2 id="unloadcontent">UnloadContent()</h2>
-      <p><code>UnloadContent()</code> is called once when the game is shutting down, from the graphics device's <em>device-disposing</em> event during <code>Dispose(bool)</code> &mdash; that is, after the main loop has exited and after <code>OnExiting</code>. <strong>The default implementation is empty</strong>: it does not unload content. The <code>ContentManager</code> is disposed by <code>Game::Dispose(bool)</code> just before the device, so every asset loaded through it is released for you and is already gone when <code>UnloadContent()</code> runs. Override it only to release GPU resources you created and own yourself.</p>
+      <p><code>UnloadContent()</code> is called once, from the graphics device service's <em>device-disposing</em> event, when <code>Game::Dispose()</code> is called explicitly (or the registered graphics device service is disposed) &mdash; that is, after the main loop has exited and after <code>OnExiting</code>. <code>Run()</code> does not call <code>Dispose()</code>, the destructor's <code>Dispose(false)</code> never reaches <code>UnloadContent()</code>, and nothing is called when no graphics device service such as <code>GraphicsDeviceManager</code> is registered, so a game that only calls <code>Run()</code> and lets the object go out of scope never sees it; call <code>game.Dispose()</code> after <code>Run()</code> if you rely on it. <strong>The default implementation is empty</strong>: it does not unload content. The <code>ContentManager</code> is disposed by <code>Game::Dispose(bool)</code> just before the device, so every asset loaded through it is released for you and is already gone when <code>UnloadContent()</code> runs. Override it only to release GPU resources you created and own yourself.</p>
       <pre><code class="language-cpp">void UnloadContent() override {
     // release manually created resources (the ContentManager has already been disposed)
     customRenderTarget_.reset();
@@ -373,7 +373,7 @@ graphics_.setIsFullScreenProperty(!graphics_.getIsFullScreenProperty());
 graphics_.ApplyChanges();</code></pre>
 
       <h2 id="gamewindow">GameWindow</h2>
-      <p><code>GameWindow</code> is accessed through <code>game.getWindowProperty()</code>. It represents the OS window and exposes properties for the title, client area, and resize behaviour. Setting the title and resize flag in the constructor is the normal XNA pattern and works; the native window itself is created when <code>Run()</code> is called, so query <code>getClientBoundsProperty()</code> from <code>Initialize()</code> or later.</p>
+      <p><code>GameWindow</code> is accessed through <code>game.getWindowProperty()</code>. It represents the OS window and exposes properties for the title, client area, and resize behaviour. Setting the title and resize flag in the constructor is the normal XNA pattern and works; for any renderer that needs a window, the native window is already created during <code>Game</code> construction, so <code>getClientBoundsProperty()</code> can be queried from a derived constructor, although the manager's preferred size is only applied when the game initialises, just before <code>Initialize()</code> runs.</p>
 
       <div class="table-wrap">
         <table>
