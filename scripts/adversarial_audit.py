@@ -578,6 +578,17 @@ def _plain(h: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", h or ""))).strip()
 
 
+
+def added_token(fx: dict, blob: str) -> str | None:
+    """A six-word run of the ADDED text (not of the text a replace kept) that occurs verbatim in the destination section."""
+    new_words = _plain(fx.get("html", "")).split(" ")
+    kept = _norm(_plain(fx.get("old_html", "")))
+    for i in range(0, max(1, len(new_words) - 5)):
+        cand = " ".join(new_words[i:i + 6])
+        if len(cand) >= 20 and _norm(cand) in blob and _norm(cand) not in kept:
+            return cand
+    return None
+
 def cmd_lost_concepts(write: bool) -> int:
     ur_dir = ROOT / "audit" / "data" / "adversarial" / "unit-reviews"
     added = 0
@@ -616,14 +627,7 @@ def cmd_lost_concepts(write: bool) -> int:
                 anchor = (fx.get("anchor") or "").split()[0] if fx.get("anchor") else ""
                 dest = f"{page}#{anchor}" if anchor and section(page, anchor) is not None else page
                 blob = section(page, anchor) if anchor and section(page, anchor) is not None else section(page, "")
-                new_text = _plain(fx.get("html", ""))
-                token = None
-                words = new_text.split(" ")
-                for i in range(0, max(1, len(words) - 5)):        # the first six-word run of the added text that occurs verbatim on the page
-                    cand = " ".join(words[i:i + 6])
-                    if len(cand) >= 20 and _norm(cand) in (blob or ""):
-                        token = cand
-                        break
+                token = added_token(fx, blob or "")
                 if token is None:
                     print(f"ERROR {u['unit']}/{fd['id']}: no verbatim phrase of the added text found in {dest}")
                     problems += 1
