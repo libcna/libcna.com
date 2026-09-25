@@ -143,13 +143,28 @@ def main() -> int:
             dest = u.get("destination") or u.get("developer_source") or ""
             pk[p2_pkg(dest)].append({"cand": f"P2-{n:03d}", "source": "phase2", "dest_page": dest, "summary": b.get("summary", ""),
                                      "evidence": b.get("evidence", ""), "note": b.get("note", "")})
+    ledger_ids = {c["cand"] for k, v in pk.items() if k != "B10" for c in v if c["cand"].startswith("CNA-BUG-")}
+    skipped: list[dict] = []
     for f in sorted(OUT.glob("WP*.json")):
         doc = json.loads(f.read_text(encoding="utf-8"))
         for it in doc.get("items", []):
             it = dict(it)
             it["cand"] = it.pop("id", None) or f"{doc.get('wp', f.stem)}-i???"
             it["source"] = "wp"
-            pk["B10"].append(it)
+            reading = (it.get("target_reading") or "").strip().lower()
+            ids = set(re.findall(r"CNA-BUG-\d{3}", f"{it.get('bible_ref', '')} {it.get('ref', '')} {it.get('text', '')}"))
+            reason = None
+            if it.get("kind") == "not-an-issue":
+                reason = "chapter package classified it not-an-issue (documentation gap or architecture decision)"
+            elif reading.startswith("absent"):
+                reason = "chapter package read it as absent at TARGET (not a current issue; no publication)"
+            elif ids and ids <= ledger_ids:
+                reason = "covered by the Bible-ledger verification of " + ", ".join(sorted(ids))
+            if reason:
+                skipped.append({"cand": it["cand"], "kind": it.get("kind"), "reading": reading[:40], "reason": reason, "text": it.get("text", "")[:160]})
+            else:
+                pk["B10"].append(it)
+    (OUT / "triage-B10.json").write_text(json.dumps({"skipped": skipped}, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
     if cmd == "summary":
         for k, v in pk.items():
             print(k, len(v), dict(Counter(x["source"] for x in v)))
