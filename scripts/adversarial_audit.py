@@ -570,6 +570,78 @@ def counts_block() -> str:
     return "\n".join(lines)
 
 
+
+# ---------------------------------------------------------------------------------------------
+# lost-concepts: a LOST finding means the Phase-3 ledger had no concept for a source statement; the ledger gets one (id <prefix>-advNN)
+# ---------------------------------------------------------------------------------------------
+def _plain(h: str) -> str:
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", h or ""))).strip()
+
+
+def cmd_lost_concepts(write: bool) -> int:
+    ur_dir = ROOT / "audit" / "data" / "adversarial" / "unit-reviews"
+    added = 0
+    problems = 0
+    for f in sorted(ur_dir.glob("*.json")) if ur_dir.exists() else []:
+        for u in json.loads(f.read_text(encoding="utf-8")).get("units", []):
+            lost = [fd for fd in u.get("findings", []) if fd["type"] == "LOST"]
+            if not lost:
+                continue
+            rp = RECORDS / f"{u['unit']}.json"
+            rec = json.loads(rp.read_text(encoding="utf-8"))
+            have = {c["id"] for c in rec["concepts"]}
+            prefix = rec["concepts"][0]["id"].rsplit("-", 1)[0]
+            changed = False
+            for n, fd in enumerate(lost, 1):
+                cid = f"{prefix}-adv{n:02d}"
+                if cid in have:
+                    continue
+                outcome = (json.loads(FINDING_OUTCOMES.read_text(encoding="utf-8")) if FINDING_OUTCOMES.exists() else {}).get(fd["id"], {})
+                if outcome.get("outcome") == "owner-decision":       # nothing was added to the site: the statement is recorded as history, with the reason
+                    sec = next((c["section"] for c in rec["concepts"] if c["section"].lower() in (fd.get("bible") or "").lower()), rec["concepts"][0]["section"])
+                    rec["concepts"].append({"id": cid, "section": sec, "text": _plain(fd.get("bible") or "")[:420], "kind": "provenance", "disposition": "HISTORICAL ONLY",
+                                            "note": f"Added by the post-Phase-3 adversarial audit (finding {fd['id']}): this describes how the retired book was produced. Whether the site should carry an equivalent statement about its own production is an owner decision ({outcome.get('note', '')}).",
+                                            "destinations": [], "tokens": [], "target": {"result": "not-applicable", "evidence": "provenance policy, not a TARGET fact"}})
+                    changed = True
+                    added += 1
+                    print(f"{'added' if write else 'would add'} {cid} (HISTORICAL ONLY, owner decision) for {fd['id']}")
+                    continue
+                fx = fd.get("fix") or fd.get("also") or []
+                fx = fx[0] if isinstance(fx, list) and fx else fx
+                if not isinstance(fx, dict) or not fx.get("page"):
+                    print(f"ERROR {u['unit']}/{fd['id']}: LOST finding without a page fix")
+                    problems += 1
+                    continue
+                page = fx["page"]
+                anchor = (fx.get("anchor") or "").split()[0] if fx.get("anchor") else ""
+                dest = f"{page}#{anchor}" if anchor and section(page, anchor) is not None else page
+                blob = section(page, anchor) if anchor and section(page, anchor) is not None else section(page, "")
+                new_text = _plain(fx.get("html", ""))
+                token = None
+                words = new_text.split(" ")
+                for i in range(0, max(1, len(words) - 5)):        # the first six-word run of the added text that occurs verbatim on the page
+                    cand = " ".join(words[i:i + 6])
+                    if len(cand) >= 20 and _norm(cand) in (blob or ""):
+                        token = cand
+                        break
+                if token is None:
+                    print(f"ERROR {u['unit']}/{fd['id']}: no verbatim phrase of the added text found in {dest}")
+                    problems += 1
+                    continue
+                sec = next((c["section"] for c in rec["concepts"] if c["section"].lower() in (fd.get("bible") or "").lower()), rec["concepts"][0]["section"])
+                rec["concepts"].append({"id": cid, "section": sec, "text": _plain(fd.get("bible") or "")[:420], "kind": "semantics", "disposition": "NEW PAGE",
+                                        "note": f"Added by the post-Phase-3 adversarial audit (finding {fd['id']}): the source statement had no concept in the Phase-3 ledger.",
+                                        "destinations": [dest], "tokens": [token],
+                                        "target": {"result": "confirmed", "evidence": _plain(fd.get("target") or "")[:260]}})
+                changed = True
+                added += 1
+                print(f"{'added' if write else 'would add'} {cid} for {fd['id']} -> {dest}")
+            if changed and write:
+                rp.write_text(json.dumps(rec, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    print(f"lost-concepts: {added} concept(s) {'added' if write else 'missing'}; problems {problems}")
+    return 1 if problems or (added and not write) else 0
+
+
 def cmd_counts(write: bool) -> int:
     text = LEDGER.read_text(encoding="utf-8")
     if COUNTS_BEGIN not in text or COUNTS_END not in text:
@@ -602,6 +674,8 @@ def main() -> int:
     sub.add_parser("issues")
     cn = sub.add_parser("counts")
     cn.add_argument("--write", action="store_true")
+    lc = sub.add_parser("lost-concepts")
+    lc.add_argument("--write", action="store_true")
     sub.add_parser("all")
     args = ap.parse_args()
     if args.cmd == "graph":
@@ -612,7 +686,9 @@ def main() -> int:
         return cmd_issues()
     if args.cmd == "counts":
         return cmd_counts(args.write)
-    return cmd_graph() | cmd_anchors() | cmd_issues() | cmd_counts(False)
+    if args.cmd == "lost-concepts":
+        return cmd_lost_concepts(args.write)
+    return cmd_graph() | cmd_anchors() | cmd_issues() | cmd_lost_concepts(False) | cmd_counts(False)
 
 
 if __name__ == "__main__":
