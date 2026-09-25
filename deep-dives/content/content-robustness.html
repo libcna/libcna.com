@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Content input boundaries and hostile-input behaviour - CNA Deep Dives</title>
+  <meta name="description" content="Where CNA enforces size, count, nesting and path limits across XNB, CNB, CNJ and the build importer, how the loaders are fuzzed, which exceptions hostile files produce, and which gaps remain.">
+  <meta name="keywords" content="content security, hostile input, fuzzing, xnbreadlimits, path containment, decompression, cnj, cnb, error normalization, resource limits">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/content/content-robustness.html">
+  <meta property="og:title" content="Content input boundaries and hostile-input behaviour - CNA Deep Dives">
+  <meta property="og:description" content="Where CNA enforces size, count, nesting and path limits across XNB, CNB, CNJ and the build importer, how the loaders are fuzzed, which exceptions hostile files produce, and which gaps remain.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/content/content-robustness.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Content input boundaries and hostile-input behaviour","description":"Where CNA enforces size, count, nesting and path limits across XNB, CNB, CNJ and the build importer, how the loaders are fuzzed, which exceptions hostile files produce, and which gaps remain.","url":"https://libcna.com/deep-dives/content/content-robustness.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine <span class="dev-nav-count">11</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../renderers/index.html" class="docs-nav-link">Renderers <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Content <span class="dev-nav-count">5</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="contentmanager-resolution-rules.html" class="docs-nav-link">ContentManager resolution rules</a></li>
+        <li><a href="xnb-container-and-object-graph.html" class="docs-nav-link">XNB container and object graph</a></li>
+        <li><a href="xnb-type-readers.html" class="docs-nav-link">XNB type readers</a></li>
+        <li><a href="cnj-documents.html" class="docs-nav-link">CNJ documents</a></li>
+        <li><a href="content-robustness.html" class="docs-nav-link active" aria-current="page">Content input boundaries</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">3</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Content</a></li>
+        <li aria-current="page">Content input boundaries</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Content input boundaries and hostile-input behaviour</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#limits">Limits are useful only where they are enforced</a></li>
+          <li><a href="#trust">Top-level names and internal references have different trust rules</a></li>
+          <li><a href="#recursion">Recursion: two axes bounded, two open</a></li>
+          <li><a href="#fuzzing">Fuzzing reaches the public loaders</a></li>
+          <li><a href="#oracles">Differential oracles reduce self-consistency risk</a></li>
+          <li><a href="#normalization">Error normalisation and its limits</a></li>
+          <li><a href="#asymmetries">Asymmetries that remain at this snapshot</a></li>
+          <li><a href="#evidence">Evidence and what is not proven</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Content &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Checked by reading the content sources, PathContainment.hpp and the fuzz and containment tests at 009d40f5; no fuzzer, sanitizer build or test was run. The cgltf residual is CNA's own record; three gaps are established by reading only.</p></div>
+
+<p class="lede">Loading content means trusting lengths, counts, recursion, compression, paths and decoders that come from a file, and then allocating GPU and audio resources on the strength of them. This page collects, across XNB, CNB, CNJ and the build-time XNB importer, where CNA enforces each bound at this snapshot, which trust rule applies to which kind of path, how the loaders are fuzzed and compared against independent implementations, which exceptions a hostile file can produce, and which asymmetries remain. It is written for games that load mods or downloads and for maintainers who change a reader; it states the enforcement points and the gaps without turning either into a blanket claim of safety.</p>
+
+<h2 id="limits">Limits are useful only where they are enforced</h2>
+<p>A named limit is a guarantee only at the sites that check it. The table compares the four input routes.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Control</th><th scope="col">XNB through <code>Load&lt;T&gt;</code></th><th scope="col">XNB read by <code>cna-content</code></th><th scope="col">CNB</th><th scope="col">CNJ</th></tr></thead>
+<tbody>
+<tr><td>Whole file</td><td>Read in full up to <code>INT32_MAX</code> bytes; the 64 MiB <code>maxFileSize</code> is not applied to this read</td><td>At most 64 MiB, checked before reading; declared length must equal the file size</td><td>At most 512 MiB, checked before reading; declared size must equal the real size</td><td>No limit; read in full</td></tr>
+<tr><td>Decompressed data</td><td>Declared size at most 256 MiB before decoding; LZ4 bounded at every step; LZX compared with the declared size after the last block</td><td>Same decoders</td><td>Per chunk at most 384 MiB and all chunks at most 1 GiB, checked before allocating; a compressed chunk must expand exactly</td><td>Not applicable</td></tr>
+<tr><td>Strings</td><td>Reader-table names at most 1 MiB, checked after the read; other strings only against the remaining stream</td><td>Same</td><td>At most 1 MiB</td><td>No limit</td></tr>
+<tr><td>Counts</td><td>Readers 4,096; shared resources 1,000,000; each collection 10,000,000</td><td>Same</td><td>Chunks 65,536; array elements 16 Mi</td><td>No limit</td></tr>
+<tr><td>Nesting</td><td>Type names and typed objects at most 256; the untyped object path is not counted</td><td>Same decoders</td><td>Flat chunk table; no recursive structure in the container</td><td>JSON nesting unbounded</td></tr>
+<tr><td>Integrity</td><td>Declared length at most the file size</td><td>Declared length exactly the file size</td><td>CRC-32C over header, table of contents and each chunk's stored bytes</td><td>None beyond the JSON grammar</td></tr>
+</tbody>
+</table></div>
+<p>The first row is the canonical warning against reading a constant's name as a guarantee. <code>XnbReadLimits::maxFileSize</code> sounds like a file-admission guard, but on the run-time path it bounds only the compressed payload, after <code>TryReadAssetBytes</code> has already read the whole file, so an uncompressed <code>.xnb</code> between 64 MiB and 2 GiB is read and parsed; the content manifest scan reads a file of any size. The build-time importer is the route where the 64 MiB limit is a real admission check. Per-limit enforcement sites for XNB are listed on <a href="xnb-container-and-object-graph.html#limits">The XNB container and object graph</a>, the CNB limits on <a href="../../docs/cnb-format.html#limits">CNB Format</a>.</p>
+<h3 id="decompression">Decompression output</h3>
+<p>The two XNB decompressors differ in when they stop. The LZ4 decoder allocates exactly the declared size and refuses any literal or match that would pass it. The LZX loop in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xnb/XnbDecompression.cpp"><code>XnbDecompression.cpp</code></a> checks the declared size (at most 256 MiB) before it starts and compares the produced length with it once, after the last block; each block adds at most one window's worth of output, and nothing in the loop stops a stream whose blocks produce more than it declared. That was read from the loop, not exercised. CNB's Zstandard chunks are checked against their declared logical size and the aggregate budget before any allocation and must expand exactly.</p>
+
+<h2 id="trust">Top-level names and internal references have different trust rules</h2>
+<p><code>ContentManager::Load&lt;T&gt;</code> deliberately accepts an absolute name, and <code>RootDirectory</code> is a base, not a sandbox: a caller that passes an untrusted name is responsible for validating it. Containment applies instead to paths written inside content: CNJ <code>sourceFile</code> values and sidecar fields, XNB external references, XNB Song and Video media names, and CNB external-reference names. Each family's base directory and refusals are tabulated on <a href="contentmanager-resolution-rules.html#internal-references">ContentManager resolution rules</a>. The shared primitives in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/core/include/CNA/Internal/PathContainment.hpp"><code>PathContainment.hpp</code></a> compare paths component by component after optional <code>weakly_canonical</code>, never by string prefix, so <code>content-evil</code> is not inside <code>content</code>. One rule is easy to miss: a referring file lexically inside the content root is confined to that root, while a file loaded through an explicit outside-root path is confined to its own folder, which keeps external bundles loadable without letting their embedded paths roam.</p>
+<p><code>ContentPathContainmentTests.cpp</code> (18 cases) covers deep traversal, absolute and drive paths, Unicode-shaped traversal and existing-symlink escapes for Song and Video XNB media, Texture3D, Effect, AnimationClip, Model and skinned-model sidecars, and asserts that each refusal happens before the file is created or read and does not poison the cache. It also pins what stays legal: <code>.</code> segments, repeated separators and <code>..</code> that normalises back inside the root (<code>ModelNormalizedInRootBinaryFieldsStillLoad</code>, <code>ExplicitExternalSongXnbRemainsConfinedAndLoadable</code>). Symlink checking is not claimed to be race-proof: canonicalisation is followed later by an ordinary open, a time-of-check to time-of-use window. The accurate statement is that escapes present in the filesystem state being checked are refused, not that a concurrently changing filesystem cannot slip one past.</p>
+
+<h2 id="recursion">Recursion: two axes bounded, two open</h2>
+<ul>
+<li><strong>Type names.</strong> Canonical reader names nest generic arguments; <code>XnbTypeName::ParseOne</code> is bounded at 256 levels. At about four bytes per level, a sub-megabyte name exhausted the stack before the bound was added.</li>
+<li><strong>Typed objects.</strong> Nested <code>ReadObject&lt;T&gt;</code> dispatch is bounded at 256 by an RAII guard that decrements on success and on every exception, so one failed nested read cannot use up the session's remaining depth.</li>
+<li><strong>Untyped objects.</strong> <code>InnerReadObjectAny</code>, which reads object-typed values (Model tags, <code>Dictionary&lt;String, Object&gt;</code> values), shared resources and the untyped root, does not consult that guard. By reading, a file that nests object-typed dictionaries inside each other recurses without the 256 bound; this was not exercised.</li>
+<li><strong>CNJ documents.</strong> The JSON parser recurses per array and object with no depth counter, so deeply nested brackets exhaust the stack rather than being refused.</li>
+</ul>
+<p>Shared resources use a separate two-pass discipline: counts and indices are validated before any fixup is queued, every shared object is read before any fixup runs, and identity survives forward references. Recursion through the manager is a third kind: no load is marked as in progress, so a reference chain that leads back to its own asset re-enters <code>Load</code> without a cycle check; only CNJ <code>sourceFile</code> refuses cycles explicitly.</p>
+
+<h2 id="fuzzing">Fuzzing reaches the public loaders</h2>
+<p>The fuzz targets are ordinary GoogleTest cases with fixed seeds, so every run mutates the same way and a failure reproduces:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Target</th><th scope="col">Input and mutations</th><th scope="col">Acceptable outcome</th></tr></thead>
+<tbody>
+<tr><td><code>XnbContainerFuzzTests.cpp</code></td><td>Four real fixtures (the MonoGame Model cube, a Texture2D uncompressed and as LZ4, a 16-bit SoundEffect), 1,500 mutations each by bit flips, truncation, overwrites and insertions (which shift every later field), loaded through the real <code>ContentManager::Load&lt;T&gt;</code></td><td>Success or one of an enumerated set of clean exceptions (next section); <code>std::bad_alloc</code> is recorded as a failure, "an allocation-bomb guard gap"; the Model case is skipped on renderers without a 3D pipeline</td></tr>
+<tr><td><code>LzxDecoderFuzzTests.cpp</code></td><td>2,000 mutations of two real LZX payloads, including the decompressed-size hint</td><td>A clean failure, or a decode of exactly the declared length</td></tr>
+<tr><td><code>CnbContainerFuzzTests.cpp</code></td><td>4,000 mutated Curve files, 4,000 AnimationClip files, 6,000 Model files, and 3,000 files of noise or bare magic</td><td>Nothing but <code>ContentLoadException</code>; noise is never taken for a CNB file</td></tr>
+<tr><td><code>XnbWriterInputFuzzTests.cpp</code></td><td>Adversarial and mutated canonical values handed to the XNB writers</td><td>Refused cleanly with the writer's own exception type or written; a refused write leaves no partial file</td></tr>
+<tr><td><code>SoundEffectContentTypeReaderPropertyTests.cpp</code></td><td>A WAVEFORMATEX boundary-value sweep</td><td>Clean acceptance or refusal</td></tr>
+</tbody>
+</table></div>
+<p>These targets found defects that review did not: the device-dimension check in the Texture2D reader was added after the container fuzzer produced real process crashes, stack smashing under Vulkan and a non-catchable WebGPU panic, as the comment in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/src/Xnb/Texture2DContentTypeReader.cpp"><code>Texture2DContentTypeReader.cpp</code></a> records; neither API's own validation caught them. The build offers <code>CNA_SANITIZE</code> for address and undefined-behaviour sanitizer builds. Coverage is not universal: there is no CNJ document fuzzer, and glTF relies on cgltf's parser plus CNA's container validation (<code>ValidateGltfEXT</code>, which now calls <code>cgltf_validate</code> and checks alignment and required extensions) and conformance tests rather than a mutation fuzzer. CNA's integration records, dated August 2026, list a low-severity misaligned read in the vendored cgltf sparse-accessor path as an accepted residual (<code>REMED-CONTENT-010</code>); that record is CNA's own and was not re-checked here.</p>
+
+<h2 id="oracles">Differential oracles reduce self-consistency risk</h2>
+<p>A writer and a reader that share one wrong assumption agree with each other, so the strongest evidence comes from outside CNA's own code:</p>
+<ul>
+<li>the LZX decoder is compared byte for byte with FNA's unmodified C# decoder run under Mono, on a single-block and a multi-block payload;</li>
+<li>reader fixtures come from other producers: MonoGame's content pipeline, genuine XNA Game Studio 4.0 output and an LZ4 block made with upstream liblz4;</li>
+<li>transcoding is checked by loading the original XNB and the CNB built from it and comparing the runtime objects (identical pixels, equivalent font, sound and model semantics);</li>
+<li>readers check their own inputs against independent expectations: every texture level's byte count against the block-rounded size its format requires, and a SoundEffect's decoded length against the duration the file stores.</li>
+</ul>
+<p>Each oracle has a stated scope. Duration agreement cannot prove waveform identity, a storage round trip cannot prove shader sampling, and a MonoGame-produced fixture proves the layouts MonoGame writes, not every layout XNA could. The per-reader evidence is on <a href="xnb-type-readers.html">XNB type readers</a>.</p>
+
+<h2 id="normalization">Error normalisation and its limits</h2>
+<p>The XNB container fuzzer is also the most precise statement of which exceptions a malformed <code>.xnb</code> may produce through <code>Load&lt;T&gt;</code>, because anything outside its list fails the test:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Exception</th><th scope="col">Typical cause</th></tr></thead>
+<tbody>
+<tr><td><code>ContentLoadException</code></td><td>Container, table, limit, index and reader validation</td></tr>
+<tr><td><code>System::IO::EndOfStreamException</code></td><td>A truncated header or a blob shorter than declared</td></tr>
+<tr><td><code>System::ArgumentException</code> family</td><td>The XNA API's own argument checks refusing mutated content before it reaches the GPU, for example <code>VertexBuffer::SetData</code> refusing a declaration whose elements lie outside the uploaded bytes</td></tr>
+<tr><td><code>System::NotSupportedException</code></td><td>Only a graphics-profile refusal (for example a vertex declaration the profile cannot express); any other one fails the test</td></tr>
+<tr><td><code>std::bad_any_cast</code></td><td>A mutated index resolving to a reader of the wrong type</td></tr>
+<tr><td><code>std::out_of_range</code>, <code>std::length_error</code>, <code>std::invalid_argument</code></td><td>A bad bone or shared-resource index caught by checked access, a container size the standard library refuses, a malformed generic type name</td></tr>
+</tbody>
+</table></div>
+<p>The CNB fuzzer is stricter and accepts only <code>ContentLoadException</code> from the container and codecs. On the loose tier the manager wraps any <code>std::exception</code> from a reader in <code>ContentLoadException</code> with the original as its cause; that is why a malformed <code>.gltf</code> loaded through <code>Load&lt;Model&gt;</code> now reaches the caller as <code>ContentLoadException</code> even though the glTF import core itself throws <code>std::runtime_error</code>, and why a game's <code>RegisterCnjLoader</code> factory failures are normalised too. Two paths stay unwrapped: the loose tier of <code>Load&lt;SoundEffect&gt;</code>, and exceptions thrown by the object constructors that XNB readers and CNB loaders call. A caller that must survive hostile content catches <code>std::exception</code> as well as <code>ContentLoadException</code>; the tier-by-tier list is on <a href="contentmanager-resolution-rules.html#failures">ContentManager resolution rules</a>.</p>
+
+<h2 id="asymmetries">Asymmetries that remain at this snapshot</h2>
+<ul>
+<li>The run-time whole-file read of an <code>.xnb</code> is capped only at <code>INT32_MAX</code>, not by <code>maxFileSize</code>.</li>
+<li>LZX output is compared with the declared size only after the last block (by reading).</li>
+<li>The untyped object path is not depth-counted (by reading).</li>
+<li>CNJ has no document-size or nesting limit, still reads Model, custom-GLSL Effect and skinned-model fields with substring scanners, and has no fuzzer.</li>
+<li>The untyped external-reference decoder refuses LZ4 and lacks the typed decoder's 14-byte guard for compressed files.</li>
+<li>Texture3D and TextureCube readers leave dimension limits to texture creation, and Model draw ranges, vertex-element offsets and SpriteFont rectangles are trusted.</li>
+<li>Symlink containment is not time-of-check to time-of-use proof.</li>
+<li>A <code>.cnb</code> built from a source is chosen over the source by existence alone; a stale compiled file is not detected.</li>
+</ul>
+<p>Several controls that older descriptions of CNA list as missing are enforced at this snapshot: SpriteFont refuses glyph, cropping, character and kerning lists of different lengths; Texture3D and TextureCube levels must have exact byte counts under a cumulative decoded-size budget; Curve key counts are bounded; SoundEffect loop regions are checked against the decoded frame count in 64-bit arithmetic; index-buffer byte counts must be a whole number of indices; and glTF files are validated with <code>cgltf_validate</code> before import. Extending the same observable limits and fuzz discipline to CNJ and to the untyped object path is the remaining work the asymmetries describe.</p>
+
+<h2 id="evidence">Evidence and what is not proven</h2>
+<p>Read at this snapshot from the content sources and tests linked on this page and its neighbours; no test, fuzzer or sanitizer build was run for it. Established by reading only: the late LZX length comparison, the unguarded untyped object path and the absence of a CNJ depth bound (each a reading of the code, not an executed input). The cgltf residual and the fuzzer's historical findings are CNA's own records.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/content-pipeline-xnb.html#container-format-support">XNB Loading: container format support</a> &middot; <a href="../../docs/cnb-format.html#limits">CNB Format: limits</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/content.html">Content architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/content/runtime.html#known-gaps">Content runtime internals: inconsistencies</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/handbook/modify-contentmanager.html">I need to modify ContentManager</a> &middot; <a href="../../development/handbook/modify-the-content-pipeline.html">I need to modify the Content Pipeline</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html">Test architecture and change recipes</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="contentmanager-resolution-rules.html">ContentManager resolution rules</a> &middot; <a href="xnb-container-and-object-graph.html">The XNB container and object graph</a> &middot; <a href="cnj-documents.html">CNJ documents</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="cnj-documents.html" rel="prev"><span>Previous</span>CNJ documents: envelope, sourceFile and sidecar rules</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
