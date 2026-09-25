@@ -23,3 +23,6 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 16 | `docs/game-loop.html` | the first `Update` has zero elapsed time | true only for a fixed time step | WP03 | open |
 | 17 | `docs/render-targets.html#rendertargetusage` | `PlatformContents` is "equivalent to `DiscardContents`" | `PlatformContents` preserves (`RenderTargetUsagePreservesContentsEXT`); the Discard bind clears to black, depth 1, stencil 0 (`GraphicsDevice::SetRenderTargets`) | WP09 | open |
 | 18 | `docs/tutorials/61-*.html` (Vulkan occlusion queries) | Vulkan uses `VK_QUERY_RESULT_WITH_AVAILABILITY_BIT` | `IsComplete` uses the 64-bit flag and `VK_NOT_READY` | WP09 | open |
+| 19 | `docs/effects.html#spriteeffect` | SpriteBatch uses `SpriteEffect` and it sets up the projection | SpriteBatch never creates it; `SpriteEffect::OnApply()` exits at its first statement (CNA-BUG-006) | B5 | open |
+| 20 | `development/internals/modules/graphics-ext.html#frame-chain` | three tests "assert parts of this order" | they assert pass counts only | B5 | open |
+| 21 | `development/internals/graphics/backends.html#opengl4-and-easygl` | the OPENGL4 + EasyGL pair is "permitted by configure rules rather than evidenced" | `plans/plan_opengl4_modern_graphics.md` (GL4-0006) records a build and run of `OPENGL4;OPENGLES3;OPENGL33` — re-verify and narrow | B5 | open |
