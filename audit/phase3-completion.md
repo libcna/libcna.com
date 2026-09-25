@@ -30,3 +30,8 @@ Evidence boundary: nothing was built as a whole; executed items are named per en
 ## Validation (`scripts/validate_all.sh`, `PHASE3_FINAL=1`): overall PASS
 validate_site, validate_presentation, compare_presentation (Phase 1 / Phase 2 / Phase 3), check_facts (0 problems), check_source_links, site_dev, developer_ledger, check_retired_renderers (0), site_deep, check_deep_page --all (0 errors), apply_expansions, backlinks, known_issues validate, bible_ledger --final (119/119, 0 errors, 0 warnings), git diff --check.
 Browser QA (headless Chrome): 468 new pages at 1400 dark and 390 light (after CSS fixes: 0 overflow / console / image flags) + 30 protected and representative pages in 1400/390 × dark/light; remaining flags are pre-existing low-contrast labels reproduced identically on the PHASE2_BASE pages.
+
+## Retired book sites (owner decision, 2026-09-26)
+`book.libcna.com` and `bible.libcna.com` are being shut down. The sealed alpha.1 PDF (`CNA_Bible.pdf`, 584 pages, 2,602,878 bytes, SHA-256 `f4916143649d3e5e64bf6c4a5e2e0027ef136b8510ba338f58450c33a984870e`, byte-identical to the file served by book.libcna.com) is now kept on this site as
+`historical/cna-bible-v0.1.0-alpha.1.pdf` behind a landing page that states it is historical (`historical/index.html`). The homepage hero buttons "Book (PDF)" / "Book (HTML)" were removed; the homepage footer and the network page link only the historical page/PDF, labelled historical.
+The eight removed CTAs/cards/headings are recorded as owner-decision dispositions in `audit/data/phase{1,2,3}-dispositions.json` (0 unexplained losses). No other page linked the retired sites.
