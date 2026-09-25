@@ -18,7 +18,7 @@ The block is written between <!--p3:begin KEY--> and <!--p3:end KEY--> so re-run
     before_id   immediately before the element whose id is `id`
     after_id    at the end of the <h2> section whose heading id is `id` (i.e. before the next <h2>)
 
-Only pages under docs/ and development/ may be targeted (root pages are protected and are edited by hand).  Sections must use ids that
+Only pages under docs/, development/ and deep-dives/ may be targeted (root pages are protected and are edited by hand).  Sections must use ids that
 do not exist on the target page; new <h2> entries are added to the page's "On this page" list when it has one; the JSON-LD
 dateModified is refreshed.  KEY must be globally unique.  Nothing already on the page is ever removed or altered.
 """
@@ -38,7 +38,7 @@ import site_deep  # noqa: E402,F401  (side effect: {{page:}} tokens may target D
 
 ROOT = SD.ROOT
 EXP = ROOT / "audit" / "data" / "bible" / "expansions"
-ALLOWED = ("docs/", "development/")
+ALLOWED = ("docs/", "development/", "deep-dives/")
 KEY_RX = re.compile(r"^[a-z0-9][a-z0-9-]{3,60}$")
 
 

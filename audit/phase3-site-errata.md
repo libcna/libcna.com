@@ -67,3 +67,5 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 60 | `development/internals/graphics/backends.html#untoured-2d` | (GDI frame copy) | GDI copies the full frame by default; copying only damaged rows needs `CNA_GDI_DIRTY_PRESENTATION` (WP11) | WP11 | open |
 | 61 | `deep-dives/renderers/render-targets-clears-and-viewports.html#clear-families` (our page, WP08) | GDI has no stencil plane | GDI does have a stencil plane and can clear it (WP11) | WP11 | open |
 | 62 | `deep-dives/renderers/presentation-and-backbuffer-readback.html#swap-interval` (our page, WP08) | DIRECT2D ignores the swap interval | DIRECT2D passes the interval to DXGI Present (WP11) | WP11 | open |
+| 63 | `development/handbook/update-the-c-api.html#inventory` | nine release-gate criteria are "recorded and measured as met" | running the gate at TARGET measures two unmet and `--check` fails (WP21/B9) | WP21 | open |
+| 64 | `deep-dives/practice/project-records-and-evidence.html#task-ids` (our page, WP20) | the gate "reads… one unmet criterion" | two unmet at TARGET (WP21/B9) | WP21 | open |

@@ -35,7 +35,7 @@ BOOK_VOCAB = re.compile(
     r"(\bthe (?:CNA )?Bible\b|\bthis book\b|\bthe book\b|\bChapters? \d+\b|\bCh\. ?\d+\b|\bPart [IVX]+\b|\\S ?\d|§ ?\d|\\(?:cnaclass|texttt|ref|cite)\b|"
     r"bible\.libcna|cnabugs|\bd6e9ff05\b|\blatex/book\b|ch\d\d-[a-z-]+\.tex|\bthe manuscript\b|\bthis edition\b|\bsealed edition\b)", re.I)
 # check_dev_page.DEV_VOCAB minus the false positive on CNA's own file names that end in "coverage.md"
-DEV_VOCAB = re.compile(r"(developer\.libcna\.com|(?<![\w-])COVERAGE\.md|this manual\b|this handbook\b|this website's pin|"
+DEV_VOCAB = re.compile(r"(developer\.libcna\.com|(?<![\w/-])COVERAGE\.md|this manual\b|this handbook\b|this website's pin|"
                        r"Phase 0 overview)", re.I)
 HEADING = re.compile(r"<h([1-6])\b([^>]*)>", re.I)
 
