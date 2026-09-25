@@ -85,6 +85,8 @@ def retired_rx():
 # ---------------------------------------------------------------------------------------------
 def check_issue(it: dict, files: set[str], errs: list[str], where: str, known_page, expand) -> None:
     for f in REQUIRED:
+        if f == "cand_ids" and it.get("cand_ids") == [] and str(it.get("origin", "")).lower().startswith("new finding"):
+            continue  # a defect found while verifying, with no earlier candidate
         if f not in it or it[f] in (None, "", []):
             if f in ("related",) and it.get(f) == {}:
                 errs.append(f"{where}: related must link at least one page")

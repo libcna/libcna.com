@@ -50,7 +50,7 @@ no inline styles/scripts):
 
 | Field | Content |
 |---|---|
-| `cand_ids` | every candidate id this entry resolves (a defect reported three times is one issue) |
+| `cand_ids` | every candidate id this entry resolves (a defect reported three times is one issue). A **new finding** (a defect you discovered that no candidate mentions) is published with `"cand_ids": []` and `"origin": "new finding at TARGET review: <how found>"`; it needs no disposition |
 | `id` | for an item with a Bible id keep it (`CNA-BUG-019`). For anything new use a temporary id `NEW-<pkg>-<nn>`; the orchestrator assigns the final stable id at merge |
 | `class` | `bug` \| `functional-gap` \| `platform-limitation` \| `verification-gap` |
 | `title` | plain text (may contain `<T>`; the generator escapes it), precise, one line, names the symbol; describes only the surviving defect |
