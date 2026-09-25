@@ -49,3 +49,5 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 42 | `docs/model-loading.html` (skeletal animation table) | `SkinnedModelEXT` is what glTF, `.cnj` and `.cnb` deliver | they put `SkinningData` on `Model::Tag` | WP13 | open |
 | 43 | `docs/3d-rendering.html#model-rendering` | feeds `CopyAbsoluteBoneTransformsTo` output to `SkinnedEffect::SetBoneTransforms` | that array is scene-node indexed with no inverse bind; the palette must come from `AnimationPlayer::GetSkinTransforms()` | WP13 | open |
 | 44 | `docs/tutorials/111-cnj-pipeline.html#emitted` | clip `.cnj` files are written for skinned groups only | rigid clips are serialized too | WP13 | open |
+| 45 | `docs/effects.html#effectparameter` | string `SetValue` throws `InvalidCastException` | only for compiled-effect parameters (`EffectParameter.cpp`) | WP07 | open |
+| 46 | `docs/effects.html#stock-effects-at-a-glance` | the API is unchanged except shadow members | `BasicEffect` also gained XNA's parameter graph, technique name and `VertexColorEnabled` accessors | WP07 | open |
