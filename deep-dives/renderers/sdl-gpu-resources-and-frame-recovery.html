@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SDL_GPU uploads, render-target lifetime and swapchain recovery - CNA Deep Dives</title>
+  <meta name="description" content="What SDL_gpu validation exposed in CNA&#x27;s SDL_GPU renderer, when uploads may cycle, how render targets outlive their wrappers, what MRT writes, and how a failed swapchain acquisition keeps the frame.">
+  <meta name="keywords" content="sdl_gpu, texture3d, upload cycling, render target lifetime, use-after-free, mrt, rendertargetusage, swapchain recovery, occlusionquery, validation">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html">
+  <meta property="og:title" content="SDL_GPU uploads, render-target lifetime and swapchain recovery - CNA Deep Dives">
+  <meta property="og:description" content="What SDL_gpu validation exposed in CNA&#x27;s SDL_GPU renderer, when uploads may cycle, how render targets outlive their wrappers, what MRT writes, and how a failed swapchain acquisition keeps the frame.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"SDL_GPU uploads, render-target lifetime and swapchain recovery","description":"What SDL_gpu validation exposed in CNA's SDL_GPU renderer, when uploads may cycle, how render targets outlive their wrappers, what MRT writes, and how a failed swapchain acquisition keeps the frame.","url":"https://libcna.com/deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Renderers <span class="dev-nav-count">6</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="native-gpu-evidence-tiers.html" class="docs-nav-link">Modern GPU evidence tiers</a></li>
+        <li><a href="vulkan-presentation-and-readback.html" class="docs-nav-link">Vulkan presentation &amp; readback</a></li>
+        <li><a href="vulkan-deferred-state-and-descriptors.html" class="docs-nav-link">Vulkan state, queries &amp; descriptors</a></li>
+        <li><a href="sdl-gpu-pipeline-state-and-draw-order.html" class="docs-nav-link">SDL_GPU pipelines &amp; draw order</a></li>
+        <li><a href="sdl-gpu-resources-and-frame-recovery.html" class="docs-nav-link active" aria-current="page">SDL_GPU resources &amp; recovery</a></li>
+        <li><a href="webgpu-renderer-semantics.html" class="docs-nav-link">WebGPU semantics</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content</a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D</a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">3</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">2</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Renderers</a></li>
+        <li aria-current="page">SDL_GPU resources &amp; recovery</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>SDL_GPU uploads, render-target lifetime and swapchain recovery</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#validation-mode">What validation mode exposed</a></li>
+          <li><a href="#upload-cycling">Upload cycling: when a texture may swap its backing</a></li>
+          <li><a href="#target-lifetime">Destroying a render target before the frame is submitted</a></li>
+          <li><a href="#mrt">Multiple render targets are a shader capability</a></li>
+          <li><a href="#usage">Usage and first-use load actions</a></li>
+          <li><a href="#swapchain-failure">Two kinds of acquisition failure</a></li>
+          <li><a href="#limits">Limits, and limits that no longer apply</a></li>
+          <li><a href="#evidence">Evidence and its limits</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Renderers &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. No SDL_GPU test was executed for this page. CNA's routine SDL_GPU evidence is SDL_gpu's Vulkan driver on Linux; Direct3D 12 evidence is a Wine and vkd3d-proton probe, and no Metal run is recorded.</p></div>
+
+<p class="lede">The <code>SDL_GPU</code> renderer records every draw on the CPU and only acquires a command buffer and a swapchain texture when the frame is flushed. This page explains what that means for resources: which contract violations SDL_gpu's validation mode exposed and how they were resolved, when an upload may swap a texture's backing memory, how a render target can be destroyed before the frame that samples it is submitted, what multiple render targets really write, how usage chooses load and store actions, and how a failed swapchain acquisition keeps the queued frame. The companion page <a href="sdl-gpu-pipeline-state-and-draw-order.html">SDL_GPU shader intake, pipeline keys and draw order</a> covers shaders, pipeline state and presentation timing.</p>
+
+<h2 id="validation-mode">What validation mode exposed</h2>
+<p>The renderer passes SDL_gpu's <code>debug_mode</code> flag from CNA's ordinary build mode: a build without <code>NDEBUG</code> asks for validation (on the Vulkan driver, the Khronos layer) and a release build does not. The toggle mirrors the Direct3D 11 renderer's debug-layer rule: validation is a debug-build convenience, never a hard requirement. While validation was hard-coded off, two contract violations had appeared to work; with it on, each could hang the Vulkan driver rather than merely print a warning. Release-mode pixels can look plausible while resource descriptions are still invalid.</p>
+<ul>
+<li><strong>Multisampled cube faces.</strong> The first MSAA implementation for <code>RenderTargetCube</code> used a six-layer multisampled texture. SDL_gpu's validation forbids a sample count above one on any array texture, and a cube type has no multisampled variant. The next design used one single-layer multisampled 2D texture for whichever face was rendering; it could not preserve content, because its previous samples belonged to another face, so it had to be cycled on every pass, and cycling is illegal together with <code>SDL_GPU_LOADOP_LOAD</code>. At this snapshot (REMED-GFX-141) each face owns its own single-layer multisampled 2D texture, which resolves into that face's layer of the single-sample cube texture through <code>resolve_texture</code> and <code>resolve_layer</code> when the pass ends; nothing is cycled, and a preserving face stores its samples with <code>SDL_GPU_STOREOP_RESOLVE_AND_STORE</code> for the next cycle.</li>
+<li><strong>Automatic mipmaps on plain textures.</strong> An early implementation gave plain <code>Texture3D</code> and <code>TextureCube</code> an automatic mip generator but created them with <code>SAMPLER</code> usage only, although SDL_gpu's generator also requires <code>COLOR_TARGET</code>. Widening the usage exposed a deeper failure: SDL 3.5's Vulkan path created 2D render-target views for depth planes that no longer exist in the smaller mip levels of a 3D texture. REMED-GFX-099 removed the invented behaviour instead of suppressing the diagnostics. XNA and FNA allocate an authored chain and let each <code>SetData(level, …)</code> fill the named level, so plain <code>Texture3D</code> is <code>SAMPLER</code>-only again, and plain <code>TextureCube</code> is likewise an authored-level resource that never calls SDL's whole-cube generator. Rendered targets still regenerate their chains, per segment, after the pass (see <a href="../../development/internals/graphics/sdl-gpu.html#segments">Render targets are ordered pass segments</a>).</li>
+</ul>
+<p><code>SdlGpu_Texture3D_Validity</code> only constructs an 8 × 8 × 2, four-level texture, because a construction-time validation defect is invisible to pixel checks; CMake makes every related image-view and blit VUID, and every validation error or warning, fatal for it. <code>SdlGpu_Texture3D</code> covers the data contract: a one-level 4 × 4 × 4 volume with four distinguishable depth planes, a partial box whose surrounding voxels must stay unchanged, a canonical three-level chain including nonzero levels, repeated uploads and forward and reverse level order, two resources alternated A, B, A, a non-power-of-two 7 × 5 × 3 chain and destruction after a nonzero-level transfer. Validation is evidence with a scope: here it first exposed tolerated violations and then forced the design back to the public resource contract.</p>
+
+<h2 id="upload-cycling">Upload cycling: when a texture may swap its backing</h2>
+<p><code>SDL_UploadToGPUTexture</code> takes a <code>cycle</code> flag. With <code>cycle = true</code>, if the GPU may still be reading the texture, SDL gives the texture fresh backing memory for the new data instead of stalling. That is correct when an upload replaces the whole resource, and wrong when the resource is built by several writes, because every write after the first lands on a new backing and the earlier ones are orphaned: they read back as zero or uninitialised, with no error.</p>
+<p>The first <code>Texture3D</code> implementation copied the <code>cycle = true</code> choice from the <code>Texture2D</code> upload path. A 3D texture is filled by several independent sub-volume and per-level <code>SetData</code> calls, so a first slice written and then followed by a second write read back as zero. The rule at this snapshot, stated in the upload code of <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp"><code>SdlGpuRenderer.cpp</code></a>:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Resource</th><th scope="col">cycle</th><th scope="col">Reason</th></tr></thead>
+<tbody>
+<tr><td><code>Texture3D</code> <code>SetData</code></td><td><code>false</code></td><td>Sub-volumes and levels must all land on the same backing.</td></tr>
+<tr><td><code>TextureCube</code> per-face <code>SetData</code></td><td><code>false</code></td><td>Six faces, and possibly several levels, are assembled on one resource; this was applied proactively for the same reason.</td></tr>
+<tr><td><code>Texture2D</code> with one level</td><td><code>true</code></td><td>The whole resource is replaced anyway, so a fresh backing avoids a stall for free.</td></tr>
+<tr><td><code>Texture2D</code> with a mip chain</td><td><code>false</code></td><td>Cycling discards every level the upload does not write, so level 0 followed by level 1 would orphan level 0.</td></tr>
+</tbody>
+</table></div>
+<p>A discriminating test for this defect class writes different colours to different parts of one resource in separate calls and reads each part back. With XNA's box-coordinate signature, <code>SetData(level, left, top, right, bottom, front, back, data, startIndex, elementCount)</code>, two slices of an off-centre 2 × 2 region look like this (illustrative; the registered test uses a richer pattern):</p>
+<pre><code class="language-cpp">Texture3D tex(device, 4, 4, 2, false, SurfaceFormat::Color);
+std::vector&lt;Color&gt; red(4, Color::Red), green(4, Color::Green);
+tex.SetData(0, 1, 1, 3, 3, 0, 1, red.data(), 0, 4);     // z = 0 slice of the box x 1..2, y 1..2
+tex.SetData(0, 1, 1, 3, 3, 1, 2, green.data(), 0, 4);   // z = 1 slice, a second, separate write
+std::vector&lt;Color&gt; gotRed(4), gotGreen(4);
+tex.GetData(0, 1, 1, 3, 3, 0, 1, gotRed.data(), 0, 4);  // with cycle = true this read back zero
+tex.GetData(0, 1, 1, 3, 3, 1, 2, gotGreen.data(), 0, 4);</code></pre>
+<p>Two choices make such a test discriminating rather than accidentally passing: the region is off-centre, so corruption of the origin corner alone is still caught, and each slice has its own colour, so an out-of-range read that happens to land on the same colour cannot pass. The same principle applies to any test of retained or downsampled content.</p>
+
+<h2 id="target-lifetime">Destroying a render target before the frame is submitted</h2>
+<p>Because the render pass runs at flush time, a render target destroyed as a local variable inside one <code>Draw()</code> could still be named by a queued, unsubmitted command, for example a SpriteBatch draw that samples it. When the wrapper's destructor released the GPU texture immediately, that was a use-after-free; it was found as a real segmentation fault while the MRT test was first being written, before any release. The fix separates GPU state from the public wrapper: <code>SdlGpuRenderTarget2DState</code> and <code>SdlGpuRenderTargetCubeState</code> hold the native handles, and queued commands and pass segments keep them alive by <code>shared_ptr</code>. Lifetime then has two stages. Until the frame has rendered, every command and segment that names the state holds a reference; when the last one goes, the state's destructor does not release anything but queues its colour, depth and MSAA handles into <code>pendingTextureReleases_</code>. After the next successful command-buffer submission the renderer releases each queued handle with <code>SDL_ReleaseGPUTexture()</code>. SDL may still fence the physical memory internally; CNA's own, narrower rule is that a recording never releases a handle an unsubmitted command still names. The destruction walk and the failure path are in <a href="../../development/internals/graphics/sdl-gpu.html#shutdown">Destruction order is part of the renderer contract</a>.</p>
+<p>The permanent regression, <code>SdlGpu_RenderTargetLifetime</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/examples/sdlgpu_rendertarget_lifetime_test.cpp"><code>sdlgpu_rendertarget_lifetime_test.cpp</code></a>), is stricter than "a short-lived target does not crash":</p>
+<pre><code class="language-cpp">// Shape of the regression's per-frame work (abridged from the test).
+void DrawThroughShortLivedRenderTarget(GraphicsDevice&amp; dev) {
+    RenderTarget2D localRt(dev, 8, 8, false, SurfaceFormat::Color,
+                           DepthFormat::None, 0, RenderTargetUsage::DiscardContents);
+    dev.SetRenderTarget(&amp;localRt);
+    dev.Clear(Color::Red);
+    dev.SetRenderTarget(nullptr);
+
+    dev.SetRenderTarget(rtDest_.get());   // a 16x16 target that outlives the frame
+    dev.Clear(Color::Blue);
+    sb_-&gt;Begin();
+    sb_-&gt;Draw(localRt, Rectangle(0, 0, 16, 16), Rectangle(0, 0, 8, 8), Color::White);
+    sb_-&gt;End();
+    dev.SetRenderTarget(nullptr);
+}   // localRt is destroyed here, before Present() renders the frame</code></pre>
+<p>On the first frame the test reads the centre of the surviving target and requires red within a small tolerance, which proves the queued sampling draw really ran; a no-crash check could pass after silently dropping it. It then repeats create, clear, sample and destroy for 120 frames, which shows the release queue is drained after each submission instead of retaining every texture until shutdown. Multiple render targets follow the same ownership: each immutable <code>PassSegment</code> retains its primary and secondary attachments as <code>shared_ptr&lt;SdlGpuRenderTarget2DState&gt;</code>, so destroying a public secondary target cannot invalidate a recorded bind cycle.</p>
+
+<h2 id="mrt">Multiple render targets are a shader capability</h2>
+<p><code>GraphicsDevice::SetRenderTargets()</code> makes the first <code>RenderTarget2D</code> the primary target and records the others as extra attachments of the same pass segment, so the pass contains one <code>SDL_GPUColorTargetInfo</code> per bound target. The pipeline key includes the attachment count and every slot's format, so a pipeline created for one colour output cannot be rebound for two. All attachments share the draw's blend factors and functions, as one <code>GraphicsDevice.BlendState</code> governs the whole draw, while each slot takes its own <code>ColorWriteChannels</code> mask. The segment's explicit clear colour applies to every colour attachment; each attachment keeps its own first-use state, and depth comes from the primary target.</p>
+<p>That does not mean every draw writes every target. CNA's stock sprite and 3D fragment shaders declare one output, so their contract is narrow on purpose: target 0 receives the draw, and targets 1 onward can be bound and cleared independently. A custom effect can write several. <code>SdlGpu_MRT</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/examples/sdlgpu_mrt_test.cpp"><code>sdlgpu_mrt_test.cpp</code></a>) draws one SpriteBatch sprite with a <code>#version 450</code> effect whose fragment stage declares <code>layout(location = 0) out vec4 outColorA</code> and <code>layout(location = 1) out vec4 outColorB</code>, where B is A with its channels rotated. Sampling a white texture with tint (0.2, 0.4, 0.8, 1) must read (51, 102, 204, 255) from the first target and (102, 204, 51, 255) from the second. Those distinct values rule out both an extra clear and a copied single-output result: one fragment invocation wrote two attachments. At this snapshot the test also varies the target count up to four, changes only slot 1 from <code>Color</code> to <code>HdrBlendable</code>, and drives a compiled Effect Framework program that writes <code>oC0</code> and <code>oC1</code> (SDLGPU-75), which keeps a classic-XNA MRT oracle runnable even in a build without the optional <code>ShaderEffect</code> compiler.</p>
+
+<h2 id="usage">Usage and first-use load actions</h2>
+<p>Each 2D target and each cube face starts with independent first-use colour, depth and stencil flags. The shared <code>DiscardContents</code> bind clear issued by <code>GraphicsDevice</code> (opaque black, depth 1, stencil 0 on the attachments that exist) records its clear into the new bind-cycle segment; a preserving bind records none. Once a pass has written a resource, later cycles load its stored aspects unless an explicit ordered clear selects them. Only <code>DiscardContents</code> discards: <code>PlatformContents</code> follows the shared FNA predicate <code>usage != DiscardContents</code> and preserves like <code>PreserveContents</code>, and the cube and depth-stencil usage fixtures assert that explicitly.</p>
+<p>Cube usage reaches construction too. A single-sample face simply loads its cube layer. A multisampled face owns its persistent per-face attachment and uses <code>RESOLVE_AND_STORE</code> when it preserves, or when a later segment in the same frame must load its samples; a discarding face with no later reader may use plain <code>RESOLVE</code>. The ordered-clear rules that combine with these load actions are described in <a href="../../development/internals/graphics/sdl-gpu.html#segments">the internals page</a>; <code>SdlGpu_RenderTargetCube_Usage</code>, <code>SdlGpu_RenderTargetCube_MsaaFace</code> and <code>SdlGpu_RenderTargetCube_MsaaMip</code> cover the cube paths.</p>
+
+<h2 id="swapchain-failure">Two kinds of acquisition failure</h2>
+<p>SDL_gpu distinguishes two outcomes of <code>SDL_WaitAndAcquireGPUSwapchainTexture()</code> that a renderer must not conflate:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Outcome</th><th scope="col">Meaning</th><th scope="col">What the renderer does</th></tr></thead>
+<tbody>
+<tr><td>Returns true with a null texture</td><td>A documented non-error case, such as a minimised window</td><td>Submits the command buffer (SDL requires a buffer that attempted acquisition to be submitted, not cancelled) and skips rendering for that flush.</td></tr>
+<tr><td>Returns false</td><td>A hard acquisition failure</td><td>Captures <code>SDL_GetError()</code>, submits the command buffer first, then throws <code>std::runtime_error</code>. The queued frame is not discarded: <code>framePending_</code> stays true, so a caller that recovers the window can present the same queued clear and draws.</td></tr>
+</tbody>
+</table></div>
+<p>A real device loss is hard to reproduce on demand, so <code>SdlGpu_SwapchainRecovery</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/examples/sdlgpu_swapchain_recovery_test.cpp"><code>sdlgpu_swapchain_recovery_test.cpp</code></a>) forces the same code path with SDL's own pair of calls. It renders nine ordinary frames; on frame 10 it calls <code>SDL_ReleaseWindowFromGPUDevice()</code>, so the next <code>Present()</code> must throw with a real SDL error; it reclaims the identical window with <code>SDL_ClaimWindowForGPUDevice()</code>; it requires the next <code>Present()</code> to succeed with the preserved frame; and it renders 30 further frames without an exception. That is a bounded, controlled proof of recovery after a hard acquisition failure, not a claim about every kind of device loss. <code>SdlGpu_MinimizedRetry</code> covers the null-texture case. Back-buffer readback is a separate route (a lazily enabled readable proxy), described in <a href="../../development/internals/graphics/sdl-gpu.html#resize">Resize, readback and limitations</a>.</p>
+
+<h2 id="limits">Limits, and limits that no longer apply</h2>
+<p><strong>Occlusion queries are an API limitation, not a task gap.</strong> The vendored SDL_gpu 3.5.0 has command-completion fences but no occlusion-query or query-pool command, so nothing can count samples that pass depth and stencil. <code>SdlGpuRenderer::CreateOcclusionQuery()</code> throws <code>NotSupportedException</code> saying exactly that, and the renderer answers <code>OcclusionQuery</code> false (SDLGPU-80). Constructing an <code>OcclusionQuery</code> through the public API therefore fails deterministically instead of producing a query whose <code>Begin</code> and <code>End</code> silently do nothing, which is what an inherited null factory would have allowed. <code>SdlGpu_OcclusionQuery_Limitation</code> locks that contract. The limitation is worth reopening only if SDL_gpu gains query commands.</p>
+<p><strong>Former limits that are closed at this snapshot:</strong></p>
+<ul>
+<li>Hardware instancing is implemented. <code>DrawInstancedPrimitivesEx</code> routes stock families, compiled effects and custom effects with their instance count, re-enters the stock dispatcher with a per-instance stream (STREETS-0001), and the <code>Instancing</code> capability is answered true by the renderer's own switch rather than by an inherited default. CNA's older records describe a revision that reported the capability while every valid instanced draw reached the common throwing default, a capability overclaim that no longer exists. <code>SdlGpu_InstancedStockFamilies</code> and <code>SdlGpu_InstancedPbr3D</code> cover it.</li>
+<li>Depth bias and slope-scale bias are pipeline state, normalised per depth format and hashed (see <a href="sdl-gpu-pipeline-state-and-draw-order.html#dynamic-state">dynamic and baked state</a>); <code>MaxAnisotropy</code> is part of the full sampler key.</li>
+<li>Secondary MRT attachments are retained by their pass segment, which closed the raw-pointer lifetime hazard described above.</li>
+<li>An ordinary <code>Texture2D</code> allocates its declared native level count and overrides <code>UpdatePixelsLevel</code>, so a nonzero level reaches the GPU resource (<code>SdlGpu_Texture2DMipStorage</code>). None of this adds automatic downsampling: upper levels of a plain <code>Texture2D</code> stay explicitly authored, as in XNA and FNA, and <code>SDL_GenerateMipmapsForGPUTexture</code> is deliberately not called for plain textures.</li>
+</ul>
+<p><strong>Driver coverage.</strong> One identity sits over several native APIs. The Direct3D 12 and Metal routes are code paths whose evidence is limited to what <a href="native-gpu-evidence-tiers.html#tiers">the evidence page</a> lists: a Direct3D 12 probe run under Wine with vkd3d-proton, and no Metal run recorded. The shared <code>.cnj</code> custom-effect fixture remains a cross-renderer portability gap (<a href="sdl-gpu-pipeline-state-and-draw-order.html#cnj-boundary">the .cnj boundary</a>).</p>
+
+<h2 id="evidence">Evidence and its limits</h2>
+<p>Every test named on this page is registered in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/examples/CMakeLists.txt"><code>the SDL_GPU examples CMakeLists.txt</code></a> at this snapshot; none was executed for this page. They run only in a build that selects <code>SDL_GPU</code>, need a display with a GPU (CNA's standard runner is a private headless compositor, because plain Xvfb cannot present Vulkan on a real GPU), and fail on any validation output. Registration and CNA's own notes are the evidence here, not a result obtained for this page.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/rendering-backends.html#modern-gpu">Rendering backends: modern GPU APIs</a> &middot; <a href="../../docs/tutorials/131-sdl-gpu.html">Tutorial 131: The SDL_GPU Renderer</a> &middot; <a href="../../docs/render-targets.html">Render targets</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/graphics/sdl-gpu.html">SDL_gpu renderer internals</a> &middot; <a href="../../development/internals/graphics/resources.html">Textures and render targets</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/handbook/debug-shutdown-and-lifetime.html">Debug shutdown and lifetime</a> &middot; <a href="../../development/handbook/fix-a-renderer-bug.html">Fix a renderer bug</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html#gpu">Test architecture: GPU tests</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../development/reference/test-targets.html">Test target index</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="sdl-gpu-pipeline-state-and-draw-order.html">SDL_GPU shader intake, pipeline keys and draw order</a> &middot; <a href="native-gpu-evidence-tiers.html">Evidence tiers of the native modern GPU renderers</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="sdl-gpu-pipeline-state-and-draw-order.html" rel="prev"><span>Previous</span>SDL_GPU shader intake, pipeline keys and draw order</a><a class="dev-pager-next" href="webgpu-renderer-semantics.html" rel="next"><span>Next</span>WebGPU renderer semantics: surfaces, targets, mips and pipeline state</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

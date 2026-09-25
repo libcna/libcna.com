@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SDL_GPU shader intake, pipeline keys and draw order - CNA Deep Dives</title>
+  <meta name="description" content="Why CNA&#x27;s SDL_GPU renderer uses precompiled SPIR-V in SDL_gpu&#x27;s set convention, which GLSL ShaderEffect accepts, how pipelines are keyed, what state is dynamic, and how draw order and vsync are kept.">
+  <meta name="keywords" content="sdl_gpu, sdl_gpu shaders, spir-v, shadereffect, libshaderc, pipeline cache, depth bias, sampler state, draw order, presentinterval">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html">
+  <meta property="og:title" content="SDL_GPU shader intake, pipeline keys and draw order - CNA Deep Dives">
+  <meta property="og:description" content="Why CNA&#x27;s SDL_GPU renderer uses precompiled SPIR-V in SDL_gpu&#x27;s set convention, which GLSL ShaderEffect accepts, how pipelines are keyed, what state is dynamic, and how draw order and vsync are kept.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"SDL_GPU shader intake, pipeline keys and draw order","description":"Why CNA's SDL_GPU renderer uses precompiled SPIR-V in SDL_gpu's set convention, which GLSL ShaderEffect accepts, how pipelines are keyed, what state is dynamic, and how draw order and vsync are kept.","url":"https://libcna.com/deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Renderers <span class="dev-nav-count">6</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="native-gpu-evidence-tiers.html" class="docs-nav-link">Modern GPU evidence tiers</a></li>
+        <li><a href="vulkan-presentation-and-readback.html" class="docs-nav-link">Vulkan presentation &amp; readback</a></li>
+        <li><a href="vulkan-deferred-state-and-descriptors.html" class="docs-nav-link">Vulkan state, queries &amp; descriptors</a></li>
+        <li><a href="sdl-gpu-pipeline-state-and-draw-order.html" class="docs-nav-link active" aria-current="page">SDL_GPU pipelines &amp; draw order</a></li>
+        <li><a href="sdl-gpu-resources-and-frame-recovery.html" class="docs-nav-link">SDL_GPU resources &amp; recovery</a></li>
+        <li><a href="webgpu-renderer-semantics.html" class="docs-nav-link">WebGPU semantics</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content</a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D</a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">3</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">2</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Renderers</a></li>
+        <li aria-current="page">SDL_GPU pipelines &amp; draw order</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>SDL_GPU shader intake, pipeline keys and draw order</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#dependency">An SDL3 API, not a separate library</a></li>
+          <li><a href="#shader-bytecode">Precompiled bytecode in SDL_gpu's set convention</a></li>
+          <li><a href="#skinned-palette">The 72-bone palette and the pushed-uniform limit</a></li>
+          <li><a href="#shader-effect-dialect">Custom ShaderEffect: which GLSL the runtime route accepts</a></li>
+          <li><a href="#pipeline-key">One hashed pipeline key with conditional dimensions</a></li>
+          <li><a href="#dynamic-state">What is dynamic and what is baked</a></li>
+          <li><a href="#draw-order">Deferred replay preserves public draw order</a></li>
+          <li><a href="#present-interval">Present timing belongs to the device manager</a></li>
+          <li><a href="#evidence">Evidence and its limits</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Renderers &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. No SDL_GPU test was executed for this page. CNA's routine SDL_GPU evidence is SDL_gpu's Vulkan driver on Linux; the pushed-uniform limit is CNA's measurement on that driver, and Direct3D 12 or Metal behaviour is not established by it.</p></div>
+
+<p class="lede">The <code>SDL_GPU</code> renderer drives SDL3's own GPU API and lets SDL choose the native driver. This page explains the parts of its design that follow from that API: why its shaders are precompiled SPIR-V in a fixed resource-set convention, why the skinning palette is a texture, which GLSL a custom <code>ShaderEffect</code> may contain, how immutable pipelines are keyed, what state is dynamic, how deferred replay keeps the game's draw order, and why vertical synchronisation is a device-manager setting rather than a renderer poke. It complements the maintainer tour in <a href="../../development/internals/graphics/sdl-gpu.html">SDL_gpu renderer internals</a> and the build-and-query walkthrough in <a href="../../docs/tutorials/131-sdl-gpu.html">Tutorial 131</a>.</p>
+
+<h2 id="dependency">An SDL3 API, not a separate library</h2>
+<p><code>SDL_gpu</code> dispatches internally to Vulkan, Direct3D 12 or Metal, depending on the platform and the drivers available. Its implementation is part of the SDL3 library CNA already vendors, so on Linux, where SDL's Vulkan driver consumes CNA's committed SPIR-V directly, this renderer adds no third-party dependency at all; that is the argument CNA's own planning gave for adding it next to renderers that need the Vulkan SDK or a downloaded <code>wgpu-native</code>. The argument is narrower at this snapshot: on Windows and Apple targets <code>CNA_SDL_GPU_SHADERCROSS</code> defaults to ON and fetches a pinned SDL_shadercross with SPIRV-Cross to translate the same SPIR-V for Direct3D 12 or Metal, and a custom GLSL <code>ShaderEffect</code> needs a target-native <code>libshaderc</code>. The build switches are listed in <a href="../../development/internals/graphics/sdl-gpu.html#selection">the internals page</a>.</p>
+<p>The implementation class is <code>CNA::Internal::Renderers::SdlGpu::SdlGpuRenderer</code>, sources are under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src"><code>modules/renderers/sdl-gpu/src</code></a>, the target is <code>cna_renderer_sdl_gpu</code> and the identity is selected with <code>-DCNA_GRAPHICS_RENDERER=SDL_GPU</code>. The name is deliberately distinct from <code>SdlRenderer</code>, the 2D-only <code>SDL_RENDERER</code> identity built on SDL's older <code>SDL_Renderer</code> API: the two SDL APIs are unrelated, and CNA keeps their similar names from colliding.</p>
+
+<h2 id="shader-bytecode">Precompiled bytecode in SDL_gpu's set convention</h2>
+<p><code>SDL_CreateGPUShader</code> accepts only bytecode tagged with an <code>SDL_GPUShaderFormat</code>: SPIR-V for the Vulkan driver, DXBC or DXIL for Direct3D 12, MSL or a metallib for Metal. It never takes GLSL or HLSL source. It also fixes where each resource lives. The stock shaders under <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/shaders"><code>src/shaders</code></a> (23 GLSL sources, compiled offline by <code>compile_shaders.py</code> into the checked-in <code>spirv_shaders.hpp</code>) follow SDL_gpu's graphics convention, which the script's docstring states explicitly:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Stage</th><th scope="col">Sampled textures, storage textures and buffers</th><th scope="col">Uniform buffers</th></tr></thead>
+<tbody>
+<tr><td>Vertex</td><td>set 0</td><td>set 1</td></tr>
+<tr><td>Fragment</td><td>set 2</td><td>set 3</td></tr>
+</tbody>
+</table></div>
+<p>The <code>VULKAN</code> renderer's own GLSL uses its own descriptor layout, so its compiled SPIR-V is a useful algorithmic reference (the same lighting, alpha-test and dual-texture arithmetic) but not reusable output: every stock shader had to be re-authored for these sets. Uniform values that other renderers would push as constants are delivered with <code>SDL_PushGPUVertexUniformData</code> and its fragment twin into the set-1 and set-3 blocks. One piece of GLSL is now genuinely shared: the shadow-sampling include is inlined by the SDL_GPU script with <code>CNA_SHADOW_*</code> defines that move its resources into these sets. Portable shader packages compiled for the Vulkan layout are accepted at run time through a SPIR-V remapper; see <a href="../../development/internals/graphics/sdl-gpu.html#shaders">Shader routes</a>.</p>
+
+<h3 id="y-flip">The screenshot that exposed a Y-flip</h3>
+<p>The renderer's first real milestone was a textured, tinted, rotated, multi-flip sprite scene that survives a resize. The first vertex shader converted pixel positions to NDC with <code>gl_Position = vec4(ndc, 0, 1)</code>, the same shape the other renderers' sprite shaders use. It compiled, ran without error and drew every sprite upside down, because SDL_gpu's Vulkan driver flips clip-space Y internally to give shaders a consistent cross-driver convention. Only a captured screenshot revealed it; a "did it throw" test could not. The fix negates Y explicitly in <code>sprite2d.vert.glsl</code>:</p>
+<pre><code class="language-glsl">// sprite2d.vert.glsl at 009d40f5: pixel space -> NDC, (0,0) top-left, Y down like XNA
+vec2 ndc = (inPos.xy / ubo.viewportSize) * 2.0 - 1.0;
+gl_Position = vec4(ndc.x, -ndc.y, inPos.z, 1.0);</code></pre>
+<p>The isolating tool was kept in the tree: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/examples/sdlgpu_diag_single_sprite.cpp"><code>sdlgpu_diag_single_sprite.cpp</code></a> draws exactly one non-rotated, non-flipped, full-texture sprite with native back-buffer presentation, so texture sampling and UV mapping can be checked independently of viewport scaling, rotation, flips and address modes. It is a manual diagnostic, not a CTest.</p>
+
+<h2 id="skinned-palette">The 72-bone palette and the pushed-uniform limit</h2>
+<p><code>SkinnedEffect</code> supports up to <code>SkinnedEffect::MaxBones</code> = 72 bones, so its palette is 72 × 64 = 4,608 bytes. Every other stock effect's per-draw payload (matrices, <code>DiffuseColor</code>, alpha-test and light parameters) is pushed with <code>SDL_PushGPUVertexUniformData</code> or its fragment twin, but on this renderer's Vulkan driver a pushed uniform block is limited to about 4,096 bytes. CNA found that limit with an empirical binary search; <code>SDL_gpu.h</code> does not document it. The palette therefore cannot be pushed.</p>
+<p>The first workaround bound the palette as a vertex storage buffer. At this snapshot that route is gone, because it made Direct3D 12 reject an otherwise valid graphics pipeline. <code>skinned3d.vert.glsl</code> now samples a 288 × 1 <code>RGBA32F</code> texture at vertex set 0, binding 0, holding the same column-major palette as four adjacent texels per matrix. The comment in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/shaders/skinned3d.vert.glsl"><code>skinned3d.vert.glsl</code></a> gives the reasons: SDL_gpu's Direct3D 12 backend accepts it as well as Vulkan, it is expressible on Metal, and the 4,608-byte row is 256-byte aligned, which avoids Direct3D 12's slow unaligned texture-upload path. The general lesson is to name the mechanism per payload size precisely, rather than write "uniforms are uploaded per draw" as if one mechanism served every payload.</p>
+
+<h2 id="shader-effect-dialect">Custom ShaderEffect: which GLSL the runtime route accepts</h2>
+<p><code>ShaderEffect</code>'s public contract takes shader source, while SDL_gpu takes only bytecode. <code>SdlGpuEffectRenderer::CompileProgram</code> bridges the two in two ways. A payload that starts with the SPIR-V magic word goes to the SPIR-V intake, which needs no compiler and exists in every build. Otherwise, in a build where CMake found a target-native <code>libshaderc</code> (<code>CNA_SDL_GPU_SHADER_EFFECTS</code>), the GLSL text is compiled to SPIR-V at run time by the linked library. The development environment that built this route had no <code>libshaderc</code> development package, so there is no <code>shaderc.h</code> to include: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp"><code>SdlGpuRenderer.cpp</code></a> hand-declares the exact <code>extern "C"</code> subset it calls (<code>shaderc_compiler_initialize</code>, <code>shaderc_compile_into_spv</code>, <code>shaderc_result_get_bytes</code> and the release and status functions), with the shader-kind and optimisation-level enumerators as named integer constants. The compile still goes through the real shared library; only the header describing its C ABI is hand-written, matching the ctypes bindings <code>compile_shaders.py</code> uses against the same library.</p>
+<p>The GLSL route is narrow, and the narrowness is the contract. It compiles for Vulkan's GLSL rules and creates the vertex shader with one uniform buffer and the fragment shader with one sampler and one uniform buffer. A source that works is therefore written like the passing <code>SdlGpu_ShaderEffect</code> regression: desktop <code>#version 450</code>, an explicit <code>layout(location = …)</code> on every vertex attribute and stage input and output, the fragment sampler at <code>layout(set = 2, binding = 0)</code>, and the per-draw values in a named uniform block at <code>set = 1</code> in the vertex stage and <code>set = 3</code> in the fragment stage. That test compiles both stages at run time, draws a white texture into a <code>RenderTarget2D</code> and reads back the effect's blue tint, then repeats the draw without the effect and requires white, so the binding is proven by pixels rather than by <code>IsEffectValid()</code>. The renderer declares SPIR-V as its dialect and its <code>SupportsShaderLanguageEXT</code> claims only SPIR-V, even where the GLSL route exists, because that route rejects the GLSL ES 3.00 profile other parts of CNA use.</p>
+<p>The <code>VULKAN</code> renderer is stricter still: its <code>ShaderEffect</code> takes SPIR-V words and refuses GLSL text (see <a href="../../development/internals/graphics/vulkan.html#shaders">Vulkan internals: shader boundaries</a>), which was noticed while this route was being built. <code>CustomEffects</code> means a renderer accepts an effect, not that it executes the source you wrote; <code>ExecutesShaderEffectSourceEXT()</code> and the declared dialect answer those questions.</p>
+<h3 id="cnj-boundary">The .cnj fixture boundary</h3>
+<p>The runtime compiler does not make every GLSL text accepted elsewhere portable to this renderer. The content test <code>CnjEffectTest.LoadsRealCnjFixture</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/content/tests/Microsoft/Xna/Framework/Content/CnjEffectTests.cpp"><code>CnjEffectTests.cpp</code></a>) writes an ordinary <code>.cnj</code> effect manifest with a GLSL ES 3.00 pair: <code>#version 300 es</code>, unqualified stage inputs and outputs, and loose <code>uniform mat4 projection</code> and <code>uniform sampler2D texture1</code> declarations. Vulkan-rule GLSL requires locations and forbids non-opaque uniforms outside a block, so that source cannot compile on this route, and the effect is invalid before a pixel is drawn. This is an open compatibility gap, not evidence that <code>ShaderEffect</code> is a no-op here: custom effects work when authored in the dialect above. Closing it needs a designed decision, either migrating the shared <code>.cnj</code> source convention to the stricter portable dialect, which changes content expectations for every renderer, or giving this renderer a real translation layer from loose GLSL to the blocks, locations and sets SDL_gpu requires. Neither is a one-line relaxation. See <a href="../../docs/shader-effects.html#renderer-availability">Shader effects: renderer availability</a> for the user-side matrix.</p>
+
+<h2 id="pipeline-key">One hashed pipeline key with conditional dimensions</h2>
+<p>SDL_gpu graphics pipelines are immutable, so the renderer cannot bind an XNA state object at the end of a deferred frame and hope it describes every earlier draw. Each queued sprite or 3D command carries a <code>RenderStateSnapshot</code> taken when it was issued (blend factors and functions, per-slot colour write masks, cull and fill mode, both depth-bias values, stencil operations, masks and reference, depth test fields), and pipeline lookup folds the pipeline-relevant part into one <code>std::size_t</code> key. <code>PipelineCacheKey</code> combines the primitive topology, depth test, depth write and depth function, the number of colour targets and every slot's format, the sample count, the depth-stencil format (<code>INVALID</code> for a pass without one) and the snapshot, using the well-known <code>boost::hash_combine</code> mixing formula in <code>HashCombine</code>. It replaced a hand-packed integer key whose fixed bit budget would have become collision-prone as dimensions were added, the limit the Vulkan renderer's packed blend key documents.</p>
+<p>Conditional hashing keeps the cache both correct and finite:</p>
+<ul>
+<li>Disabled blending does not hash its six factors and functions; disabled stencil does not hash its operations or masks; disabled two-sided stencil does not hash the counter-clockwise fields. Two commands that need the same pipeline share it even when their irrelevant XNA fields differ.</li>
+<li>Stencil masks are hashed after truncation to the <code>Uint8</code> SDL applies, so two integers that truncate to the same byte do not fragment the cache.</li>
+<li>Every MRT slot's format is part of the key (SDLGPU-72), because render-pass compatibility is slot-aligned: <code>{Color, Color}</code> and <code>{Color, HalfVector4}</code> need different pipelines even when the primary attachment and every public state match.</li>
+<li>Depth-stencil format presence is part of the key even when depth testing is off (REMED-GFX-097): a depthless pass must never reuse a pipeline created for a depth-backed one.</li>
+<li>The sample count is a required dimension. A pipeline created with the wrong <code>sample_count</code> for its pass's attachments was one of the findings of an adversarial review of this renderer.</li>
+</ul>
+<p>The colour format in the key comes from the pass actually being recorded: each frame asks SDL for the swapchain texture's real format, which is independent of the public <code>BackBufferFormat</code>. <code>GetAppliedBackBufferFormatEXT()</code> reports <code>Color</code> because readback normalises BGRA to RGBA. The back buffer's depth attachment, by contrast, follows the public <code>DepthFormat</code> at this snapshot: <code>DepthFormat::None</code> means no depth attachment, <code>Depth16</code> and <code>Depth24</code> fall back to <code>D32_FLOAT</code> where the device lacks them, and a change through <code>UpdatePresentationFormatEXT</code> first renders any pending frame and then releases the old attachment.</p>
+
+<h2 id="dynamic-state">What is dynamic and what is baked</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">State</th><th scope="col">Where it lives</th><th scope="col">Detail</th></tr></thead>
+<tbody>
+<tr><td>Stencil reference</td><td>Per draw, <code>SDL_SetGPUStencilReference()</code></td><td>Captured with the command, not baked into a pipeline. An adversarial pixel test once found the call missing: a left-half stencil write followed by a full-screen <code>Equal</code>-reference draw now proves the dynamic value reaches the GPU (<code>SdlGpu_RenderState</code>).</td></tr>
+<tr><td>Viewport, scissor, blend constants</td><td>Per draw, <code>SDL_SetGPUViewport</code>, <code>SDL_SetGPUScissor</code>, <code>SDL_SetGPUBlendConstants</code></td><td>Captured in the draw's <code>QueuedDrawRef</code> and applied immediately before it (REMED-GFX-064, -068, -069). Enabled scissors are clamped to the target; disabled or degenerate ones expand to its full extent, so an enabled zero-area rectangle draws unclipped here as on <code>VULKAN</code>, while <code>WEBGPU</code> clips such a draw entirely.</td></tr>
+<tr><td>Depth bias</td><td>Pipeline-static in SDL 3.5</td><td>See below.</td></tr>
+<tr><td>Sampler state</td><td>Cached <code>SDL_GPUSampler</code> objects</td><td>See below.</td></tr>
+</tbody>
+</table></div>
+<p><strong>Depth bias.</strong> SDL 3.5 exposes the constant factor, clamp, slope factor and an enable bit only in the pipeline's rasterizer state. Before REMED-GFX-051 the renderer captured both public values but left them out of the snapshot and the key, so every draw replayed through the same zero-bias pipeline. Now <code>NormalizeDepthBias</code> converts XNA's normalised <code>RasterizerState.DepthBias</code> into the attachment's native units the way FNA3D's SDL_gpu driver does: multiplied by 2<sup>23</sup>−1 for a 32-bit float depth format, 2<sup>24</sup>−1 for a 24-bit one, and 2<sup>16</sup>−1 for 16-bit or a depthless pass. <code>SlopeScaleDepthBias</code> already has the same meaning in both APIs. Lines and points have no polygon slope and get no bias, so their values are normalised to "disabled" and neither change native state nor fragment the cache; signed zero is canonicalised; non-finite values are passed through for SDL and the driver to judge. Every pipeline also sets <code>enable_depth_clip</code>, because XNA clips primitives outside its 0 to 1 depth range while SDL_gpu's default is to clamp. <code>SdlGpu_DepthBias</code> combines deterministic depth-winner pixels, cache-cardinality checks (one pipeline per genuinely static state, no fragmentation from signed zero, target identity, viewport or line-only state) and validation-fatal execution.</p>
+<p><strong>Samplers.</strong> The sampler key and the native descriptor carry the complete request (REMED-GFX-170): all nine <code>TextureFilter</code> values mapped separately for minification, magnification and mip mode with no default branch, the U, V and W address modes, <code>MaxAnisotropy</code> clamped to 1 to 16 and applied only for <code>TextureFilter::Anisotropic</code> (so a <code>Point</code> request never becomes a filtered fetch), <code>MaxMipLevel</code> as SDL's minimum level of detail, and <code>MipMapLevelOfDetailBias</code>. Anisotropy is therefore no longer merely a stored capability bit.</p>
+
+<h2 id="draw-order">Deferred replay preserves public draw order</h2>
+<p>Deferring all work until <code>Present()</code> once introduced a correctness bug hidden by the family-specific command vectors: every 3D family was replayed first and every sprite last, whatever order the game used. A background sprite, a 3D model and a HUD sprite came out right only by accident, and a sprite followed by a 3D draw was replayed as 3D then sprite. This is visible whenever later content should cover earlier content, not merely a performance detail.</p>
+<p>Every <code>Queue*Draw()</code> and <code>QueueSprite()</code> call now appends a compact kind-and-index reference through one choke point, <code>PushDrawOrder</code>, beside its family-specific command. <code>RenderQueuedDraws()</code> makes one chronological pass over those references and dispatches each family's issue routine only for commands that belong to the current target. No sort is needed, because append order is already the public call order, and pipeline-rebind avoidance is tracked across all kinds so correctness did not cost the bind cache. The regression is built to discriminate: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/examples/sdlgpu_draworder_test.cpp"><code>sdlgpu_draworder_test.cpp</code></a> draws an opaque red full-target sprite and an opaque green full-target 3D quad into one target with depth testing off. Sprite then 3D must read green; 3D then sprite must read red. The old fixed-family order would have read red both times, so the pair cannot pass by crashing less.</p>
+
+<h2 id="present-interval">Present timing belongs to the device manager</h2>
+<p>The SDL_GPU tests established a small rule about CNA's initialisation order. <code>GraphicsDeviceManager</code> defaults <code>SynchronizeWithVerticalRetrace</code> to true, the right XNA-compatible default for a game. CNA's virtual test display offers no useful vertical-retrace signal, so with vsync on each frame could wait around a second, and a 60- or 120-frame GPU test spent its CTest budget waiting. The correct setup, used by most of the family's Game-based examples (36 of the 50 example sources set it), is the public property, set before <code>Game::DoInitialize()</code> creates or resets the device:</p>
+<pre><code class="language-cpp">gdm_ = std::make_unique&lt;GraphicsDeviceManager&gt;(this);
+gdm_-&gt;setPreferredBackBufferWidthProperty(64);
+gdm_-&gt;setPreferredBackBufferHeightProperty(64);
+gdm_-&gt;setSynchronizeWithVerticalRetraceProperty(false);</code></pre>
+<p>The order matters. Earlier tests called <code>SdlGpuRenderer::SetSwapInterval(0)</code> directly. During initialisation, however, the device manager converts its still-true property into <code>PresentInterval::One</code>, and <code>GraphicsDevice::Reset</code> forwards the interval to the renderer. That forwarding was itself a repair: before it, the reset path never called <code>IGraphicsRenderer::SetSwapInterval()</code> on any renderer. Once it landed it rightly overwrote the private early poke, and the tests' timeouts surfaced instead of an accidental ordering dependency being preserved. The explicit <code>false</code> is a test-environment choice made through the property a game would use, at the point in the lifecycle where CNA will not replace it; it is not a recommendation to disable synchronisation.</p>
+<p>On this renderer interval 0 asks SDL_gpu for <code>SDL_GPU_PRESENTMODE_IMMEDIATE</code>, falling back to <code>MAILBOX</code>, which is still synchronised to vertical blank and so is recorded as applied interval 1; any positive interval selects <code>VSYNC</code>. SDL_gpu has no half-rate or relaxed mode, so <code>PresentInterval::Two</code> behaves exactly like <code>One</code>, unlike the Vulkan renderer's <code>FIFO_RELAXED</code> (<a href="vulkan-presentation-and-readback.html#present-modes">Vulkan present modes</a>). A refused <code>SDL_SetGPUSwapchainParameters</code> is logged and keeps the previous applied value; the swapchain composition requested is <code>SDL_GPU_SWAPCHAINCOMPOSITION_SDR</code>. In headless mode the interval is only recorded.</p>
+
+<h2 id="evidence">Evidence and its limits</h2>
+<p>The tests named here (<code>SdlGpu_ShaderEffect</code>, <code>SdlGpu_RenderState</code>, <code>SdlGpu_DepthBias</code>, <code>SdlGpu_SamplerState</code>, <code>SdlGpu_DrawOrder</code> and the content-module <code>CnjEffectTest</code>) are registered at this snapshot; none was executed for this page. They run in a build that selects <code>SDL_GPU</code>, under a directory-wide gate that fails on validation output, and CNA's own records place their routine execution on SDL_gpu's Vulkan driver on Linux. The ~4,096-byte pushed-uniform figure is CNA's measurement on that driver, not an SDL guarantee, and a Direct3D 12 or Metal run is not established by it. The renderer's resource lifetime, uploads, render targets and swapchain recovery continue in <a href="sdl-gpu-resources-and-frame-recovery.html">SDL_GPU uploads, render-target lifetime and swapchain recovery</a>; the comparison with the other native renderers is in <a href="native-gpu-evidence-tiers.html">Evidence tiers of the native modern GPU renderers</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/rendering-backends.html#modern-gpu">Rendering backends: modern GPU APIs</a> &middot; <a href="../../docs/tutorials/131-sdl-gpu.html">Tutorial 131: The SDL_GPU Renderer</a> &middot; <a href="../../docs/shader-effects.html#renderer-availability">Shader effects: renderer availability</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/graphics/sdl-gpu.html">SDL_gpu renderer internals</a> &middot; <a href="../../development/internals/graphics/draw-call.html">Indexed draw trace</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/handbook/fix-a-renderer-bug.html">Fix a renderer bug</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html#gpu">Test architecture: GPU tests</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../development/reference/cmake-options.html">CMake option index</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="sdl-gpu-resources-and-frame-recovery.html">SDL_GPU uploads, lifetime and recovery</a> &middot; <a href="native-gpu-evidence-tiers.html">Evidence tiers of the native modern GPU renderers</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="vulkan-deferred-state-and-descriptors.html" rel="prev"><span>Previous</span>Vulkan draw-time state, ordered clears, occlusion queries and descriptor pools</a><a class="dev-pager-next" href="sdl-gpu-resources-and-frame-recovery.html" rel="next"><span>Next</span>SDL_GPU uploads, render-target lifetime and swapchain recovery</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

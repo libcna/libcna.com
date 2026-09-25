@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vulkan draw-time state, ordered clears, occlusion queries and descriptor pools - CNA Deep Dives</title>
+  <meta name="description" content="How CNA&#x27;s deferred VULKAN renderer carries blend, stencil, viewport and scissor state, orders clears, counts occlusion queries and grows descriptor pools, with the defects behind each rule.">
+  <meta name="keywords" content="vulkan, blendstate, depthstencilstate, ordered clear, rendertargetusage, occlusionquery, descriptor pool, vkcmdclearattachments, depth bias, device features">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/renderers/vulkan-deferred-state-and-descriptors.html">
+  <meta property="og:title" content="Vulkan draw-time state, ordered clears, occlusion queries and descriptor pools - CNA Deep Dives">
+  <meta property="og:description" content="How CNA&#x27;s deferred VULKAN renderer carries blend, stencil, viewport and scissor state, orders clears, counts occlusion queries and grows descriptor pools, with the defects behind each rule.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/renderers/vulkan-deferred-state-and-descriptors.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Vulkan draw-time state, ordered clears, occlusion queries and descriptor pools","description":"How CNA's deferred VULKAN renderer carries blend, stencil, viewport and scissor state, orders clears, counts occlusion queries and grows descriptor pools, with the defects behind each rule.","url":"https://libcna.com/deep-dives/renderers/vulkan-deferred-state-and-descriptors.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Renderers <span class="dev-nav-count">6</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="native-gpu-evidence-tiers.html" class="docs-nav-link">Modern GPU evidence tiers</a></li>
+        <li><a href="vulkan-presentation-and-readback.html" class="docs-nav-link">Vulkan presentation &amp; readback</a></li>
+        <li><a href="vulkan-deferred-state-and-descriptors.html" class="docs-nav-link active" aria-current="page">Vulkan state, queries &amp; descriptors</a></li>
+        <li><a href="sdl-gpu-pipeline-state-and-draw-order.html" class="docs-nav-link">SDL_GPU pipelines &amp; draw order</a></li>
+        <li><a href="sdl-gpu-resources-and-frame-recovery.html" class="docs-nav-link">SDL_GPU resources &amp; recovery</a></li>
+        <li><a href="webgpu-renderer-semantics.html" class="docs-nav-link">WebGPU semantics</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content</a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D</a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">3</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">2</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Renderers</a></li>
+        <li aria-current="page">Vulkan state, queries &amp; descriptors</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Vulkan draw-time state, ordered clears, occlusion queries and descriptor pools</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#discarded-parameters">A recurring defect shape: state accepted, then discarded</a></li>
+          <li><a href="#draw-snapshots">Draw-time snapshots: viewport, scissor and blend factor</a></li>
+          <li><a href="#ordered-clears">Clear is an ordered, aspect-selective command</a></li>
+          <li><a href="#usage">RenderTargetUsage: one predicate, per-aspect consequences</a></li>
+          <li><a href="#target-mips-mrt">Render-target mips, MSAA and the MRT limit</a></li>
+          <li><a href="#occlusion-queries">Occlusion queries in a deferred recorder</a></li>
+          <li><a href="#descriptor-pools">Descriptor pools grow; they do not cap</a></li>
+          <li><a href="#device-features">Optional device features are negotiated, not assumed</a></li>
+          <li><a href="#depth-bias">The depth-bias case: a test that measured the wrong convention</a></li>
+          <li><a href="#evidence">Coverage and what remains unproven</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Renderers &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. No Vulkan test was executed for this page. Driver observations quoted from CNA's source comments (lavapipe, AMD RADV) are evidence for those drivers only; the SpriteBatch occlusion-query and zero-area scissor statements are readings of the source that no registered test decides.</p></div>
+
+<p class="lede">The <code>VULKAN</code> renderer does not execute a public draw when it is called: it stores a record and replays it into a command buffer when the frame is submitted. That delay decides how state objects, clears, occlusion queries and descriptor sets have to work. This page explains the exact semantics at this snapshot, with the defects that taught each rule: blend and stencil state that used to be accepted and then discarded, clears that could not express their position, a query that spans only one contiguous run, and descriptor pools that grow instead of capping. It is for maintainers changing <code>VulkanRenderer</code> and for game developers who need to know what a Vulkan build really does with their state.</p>
+
+<h2 id="discarded-parameters">A recurring defect shape: state accepted, then discarded</h2>
+<p>An interface that takes a complete state packet while the implementation consumes only part of it produces no error at all; it produces plausible pictures. Two historical Vulkan defects had exactly this shape, and their repair defines the current code. Both are fixed at this snapshot; they are described here because the same shape keeps reappearing in new renderers.</p>
+<h3 id="blend-history">Blend state</h3>
+<p><code>VulkanRenderer::ApplyBlendState</code> used to keep only one Boolean, whether blending was on, and every pipeline hard-coded the <code>BlendState.NonPremultiplied</code> equation whenever it was. CNA's records describe several independent blend pixel tests failing before the repair (tracking item Task 868). Today the entry point stores all six values (colour and alpha source factor, destination factor and function), the four per-slot <code>ColorWriteChannels</code> masks and the multisample mask, and blending counts as enabled unless both colour and alpha are the <code>Opaque</code> preset (<code>One</code>/<code>Zero</code>). One shared helper, <code>FillBlendAttachmentState</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/VulkanRenderer.cpp"><code>VulkanRenderer.cpp</code></a>, turns them into a <code>VkPipelineColorBlendAttachmentState</code> for every pipeline-creation function, because the fix had to reach every place a graphics pipeline is built rather than one central function. XNA's <code>Blend.BlendFactor</code> maps to <code>VK_BLEND_FACTOR_CONSTANT_COLOR</code>, and the XNA write-mask bits (R=1, G=2, B=4, A=8) are identical to <code>VK_COLOR_COMPONENT_*</code>. The blend state is part of the pipeline key, packed into a fixed bit budget; the SDL_GPU renderer later chose a hashed key for the same job (<a href="sdl-gpu-pipeline-state-and-draw-order.html#pipeline-key">SDL_GPU pipeline keys</a>).</p>
+<h3 id="stencil-history">Depth-stencil state</h3>
+<p><code>ApplyDepthStencilState</code> takes sixteen parameters. It once stored only the depth-enable and depth-write flags; every stencil value was dropped and no pipeline ever set <code>stencilTestEnable</code>. CNA's records describe separate checks of the enable flag, the masks, the front-face operations, two-sided mode and the reference value each failing. The same investigation found that the device-wide depth format tried a stencil-less format first (see <a href="vulkan-presentation-and-readback.html#backbuffer-depth">the back-buffer depth format</a>). The current design:</p>
+<ul>
+<li><code>FillDepthStencilState</code> writes <code>depthCompareOp</code>, <code>stencilTestEnable</code> and full front and back <code>VkStencilOpState</code> blocks into every 3D pipeline; with <code>TwoSidedStencilMode</code> false the back face simply copies the front, which is FNA's behaviour (the counter-clockwise fields are ignored, not reset).</li>
+<li>Compare mask, write mask and reference are true Vulkan dynamic state, set per draw with <code>vkCmdSetStencilCompareMask</code>, <code>vkCmdSetStencilWriteMask</code> and <code>vkCmdSetStencilReference</code>.</li>
+<li><code>GraphicsDevice.ReferenceStencil</code> is an independent device property in XNA and FNA, so the renderer overrides <code>SetReferenceStencil()</code> to change the value without a full state re-application. The base <code>IGraphicsRenderer</code> default is a no-op; the EasyGL renderer overrides it as well.</li>
+</ul>
+<p>The first stencil repair also swapped the counter-clockwise operations onto the front face, blaming a software-rasteriser quirk it could not isolate. A later measurement on an AMD Radeon 780M with the RADV driver (VKPAR-0005, recorded in the source comment above <code>FillDepthStencilState</code>) showed stencil gating normally and the swap inverting all three operations. The convention now written down beside the code: clockwise-as-displayed is the front face, the ordinary <code>StencilFunction</code>/<code>StencilPass</code>/<code>StencilFail</code>/<code>StencilDepthBufferFail</code> apply to it, and the counter-clockwise fields go to <code>back</code>. The stock vertex shaders' <code>pos.y = -pos.y</code> only converts Direct3D-style clip space to Vulkan's, so it mirrors nothing. The lesson is the one that <a href="native-gpu-evidence-tiers.html#defect-shapes">the evidence page</a> generalises: a plausible explanation attributed to one driver is not a measurement.</p>
+
+<h2 id="draw-snapshots">Draw-time snapshots: viewport, scissor and blend factor</h2>
+<p>Because replay happens at submit time, any state read from the renderer's mutable members during replay would give every queued draw the frame's last value. <code>PushPending3DDraw</code> and the SpriteBatch end-of-batch path therefore copy the scissor rectangle and enable bit (REMED-GFX-013), the viewport (REMED-GFX-062) and the blend factor (REMED-GFX-070) into each record; <code>SetScissorRect</code>, <code>SetViewport</code> and <code>SetBlendFactor</code> are store-only. At replay the two helpers treat the rectangles differently on purpose:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">State</th><th scope="col">Replay rule</th><th scope="col">Why</th></tr></thead>
+<tbody>
+<tr><td>Scissor (<code>computeScissor</code>)</td><td>An enabled rectangle is clamped to the current target; a disabled rectangle, or one with zero width or height, becomes the full target before <code>vkCmdSetScissor</code></td><td>A <code>VkRect2D</code> must lie inside the framebuffer</td></tr>
+<tr><td>Viewport (<code>computeViewport</code>)</td><td>Not clamped; an unset or zero-sized viewport becomes the full target; depth range clamped to [0, 1]; height stays positive</td><td>A viewport is the NDC-to-framebuffer transform, so clamping would move geometry; Direct3D and XNA pass an overhanging viewport through; the Y flip is done in the vertex shader</td></tr>
+<tr><td>Blend factor</td><td><code>vkCmdSetBlendConstants</code> per draw</td><td>Render-target passes would otherwise get no constant at all</td></tr>
+</tbody>
+</table></div>
+<p>A pass opens with full-target defaults and each draw replaces them with its own snapshot, so a later state change cannot retroactively unclip or move a draw queued earlier in the same frame. The shared <code>Vulkan_Deferred_Viewport</code> and <code>Vulkan_Deferred_Scissor</code> suites queue several changes inside one unflushed bind cycle, on the back buffer and on a <code>RenderTarget2D</code>, so a final live value cannot satisfy them by accident. The scissor rule has one consequence worth knowing: an enabled scissor rectangle of zero area draws unclipped on this renderer, as it does on <code>SDL_GPU</code>, whereas <code>WEBGPU</code> keeps the zero-area rectangle and so clips the draw entirely, and <code>METAL</code> suppresses the draw (see <a href="webgpu-renderer-semantics.html#dynamic-state">WebGPU dynamic state</a> and <a href="../../docs/tutorials/109-metal-macos.html#what-works">Tutorial 109</a>). That cross-renderer difference is recorded for review rather than resolved here.</p>
+
+<h2 id="ordered-clears">Clear is an ordered, aspect-selective command</h2>
+<p>Every public <code>Clear</code> becomes a <code>PendingClear</code> record (REMED-GFX-129) carrying a shared reference to its destination, its bind-cycle segment, its position in the frame's public command stream (<code>order</code>), the aspects it names (<code>wantColor</code>, <code>wantDepth</code>, <code>wantStencil</code>) and their values. Command recording discovers passes from this stream as well as from draws, so a target that is only cleared still gets a render pass. <code>RecordCommandBuffer</code> then replays each segment's draws in slices between its clears:</p>
+<ul>
+<li>A clear that precedes every draw of its cycle may ride the pass's load action, but only when that pass really clears its colour attachment, that is on a discarding target. The shared layer issues a clear on every <code>DiscardContents</code> bind, so folding saves one full-target clear per bind.</li>
+<li>Every other clear, and every clear at all on a preserving target (whose pass uses <code>VK_ATTACHMENT_LOAD_OP_LOAD</code>), is recorded as <code>vkCmdClearAttachments</code> after the preceding slice of draws. <code>vkCmdClearColorImage</code> is avoided because it is a transfer command that cannot be recorded inside a render pass.</li>
+<li>The clear rectangle is always the whole render area. Viewport and scissor do not restrict a clear, a contract CNA established across renderers (REMED-GFX-018) and that checks V1/V2 of the shared ordered-clear fixture assert.</li>
+<li>The aspect mask follows the attachment: a stencil request on a depth-only format drops the stencil bit, because clearing a stencil aspect that does not exist is invalid usage.</li>
+<li><code>ClearDepth</code>, <code>ClearStencil</code> and the combined variants record ordered clears of just their aspects. Before REMED-GFX-129, <code>Clear(ClearOptions::DepthBuffer, …)</code> only updated a fallback value and did nothing on Vulkan.</li>
+<li>The first back-buffer cycle of a frame always clears, because an acquired swapchain image has undefined content; later back-buffer cycles load what earlier cycles stored unless they issue their own clear, per aspect.</li>
+</ul>
+<p>An occlusion query left open by one slice stays open across a clear in the middle of its segment, since ending and re-beginning the same query index in one pass is invalid usage.</p>
+<p>Two renderer-neutral suites make these rules observable. <code>Vulkan_GraphicsDevice_ClearOptions</code> first establishes distinct colour, depth and stencil contents and then encodes whichever aspects survive a clear into colour probes, so it can tell the three aspects apart instead of asserting one pixel. <code>Vulkan_GraphicsDevice_OrderedClear</code> runs the shared <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/graphicsdevice_ordered_clear_test.cpp"><code>graphicsdevice_ordered_clear_test.cpp</code></a>, which queues each whole public sequence (for example draw, clear, draw on a preserving target) and only then reads anything back: no readback, present, flush or extra frame sits between two commands of a sequence, so a renderer cannot pass by being forced to settle in between. Depth and stencil are proven by rendering geometry that the stored values must reject or gate, never by reading them back, and a silent validation layer is not counted as evidence.</p>
+<h3 id="clear-history">The black-frame defects this replaced</h3>
+<p>Two render-target defects produced black frames with no error. First, <code>Clear()</code> once changed only global clear values while command recording discovered passes solely from draws, so a target that was cleared and unbound without a draw never entered recording (Task 875):</p>
+<pre><code class="language-cpp">device.SetRenderTarget(&amp;probe, CubeMapFace::PositiveZ);
+device.Clear(Color::CornflowerBlue);
+device.SetRenderTarget(nullptr);   // no intervening draw: the former failure trigger</code></pre>
+<p>An intermediate repair added a list of cleared targets; the <code>PendingClear</code> stream has since superseded it. <code>Vulkan_RenderTarget2D_ClearOnlyRoundtrip</code> still fills two targets without a draw and samples both. Second, SpriteBatch content rendered into all six faces of a <code>RenderTargetCube</code>, unbound and then sampled through <code>EnvironmentMapEffect</code> came out black; <code>Vulkan_RenderTargetCube_SampleAfterUnbind</code> now expects the blue centre. CNA's records do not identify the commit that fixed the second defect. CNA's own <code>docs/rendertarget-support.md</code> still lists these and several other Vulkan render-target features as open at this snapshot; the source and the registered regressions are the better evidence.</p>
+
+<h2 id="usage">RenderTargetUsage: one predicate, per-aspect consequences</h2>
+<p>All renderers derive "preserve" from one shared predicate, <code>RenderTargetUsagePreservesContentsEXT</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/Microsoft/Xna/Framework/Graphics/RenderTargetUsage.hpp"><code>RenderTargetUsage.hpp</code></a>: only <code>DiscardContents</code> discards; <code>PreserveContents</code> and <code>PlatformContents</code> both preserve, as in FNA. <code>RenderTarget2D</code> and <code>RenderTargetCube</code> pass that Boolean to the renderer. On a <code>DiscardContents</code> bind, <code>GraphicsDevice</code> itself clears colour to opaque black and, where the attachments really exist, depth to 1 and stencil to 0 (the neutral sequence is in <a href="../../development/internals/graphics/resources.html#bind">Textures and render targets: bind</a>). An explicit ordered clear supersedes either policy.</p>
+<p>On Vulkan the Boolean selects render-pass variants: the single-sample and MSAA render-pass caches each provide a clear and a load variant, and a preserving target's depth-stencil attachment gets the layouts and store operations it needs to survive a full unbind and rebind. For a <code>RenderTargetCube</code>, colour is per face (each face renders through its own framebuffer over a single-layer view), while one depth-stencil image is deliberately shared by all six faces, matching FNA. The cube's MSAA route is a separate multisampled 2D image with six array layers and one view per face (REMED-GFX-141), resolved into the corresponding layer of the single-sample, cube-compatible colour image. Six layers, rather than one image shared by the face being rendered, is what lets a <code>PreserveContents</code> face be reloaded for a partial update; the MSAA image is created <code>TRANSIENT</code> only for a discarding target. <code>Vulkan_RenderTargetUsage</code>, <code>Vulkan_RenderTargetCube_Usage</code>, <code>Vulkan_RenderTargetCube_MsaaFace</code> and <code>Vulkan_RenderTarget_DepthStencilUsage</code> distinguish these paths, including <code>PlatformContents</code>.</p>
+
+<h2 id="target-mips-mrt">Render-target mips, MSAA and the MRT limit</h2>
+<ul>
+<li><strong>Mip generation.</strong> A render target created with <code>mipMap = true</code> allocates its chain with transfer usage, and <code>VulkanTargetPassEXT::MaybeGenerateMips</code> runs after the pass: a per-level <code>vkCmdBlitImage</code> cascade with linear filtering from the resolved level 0, with a layout barrier around each level. Tests: <code>Vulkan_RenderTarget2D_MipChain</code>, <code>Vulkan_RenderTargetCube_MipChain</code>, <code>Vulkan_MrtMipFinalization</code>.</li>
+<li><strong>MSAA.</strong> Both <code>RenderTarget2D</code> and <code>RenderTargetCube</code> resolve multisampled content (<code>Vulkan_RenderTarget2D_MsaaResolve</code>, <code>Vulkan_RenderTargetCube_MsaaResolve</code>).</li>
+<li><strong>MRT.</strong> At most four simultaneous targets. The cap is CNA's shared <code>MAX_RENDERTARGET_BINDINGS</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a>, which mirrors FNA; it does not come from the Vulkan device limit. The <code>MultipleRenderTargets</code> capability asks the different question of whether more than one colour attachment is expressible (<code>maxColorAttachments &gt; 1</code>), and the public answer is additionally limited by the XNA profile.</li>
+<li><strong>Texture mips.</strong> A plain <code>Texture2D</code> upload above level 0 goes through <code>UpdatePixelsLevel</code> into the requested subresource (<code>Vulkan_Texture2D_Mip_RoundTrip</code>); upper levels are authored by the game, as in XNA.</li>
+</ul>
+
+<h2 id="occlusion-queries">Occlusion queries in a deferred recorder</h2>
+<p>Vulkan records an occlusion query inside a render pass, but CNA's <code>OcclusionQuery.Begin()</code> and <code>End()</code> return long before the frame's command buffer exists. The renderer therefore turns a query into a tag (CNA's tracking items Task 447 and 854):</p>
+<ol>
+<li><code>Begin()</code> marks the query active on the renderer and resets its tagged-draw count; <code>End()</code> clears the mark. Neither records a Vulkan command.</li>
+<li><code>PushPending3DDraw</code> tags every 3D draw queued while the query is active and counts it.</li>
+<li>At the start of <code>RecordCommandBuffer</code>, before any render pass begins, every query tagged this frame gets <code>vkCmdResetQueryPool</code>; resetting inside a render pass is not allowed. A query reused every frame, the idiomatic XNA pattern, is therefore reset every time it is used, not only at construction.</li>
+<li>During replay, a contiguous run of draws carrying the same tag is wrapped in one <code>vkCmdBeginQuery</code>/<code>vkCmdEndQuery</code> pair, so one query may legitimately cover several draws. An open query is closed at the end of each render pass.</li>
+<li><code>getIsCompleteProperty()</code> polls <code>vkGetQueryPoolResults</code> without waiting and stays false while the result is not ready; <code>getPixelCountProperty()</code> returns the value once it is.</li>
+</ol>
+<p>Four precise consequences follow from that design:</p>
+<ul>
+<li><strong>Only the first contiguous run per frame is counted.</strong> A query already recorded once this frame is deliberately not reopened, because Vulkan requires a reset between two begins and re-resetting mid-frame would corrupt the first run's in-flight result. If the tagged draws of one <code>Begin()</code>/<code>End()</code> span a render-pass boundary (a render-target switch inside the span), the draws after the boundary are not summed. This is a real capability gap against what the hardware could do, and it is stated in the source rather than hidden. Keep render-target changes outside a query's span on Vulkan.</li>
+<li><strong>Exact counts need a device feature.</strong> Without <code>occlusionQueryPrecise</code> and <code>VK_QUERY_CONTROL_PRECISE_BIT</code>, Vulkan only promises "some samples passed". The renderer enables the feature where offered and passes the bit only then (VULKAN-370); <code>OcclusionQuery::isPixelCountPreciseEXT()</code> reports which one you got.</li>
+<li><strong>An empty span completes immediately with zero</strong> (VKPAR-0026), as XNA reports it, instead of waiting for a result nothing will produce. A query disposed with draws still queued is detached from them first; the draws survive, and the query pool is retired behind the frame fence (REMED-GFX-075).</li>
+<li><strong>Only 3D draws are tagged.</strong> The tag is applied in <code>PushPending3DDraw</code>; reading the source, SpriteBatch batches recorded between <code>Begin()</code> and <code>End()</code> do not carry it, so on this renderer they do not contribute to the count. This is a reading of the code at this snapshot, not an executed observation.</li>
+</ul>
+<p>The ordinary visibility-culling pattern fits these rules as long as the proxy is drawn with the 3D API inside one target:</p>
+<pre><code class="language-cpp">// Illustrative: DrawBoundingProxy and DrawFullDetailMesh stand for game code.
+OcclusionQuery query(getGraphicsDeviceProperty());   // requires HiDef and the capability
+
+query.Begin();
+DrawBoundingProxy(candidate);   // cheap 3D stand-in; no render-target change inside the span
+query.End();
+
+// One or more frames later, without blocking:
+if (query.getIsCompleteProperty() &amp;&amp; query.getPixelCountProperty() &gt; 0)
+    DrawFullDetailMesh(candidate);</code></pre>
+<p>Evidence: <code>Vulkan_OcclusionQuery_PixelCount</code> draws a visible quad (positive count), a quad behind a nearer opaque occluder (zero or far lower) and two non-overlapping half-quads inside one span (both contributions summed); <code>Vulkan_OcclusionQuery_Precision</code> asserts an exactly known fragment count rather than "greater than zero"; <code>Vulkan_OcclusionQuery_Cycle</code> covers the reset-and-reuse cycle. The user-side pattern, including the multi-frame ring of queries, is in <a href="../../docs/tutorials/61-occlusion-query.html">Tutorial 61: Occlusion Queries</a>.</p>
+
+<h2 id="descriptor-pools">Descriptor pools grow; they do not cap</h2>
+<p>Every <code>Texture2D</code> and <code>RenderTarget2D</code> on this renderer takes one combined-image-sampler descriptor set at construction, and the sampled-descriptor cache keyed by <code>(VkImageView, VkSampler)</code> takes one more for every distinct pair a draw uses. The base pool is sized by <code>MaxDescriptorSets</code>, which is 512, and created with <code>VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT</code> so single sets can be returned. At this snapshot 512 is a per-pool capacity, not a ceiling on live textures:</p>
+<ul>
+<li><code>AllocateTexSamplerDescSetEXT</code> tries the newest overflow pool first (the older ones are full, which is why the newer ones exist), then the base pool, and when every existing pool is full it chains another pool of the same size (VULKAN-390). Textures and render targets allocate through the same function (VULKAN-181/391).</li>
+<li>It throws a named <code>std::runtime_error</code> only if the device refuses to create a further pool, or a fresh pool refuses its first allocation. It never substitutes a resource.</li>
+<li>A disposed resource returns its set to the pool it came from, through the frame-fenced retirement queue, so a game that streams textures in and out does not accumulate towards anything.</li>
+<li>The stock-effect descriptor pools are created with <code>kEffectPoolMaxSets</code> (<code>512 * MaxFramesInFlight</code>) sets, and they and the custom-effect path chain further pools the same way through <code>AllocateFromGrowingPoolEXT</code>. A caller that still gets no set refuses by name; the <code>ShaderEffect</code> path, for example, throws rather than binding a null descriptor set.</li>
+<li><code>GetTexSamplerDescriptorPoolCountEXT()</code> reports how many pools back the cache, so a test can prove that chaining happened instead of inferring it from the pixels.</li>
+</ul>
+<p>The history explains the design. When the single pool was full, the sampled-descriptor cache used to return the renderer's default white descriptor set, so a game with more than 512 live texture and sampler combinations drew white sprites with no exception, log line or validation message. Chaining replaced that, but at first only that cache used the growing pool; <code>Texture2D</code> and <code>RenderTarget2D</code> still allocated straight from the base pool. On the lavapipe software driver the gap was invisible, because the driver kept allocating past <code>maxSets</code>, which the specification permits. On RADV, <code>Vulkan_DescriptorCapacityContract</code>, whose subject is 256 simultaneously live textures, failed every leg until both callers went through the growing path.</p>
+<p>The regression for the overflow path, <code>Vulkan_DescriptorPoolOverflow</code>, shows how to test an arm that volume cannot reach. Its source records that on the tested drivers even 4,000 simultaneously live pairs, and a pool shrunk to 8 sets, never produced an allocation failure, so a volume-only test would pass while executing none of the code it claims to cover. The test therefore injects <code>VK_ERROR_OUT_OF_POOL_MEMORY</code> through the one allocation helper every call site uses, and checks that a single injected failure chains exactly one more pool, that 640 distinct live 1x1 textures (each colour encoding its index, so white is never a legitimate answer) each draw their own texture, that a failure the fresh pool cannot satisfy raises the named exception, and that the validation layer stays silent. <code>Vulkan_DescriptorCapacityContract</code> checks each draw against a self-identifying colour, so a recycled or grown pool that aliased one resource onto another's binding would name the wrong resource.</p>
+
+<h2 id="device-features">Optional device features are negotiated, not assumed</h2>
+<p><code>CreateLogicalDevice</code> enables an optional <code>VkPhysicalDeviceFeatures</code> member only when the physical device reports it, and records the outcome for the capability answers: <code>fillModeNonSolid</code> (wireframe; <code>FillMode::WireFrame</code> is honoured only when it is enabled), <code>samplerAnisotropy</code> (with the device's <code>maxSamplerAnisotropy</code>), <code>independentBlend</code>, <code>occlusionQueryPrecise</code>, <code>drawIndirectFirstInstance</code> and <code>textureCompressionBC</code>; the 4444 packed formats additionally need the <code>VK_EXT_4444_formats</code> extension and its feature bit. A device without a feature gets a working renderer with the corresponding capability reported false, not a creation failure. This was once investigated as a possible gap and found already correct; it is recorded here because a renderer's evidence record should show negative findings as well as defects. <code>VulkanRenderer::SupportsCapability</code> has no <code>default:</code> arm and the family compiles with <code>-Werror=switch</code>, so a new <code>GraphicsCapability</code> member stops the build until this renderer answers it; an out-of-range value is refused rather than claimed.</p>
+<p>Formats follow the same rule. <code>ClassifySurfaceFormatEXT</code> answers from the physical device's real <code>VkFormatProperties</code> for every format the renderer can store and defers to the framework's <code>Color</code>-only rule for a format it has no mapping for (VULKAN-170), so non-<code>Color</code> textures are not blocked wholesale on Vulkan. The per-renderer summary is in <a href="../../docs/rendering-backends.html#texture-formats">Rendering backends: texture formats</a>.</p>
+
+<h2 id="depth-bias">The depth-bias case: a test that measured the wrong convention</h2>
+<p>For a long time one Vulkan test, <code>Vulkan_DepthBias</code>, failed only at its most extreme tested bias magnitude, and an equivalent observation had been recorded on <code>DIRECTX9</code>, which suggested a shared driver-environment cause. The explanation at this snapshot, recorded in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/examples/vulkan_depth_bias_test.cpp"><code>vulkan_depth_bias_test.cpp</code></a> (VULKAN-091), is that the test used OpenGL's depth convention. Its flat triangles sat at <code>z = 0</code> under an identity projection and were described as "depth 0.5", which is true in OpenGL, where clip z in [-1, 1] maps to [0, 1]. XNA uses Direct3D 9's convention, clip z in [0, w], and so does Vulkan; there <code>z = 0</code> is the near plane, nothing can be biased in front of it, and the <code>Less</code> test fails. A separate off-screen experiment on every device the loader offered showed <code>vkCmdSetDepthBias</code>'s constant factor behaving as specified on both the lavapipe driver (with the same <code>D24_UNORM_S8_UINT</code> format the renderer picks) and RADV; two drivers is the threshold CNA's Vulkan plan sets before attributing a result to one. The flat scenarios now sit at <code>z = 0.5</code>, the tilted ones span 0.2 to 0.8, and a new guard leg draws a flat triangle at <code>z = 0</code> with a bias of -1e6 and requires it to stay red, which is what XNA's depth range means. <code>RasterizerState.DepthBias</code> maps to <code>vkCmdSetDepthBias</code>'s constant factor and <code>SlopeScaleDepthBias</code> to its slope factor, matching FNA's <code>glPolygonOffset(slopeScaleDepthBias, depthBias)</code>.</p>
+
+<h2 id="evidence">Coverage and what remains unproven</h2>
+<p>The renderer-specific pixel suite is large. Pixel tests that were once missing on Vulkan now exist as registrations that reuse the shared EasyGL sources verbatim: <code>Vulkan_SpriteBatch_LayerDepthOrder</code>, <code>Vulkan_SpriteBatch_Rotation</code>, <code>Vulkan_SpriteBatch_Scale</code>, <code>Vulkan_SpriteBatch_SourceRectangleCropping</code> and <code>Vulkan_SpriteEffects_Flip</code> for SpriteBatch, the <code>Vulkan_SpriteFont_*</code> glyph-placement tests, and <code>Vulkan_Model_TwoMeshesEffects</code> and <code>Vulkan_Model_HierarchyChildMesh</code> for multi-mesh models. Registration is not a result: no test on this page was executed for it, and the registrations run only in a build that selects <code>VULKAN</code>, with a display and a Vulkan device. The renderer is not part of the 32-fixture cross-renderer parity corpus and is not compared with real XNA output. The occlusion-query SpriteBatch observation and the zero-area scissor difference above are readings of the source that no registered test decides. How this evidence compares with the other native renderers is summarised in <a href="native-gpu-evidence-tiers.html">Evidence tiers of the native modern GPU renderers</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/graphics-state.html">Graphics state</a> &middot; <a href="../../docs/render-targets.html#rendertargetusage">Render targets: RenderTargetUsage</a> &middot; <a href="../../docs/tutorials/61-occlusion-query.html">Tutorial 61: Occlusion queries</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/graphics/vulkan.html">Vulkan renderer internals</a> &middot; <a href="../../development/internals/graphics/resources.html">Textures and render targets</a> &middot; <a href="../../development/internals/graphics/draw-call.html">Indexed draw trace</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/handbook/fix-a-renderer-bug.html">Fix a renderer bug</a> &middot; <a href="../../development/handbook/debug-shutdown-and-lifetime.html">Debug shutdown and lifetime</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html#gpu">Test architecture: GPU tests</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../development/reference/test-targets.html">Test target index</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="vulkan-presentation-and-readback.html">Vulkan presentation and readback</a> &middot; <a href="native-gpu-evidence-tiers.html">Evidence tiers of the native modern GPU renderers</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="vulkan-presentation-and-readback.html" rel="prev"><span>Previous</span>Vulkan presentation, frame pacing and back-buffer readback</a><a class="dev-pager-next" href="sdl-gpu-pipeline-state-and-draw-order.html" rel="next"><span>Next</span>SDL_GPU shader intake, pipeline keys and draw order</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

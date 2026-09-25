@@ -1,0 +1,1370 @@
+{
+ "unit": "legacy-sdlgpu",
+ "author": "WP09",
+ "done": true,
+ "target_relevance": "partly-stale",
+ "actions": [
+  "NEW PAGE",
+  "DEEP DIVE",
+  "MERGE",
+  "TARGET-CONTRADICTED",
+  "TESTING/EVIDENCE"
+ ],
+ "summary": "Older SDL_GPU campaign narrative: dependency argument, SDL_gpu shader convention and Y-flip, skinned palette, runtime GLSL ShaderEffect and the .cnj boundary, pipeline snapshots and hashing, draw order, present timing, validation findings, render-target lifetime, MRT, usage, Texture3D cycling, swapchain recovery and open items. Partly stale at 009d40f5: the palette is now a texture, back-buffer depth follows DepthFormat, instancing exists, cube MSAA uses per-face textures and occlusion creation throws. The Development internals page already held much of the mechanism; the rationale, tests and corrections went into two SDL_GPU deep dives.",
+ "sections": [],
+ "empty_sections": [],
+ "concepts": [
+  {
+   "id": "WP09-sdlgpu-001",
+   "section": "Legacy SDL GPU Chapter Material",
+   "text": "SDL_GPU implements CNA's renderer contract on SDL3's SDL_gpu API: it owns an SDL_GPUDevice, records draws in CPU-side queues and acquires a command buffer and swapchain texture only at flush.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html"
+   ],
+   "tokens": [
+    "SDL_GPUDevice"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp; modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-002",
+   "section": "Legacy SDL GPU Chapter Material",
+   "text": "The renderer was covered late in the source material, a gap in the documentation rather than in CNA's code.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Narrative about the documentation's own coverage history; no technical claim."
+  },
+  {
+   "id": "WP09-sdlgpu-003",
+   "section": "Why this renderer costs nothing new",
+   "text": "SDL_gpu dispatches internally to Vulkan, Direct3D 12 or Metal depending on platform and driver availability.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#selection",
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#dependency"
+   ],
+   "tokens": [
+    "Vulkan / Direct3D 12 / Metal"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (CreateGraphicsRenderer / SDL_CreateGPUDevice)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-004",
+   "section": "Why this renderer costs nothing new",
+   "text": "The SDL_gpu implementation is part of the vendored SDL3, so on Linux the renderer adds no third-party dependency; at the snapshot Windows and Apple builds default CNA_SDL_GPU_SHADERCROSS on (pinned SDL_shadercross and SPIRV-Cross) and GLSL ShaderEffect needs a target-native libshaderc.",
+   "kind": "configuration",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#selection",
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#dependency"
+   ],
+   "tokens": [
+    "There is no separate SDL_gpu library",
+    "CNA_SDL_GPU_SHADERCROSS"
+   ],
+   "note": "The source unit said zero new dependency; true only for the Linux/Vulkan route.",
+   "target": {
+    "result": "corrected",
+    "evidence": "cmake/RendererSelection.cmake (CNA_SDL_GPU_SHADERCROSS); cmake/ThirdPartySDLShaderCross.cmake; modules/renderers/sdl-gpu/CMakeLists.txt"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-005",
+   "section": "Why this renderer costs nothing new",
+   "text": "Main class CNA::Internal::Renderers::SdlGpu::SdlGpuRenderer, sources under modules/renderers/sdl-gpu/src, target cna_renderer_sdl_gpu, selected with -DCNA_GRAPHICS_RENDERER=SDL_GPU.",
+   "kind": "reference",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#selection",
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#dependency"
+   ],
+   "tokens": [
+    "cna_renderer_sdl_gpu",
+    "SdlGpuRenderer"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp; modules/renderers/sdl-gpu/CMakeLists.txt"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-006",
+   "section": "Why this renderer costs nothing new",
+   "text": "The SdlGpuRenderer name is deliberately distinct from SdlRenderer (the 2D SDL_RENDERER identity on SDL's unrelated SDL_Renderer API) so the similar SDL names do not collide.",
+   "kind": "naming",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#dependency"
+   ],
+   "tokens": [
+    "SdlRenderer"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-renderer (SdlRenderer); modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-007",
+   "section": "Precompiled bytecode only, in a fixed resource-binding order",
+   "text": "SDL_CreateGPUShader accepts only format-tagged bytecode (SPIR-V, DXBC/DXIL, MSL or metallib), never GLSL or HLSL source.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#shader-bytecode"
+   ],
+   "tokens": [
+    "SDL_CreateGPUShader",
+    "SDL_GPUShaderFormat"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (CreateSdlGpuShaderEXT; SDL_GPUShaderCreateInfo use)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-008",
+   "section": "Precompiled bytecode only, in a fixed resource-binding order",
+   "text": "SDL_gpu fixes resource sets per stage (vertex textures/storage set 0, vertex uniforms set 1, fragment textures/storage set 2, fragment uniforms set 3), a different layout from the Vulkan renderer's shaders.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#shaders",
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#shader-bytecode"
+   ],
+   "tokens": [
+    "compile_shaders.py",
+    "set 3"
+   ],
+   "note": "The source unit described the convention in HLSL register terms (t/s/u/b); CNA's shaders use the SPIR-V set form.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/sdl-gpu/src/shaders/compile_shaders.py (docstring)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-009",
+   "section": "Precompiled bytecode only, in a fixed resource-binding order",
+   "text": "Vulkan's compiled SPIR-V is an algorithmic reference but not reusable output for SDL_GPU; every stock shader was re-authored for SDL_gpu's sets; Vulkan-layout packages are accepted at run time only through the SPIR-V remapper.",
+   "kind": "rationale",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#shaders",
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#shader-bytecode"
+   ],
+   "tokens": [
+    "RemapSpirvForSdlGpuEXT",
+    "algorithmic reference"
+   ],
+   "note": "The runtime remapper is new relative to the source unit.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuSpirvBindings.cpp (RemapSpirvForSdlGpuEXT)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-010",
+   "section": "Precompiled bytecode only, in a fixed resource-binding order",
+   "text": "SDL_GPU's stock shaders are 23 GLSL sources under src/shaders compiled offline by compile_shaders.py into the checked-in spirv_shaders.hpp; the shadow-sampling include is shared with the Vulkan renderer through CNA_SHADOW_* defines.",
+   "kind": "reference",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#shader-bytecode"
+   ],
+   "tokens": [
+    "23 GLSL sources",
+    "spirv_shaders.hpp"
+   ],
+   "note": "The source unit's list of pairs predates removal of instanced3d.vert.glsl.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/shaders/ (23 *.glsl at 009d40f5)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-011",
+   "section": "The screenshot that exposed a Y-flip",
+   "text": "SDL_gpu's Vulkan driver flips clip-space Y internally; the first sprite shader drew every sprite upside down without error; sprite2d.vert.glsl negates ndc.y; only a captured screenshot revealed it.",
+   "kind": "defect",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#y-flip"
+   ],
+   "tokens": [
+    "sprite2d.vert.glsl",
+    "-ndc.y"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/shaders/sprite2d.vert.glsl"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-012",
+   "section": "The screenshot that exposed a Y-flip",
+   "text": "The isolating diagnostic sdlgpu_diag_single_sprite.cpp (one plain full-texture sprite with native back-buffer presentation) was kept in the tree as a manual tool, not a CTest.",
+   "kind": "tooling",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#y-flip"
+   ],
+   "tokens": [
+    "sdlgpu_diag_single_sprite.cpp"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/examples/sdlgpu_diag_single_sprite.cpp"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-013",
+   "section": "The screenshot that exposed a Y-flip",
+   "text": "A 'did it throw' test cannot catch a wrong-but-plausible image; a pixel or screenshot check is needed.",
+   "kind": "lesson",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/native-gpu-evidence-tiers.html#defect-shapes"
+   ],
+   "tokens": [
+    "upside-down sprites"
+   ],
+   "note": "",
+   "target": {
+    "result": "not-applicable",
+    "evidence": "methodology"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-014",
+   "section": "SkinnedEffect's storage-buffer workaround and push-uniform limit",
+   "text": "SDL_gpu's pushed-uniform blocks are limited to about 4,096 bytes on CNA's Vulkan driver (an empirical binary-search measurement, undocumented in SDL_gpu.h), smaller than SkinnedEffect's 72 x 64 = 4,608-byte palette; other stock effects keep uniform pushes.",
+   "kind": "limitation",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#skinned-palette"
+   ],
+   "tokens": [
+    "4,096 bytes",
+    "4,608 bytes"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/shaders/skinned3d.vert.glsl (comment)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-015",
+   "section": "SkinnedEffect's storage-buffer workaround and push-uniform limit",
+   "text": "The source unit said SkinnedEffect's bone matrices use a vertex storage buffer; at the snapshot the palette is a 288x1 RGBA32F sampler texture at vertex set 0 binding 0, because the storage-buffer route made Direct3D 12 reject the pipeline; the row is 256-byte aligned for Direct3D 12 uploads.",
+   "kind": "correction",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#skinned-palette"
+   ],
+   "tokens": [
+    "288 × 1",
+    "RGBA32F"
+   ],
+   "note": "",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/sdl-gpu/src/shaders/skinned3d.vert.glsl; modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp (SkinnedDrawCommand comment)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-016",
+   "section": "Custom ShaderEffect runtime compilation without a development package",
+   "text": "SDL_GPU compiles GLSL ShaderEffect source to SPIR-V at run time with a linked target-native libshaderc (CNA_SDL_GPU_SHADER_EFFECTS); SPIR-V payloads use a compiler-free intake available in every build.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#shaders",
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#shader-effect-dialect"
+   ],
+   "tokens": [
+    "libshaderc",
+    "CNA_SDL_GPU_SHADER_EFFECTS"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (SdlGpuEffectRenderer::CompileProgram)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-017",
+   "section": "Custom ShaderEffect runtime compilation without a development package",
+   "text": "Because no libshaderc development package was available, SdlGpuRenderer.cpp hand-declares the extern \"C\" shaderc entry points it calls (shaderc_compiler_initialize, shaderc_compile_into_spv, shaderc_result_get_bytes and helpers) with enum values as named constants; compilation still uses the real shared library.",
+   "kind": "engineering",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#shader-effect-dialect"
+   ],
+   "tokens": [
+    "shaderc_compiler_initialize",
+    "shaderc_compile_into_spv"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (SDLGPU-42/43 extern C block)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-018",
+   "section": "Custom ShaderEffect runtime compilation without a development package",
+   "text": "The Vulkan renderer's ShaderEffect does not compile GLSL at all: it takes SPIR-V words and refuses GLSL text, despite ShaderEffect's source-oriented contract.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/vulkan.html#shaders",
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#shader-effect-dialect"
+   ],
+   "tokens": [
+    "takes SPIR-V words, not GLSL text"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/vulkan/src/VulkanRenderer.cpp (VulkanEffectRenderer); modules/renderers/vulkan/examples/CMakeLists.txt (Vulkan_ShaderDialectContract)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-019",
+   "section": "Custom ShaderEffect runtime compilation without a development package",
+   "text": "CustomEffects means a renderer accepts an effect, not that it executes the source; ExecutesShaderEffectSourceEXT and the declared dialect answer that; SDL_GPU declares SPIR-V and does not claim GLSL even where the GLSL route exists.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#shader-effect-dialect"
+   ],
+   "tokens": [
+    "ExecutesShaderEffectSourceEXT()",
+    "SupportsShaderLanguageEXT"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp (GetShaderDialectEXT, SupportsShaderLanguageEXT doc)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-020",
+   "section": "The .cnj fixture exposes the remaining shader-compatibility boundary",
+   "text": "CnjEffectTest.LoadsRealCnjFixture's GLSL ES 3.00 pair (loose uniforms, unqualified stage I/O) is not accepted by SDL_GPU's Vulkan-rule GLSL route, so that .cnj effect is invalid on this renderer.",
+   "kind": "limitation",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#cnj-boundary"
+   ],
+   "tokens": [
+    "CnjEffectTest.LoadsRealCnjFixture",
+    "#version 300 es"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/content/tests/Microsoft/Xna/Framework/Content/CnjEffectTests.cpp; modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (CompileProgram)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-021",
+   "section": "The .cnj fixture exposes the remaining shader-compatibility boundary",
+   "text": "SdlGpu_ShaderEffect proves the supported dialect: #version 450, explicit locations, fragment sampler at set 2 binding 0, uniform blocks at set 1 (vertex) and set 3 (fragment), with a tint readback and a white control draw.",
+   "kind": "test",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#shader-effect-dialect"
+   ],
+   "tokens": [
+    "SdlGpu_ShaderEffect",
+    "layout(set = 2, binding = 0)"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/examples/sdlgpu_shadereffect_test.cpp"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-022",
+   "section": "The .cnj fixture exposes the remaining shader-compatibility boundary",
+   "text": "SDL_GPU's GLSL route creates the vertex shader with one uniform buffer and the fragment shader with one sampler and one uniform buffer, so a custom GLSL effect must fit that shape.",
+   "kind": "limitation",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#shader-effect-dialect"
+   ],
+   "tokens": [
+    "one sampler and one uniform buffer"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (CompileProgram vsInfo/fsInfo counts)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-023",
+   "section": "The .cnj fixture exposes the remaining shader-compatibility boundary",
+   "text": "Closing the .cnj gap needs a designed decision: migrate the shared .cnj source convention to the portable dialect (changing content expectations everywhere) or add a real loose-GLSL translation layer to SDL_GPU.",
+   "kind": "design",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#cnj-boundary"
+   ],
+   "tokens": [
+    "translation layer"
+   ],
+   "note": "",
+   "target": {
+    "result": "not-applicable",
+    "evidence": "design rationale"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-024",
+   "section": "Pipeline state is snapshotted at draw time, except where it is deliberately not",
+   "text": "Each queued SDL_GPU sprite or 3D command carries a RenderStateSnapshot taken when issued (blend, write masks, cull, fill, depth bias, stencil, depth fields).",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#queue",
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#pipeline-key"
+   ],
+   "tokens": [
+    "RenderStateSnapshot"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp (RenderStateSnapshot)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-025",
+   "section": "Pipeline state is snapshotted at draw time, except where it is deliberately not",
+   "text": "SDL_GPU folds topology, depth fields, per-slot colour formats, sample count, depth-stencil format and the snapshot into one std::size_t key with a boost-style HashCombine, replacing a hand-packed integer key.",
+   "kind": "algorithm",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#pipeline-key"
+   ],
+   "tokens": [
+    "PipelineCacheKey",
+    "HashCombine"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (PipelineCacheKey, HashCombine)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-026",
+   "section": "Pipeline state is snapshotted at draw time, except where it is deliberately not",
+   "text": "Conditional hashing: disabled blend, disabled stencil and disabled two-sided stencil do not hash their sub-fields; stencil masks are hashed after Uint8 truncation; slot formats (SDLGPU-72) and depth-format presence (REMED-GFX-097) are required dimensions.",
+   "kind": "algorithm",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#pipeline-key"
+   ],
+   "tokens": [
+    "SDLGPU-72",
+    "REMED-GFX-097",
+    "Uint8"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (PipelineCacheKey)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-027",
+   "section": "Pipeline state is snapshotted at draw time, except where it is deliberately not",
+   "text": "The colour format in SDL_GPU's pipeline key comes from the swapchain texture SDL actually returns each frame, not from the public BackBufferFormat; GetAppliedBackBufferFormatEXT reports Color.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#pipeline-key"
+   ],
+   "tokens": [
+    "GetAppliedBackBufferFormatEXT()"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (GetAppliedBackBufferFormatEXT)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-028",
+   "section": "Pipeline state is snapshotted at draw time, except where it is deliberately not",
+   "text": "The source unit said SDL_GPU always allocates a D24S8 or D32S8 back-buffer depth attachment and that DepthFormat::None does not suppress it.",
+   "kind": "correction",
+   "disposition": "TARGET CONTRADICTED",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#pipeline-key"
+   ],
+   "tokens": [
+    "UpdatePresentationFormatEXT"
+   ],
+   "note": "At 009d40f5 the back-buffer depth attachment follows the public DepthFormat: None means none; Depth16/Depth24 fall back to D32_FLOAT.",
+   "target": {
+    "result": "contradicted",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (TryGetDepthTargetFormatInfo; UpdatePresentationFormatEXT)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-029",
+   "section": "Pipeline state is snapshotted at draw time, except where it is deliberately not",
+   "text": "SDL_GPU sends the stencil reference per draw through SDL_SetGPUStencilReference; a left-half stencil write followed by an Equal-reference draw proves it (SdlGpu_RenderState).",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#dynamic-state"
+   ],
+   "tokens": [
+    "SDL_SetGPUStencilReference()",
+    "SdlGpu_RenderState"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp (referenceStencil_); modules/renderers/sdl-gpu/examples/sdlgpu_renderstate_test.cpp"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-030",
+   "section": "Pipeline state is snapshotted at draw time, except where it is deliberately not",
+   "text": "SDL_GPU viewport, scissor and blend constants are snapshotted per queued draw and applied with SDL_SetGPUViewport, SDL_SetGPUScissor and SDL_SetGPUBlendConstants immediately before it; enabled scissors clamp, disabled or degenerate ones expand to the full target.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#dynamic-state"
+   ],
+   "tokens": [
+    "SDL_SetGPUViewport",
+    "SDL_SetGPUBlendConstants"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (ApplyScissorForRef, ApplyBlendFactorForRef)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-031",
+   "section": "Pipeline state is snapshotted at draw time, except where it is deliberately not",
+   "text": "SDL_GPU depth bias is pipeline-static: NormalizeDepthBias scales DepthBias per depth format (2^23-1, 2^24-1, 2^16-1) like FNA3D's SDL_gpu driver, disables bias for lines and points, canonicalises signed zero and hashes the result; enable_depth_clip is set on every pipeline (REMED-GFX-051).",
+   "kind": "algorithm",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#dynamic-state"
+   ],
+   "tokens": [
+    "NormalizeDepthBias",
+    "enable_depth_clip",
+    "REMED-GFX-051"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (NormalizeDepthBias, FillDepthBiasState); modules/renderers/sdl-gpu/examples/sdlgpu_depth_bias_test.cpp"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-032",
+   "section": "Pipeline state is snapshotted at draw time, except where it is deliberately not",
+   "text": "SDL_GPU sampler key and descriptor carry every TextureFilter value mapped per component, U/V/W addressing, MaxAnisotropy clamped 1..16 and applied only for Anisotropic, MaxMipLevel as min_lod and MipMapLevelOfDetailBias (REMED-GFX-170).",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#dynamic-state"
+   ],
+   "tokens": [
+    "REMED-GFX-170",
+    "MaxMipLevel"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (FillSdlGpuSamplerCreateInfo; SetSamplerState); modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp (SamplerCacheKeyEXT)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-033",
+   "section": "Deferred rendering still preserves the game's draw order",
+   "text": "SDL_GPU once replayed every 3D family first and every sprite last regardless of the game's call order.",
+   "kind": "defect",
+   "disposition": "FIXED BUG",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#draw-order"
+   ],
+   "tokens": [
+    "every 3D family was replayed first"
+   ],
+   "note": "Fixed: PushDrawOrder appends a reference per queued draw and RenderQueuedDraws replays chronologically.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (RenderQueuedDraws; drawOrder_)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-034",
+   "section": "Deferred rendering still preserves the game's draw order",
+   "text": "Every Queue*Draw and QueueSprite appends a kind/index reference through PushDrawOrder; RenderQueuedDraws makes one chronological pass per target without sorting, and pipeline-rebind avoidance works across all kinds.",
+   "kind": "algorithm",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#queue",
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#draw-order"
+   ],
+   "tokens": [
+    "PushDrawOrder",
+    "RenderQueuedDraws()"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (PushDrawOrder, RenderQueuedDraws)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-035",
+   "section": "Deferred rendering still preserves the game's draw order",
+   "text": "SdlGpu_DrawOrder is discriminating: an opaque red full-target sprite and an opaque green full-target 3D quad in both orders with depth off must read green then red; the old order read red twice.",
+   "kind": "test",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#draw-order"
+   ],
+   "tokens": [
+    "sdlgpu_draworder_test.cpp"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/examples/sdlgpu_draworder_test.cpp"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-036",
+   "section": "Present timing belongs to the device manager, not a test-only renderer poke",
+   "text": "GraphicsDeviceManager defaults SynchronizeWithVerticalRetrace to true; CNA's virtual test display has no useful retrace, so SDL_GPU examples set the property false through the public API before Game::DoInitialize (36 of the 50 example sources).",
+   "kind": "guidance",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#present-interval"
+   ],
+   "tokens": [
+    "setSynchronizeWithVerticalRetraceProperty",
+    "36 of the 50 example sources"
+   ],
+   "note": "The source unit counted 22 examples; recounted at TARGET.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/runtime/src/GraphicsDeviceManager.cpp (synchronizeWithVerticalRetrace_(true)); modules/renderers/sdl-gpu/examples/*.cpp (grep count at 009d40f5)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-037",
+   "section": "Present timing belongs to the device manager, not a test-only renderer poke",
+   "text": "GraphicsDevice::Reset once did not forward the presentation interval to IGraphicsRenderer::SetSwapInterval; after the repair it overwrote early private SetSwapInterval(0) pokes, exposing test timeouts instead of preserving an ordering dependency.",
+   "kind": "history",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#present-interval"
+   ],
+   "tokens": [
+    "SdlGpuRenderer::SetSwapInterval(0)"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (Reset forwarding comment)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-038",
+   "section": "Present timing belongs to the device manager, not a test-only renderer poke",
+   "text": "SDL_GPU interval 0 requests IMMEDIATE, then MAILBOX (recorded as applied interval 1); any positive interval is VSYNC; SDL_gpu has no half-rate mode so PresentInterval.Two equals One; a refused swapchain-parameter call keeps the previous value.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#construction",
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#present-interval"
+   ],
+   "tokens": [
+    "no half-rate present mode",
+    "SDL_GPU_SWAPCHAINCOMPOSITION_SDR"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (ConfigureSwapchain, SetSwapInterval)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-039",
+   "section": "Two violations exposed by validation mode",
+   "text": "SDL_GPU requests SDL_gpu debug_mode (validation) in builds without NDEBUG and not in release builds, mirroring the Direct3D 11 renderer's rule.",
+   "kind": "configuration",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#construction",
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#validation-mode"
+   ],
+   "tokens": [
+    "on whenever NDEBUG is not defined",
+    "debug_mode"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (resources.debugModeEnabled)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-040",
+   "section": "Two violations exposed by validation mode",
+   "text": "SDL_gpu forbids multisampled array textures; RenderTargetCube MSAA now uses six single-layer multisampled 2D textures, one per face, resolving into the cube's layers (REMED-GFX-141); the intermediate single shared texture could not preserve content because cycling is illegal with LOADOP_LOAD.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#validation-mode"
+   ],
+   "tokens": [
+    "REMED-GFX-141",
+    "resolve_layer"
+   ],
+   "note": "The source unit described the single shared attachment as the final design.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp (REMED-GFX-141 comment); modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (RenderTargetCube MSAA creation)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-041",
+   "section": "Two violations exposed by validation mode",
+   "text": "Automatic mip generation on plain Texture3D/TextureCube needed COLOR_TARGET and made SDL 3.5's Vulkan path build invalid depth-plane views; REMED-GFX-099 made plain Texture3D SAMPLER-only with authored levels, and plain TextureCube is authored too.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#validation-mode"
+   ],
+   "tokens": [
+    "REMED-GFX-099",
+    "SAMPLER"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (SdlGpuTexture3DRenderer and SdlGpuTextureCubeRenderer constructors)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-042",
+   "section": "Two violations exposed by validation mode",
+   "text": "SdlGpu_Texture3D_Validity is construction-only with validation fatal; SdlGpu_Texture3D covers the data contract (planes, partial box, three-level chain, write orders, two resources, NPOT chain, destruction).",
+   "kind": "test",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#validation-mode"
+   ],
+   "tokens": [
+    "SdlGpu_Texture3D_Validity",
+    "SdlGpu_Texture3D"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/examples/sdlgpu_texture3d_validity_test.cpp; sdlgpu_texture3d_test.cpp"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-043",
+   "section": "Two violations exposed by validation mode",
+   "text": "Validation is evidence with scope: it first exposed tolerated violations and then forced the design back to the public resource contract rather than suppressing diagnostics.",
+   "kind": "lesson",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#validation-mode",
+    "deep-dives/renderers/native-gpu-evidence-tiers.html#defect-shapes"
+   ],
+   "tokens": [
+    "Validation is evidence with a scope"
+   ],
+   "note": "",
+   "target": {
+    "result": "not-applicable",
+    "evidence": "methodology"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-044",
+   "section": "A pre-release render-target use-after-free",
+   "text": "A render target destroyed before SDL_GPU's deferred pass executed caused a use-after-free; SdlGpuRenderTarget2DState and SdlGpuRenderTargetCubeState hold native handles kept alive by shared_ptr from commands and segments.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#segments",
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#target-lifetime"
+   ],
+   "tokens": [
+    "SdlGpuRenderTarget2DState",
+    "QueueTextureRelease"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp; modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-045",
+   "section": "A pre-release render-target use-after-free",
+   "text": "The use-after-free was confirmed by a real segmentation fault while the MRT test was first being written, before any release.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Discovery narrative; the header of sdlgpu_mrt_test.cpp at 009d40f5 records it; the current mechanism is a separate PRESERVED concept."
+  },
+  {
+   "id": "WP09-sdlgpu-046",
+   "section": "A regression that makes destruction precede submission",
+   "text": "SdlGpu_RenderTargetLifetime creates an 8x8 local target, clears it red, samples it into a live 16x16 blue target, destroys it before Present, requires exact red, then repeats for 120 frames.",
+   "kind": "test",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#target-lifetime"
+   ],
+   "tokens": [
+    "SdlGpu_RenderTargetLifetime",
+    "120 frames"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/examples/sdlgpu_rendertarget_lifetime_test.cpp"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-047",
+   "section": "A regression that makes destruction precede submission",
+   "text": "Two lifetime stages: shared_ptr references until the frame has rendered, then the state destructor queues handles into pendingTextureReleases_, released with SDL_ReleaseGPUTexture after a successful submit; a recording never releases a handle an unsubmitted command names.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#shutdown",
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#target-lifetime"
+   ],
+   "tokens": [
+    "pendingTextureReleases_",
+    "SDL_ReleaseGPUTexture"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (QueueTextureRelease, submit path)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-048",
+   "section": "MRT as a shader capability",
+   "text": "SetRenderTargets makes the first target primary and the others extra attachments of one pass; the pipeline key includes the attachment count and formats; all attachments share blend factors while write masks are per slot; the segment's clear colour applies to every colour attachment.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#segments",
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#mrt"
+   ],
+   "tokens": [
+    "MRT extras",
+    "each slot takes its own"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (RenderToTarget colorTargets loop; FillBlendState)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-049",
+   "section": "MRT as a shader capability",
+   "text": "Stock shaders have one output, so under MRT target 0 receives the draw; SdlGpu_MRT's custom two-output effect reads (51,102,204,255) and (102,204,51,255) from one draw; it also varies count up to four and drives compiled oC0/oC1 output (SDLGPU-75).",
+   "kind": "test",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#mrt"
+   ],
+   "tokens": [
+    "(51, 102, 204, 255)",
+    "SDLGPU-75"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/examples/sdlgpu_mrt_test.cpp"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-050",
+   "section": "MRT as a shader capability",
+   "text": "Each PassSegment retains primary and secondary MRT attachments as shared_ptr, so destroying a public secondary target cannot invalidate a recorded bind cycle.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#segments",
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#target-lifetime"
+   ],
+   "tokens": [
+    "PassSegment"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp (PassSegment)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-051",
+   "section": "Usage selects per-resource first-use load/store behavior",
+   "text": "Each 2D target and cube face has independent first-use colour/depth/stencil flags; the Discard bind clear is recorded into the new segment, Preserve records none, later cycles load unless an explicit clear selects an aspect.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#segments",
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#usage"
+   ],
+   "tokens": [
+    "first-use clear flag"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (FillColorTargetInfo, clear*Pending flags)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-052",
+   "section": "Usage selects per-resource first-use load/store behavior",
+   "text": "SDL_GPU cube usage: a single-sample face loads its layer; a multisampled face keeps a persistent per-face attachment and uses RESOLVE_AND_STORE when preserving or when a later segment loads it, plain RESOLVE otherwise; PlatformContents preserves.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#usage"
+   ],
+   "tokens": [
+    "RESOLVE_AND_STORE",
+    "SdlGpu_RenderTargetCube_MsaaFace"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (RenderToTargetCubeFace); modules/renderers/sdl-gpu/examples/CMakeLists.txt"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-053",
+   "section": "Texture3D's cycle=true orphaned-write defect",
+   "text": "SDL_UploadToGPUTexture with cycle=true may give the texture fresh backing memory, orphaning earlier partial writes; SDL_GPU's first Texture3D upload path copied cycle=true and lost earlier slices.",
+   "kind": "defect",
+   "disposition": "FIXED BUG",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#upload-cycling"
+   ],
+   "tokens": [
+    "SDL_UploadToGPUTexture"
+   ],
+   "note": "Fixed: Texture3D uploads use cycle=false.",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (SdlGpuTexture3DRenderer::SetData cycle=false)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-054",
+   "section": "Texture3D's cycle=true orphaned-write defect",
+   "text": "SDL_GPU upload cycling rule: Texture3D and TextureCube uploads use cycle=false; Texture2D cycles only when it has a single level, because cycling a chain discards the levels not written.",
+   "kind": "semantics",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#upload-cycling"
+   ],
+   "tokens": [
+    "cycle",
+    "one level"
+   ],
+   "note": "The source unit said Texture2D's cycle=true path is untouched; at TARGET a mipmapped Texture2D does not cycle.",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (UpdatePixelsLevel 'const bool cycle = levelCount_ == 1')"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-055",
+   "section": "Texture3D's cycle=true orphaned-write defect",
+   "text": "A discriminating test for orphaned writes writes different colours to different, off-centre parts of one resource in separate calls and reads each back.",
+   "kind": "test-strategy",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#upload-cycling"
+   ],
+   "tokens": [
+    "off-centre"
+   ],
+   "note": "",
+   "target": {
+    "result": "not-applicable",
+    "evidence": "test design rationale"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-056",
+   "section": "Forced swapchain failure preserves the queued frame",
+   "text": "SDL_GPU acquisition: a successful call with a null texture (e.g. minimised window) is a non-error skip that still submits; a false return submits, then throws with SDL_GetError, keeping framePending_ so the queued frame survives.",
+   "kind": "failure-mode",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#swapchain-failure"
+   ],
+   "tokens": [
+    "framePending_",
+    "SDL_WaitAndAcquireGPUSwapchainTexture()"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (EnsureFrameRendered acquisition branch)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-057",
+   "section": "Forced swapchain failure preserves the queued frame",
+   "text": "SdlGpu_SwapchainRecovery forces the hard failure with SDL_ReleaseWindowFromGPUDevice on frame 10, reclaims the window, presents the preserved frame and renders 30 further frames.",
+   "kind": "test",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#swapchain-failure"
+   ],
+   "tokens": [
+    "SdlGpu_SwapchainRecovery",
+    "SDL_ReleaseWindowFromGPUDevice()"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/examples/sdlgpu_swapchain_recovery_test.cpp (kTotalFrames 40, kInduceFailureFrame 10)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-058",
+   "section": "What remains open",
+   "text": "Occlusion queries are an SDL_gpu API limitation (no query commands in SDL_gpu 3.5.0); at the snapshot CreateOcclusionQuery throws NotSupportedException (the source unit said it returns nullptr) and the capability is false.",
+   "kind": "limitation",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "docs/tutorials/131-sdl-gpu.html#capabilities",
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#limits"
+   ],
+   "tokens": [
+    "Creating a query throws",
+    "SDLGPU-80"
+   ],
+   "note": "",
+   "target": {
+    "result": "corrected",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (CreateOcclusionQuery); modules/renderers/sdl-gpu/examples/CMakeLists.txt (SdlGpu_OcclusionQuery_Limitation)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-059",
+   "section": "What remains open",
+   "text": "The source unit said SDL_GPU does not override DrawInstancedPrimitivesEx and overclaims the Instancing capability.",
+   "kind": "correction",
+   "disposition": "TARGET CONTRADICTED",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#limits"
+   ],
+   "tokens": [
+    "STREETS-0001"
+   ],
+   "note": "Instancing is implemented (stock families, compiled and custom effects) and the capability is authored true.",
+   "target": {
+    "result": "contradicted",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (DrawInstancedPrimitivesEx; SupportsCapability Instancing)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-060",
+   "section": "What remains open",
+   "text": "Closed former SDL_GPU limits: depth and slope bias per pipeline, full sampler key with MaxAnisotropy, MRT secondaries retained by segments, Texture2D native mip count with UpdatePixelsLevel and no automatic downsampling of plain textures.",
+   "kind": "status",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#limits"
+   ],
+   "tokens": [
+    "SdlGpu_Texture2DMipStorage",
+    "SDL_GenerateMipmapsForGPUTexture"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (SdlGpuTextureRenderer constructor comment)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-061",
+   "section": "What remains open",
+   "text": "Back-buffer readback lazily enables a self-owned proxy on the first GetBackBufferData, blits it to the swapchain and downloads through a transfer buffer and fence with BGRA-to-RGBA conversion; nothing is paid before the first read.",
+   "kind": "semantics",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#resize"
+   ],
+   "tokens": [
+    "backbufferReadbackEnabled_"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (REMED-GFX-165)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-062",
+   "section": "What remains open",
+   "text": "Windows (Direct3D 12) and Apple (Metal) SDL_gpu drivers are code paths rather than validation claims until run on real (or Wine-class) hardware.",
+   "kind": "evidence",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "docs/tutorials/131-sdl-gpu.html#drivers",
+    "deep-dives/renderers/native-gpu-evidence-tiers.html#tiers"
+   ],
+   "tokens": [
+    "built to work"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "docs/tutorials/131-sdl-gpu.html; scripts/run-wine-vkd3d-headless.sh"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-063",
+   "section": "Clear state is per segment and issue-ordered",
+   "text": "SDL_GPU clears are per segment: consecutive clears before a draw coalesce into the load action per aspect, a clear after a draw opens a new segment over the same destination, MSAA segments use RESOLVE_AND_STORE when a later segment loads.",
+   "kind": "algorithm",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#segments"
+   ],
+   "tokens": [
+    "SegmentForOrderedClear",
+    "RESOLVE_AND_STORE"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (SegmentForOrderedClear)"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-064",
+   "section": "Clear state is per segment and issue-ordered",
+   "text": "The renderer-neutral clear-options, ordered-clear, pass-boundary and back-buffer-order suites prove clear ordering on SDL_GPU without intermediate flushes.",
+   "kind": "test",
+   "disposition": "PRESERVED",
+   "destinations": [
+    "development/internals/graphics/sdl-gpu.html#tests"
+   ],
+   "tokens": [
+    "SdlGpu_GraphicsDevice_OrderedClear",
+    "SdlGpu_Backbuffer_PassOrder"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "modules/renderers/sdl-gpu/examples/CMakeLists.txt"
+   }
+  },
+  {
+   "id": "WP09-sdlgpu-065",
+   "section": "Verification methodology",
+   "text": "The source unit counted 83 SdlGpu_* CTest registrations.",
+   "kind": "history",
+   "disposition": "HISTORICAL ONLY",
+   "destinations": [],
+   "tokens": [],
+   "note": "Count at an older revision; at 009d40f5 examples/CMakeLists.txt has 135 cna_register_renderer_test calls; per the site's counting rule no per-renderer count is published."
+  },
+  {
+   "id": "WP09-sdlgpu-066",
+   "section": "Verification methodology",
+   "text": "SDL_GPU tests are registered with cna_register_renderer_test, skip (code 77) through the GPU launcher when no display or adapter is available, and fail on validation output; CNA's records place routine execution on SDL_gpu's Vulkan driver on Linux.",
+   "kind": "evidence",
+   "disposition": "NEW PAGE",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#evidence",
+    "deep-dives/renderers/native-gpu-evidence-tiers.html#tiers"
+   ],
+   "tokens": [
+    "fail on any validation output",
+    "Vulkan driver on Linux"
+   ],
+   "note": "",
+   "target": {
+    "result": "confirmed",
+    "evidence": "cmake/TestHelpers.cmake (cna_register_renderer_test); modules/renderers/sdl-gpu/examples/CMakeLists.txt"
+   }
+  }
+ ],
+ "figures": [],
+ "examples": [
+  {
+   "id": "WP09-sdlgpu-ex1",
+   "text": "GraphicsDeviceManager setup disabling vertical retrace before initialisation",
+   "disposition": "RECREATED",
+   "verified": "read-checked",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html#present-interval"
+   ],
+   "note": "Setter names checked in GraphicsDeviceManager.hpp."
+  },
+  {
+   "id": "WP09-sdlgpu-ex2",
+   "text": "DrawThroughShortLivedRenderTarget local render-target lifetime regression",
+   "disposition": "RECREATED",
+   "verified": "read-checked",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#target-lifetime"
+   ],
+   "note": "Matches the test at 009d40f5; RenderTarget2D constructor and SpriteBatch::Draw overloads checked."
+  },
+  {
+   "id": "WP09-sdlgpu-ex3",
+   "text": "Texture3D off-centre two-slice SetData/GetData discriminator",
+   "disposition": "RECREATED",
+   "verified": "read-checked",
+   "destinations": [
+    "deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html#upload-cycling"
+   ],
+   "note": "The source listing used a non-existent (level, x, y, z, w, h, d) SetData overload; recreated with XNA's (level, left, top, right, bottom, front, back, data, startIndex, elementCount) signature and labelled illustrative."
+  }
+ ],
+ "issues": [
+  {
+   "kind": "functional-gap",
+   "text": "The shared .cnj GLSL ES 3.00 effect fixture is not accepted by SDL_GPU's Vulkan-rule GLSL route; custom GLSL effects must use #version 450 with explicit locations and SDL_gpu sets.",
+   "ref": "new",
+   "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (CompileProgram); modules/content/tests/Microsoft/Xna/Framework/Content/CnjEffectTests.cpp"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "CnjEffectTest.LoadsRealCnjFixture expects a valid effect on a renderer that reports CustomEffects, executes source and declares a non-HLSL dialect; under SDL_GPU with libshaderc that expectation conflicts with the renderer's rejection of GLSL ES 3.00 (not executed; whether CnaTests is run under SDL_GPU is not established).",
+   "ref": "new",
+   "evidence": "modules/content/tests/Microsoft/Xna/Framework/Content/CnjEffectTests.cpp (ExpectedGlslEffectValidity); modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp (GetShaderDialectEXT, ExecutesShaderEffectSourceEXT)"
+  },
+  {
+   "kind": "platform-limitation",
+   "text": "SDL_gpu 3.5.0 exposes no occlusion-query commands, so SDL_GPU refuses OcclusionQuery creation.",
+   "ref": "new",
+   "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (CreateOcclusionQuery)"
+  },
+  {
+   "kind": "verification-gap",
+   "text": "SDL_GPU's Direct3D 12 and Metal driver routes have no native execution evidence (Direct3D 12 only via Wine/vkd3d-proton; Metal none); no workflow selects SDL_GPU.",
+   "ref": "new",
+   "evidence": "development/internals/graphics/sdl-gpu.html; .github/workflows"
+  },
+  {
+   "kind": "platform-limitation",
+   "text": "SDL_gpu's pushed-uniform limit (about 4,096 bytes measured on the Vulkan driver) forces SkinnedEffect's 4,608-byte palette into a texture.",
+   "ref": "new",
+   "evidence": "modules/renderers/sdl-gpu/src/shaders/skinned3d.vert.glsl"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "SDL_GPU drew every sprite upside down because SDL_gpu's Vulkan driver flips clip-space Y.",
+   "ref": "new",
+   "evidence": "modules/renderers/sdl-gpu/src/shaders/sprite2d.vert.glsl (-ndc.y)"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "SDL_GPU replayed every 3D family before every sprite regardless of the game's draw order.",
+   "ref": "new",
+   "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (PushDrawOrder, RenderQueuedDraws)"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "Destroying a render target before SDL_GPU's deferred pass executed caused a use-after-free.",
+   "ref": "new",
+   "evidence": "modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp (SdlGpuRenderTarget2DState); modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (QueueTextureRelease)"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "SDL_GPU Texture3D uploads used cycle=true and orphaned earlier sub-volume writes.",
+   "ref": "new",
+   "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (SdlGpuTexture3DRenderer::SetData cycle=false)"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "SDL_GPU violated SDL_gpu contracts (multisampled cube array; auto-mip without COLOR_TARGET; invalid 3D depth-plane views), hanging the Vulkan driver under validation.",
+   "ref": "new",
+   "evidence": "modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp (REMED-GFX-141); modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (REMED-GFX-099)"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "SDL_GPU reported the Instancing capability while DrawInstancedPrimitivesEx fell to the throwing default.",
+   "ref": "new",
+   "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (DrawInstancedPrimitivesEx)"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "SDL_GPU's CreateOcclusionQuery returned nullptr, which could make Begin/End silent no-ops.",
+   "ref": "new",
+   "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (CreateOcclusionQuery throws, SDLGPU-80)"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "GraphicsDevice::Reset did not forward the presentation interval to IGraphicsRenderer::SetSwapInterval on any renderer.",
+   "ref": "new",
+   "evidence": "modules/graphics/src/Xna/GraphicsDevice.cpp (Reset forwarding comment)"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "SDL_GPU stored the stencil reference without applying it (missing SDL_SetGPUStencilReference).",
+   "ref": "new",
+   "evidence": "modules/renderers/sdl-gpu/include/CNA/Internal/Renderers/SdlGpu/SdlGpuRenderer.hpp (referenceStencil_ applied per draw)"
+  },
+  {
+   "kind": "bug-candidate",
+   "text": "SDL_GPU captured DepthBias but omitted it from the snapshot and pipeline key, replaying every draw with zero bias.",
+   "ref": "new",
+   "evidence": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (HashDepthBias, REMED-GFX-051)"
+  }
+ ]
+}

@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGPU renderer semantics: surfaces, targets, mips and pipeline state - CNA Deep Dives</title>
+  <meta name="description" content="Exact behaviour of CNA&#x27;s WEBGPU renderer: non-sRGB surface policy, target-relative SpriteBatch coordinates, cube render targets, blit-free mip generation, dynamic and baked state, ordered clears and BC textures.">
+  <meta name="keywords" content="webgpu, wgpu-native, surface format, rendertargetcube, mipmap generation, spritebatch, scissor, cull mode, ordered clear, bc compression">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/renderers/webgpu-renderer-semantics.html">
+  <meta property="og:title" content="WebGPU renderer semantics: surfaces, targets, mips and pipeline state - CNA Deep Dives">
+  <meta property="og:description" content="Exact behaviour of CNA&#x27;s WEBGPU renderer: non-sRGB surface policy, target-relative SpriteBatch coordinates, cube render targets, blit-free mip generation, dynamic and baked state, ordered clears and BC textures.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/renderers/webgpu-renderer-semantics.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"WebGPU renderer semantics: surfaces, targets, mips and pipeline state","description":"Exact behaviour of CNA's WEBGPU renderer: non-sRGB surface policy, target-relative SpriteBatch coordinates, cube render targets, blit-free mip generation, dynamic and baked state, ordered clears and BC textures.","url":"https://libcna.com/deep-dives/renderers/webgpu-renderer-semantics.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Renderers <span class="dev-nav-count">6</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="native-gpu-evidence-tiers.html" class="docs-nav-link">Modern GPU evidence tiers</a></li>
+        <li><a href="vulkan-presentation-and-readback.html" class="docs-nav-link">Vulkan presentation &amp; readback</a></li>
+        <li><a href="vulkan-deferred-state-and-descriptors.html" class="docs-nav-link">Vulkan state, queries &amp; descriptors</a></li>
+        <li><a href="sdl-gpu-pipeline-state-and-draw-order.html" class="docs-nav-link">SDL_GPU pipelines &amp; draw order</a></li>
+        <li><a href="sdl-gpu-resources-and-frame-recovery.html" class="docs-nav-link">SDL_GPU resources &amp; recovery</a></li>
+        <li><a href="webgpu-renderer-semantics.html" class="docs-nav-link active" aria-current="page">WebGPU semantics</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content</a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D</a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">3</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">2</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Renderers</a></li>
+        <li aria-current="page">WebGPU semantics</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>WebGPU renderer semantics: surfaces, targets, mips and pipeline state</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#surface-format">Surface format and back-buffer depth</a></li>
+          <li><a href="#sprite-target-size">SpriteBatch coordinates follow the bound target</a></li>
+          <li><a href="#cube-targets">RenderTargetCube: one six-layer texture, per-face views, shared depth</a></li>
+          <li><a href="#mip-generation">Mip generation without a blit</a></li>
+          <li><a href="#texture-readback">Texture2D GetData on the GPU path</a></li>
+          <li><a href="#dynamic-state">Viewport and scissor are per-command dynamic state</a></li>
+          <li><a href="#pipeline-state">State baked into pipelines</a></li>
+          <li><a href="#clears">Ordered clears across eleven deferred families</a></li>
+          <li><a href="#compressed">Block-compressed textures: from open gap to native path</a></li>
+          <li><a href="#lessons">Historical defects worth remembering</a></li>
+          <li><a href="#evidence">Evidence and its limits</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Renderers &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. No WebGPU test was executed for this page. CNA's own notes place native verification on Linux x86_64 and browser runs in headless Chrome by script; no workflow selects WEBGPU and no scene is compared with real XNA output.</p></div>
+
+<p class="lede">The <code>WEBGPU</code> renderer serves native <code>wgpu-native</code> and browser WebGPU from one implementation, and CNA declares it Experimental. This page explains the semantics that are specific to it at this snapshot: how it chooses a surface format without gamma-encoding <code>Color</code>, why SpriteBatch coordinates follow the bound target, how a <code>RenderTargetCube</code> is laid out and sampled, how mipmaps are generated when WebGPU has no blit, which state is dynamic and which is baked into pipelines, how clears are ordered, and how block-compressed textures went from an open gap to a native path. Build, selection and capability answers are in <a href="../../docs/tutorials/132-webgpu.html">Tutorial 132: The WebGPU Renderer</a>; this page is for readers who need the exact behaviour behind those answers.</p>
+
+<h2 id="surface-format">Surface format and back-buffer depth</h2>
+<p><code>WebGPURenderer::ConfigureSurface()</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/webgpu/src/WebGPURenderer.cpp"><code>WebGPURenderer.cpp</code></a> prefers, in order, <code>BGRA8Unorm</code>, <code>RGBA8Unorm</code>, <code>BGRA8UnormSrgb</code> and <code>RGBA8UnormSrgb</code>, and falls back to the first format the surface reports. The reason is the one the Vulkan renderer gives for its swapchain (see <a href="vulkan-presentation-and-readback.html#swapchain-format">Vulkan: UNORM on purpose</a>): <code>SurfaceFormat::Color</code> is a plain UNORM byte format, and an sRGB format would make the hardware encode every stored value. The renderer copies its surface format into render targets and pipeline colour targets, so an sRGB choice here also reached off-screen resources whose bytes a game reads back.</p>
+<p>When a surface can only be configured as sRGB, the renderer keeps rendering in the matching non-sRGB format: <code>NonSrgbColorFormat()</code> drops only the transfer function (channel order is preserved, so the BGRA-aware readback swizzle stays correct), and that format is requested through the surface configuration's view formats, so every view over a surface texture reinterprets the same bytes without an encode. <code>Color</code> therefore stays byte-exact even on such a surface, at no cost in extra passes, textures or per-pixel conversion.</p>
+<p>The policy comes from CNA's tracking item REMED-GFX-131. Before it, <code>ConfigureSurface()</code> preferred the sRGB formats, so a public <code>Color</code> request travelled with a native sRGB swapchain, the opposite policy from Vulkan, and the shared render-target-cube fixture even carried a compile definition that sRGB-encoded its expectations for WebGPU alone. That definition is gone: it encoded a defect into the oracle rather than describing a platform difference.</p>
+<p>The back buffer's depth texture is always <code>Depth24PlusStencil8</code>, recreated for every non-minimised surface size with the colour attachment's sample count, including when the public depth format is <code>DepthFormat::None</code>. Neither requested presentation format participates. Unlike the Vulkan renderer, which writes the depth format it really created back into <code>PresentationParameters</code>, this renderer does not override the applied-format hooks, so the parameters keep the requested value. Render targets are different: <code>MapDepthFormatEXT</code> (WEBGPU-39) maps each target's requested format exactly, <code>Depth16</code> to <code>Depth16Unorm</code>, <code>Depth24</code> to <code>Depth24Plus</code>, <code>Depth24Stencil8</code> to <code>Depth24PlusStencil8</code>, and <code>None</code> means no depth attachment at all. A fullscreen transition is performed by the platform window; the next frame detects the new physical size and reconfigures the surface.</p>
+
+<h2 id="sprite-target-size">SpriteBatch coordinates follow the bound target</h2>
+<p>This renderer converts sprite positions to normalised device coordinates on the CPU, when <code>QueueSprite()</code> enqueues the sprite. A SpriteBatch destination rectangle is expressed in the pixel space of the currently bound target, never the back buffer's (XNA and FNA semantics), so <code>QueueSprite()</code> selects one of three explicit cases before dividing:</p>
+<ol>
+<li>a bound <code>RenderTarget2D</code>: that target's width and height, with an identity viewport;</li>
+<li>a bound <code>RenderTargetCube</code> face: the face size;</li>
+<li>the back buffer: the logical viewport from <code>ComputeLogicalViewport()</code> over the physical surface size. Letterbox and the other presentation modes are back-buffer-only concepts.</li>
+</ol>
+<p>Before REMED-GFX-019 the conversion always used the back buffer's logical dimensions, so a draw intended for a small off-screen target was placed as though the target were the window. Nothing threw; the sprite simply had the wrong scale and position:</p>
+<pre><code class="language-cpp">// e.g. a 256x256 render target while the window is 1920x1080
+device.SetRenderTarget(&amp;smallOffscreenTarget);
+spriteBatch.Begin();
+spriteBatch.Draw(sourceTexture, Vector2::Zero, Color::White);   // "fill the target"
+spriteBatch.End();</code></pre>
+<p>The regression, <code>WebGPU_SpriteBatch_RenderTarget</code>, makes the distinction discriminating rather than visual. It pairs a 96 × 72 back buffer with asymmetric 48 × 32 and 64 × 40 targets, requires the same destination rectangle to cover the same target-relative pixels in both, and also covers target, back buffer, target isolation, a non-identity SpriteBatch transform, texture orientation and a 48 × 48 cube face. Probe pixels inside the old, wrongly scaled rectangle but outside the correct one must stay black. The earlier practical advice to avoid differently sized targets on this renderer is no longer needed.</p>
+
+<h2 id="cube-targets">RenderTargetCube: one six-layer texture, per-face views, shared depth</h2>
+<p>A <code>RenderTargetCube</code> (WEBGPU-114) reuses the design of the plain 2D target:</p>
+<ul>
+<li>one <code>WGPUTexture</code> with six array layers, the layout <code>WebGPUTextureCubeRenderer</code> also uses for an ordinary sampled and readable <code>TextureCube</code>;</li>
+<li>a <code>WGPUTextureViewDimension_2D</code> view per face for the render-pass colour attachment, and one <code>WGPUTextureViewDimension_Cube</code> view over all six layers for sampling the result;</li>
+<li>one <code>size</code> × <code>size</code> depth-stencil attachment shared by all six faces, which is safe because only one face renders at a time and matches the choice the Vulkan renderer makes and the FNA reference contract; its sample count must match the colour attachment's.</li>
+</ul>
+<p>The whole-cube sampling view is where a silent defect lived. <code>EnvironmentMapEffect</code>'s environment map on this renderer was once stored as the concrete type <code>const WebGPUTextureCubeRenderer*</code>. Binding an ordinary <code>TextureCube</code> worked; binding a <code>RenderTargetCube</code>, a different class implementing the same <code>ITextureCubeRenderer</code> interface, made the cast fail quietly and the effect fell back to its 1 × 1 white cube, with no exception and no obviously wrong image. The repair is a small interface in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/webgpu/include/CNA/Internal/Renderers/WebGPU/WebGPURenderer.hpp"><code>WebGPURenderer.hpp</code></a>, implemented by both concrete classes and resolved with one <code>dynamic_cast</code> that yields <code>nullptr</code> for a null or incompatible input:</p>
+<pre><code class="language-cpp">// WebGPURenderer.hpp at 009d40f5 (comments abridged)
+class IWebGPUCubeSamplable
+{
+public:
+    virtual ~IWebGPUCubeSamplable() = default;
+    [[nodiscard]] virtual WGPUTextureView CubeView() const = 0;
+    // REMED-GFX-167: the view plus the reference that keeps it alive past this object
+    [[nodiscard]] virtual WebGPUSampledTextureEXT SampledCube() const = 0;
+};</code></pre>
+<p>Deferred draws now store the <code>SampledCube()</code> value, never the renderer object, so a cube destroyed after a draw was queued still has a live view when the draw replays. The regression <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/webgpu/examples/webgpu_rendertargetcube_test.cpp"><code>webgpu_rendertargetcube_test.cpp</code></a> proves the fix rather than exercising the feature. Its Check C clears all six faces of a real <code>RenderTargetCube</code> to blue, binds it as <code>EnvironmentMapEffect.EnvironmentMap</code>, draws a full-screen reflective quad and requires a blue centre, which the old cast could never produce. Check D asks whether switching into a face and back isolates the passes: clear the back buffer blue, bind a face and clear it red, unbind, and require the back buffer still blue and the face red, the same "eager flush on target switch" check the 2D target already had, now extended to a third kind of target.</p>
+<p>Two scope cuts once documented for cube targets are closed at this snapshot. <code>mipMap = true</code> now allocates a full chain, <code>floor(log2(size)) + 1</code> levels to match the XNA layer's <code>LevelCount</code>, and each face's chain is regenerated from its resolved level 0 after that face's pass. A per-cube <code>MultiSampleCount</code> is honoured through the same adapter probe the renderer uses elsewhere (WEBGPU-165), with each face resolving into its own layer; the test's Check E and Check F now assert the real chain and the applied 4x count. The test file's own header comment still describes both as refused; the code and its checks are the current evidence.</p>
+
+<h2 id="mip-generation">Mip generation without a blit</h2>
+<p>The pinned <code>wgpu-native</code> v29 has no filtered-downsample command comparable to <code>vkCmdBlitImage</code>; <code>wgpuCommandEncoderCopyTextureToTexture</code> is a same-size copy. The renderer therefore generates each level with a render pass that draws a full-screen triangle sampling the previous level through a linear sampler into the next level's attachment view (<code>GenerateMipsForLayer</code>, pipelines cached per colour format).</p>
+<p>When that happens differs by resource, and one case is a deliberate divergence from XNA, FNA and every other CNA renderer:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Resource</th><th scope="col">When upper levels are generated</th></tr></thead>
+<tbody>
+<tr><td><code>RenderTarget2D</code> with <code>mipMap = true</code></td><td>From level 0 when the target is unbound (WEBGPU-164), FNA3D's resolve timing; an MRT set regenerates every attached target</td></tr>
+<tr><td><code>RenderTargetCube</code> with <code>mipMap = true</code></td><td>Per face, after that face's pass (WEBGPU-114)</td></tr>
+<tr><td>Plain <code>Texture2D</code> or <code>TextureCube</code> with <code>mipMap = true</code></td><td>After every write to level 0 (WEBGPU-52), including a partial <code>SetData</code> at level 0, because the XNA layer re-uploads the whole level</td></tr>
+</tbody>
+</table></div>
+<p>For plain textures, XNA and FNA keep upper levels explicitly authored and never regenerate them. WebGPU's behaviour guarantees that levels above 0 are never undefined after a level-0 upload, but it is a timing difference, not an unqualified improvement: a later level-0 write overwrites upper levels that the game authored earlier with its own <code>SetData(level &gt; 0, …)</code> calls. Explicit writes to upper levels are never regenerated themselves. The source documents the divergence as deliberate. Code that authors its own mip content and then rewrites level 0 behaves differently on this renderer than on the others.</p>
+
+<h2 id="texture-readback">Texture2D GetData on the GPU path</h2>
+<p><code>WebGPUTextureRenderer::GetData()</code> (WEBGPU-51) reads an arbitrary <code>Texture2D</code> level back from the GPU: it copies the requested mip level into a temporary <code>MapRead</code> buffer with WebGPU's required 256-byte row alignment, waits through the asynchronous map callback and extracts the requested x, y, w, h rectangle. Before it existed the call silently fell through to the interface's no-op default. <code>WebGPU_Texture2D_GetData</code> checks an exact full-gradient round trip, a non-origin 2 × 2 sub-rectangle and a distinct level-1 round trip, and it drives <code>IGraphicsRenderer</code> directly on purpose: the public <code>Texture2D::GetData</code> normally serves a plain texture from its shared CPU pixel shadow, so a public round trip alone could pass while this GPU path remained a no-op. Render targets, which keep no CPU shadow, go through their own renderer's readback.</p>
+
+<h2 id="dynamic-state">Viewport and scissor are per-command dynamic state</h2>
+<p>Every queued SpriteBatch or 3D command captures its own viewport and scissor at the public draw call (REMED-GFX-116 and REMED-GFX-146); nothing at replay reads the live members. Replay opens each pass with a full-target viewport and scissor and then applies each command's snapshot through <code>wgpuRenderPassEncoderSetViewport</code> and <code>wgpuRenderPassEncoderSetScissorRect</code> on the back-buffer, 2D-target and cube-face paths. Consecutive commands with identical state skip the redundant native call, so several state changes inside one deferred pass no longer collapse to the last value, and same-state draws do not cost one setter each.</p>
+<p>Two rules differ from the Vulkan renderer. The viewport is clamped to the current target at application time: <code>wgpu-native</code> treats an oversized viewport as a validation error, and <code>GraphicsDevice.Viewport</code> can legitimately be stale relative to the physical surface during a live resize, since its default is refreshed by <code>UpdateViewportFromWindow()</code> rather than every frame. CNA's records note that wiring the viewport exposed exactly this logical-versus-physical hazard and that clamping is what restored the existing 2D and 3D regressions. WebGPU has no separate scissor-test switch, so a disabled scissor becomes a rectangle covering the whole target. An enabled rectangle is clipped to the target in signed 64-bit arithmetic, never rejected, so a rectangle hanging off an edge keeps its on-target part; an enabled rectangle of zero width or height stays zero-area and clips the draw entirely. That last rule differs from <code>VULKAN</code> and <code>SDL_GPU</code>, which expand an enabled zero-area rectangle to the full target. <code>WebGPU_Viewport_Cardinality</code>, <code>WebGPU_Scissor_Cardinality</code> and <code>WebGPU_DrawOrder_Cardinality</code> prove that per-command state needed no pipeline variant, pass split, extra submit or per-draw setter; the shared deferred pixel fixtures prove the per-command result.</p>
+
+<h2 id="pipeline-state">State baked into pipelines</h2>
+<ul>
+<li><strong>Cull mode</strong> is part of the 3D pipeline key and maps to <code>WGPUCullMode</code>. Every 3D pipeline declares a counter-clockwise front face, and WebGPU judges facing in framebuffer space, whose Y points down; XNA's front face is clockwise as displayed, and each XNA enumerator names the face it removes. So <code>CullClockwiseFace</code> maps to <code>WGPUCullMode_Back</code> and <code>CullCounterClockwiseFace</code> to <code>WGPUCullMode_Front</code> (REMED-GFX-160). The pairing used to be the other way round, and a pixel test had "verified" it: the probe quad's own winding had been mis-derived, so the test demanded that a back face stay visible under XNA's default cull mode. The SpriteBatch pipeline uses no culling and was immune, which is why the defect showed only in the stock 3D path. The mapping is now measured against the FNA-derived contract by the shared <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/frontface_winding_test.cpp"><code>frontface_winding_test.cpp</code></a>.</li>
+<li><strong>Stencil</strong> (WEBGPU-83): the complete XNA stencil state is baked into each pipeline's <code>stencilFront</code> and <code>stencilBack</code>, with the counter-clockwise operations on the back face in two-sided mode and wrapping increment and decrement mapped to <code>IncrementWrap</code>/<code>DecrementWrap</code>; each draw's own reference value is dynamic. <code>WebGPU_StencilFamily</code> and <code>WebGPU_StencilTwoSided</code> cover it.</li>
+<li><strong>Blend</strong>: every source and destination factor and operation, the dynamic <code>BlendFactor</code>, <code>MultiSampleMask</code> and per-slot <code>ColorWriteChannels</code> (all four slots since WEBGPU-143) reach keyed SpriteBatch and 3D pipelines.</li>
+<li><strong>Wireframe</strong> (WEBGPU-153): WebGPU has no polygon-mode switch, so <code>FillMode::WireFrame</code> expands each triangle's edges into a 32-bit line-list index buffer at queue time, on every 3D route, natively and in the browser.</li>
+<li><strong>Multiple render targets</strong> (WEBGPU-85/86/87): two to four <code>RenderTarget2D</code> targets form one pass; a custom WGSL effect writing <code>@location(0..N-1)</code> fans out to every slot, while stock and SpriteBatch pipelines write attachment 0 only and give slots 1 onward a zero write mask, the same stock behaviour every other renderer has.</li>
+<li><strong>Occlusion queries</strong> (WEBGPU-84): <code>CreateOcclusionQuery()</code> returns a query that records a real begin and end pair around its draws and resolves an exact sample count.</li>
+<li><strong>Vertex input</strong>: instancing uses a real per-instance vertex stream that needs no bind-group change, and several vertex streams of one input rate become one native vertex-buffer layout each (WEBGPU-172). One device slot is reserved, so the reported maximum is the smaller of the device limit minus one and CNA's own stream table.</li>
+</ul>
+<p>Each of these was once a documented gap on this renderer: stored-but-unbaked stencil, a refused <code>WireFrame</code>, no MRT, no custom SpriteBatch effects, no custom WGSL effects. All are implemented at this snapshot. The deferral of the stencil mapping had an evidence-based reason worth keeping: after the cull mapping needed a pixel test to correct it, copying a plausible stencil front/back mapping without an equivalent differential test would have made an invisible error look implemented. The cull history above shows that even a differential test needs an oracle derived from the reference contract.</p>
+
+<h2 id="clears">Ordered clears across eleven deferred families</h2>
+<p>This renderer queues its work in eleven deferred families, and it replays all of them in one ordered pass over their public positions (REMED-GFX-159). The previous fixed order, every 3D family first and sprites last, was justified as "typical XNA draw order"; a typical order is not a contract, and a game that drew its HUD before its world got the two swapped. Each public <code>Clear</code> enters the same stream, carrying independent colour, depth and stencil flags and values, so replay partitions one bind cycle into native pass segments. Leading and consecutive clears fold into the next segment's load actions; a clear after a draw closes the segment, so the following pass observes the clear at its exact public position.</p>
+<p>Usage uses the shared FNA predicate: only <code>DiscardContents</code> discards, and <code>PreserveContents</code> and <code>PlatformContents</code> both preserve. The renderer receives that Boolean for 2D and cube targets, and the first native segment selects clear or load for colour, depth and stencil together; later segments load prior contents unless an explicit ordered clear selects an aspect. A cube face owns its colour view while all faces share the target's depth-stencil attachment. The back buffer has no <code>RenderTargetUsage</code> at all in this policy, so its first segment is never treated as discarded. <code>WebGPU_GraphicsDevice_OrderedClear</code>, <code>WebGPU_RenderTargetCube_Usage</code> and <code>WebGPU_RenderTarget_DepthStencilUsage</code> distinguish the three usages and the six faces rather than inferring behaviour from one combined clear.</p>
+
+<h2 id="compressed">Block-compressed textures: from open gap to native path</h2>
+<p>Block-compressed upload was once an open gap on every CNA renderer, and it was investigated on this one first. A diagnostic against the pinned <code>wgpu-native</code> on the development GPU showed the hardware side was not the obstacle: the adapter reported <code>TextureCompressionBC</code>, and requesting it succeeded. The blocker was one layer up. <code>Texture2D</code> content loading CPU-decompressed DXT data to RGBA8 before any renderer saw it, and the shared <code>CNA::Internal::Graphics::ImageData</code> structure every texture-creation path consumed had no field for a surface format. A WebGPU-only shortcut, passing raw BC1 bytes through that RGBA8-typed field, was considered and rejected: it would compile and might even render on one renderer, but no real game's loading path could produce it, and it would misrepresent the structure's contract. The gap was left open until the cross-renderer design could change.</p>
+<p>At this snapshot it has. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Graphics/ImageData.hpp"><code>ImageData.hpp</code></a> carries <code>surfaceFormat</code> and <code>mipLevels</code>, and the renderer answers the content loaders' queries: <code>LoadsCompressedContentNativelyEXT()</code> is true, and <code>IsCompressedTransferFormatEXT()</code> is true for the DXT and BC7 formats only when the device actually enabled the BC feature (WEBGPU-144), in which case they are uploaded to a <code>WGPUTextureFormat_BC*</code> texture. Cube maps follow the same rule since WEBGPU-206 allocated cubes in their requested format. On a device without the feature, the framework's rule applies and content is decoded to <code>Color</code>. The user-facing format table is in <a href="../../docs/tutorials/132-webgpu.html#formats">Tutorial 132: formats</a>.</p>
+
+<h2 id="lessons">Historical defects worth remembering</h2>
+<p>These are fixed; they are kept because each one teaches how a renderer can look right and be wrong.</p>
+<ul>
+<li><strong>Translucent sprites rendered opaque.</strong> The SpriteBatch pipeline's blend factors did not match the non-premultiplied output its shader produced, so a sprite with an alpha strictly between 0 and 1 came out opaque. A manual screenshot review of rotation, flips and filtering missed it; a pixel-value assertion caught it. The repair matched the Vulkan renderer's blend-factor pairing.</li>
+<li><strong>Depth-stencil state was a no-op.</strong> Building the first 3D draw path, verified with a real near/far depth-ordering test rather than draw order, revealed that the renderer's depth-stencil apply entry point had never been implemented, so <code>GraphicsDevice.DepthStencilState</code> had silently done nothing on this renderer until then.</li>
+<li><strong>A failing test can be the defect.</strong> The first MSAA implementation appeared to fail its dedicated test; investigation showed the implementation correct and the test missing <code>RasterizerState::CullNone</code>.</li>
+</ul>
+
+<h2 id="evidence">Evidence and its limits</h2>
+<p>Every test named here is registered in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/webgpu/examples/CMakeLists.txt"><code>the WebGPU examples CMakeLists.txt</code></a>; none was executed for this page. They need a display with a real WebGPU adapter; CNA's own notes say a software-only X server has no adapter and that the native route was verified on Linux x86_64, while the browser route was driven in headless Chrome by CNA's scripts. Native and browser runs are separate evidence environments: Naga (native) and Tint (browser) can disagree about the same WGSL. No workflow selects <code>WEBGPU</code>, and no scene is compared with real XNA output; the renderer's pixel evidence is its own assertions and the 32-fixture cross-renderer parity corpus. The comparison with the other native renderers is in <a href="native-gpu-evidence-tiers.html">Evidence tiers of the native modern GPU renderers</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/tutorials/132-webgpu.html">Tutorial 132: The WebGPU Renderer</a> &middot; <a href="../../docs/rendering-backends.html#modern-gpu">Rendering backends: modern GPU APIs</a> &middot; <a href="../../docs/render-targets.html">Render targets</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/graphics/backends.html">Renderer back ends map</a> &middot; <a href="../../development/internals/graphics/resources.html">Textures and render targets</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/handbook/fix-a-renderer-bug.html">Fix a renderer bug</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html#gpu">Test architecture: GPU tests</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../development/reference/cmake-options.html">CMake option index</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="native-gpu-evidence-tiers.html">Evidence tiers of the native modern GPU renderers</a> &middot; <a href="vulkan-presentation-and-readback.html">Vulkan presentation and readback</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="sdl-gpu-resources-and-frame-recovery.html" rel="prev"><span>Previous</span>SDL_GPU uploads, render-target lifetime and swapchain recovery</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

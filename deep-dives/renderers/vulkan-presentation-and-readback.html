@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vulkan presentation, frame pacing and back-buffer readback - CNA Deep Dives</title>
+  <meta name="description" content="How CNA&#x27;s VULKAN renderer picks its swapchain format and present mode, synchronises two frames in flight, and reads the back buffer without racing the presentation engine.">
+  <meta name="keywords" content="vulkan, swapchain, vkpresentmodekhr, presentinterval, frames in flight, getbackbufferdata, readback, srgb, fifo_relaxed, depth format">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/renderers/vulkan-presentation-and-readback.html">
+  <meta property="og:title" content="Vulkan presentation, frame pacing and back-buffer readback - CNA Deep Dives">
+  <meta property="og:description" content="How CNA&#x27;s VULKAN renderer picks its swapchain format and present mode, synchronises two frames in flight, and reads the back buffer without racing the presentation engine.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/renderers/vulkan-presentation-and-readback.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Vulkan presentation, frame pacing and back-buffer readback","description":"How CNA's VULKAN renderer picks its swapchain format and present mode, synchronises two frames in flight, and reads the back buffer without racing the presentation engine.","url":"https://libcna.com/deep-dives/renderers/vulkan-presentation-and-readback.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Renderers <span class="dev-nav-count">6</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="native-gpu-evidence-tiers.html" class="docs-nav-link">Modern GPU evidence tiers</a></li>
+        <li><a href="vulkan-presentation-and-readback.html" class="docs-nav-link active" aria-current="page">Vulkan presentation &amp; readback</a></li>
+        <li><a href="vulkan-deferred-state-and-descriptors.html" class="docs-nav-link">Vulkan state, queries &amp; descriptors</a></li>
+        <li><a href="sdl-gpu-pipeline-state-and-draw-order.html" class="docs-nav-link">SDL_GPU pipelines &amp; draw order</a></li>
+        <li><a href="sdl-gpu-resources-and-frame-recovery.html" class="docs-nav-link">SDL_GPU resources &amp; recovery</a></li>
+        <li><a href="webgpu-renderer-semantics.html" class="docs-nav-link">WebGPU semantics</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content</a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D</a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">3</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime</a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering</a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification</a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice</a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">2</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Renderers</a></li>
+        <li aria-current="page">Vulkan presentation &amp; readback</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Vulkan presentation, frame pacing and back-buffer readback</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#swapchain-format">The swapchain format: UNORM on purpose</a></li>
+          <li><a href="#backbuffer-depth">The back buffer always owns a depth-stencil image</a></li>
+          <li><a href="#present-modes">PresentInterval and VkPresentModeKHR</a></li>
+          <li><a href="#frames-in-flight">Two frames in flight</a></li>
+          <li><a href="#deferred-present">Deferred present: why readback cannot simply call Present</a></li>
+          <li><a href="#readback-cache">The readback cache and its edges</a></li>
+          <li><a href="#evidence">Tests and what they do not prove</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Renderers &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. No Vulkan test was executed for this page; present-mode cadence is the Vulkan specification's contract, not a CNA measurement, and driver-specific observations in CNA's source comments (lavapipe, RADV) are evidence for those drivers only.</p></div>
+
+<p class="lede">This page explains how the <code>VULKAN</code> renderer turns a finished CNA frame into pixels on screen, and how <code>GraphicsDevice::GetBackBufferData</code> reads those pixels back without racing the presentation engine. It covers the swapchain format decision and why it deliberately avoids an sRGB format, the depth image every back buffer owns, the mapping from XNA's <code>PresentInterval</code> to a <code>VkPresentModeKHR</code>, the two-frames-in-flight synchronisation model, and the deferred-present and readback-cache mechanisms. It is written for anyone porting a game to Vulkan, writing pixel tests against it, or changing <code>VulkanRenderer</code>'s frame code.</p>
+
+<h2 id="swapchain-format">The swapchain format: UNORM on purpose</h2>
+<p><code>VulkanRenderer::CreateSwapchain()</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/src/VulkanRenderer.cpp"><code>VulkanRenderer.cpp</code></a> makes two decisions once, when the swapchain is created, instead of leaving them to whatever the driver lists first: the pixel format the swapchain presents through, and the present mode that governs frame pacing. A physical device usually reports several <code>(VkFormat, VkColorSpaceKHR)</code> pairs for a surface. Many Vulkan tutorials prefer an sRGB variant such as <code>VK_FORMAT_B8G8R8A8_SRGB</code>, because the hardware then gamma-encodes every stored pixel automatically. CNA does the opposite on purpose.</p>
+<p>The reason is XNA's own format contract. <code>SurfaceFormat::Color</code>, the default back-buffer format, is a plain 8-bit UNORM byte format; the gamma-encoded variant is a separate CNAEXT value, <code>SurfaceFormat::ColorSrgbEXT</code>. An sRGB swapchain would apply a linear-to-sRGB encode to every presented pixel that XNA never performed, so every frame would come out lighter than the same game under XNA. The renderer therefore searches for the exact pair it wants and falls back to the first listed pair only when the device does not offer it:</p>
+<pre><code class="language-cpp">// VulkanRenderer::CreateSwapchain() at 009d40f5 (abridged)
+VkSurfaceFormatKHR fmt = fmts[0];                 // fallback: whatever the device lists first
+for (auto&amp; f : fmts)
+    if (f.format == VK_FORMAT_B8G8R8A8_UNORM &amp;&amp;
+        f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+    { fmt = f; break; }</code></pre>
+<p>The search is a preference, not a guarantee: a surface that does not list <code>B8G8R8A8_UNORM</code> with the non-linear colour space gets its first reported pair, which may be an sRGB format. The readback code (below) is written for either byte order and either transfer function.</p>
+
+<h3 id="format-vs-colorspace">Two fields, two questions</h3>
+<p>The pair looks contradictory at first sight: a UNORM format together with <code>VK_COLOR_SPACE_SRGB_NONLINEAR_KHR</code>. It is not. The two fields answer different questions.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Field</th><th scope="col">Question it answers</th><th scope="col">What CNA asks for</th></tr></thead>
+<tbody>
+<tr><td><code>colorSpace</code></td><td>What colour space does the display expect the presented bytes to be in?</td><td><code>VK_COLOR_SPACE_SRGB_NONLINEAR_KHR</code>, the near-universal default of consumer displays and Vulkan implementations</td></tr>
+<tr><td><code>format</code></td><td>Does the swapchain transform values when a shader stores them?</td><td><code>_UNORM</code>: the bytes a draw writes are the bytes that are presented; an <code>_SRGB</code> sibling with the same byte layout would encode on write</td></tr>
+</tbody>
+</table></div>
+<p>So the choice means "present to an ordinary monitor, but do not add an encode step that XNA's <code>Color</code> format never had". A porting engineer who changes this one line because "sRGB is the correct colour space" introduces a visible brightness change in every scene of every game, not an edge case. WebGPU reached the same conclusion later and for the same reason; see <a href="webgpu-renderer-semantics.html#surface-format">the WebGPU surface-format policy</a>, which also shows how a renderer can keep <code>Color</code> byte-exact on a surface that can only be configured as sRGB.</p>
+
+<h3 id="applied-formats">What PresentationParameters reports back</h3>
+<p>The swapchain format is fixed renderer policy, not a response to the caller's <code>PresentationParameters.BackBufferFormat</code>. The renderer constructor reads the surface snapshot, the Vulkan surface service, the virtual size, the swap interval and the requested sample count from <code>GraphicsRendererCreateArgs</code>; it does not read the <code>backBufferFormat</code>, <code>depthStencilFormat</code> or <code>isFullScreen</code> fields of that structure (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp"><code>IGraphicsRenderer.hpp</code></a> documents those fields as optional for renderers that do not need format fidelity). Instead of silently ignoring the request, the renderer now reports what is really in effect: <code>GetAppliedBackBufferFormatEXT()</code> always answers <code>SurfaceFormat::Color</code> and <code>GetAppliedDepthStencilFormatEXT()</code> answers the depth format the renderer actually created (CNA's tracking item VULKAN-348). <code>GraphicsDevice</code> writes both answers back into its <code>PresentationParameters</code> in <code>NormalizeAppliedPresentationFormats</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a>), so a game that reads the parameters after device creation sees the formats it got, not the ones it asked for.</p>
+<p>Fullscreen is a window operation performed by the platform layer, not by this renderer. When the window changes size, a later out-of-date or suboptimal result rebuilds the swapchain at the surface's new extent (see <a href="../../development/internals/graphics/vulkan.html#swapchain">Vulkan internals: swapchain policy, resize and reset</a>).</p>
+
+<h2 id="backbuffer-depth">The back buffer always owns a depth-stencil image</h2>
+<p><code>CreateDepthResources()</code> calls <code>FindDepthFormat()</code> unconditionally, so a Vulkan back buffer always has a depth attachment, even when the game asked for <code>DepthFormat::None</code>. <code>FindDepthFormat()</code> takes the first of <code>VK_FORMAT_D24_UNORM_S8_UINT</code>, <code>VK_FORMAT_D32_SFLOAT_S8_UINT</code> and <code>VK_FORMAT_D32_SFLOAT</code> that supports <code>DEPTH_STENCIL_ATTACHMENT</code> with optimal tiling, and throws <code>"Vulkan: no suitable depth format"</code> if none does.</p>
+<p>The order matters. An earlier version tried <code>VK_FORMAT_D32_SFLOAT</code> first; because that format is mandatory on essentially all hardware, a stencil-capable format was almost never chosen, and <code>DepthStencilState.StencilEnable</code> could not work however correctly the pipeline mapped it. The stencil-capable formats are now tried first. Two public answers follow the format that was really chosen rather than the request:</p>
+<ul>
+<li><code>SupportsCapability(GraphicsCapability::StencilBuffer)</code> is true only for a format with a stencil aspect (<code>D24_UNORM_S8_UINT</code>, <code>D32_SFLOAT_S8_UINT</code>, <code>D16_UNORM_S8_UINT</code>, <code>S8_UINT</code>), so a device that fell back to <code>D32_SFLOAT</code> honestly reports no stencil.</li>
+<li><code>GetAppliedDepthStencilFormatEXT()</code> reports that format, which is why a <code>DepthFormat::None</code> request comes back as the depth format that exists: reporting <code>None</code> would describe a buffer that exists as absent.</li>
+</ul>
+<p>Render targets are different. <code>RenderTarget2D</code> and <code>RenderTargetCube</code> select their own depth format per instance, and <code>DepthFormat::None</code> on a render target means no depth attachment. Do not generalise the back-buffer rule to off-screen targets.</p>
+
+<h2 id="present-modes">PresentInterval and VkPresentModeKHR</h2>
+<p>The swap interval that <code>CreateSwapchain()</code> reads comes from <code>PresentationParameters.PresentationInterval</code>: <code>Immediate</code> is 0, <code>Default</code> and <code>One</code> are 1, <code>Two</code> is 2. The renderer maps it onto the modes the surface actually offers, with an explicit fallback chain for every case:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Interval</th><th scope="col">Preferred mode</th><th scope="col">Fallbacks</th><th scope="col">Meaning</th></tr></thead>
+<tbody>
+<tr><td>0 (<code>Immediate</code>)</td><td><code>VK_PRESENT_MODE_IMMEDIATE_KHR</code></td><td><code>VK_PRESENT_MODE_MAILBOX_KHR</code>, then FIFO</td><td>No wait for vertical blank; IMMEDIATE may tear, MAILBOX replaces the queued image without tearing</td></tr>
+<tr><td>1 (<code>Default</code>, <code>One</code>)</td><td><code>VK_PRESENT_MODE_FIFO_KHR</code></td><td>none needed</td><td>Real vertical synchronisation</td></tr>
+<tr><td>2 (<code>Two</code>)</td><td><code>VK_PRESENT_MODE_FIFO_RELAXED_KHR</code></td><td>FIFO</td><td>Vertical synchronisation that tolerates a late frame (see below)</td></tr>
+</tbody>
+</table></div>
+<p>FIFO is the only present mode the Vulkan specification guarantees on every conformant implementation. Starting from it, and ending every fallback chain with it, is what makes swapchain creation never fail for lack of a particular mode. The mode the swapchain was really created with is recorded separately from the request and exposed as <code>GetAppliedPresentModeEXT()</code>; <code>SupportsUnsynchronisedPresentModeEXT()</code> says whether the surface offered IMMEDIATE or MAILBOX at all. Both exist because "the mode is still FIFO with vsync off" is a correct answer on some surfaces and a broken renderer on others, and a test that could not tell the two apart would excuse the defect.</p>
+
+<h3 id="fifo-relaxed">Why Two is not half the refresh rate</h3>
+<p>On this renderer <code>PresentInterval::Two</code> asks for <code>FIFO_RELAXED</code>, which is a different request from <code>Immediate</code>. FIFO relaxed still waits for vertical blank while the application keeps up; only on a frame that would otherwise miss the blank does it present immediately and accept a single tear. It is the Vulkan-native form of "prefer vsync, but do not let one slow frame turn into a visible stutter". It is not the Direct3D 9 reading of "present interval two" as half the display refresh rate. A game that sets <code>Two</code> expecting a fixed 30 Hz cadence on a 60 Hz display will not get it here; check the real frame rate on the target machine instead of assuming that interval semantics carried over from a Direct3D background. The SDL_GPU renderer differs again: SDL_gpu has no half-rate or relaxed mode, so <code>Two</code> behaves like <code>One</code> there (<a href="sdl-gpu-pipeline-state-and-draw-order.html#present-interval">SDL_GPU present timing</a>).</p>
+
+<h3 id="runtime-interval">Changing the interval at run time</h3>
+<p>For a long time the swap interval was read exactly once, when the swapchain was first created. <code>VulkanRenderer</code> did not override <code>IGraphicsRenderer::SetSwapInterval()</code>, so <code>GraphicsDeviceManager.SynchronizeWithVerticalRetrace</code> followed by <code>ApplyChanges()</code> changed nothing on Vulkan; because <code>Game</code> builds its device before a derived constructor can change the property, an ordinary game that disabled vsync still ran in FIFO. At this snapshot both halves of that path are repaired:</p>
+<ol>
+<li><code>GraphicsDevice::Reset</code> forwards <code>PresentationInterval</code> to <code>IGraphicsRenderer::SetSwapInterval()</code> on every renderer. The comment beside the call in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a> records that this forwarding was previously missing from the <code>Reset()</code> overload that <code>ApplyChanges()</code> uses. <code>GraphicsDeviceManager</code> turns its property into <code>PresentInterval::One</code> or <code>PresentInterval::Immediate</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/GraphicsDeviceManager.cpp"><code>GraphicsDeviceManager.cpp</code></a>).</li>
+<li><code>VulkanRenderer::SetSwapInterval()</code> (VULKAN-332) records the request first, so <code>GetSwapIntervalEXT()</code> can answer it even when no rebuild is possible, returns early for an unchanged interval, and otherwise calls <code>RecreateSwapchain()</code>, the same path a resize takes. A zero-sized drawable or an uninitialised device defers the rebuild.</li>
+</ol>
+<p>The regression, <code>Vulkan_SwapInterval</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/examples/vulkan_swap_interval_test.cpp"><code>vulkan_swap_interval_test.cpp</code></a>), deliberately does not use the recorded interval as its oracle, because a renderer that stored the request and rebuilt nothing would satisfy it. It reads the live <code>VkPresentModeKHR</code>, which only <code>CreateSwapchain()</code> writes, and expects FIFO with vsync on, IMMEDIATE or MAILBOX with it off, and FIFO again afterwards; a surface that offers neither unsynchronised mode is reported rather than failed. It also renders after each change and requires a silent validation layer. The companion <code>Vulkan_PresentInterval</code> reuses the renderer-neutral <code>PresentationParameters</code> round-trip from the EasyGL suite.</p>
+
+<h2 id="frames-in-flight">Two frames in flight</h2>
+<p><code>MaxFramesInFlight</code> is a fixed <code>constexpr int</code> of 2 in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/include/CNA/Internal/Renderers/Vulkan/VulkanRenderer.hpp"><code>VulkanRenderer.hpp</code></a>. The renderer owns one <code>VkFence</code>, one image-available semaphore, one render-finished semaphore and one command buffer per slot, indexed by a wrapping <code>currentFrame_</code>. The fences are created signalled so that the first wait on each slot returns immediately. The per-frame sync objects are indexed by slot, never by swapchain image, so a swapchain rebuild that changes the image count does not recreate them.</p>
+<figure class="diagram-figure" role="group" aria-labelledby="fig-vk-frame-cap">
+<pre class="diagram">
+ CPU (Present -> SubmitFrame(false))                GPU queue            presentation
+ -----------------------------------                ---------            ------------
+ wait inFlightFences_[slot]   &lt;---- signalled by the submit two frames ago
+ ProcessRetiredResources(false)
+ vkAcquireNextImageKHR ----- signals imageAvailable[slot] when the image is free
+ reset fence, reset + record command buffer
+ vkQueueSubmit -------------&gt; waits imageAvailable[slot] at colour output
+                              renders, then signals renderFinished[slot]
+                              and inFlightFences_[slot]
+ vkQueuePresentKHR -------------------------------&gt; waits renderFinished[slot]
+ currentFrame_ = (currentFrame_ + 1) % 2
+</pre>
+<figcaption id="fig-vk-frame-cap"><strong>Figure.</strong> One call of <code>SubmitFrame(false)</code>, read top to bottom. The fence throttles the CPU against the GPU work that used the same slot two frames earlier; the image-available semaphore makes the GPU wait until the acquired swapchain image may be written; the render-finished semaphore makes the presentation engine wait until rendering is done. The slot index then advances modulo two.</figcaption>
+</figure>
+<p>Each primitive answers exactly one question:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Primitive</th><th scope="col">Waited on by</th><th scope="col">Question</th></tr></thead>
+<tbody>
+<tr><td><code>inFlightFences_[slot]</code></td><td>the CPU, at the start of <code>SubmitFrame</code></td><td>May the CPU reuse this slot's command buffer and per-frame buffers yet?</td></tr>
+<tr><td><code>imageAvailableSemaphores_[slot]</code></td><td>the GPU, at <code>VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT</code></td><td>May rendering write into the acquired swapchain image yet? (The presentation engine may still be showing it.)</td></tr>
+<tr><td><code>renderFinishedSemaphores_[slot]</code></td><td>the presentation engine, in <code>vkQueuePresentKHR</code></td><td>May the finished image be displayed yet?</td></tr>
+</tbody>
+</table></div>
+<p>Two ordering details are easy to break. First, an acquire that returns <code>VK_ERROR_OUT_OF_DATE_KHR</code> recreates the swapchain and returns before the fence is reset; resetting it there would leave an unsignalled fence with no submission behind it and hang the next frame. Second, <code>ProcessRetiredResources(false)</code> runs right after the fence wait, because that is the moment a retired handle's consuming frame is provably complete. The ordinary sequence is also listed step by step in <a href="../../development/internals/graphics/vulkan.html#present">Vulkan internals: SubmitFrame and synchronization</a>.</p>
+
+<h2 id="deferred-present">Deferred present: why readback cannot simply call Present</h2>
+<p><code>GraphicsDevice::GetBackBufferData</code> has to answer a question the ordinary present path never asks: are the exact pixels the GPU just rendered still readable, or has the presentation engine already taken the image? Presenting first and reading afterwards would race the compositor. <code>ReadBackbuffer()</code> therefore uses the same <code>SubmitFrame</code> with <code>deferSwap = true</code>:</p>
+<pre><code class="language-cpp">// VulkanRenderer::SubmitFrame(bool deferSwap), the held-present branch (abridged)
+if (deferSwap) {
+    // Wait for render + readback copy to complete, but hold the image.
+    vkWaitForFences(device_, 1, &amp;inFlightFences_[currentFrame_], VK_TRUE, UINT64_MAX);
+    deferredPresentImageIndex_ = imageIndex;
+    hasDeferredPresent_        = true;
+    return true;
+}</code></pre>
+<p>When a readback is pending, <code>RecordCommandBuffer</code> copies the whole swapchain image into <code>readbackStagingBuf_</code> inside the same command buffer as the frame's rendering. The second fence wait in the branch above blocks until that copy has completed on the GPU. <code>ReadBackbuffer()</code> then maps the staging memory and copies the requested rectangle out, and only after the CPU has finished reading does it call <code>FinishDeferredPresent()</code>, which performs the <code>vkQueuePresentKHR</code> that <code>SubmitFrame(true)</code> skipped and advances the frame slot. The frame is presented late but exactly once, so reading the back buffer never drops a frame from the screen. The present waits on the render-finished semaphore as usual; because the submit has already completed, that wait does not block.</p>
+
+<h2 id="readback-cache">The readback cache and its edges</h2>
+<p>A naive implementation would call <code>SubmitFrame(true)</code> on every <code>GetBackBufferData</code> call. The real code captures the whole back buffer once and serves every rectangle of the same frame from the cached staging buffer. It re-renders only when one of three conditions holds:</p>
+<ul>
+<li><code>hasNewWork</code>: 3D draws or sprite batches are pending since the last capture;</li>
+<li><code>!readbackStagingValid_</code>: the cache was invalidated, which every <code>Clear</code> variant does, and which <code>RecreateSwapchain()</code> does because the cached content describes a swapchain that no longer exists (VULKAN-404);</li>
+<li><code>!stagingCoversFrame</code>: the staging allocation is smaller than the current extent. This keeps the mapped byte count bounded by the allocation even if a future caller forgets to invalidate.</li>
+</ul>
+<p>The cache is a correctness rule, not an optimisation. Re-submitting an already-rendered frame with an empty queue would re-render the current clear colour and destroy the content that every read after the first one should have returned. A golden-image test that reads several sub-rectangles of one frame depends on it.</p>
+<p>Three further details are visible to callers:</p>
+<ul>
+<li><strong>A blank first frame is reported, not thrown.</strong> When <code>SubmitFrame(true)</code> fails because the swapchain was out of date (the source comment notes this is common on the first frame under Wayland with the RADV driver), the staging buffer was not written. <code>ReadBackbuffer()</code> zero-fills the output and returns, so a caller can detect the blank frame and retry instead of seeing stale data or an exception.</li>
+<li><strong>Byte order is checked, not assumed.</strong> Swapchain images are often <code>VK_FORMAT_B8G8R8A8_UNORM</code>, whose channel order is the reverse of the RGBA order <code>Color</code> uses. <code>ReadBackbuffer()</code> swaps blue and red only when <code>swapchainFormat_</code> is a B8G8R8A8 format (UNORM or SRGB), and copies bytes unchanged otherwise.</li>
+<li><strong>Out-of-range pixels are zero.</strong> Requested pixels outside the current extent are written as transparent black rather than read from outside the buffer.</li>
+</ul>
+
+<h2 id="evidence">Tests and what they do not prove</h2>
+<p>The behaviour above is covered by example-based tests registered in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/vulkan/examples/CMakeLists.txt"><code>the Vulkan examples CMakeLists.txt</code></a>, among them <code>Vulkan_SwapInterval</code> and <code>Vulkan_PresentInterval</code> (present modes), <code>Vulkan_PresentationParameters</code> (the parameter round-trip, VULKAN-335), <code>Vulkan_SwapchainOutOfDate</code> (what <code>CanBeginDrawEXT()</code> answers while the swapchain is out of date, using injected acquire results), <code>Vulkan_SwapchainChurn</code> (twenty-two back-to-back recreations, a minimised 0x0 drawable and a restore with live resources), <code>Vulkan_Swapchain_Sync</code> (frame-slot wrapping and swapchain recreation with the validation layer loaded in process), <code>Vulkan_BackbufferResize</code> (the path VULKAN-404 found serving the pre-resize frame), <code>Vulkan_BackbufferFirstRead</code> and <code>Vulkan_BackbufferReadbackDimension</code>. In any build that contains <code>VULKAN</code>, every renderer test also runs under an output gate that fails on Khronos validation messages (see <a href="../../development/internals/graphics/vulkan.html#validation">Vulkan internals: testing</a>).</p>
+<p>None of these tests was executed for this page. They need a display with a Vulkan-capable adapter; several of CNA's own notes record results on the lavapipe software driver and on an AMD RADV device, which is evidence for those drivers only. No test times the real cadence of a present mode, so the "tolerates one late frame" behaviour of <code>FIFO_RELAXED</code> is the Vulkan specification's contract, not a CNA measurement. How these renderers' evidence compares is summarised in <a href="native-gpu-evidence-tiers.html">Evidence tiers of the native modern GPU renderers</a>; user-side setup is in <a href="../../docs/tutorials/85-vulkan-backend.html">Tutorial 85: The Vulkan Renderer</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/rendering-backends.html#modern-gpu">Rendering backends: modern GPU APIs</a> &middot; <a href="../../docs/tutorials/85-vulkan-backend.html">Tutorial 85: The Vulkan Renderer</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/graphics/vulkan.html">Vulkan renderer internals</a> &middot; <a href="../../development/internals/graphics/device.html">GraphicsDevice internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/handbook/fix-a-renderer-bug.html">Fix a renderer bug</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html#gpu">Test architecture: GPU tests</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../development/reference/test-targets.html">Test target index</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="vulkan-deferred-state-and-descriptors.html">Vulkan draw-time state, clears, queries and descriptors</a> &middot; <a href="native-gpu-evidence-tiers.html">Evidence tiers of the native modern GPU renderers</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="native-gpu-evidence-tiers.html" rel="prev"><span>Previous</span>Evidence tiers of the native modern GPU renderers</a><a class="dev-pager-next" href="vulkan-deferred-state-and-descriptors.html" rel="next"><span>Next</span>Vulkan draw-time state, ordered clears, occlusion queries and descriptor pools</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
