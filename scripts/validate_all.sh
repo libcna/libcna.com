@@ -22,6 +22,17 @@ if [ -d "${CNA_TARGET_TREE:-/rv/tmp/libcna-v2/cna-target}/cmake" ]; then
 else
   echo "== check_retired_renderers.py skipped (CNA worktrees not present)"
 fi
+run python3 scripts/site_deep.py check
+run python3 scripts/check_deep_page.py --all
+run python3 scripts/apply_expansions.py check
+run python3 scripts/backlinks.py check
+if [ -f data/known-issues.json ]; then
+  run python3 scripts/known_issues.py validate
+fi
+run python3 scripts/compare_presentation.py --phase3 --quiet
+if [ "${PHASE3_FINAL:-0}" = "1" ]; then
+  run python3 scripts/bible_ledger.py check --final
+fi
 run git diff --check
 echo "overall: $([ $rc -eq 0 ] && echo PASS || echo FAIL)"
 exit $rc

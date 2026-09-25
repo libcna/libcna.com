@@ -228,6 +228,22 @@ def cmd_merge(_: argparse.Namespace) -> int:
     if dup:
         print("duplicate dispositions across packages:", dup)
         return 1
+    # cross-package duplicates: audit/data/bible/issues/merge-map.json = {"<folded id>": "<surviving id>", ...}
+    mm_path = ISS / "merge-map.json"
+    merged: dict[str, str] = load(mm_path) if mm_path.exists() else {}
+    if merged:
+        by_id = {i["id"]: i for i in issues}
+        for src, dst in merged.items():
+            if src not in by_id or dst not in by_id:
+                print(f"merge-map: unknown id {src!r} or {dst!r}")
+                return 1
+            s, d_ = by_id[src], by_id[dst]
+            d_["cand_ids"] = sorted(set(d_.get("cand_ids") or []) | set(s.get("cand_ids") or []))
+            d_["origin"] = f"{d_.get('origin', '')}; merged with {src}"
+        issues = [i for i in issues if i["id"] not in merged]
+        for d in disp:
+            if d.get("published_as") in merged:
+                d["published_as"] = merged[d["published_as"]]
     used = {i["id"] for i in issues if ID_RX.match(i["id"])}
     counters: dict[str, int] = {}
     for cls, spec in CLASSES.items():
