@@ -192,7 +192,12 @@ def build(rv: dict[str, dict], dec: dict, files: set[str]) -> tuple[dict, list[s
                     if corr.get(f):
                         sets[f] = plain_to_html(corr[f], files)
                 if corr.get("evidence_note"):
-                    note = plain_to_html(corr["evidence_note"].replace("\n", " ").strip(), files)
+                    en = corr["evidence_note"]
+                    for old_s, new_s in (d.get("evidence_note_replace") or []):        # exact-once edits of the reviewer's note before it is appended (site policy: no retired renderer names)
+                        if en.count(old_s) != 1:
+                            raise SystemExit(f"{iid}: the text to replace in the reviewer's evidence note occurs {en.count(old_s)} times (need exactly 1)")
+                        en = en.replace(old_s, new_s)
+                    note = plain_to_html(en.replace("\n", " ").strip(), files)
                     inner = note[3:-4] if note.startswith("<p>") and note.endswith("</p>") else note
                     appends["evidence"] = "<p><em>Independent re-verification:</em> " + inner + "</p>"
         if act in ("accept", "override"):
