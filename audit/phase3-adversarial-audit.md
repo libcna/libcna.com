@@ -68,7 +68,9 @@ Recomputed from `data/known-issues.json` and the file system at `PHASE3_BASE`:
 | AF-005 | Source graph | `NEXT-ARCHIVE-2026-07-26.md`, `PLAN-ARCHIVE-2026-07-26.md` never dispositioned. | **fixed** (commit `6dccabe`): historical snapshots, identifiers unique to them are stale backend/test/plan names; `audit/data/adversarial/source-graph.json` + a gate in `adversarial_audit.py graph` |
 | AF-006 | Known Issues evidence boundary | CNA-BUG-181 and -182 cite SDL source read "at c74569ae, not the submodule revision cbe3fbe9 that TARGET pins". | **fixed** (commit `726c69f`): the supporting claims were re-read in a sibling SDL checkout at exactly cbe3fbe9 and hold; the evidence now says so |
 | AF-007 | Audit tooling | A first version of the planner read the post-merge `issues-source.json`, so re-planning silently dropped an applied reclassification. | **fixed** (commit `9b5bbf7`): `known_issues.build_entries()` is pure; plans are computed against the pre-audit entries |
-| AF-008 | Known Issues coverage | Two defects nobody listed, found by the math reviewer and re-verified: BoundingSphere(Vector3, float) accepts a negative radius (XNA throws) and four `GetHashCode` sums overflow `int` (UB). | **added** as CNA-BUG-250 / CNA-BUG-251 |
+| AF-008 | Known Issues coverage | Four defects nobody listed, found by reviewers and re-verified by the orchestrator: BoundingSphere(Vector3, float) accepts a negative radius (XNA throws); four `GetHashCode` sums overflow `int` (UB); the SDL_GPU constructor-failure test aborts with a double free that CNA's own record calls real and unfixed; `docs/directx9-renderer.md` says custom ShaderEffect (D9-11) is not started while the plan records it closed. | **added** as CNA-BUG-250 … CNA-BUG-253 |
+| AF-009 | Known Issues duplicates | CNA-BUG-215 / -219 / -226 are one root defect (the `IsLatched()` comment; CNA-BUG-219's own origin note says "cross-package duplicate"): the Phase-3 merge map missed them. | **fixed**: -219 and -226 folded into -215 |
+| AF-010 | Existing pages | `roadmap.html` said the C ABI release gate "has one unmet criterion" and `features.html` that it reads "Not ready because of those 468"; running `check_release_gate.py --run` in the read-only TARGET tree measures two unmet (coverage-closed, limitations-matrix); Phase-3 errata 51/63 fixed `docs/c-api.html` and two others but missed these two. | **fixed** (errata 77–78) |
 
 ## 6. Progress log (updated at each checkpoint; the final sections replace this one)
 
@@ -78,7 +80,8 @@ Batches by subsystem; a verdict is a *proposal*: `audit_issue_review.py plan` ap
 | Batch | Scope | Reviewed | Confirmed | Corrected | Reclassified | Removed |
 |---|---|---:|---:|---:|---:|---:|
 | R10 | Math & geometry | 23 | 18 | 5 | 0 | 0 |
-| R14 | Content & Models | 30 | 26 | 3 | 1 (CNA-BUG-127 → CNA-GAP-063) | 0 |
+| R14 | Content & Models | 30 | 26 | 3 | 1 (CNA-BUG-127 → functional gap) | 0 |
+| R01 | Graphics & renderers, part 1 (16 low + 5 high/medium bugs) | 21 | 12 | 6 (+1 narrowed) | 2 (CNA-BUG-100, -108 → functional gaps) | 0 |
 
 Independently re-verified by the orchestrator (not delegated): **both HIGH bugs** — CNA-BUG-001 (aliased `Matrix::Transpose` in `Plane::Transform`) and CNA-BUG-137 (`MediaPlayer::Play(Song*)` clears the queue that owns the song before copying it) — confirmed by reading; CNA-BUG-121 (spot check of a contestable medium; reviewer right); two reviewer *corrections* (CNA-GAP-034 `DateTime(ticks, kind)` exists in sharp-runtime; CNA-GAP-036 `gltf_to_cnj` takes a positional `unitScale`) — both true.
 Re-executed by the orchestrator: CNA-BUG-062 (`generate_coverage_inventory.py --check` and `generate_limitations.py --check` exit 2, naming `modules/design|diagnostics|inspector/include`), CNA-BUG-200 (`check_no_posix_setenv.py` exit 1, twelve lines), CNA-BUG-016 (header-only `Json.hpp` probe: 1,000 and 10,000 levels parse; 50,000 and 100,000 levels SIGSEGV with the default 8 MiB stack, g++ 14.2 -O0 and -O2; probe removed from `build-probe/`).
