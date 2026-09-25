@@ -84,10 +84,13 @@ class MetadataParser(HTMLParser):
         return re.sub(r"\s+", " ", "".join(self.title_parts)).strip()
 
 
+NON_SITE_DIRS = {"audit", "scripts", "build-probe", ".git"}  # repository content, not published pages (see _config.yml)
+
+
 def public_pages() -> list[Path]:
     return [
         path for path in sorted(ROOT.rglob("*.html"))
-        if path.relative_to(ROOT).as_posix() not in EXCLUDED
+        if path.relative_to(ROOT).as_posix() not in EXCLUDED and not (NON_SITE_DIRS & set(path.relative_to(ROOT).parts))
     ]
 
 

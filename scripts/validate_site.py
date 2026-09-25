@@ -97,7 +97,7 @@ def expected_canonical(rel: str) -> str:
 def main() -> int:
     errors: list[str] = []
     pages: dict[Path, PageParser] = {}
-    html_files = sorted(ROOT.rglob("*.html"))
+    html_files = sorted(p for p in ROOT.rglob("*.html") if not ({"audit", "scripts", "build-probe", ".git"} & set(p.relative_to(ROOT).parts)))
 
     for path in html_files:
         rel = path.relative_to(ROOT).as_posix()

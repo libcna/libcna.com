@@ -39,6 +39,8 @@ def patch(text: str) -> str:
 def main() -> int:
     changed = missing = 0
     for path in sorted(ROOT.rglob("*.html")):
+        if {"audit", "scripts", "build-probe", ".git"} & set(path.relative_to(ROOT).parts):
+            continue
         text = path.read_text(encoding="utf-8")
         new = patch(text)
         if new == text:
