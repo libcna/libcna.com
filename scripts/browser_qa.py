@@ -57,7 +57,8 @@ JS_METRICS = r"""
   for (const el of document.querySelectorAll('main p, main li, main td, main th, main h1, main h2, main h3, main a, main code, main span, main dd, main dt')) {
     if (!el.childNodes.length || ![...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())) continue;
     const r = el.getBoundingClientRect(); if (r.width === 0 || r.height === 0) continue;
-    if (el.closest('.toc-title, .section-label, .dev-pager span')) continue;  // shared, pre-existing muted labels
+    if (el.tagName === 'A' && el.textContent.trim() === '#') continue;  // shared heading-anchor affordance
+    if (el.closest('.toc-title, .section-label, .dev-pager span, .doc-meta')) continue;  // shared, pre-existing muted labels
     const cs = getComputedStyle(el); if (cs.visibility === 'hidden') continue;
     const fg = parse(cs.color), bg = bgOf(el); if (!fg) continue;
     const key = cs.color + '|' + JSON.stringify(bg); if (seen.has(key)) continue; seen.add(key);
@@ -92,6 +93,8 @@ class Chrome:
         self.call("Page.enable")
         self.call("Runtime.enable")
         self.call("Log.enable")
+        self.call("Network.enable")
+        self.call("Network.setCacheDisabled", cacheDisabled=True)
 
     def call(self, method: str, **params):
         self.n += 1
@@ -178,6 +181,7 @@ def main() -> int:
     s.add_argument("--height", type=int, default=900)
     s.add_argument("--scheme", default="dark")
     s.add_argument("--full", action="store_true")
+    s.add_argument("--scroll", default="", help="CSS selector to scroll into view before the screenshot")
     c = sub.add_parser("check")
     c.add_argument("urls", nargs="+")
     c.add_argument("--width", type=int, action="append")
@@ -192,6 +196,9 @@ def main() -> int:
     try:
         if args.cmd == "shot":
             ch.open(args.url, args.width, args.height, args.scheme)
+            if args.scroll:
+                ch.eval(f"(() => {{ const e = document.querySelector({json.dumps(args.scroll)}); if (e) e.scrollIntoView({{block: 'start'}}); window.scrollBy(0, -90); }})()")
+                time.sleep(0.3)
             ch.shot(Path(args.out), args.full)
             print("wrote", args.out)
         elif args.cmd == "check":

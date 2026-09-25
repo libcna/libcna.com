@@ -1,5 +1,16 @@
 # libcna.com — CNA accuracy audit and website refresh
 
+## Phase 2 (2026-09-25): the Development area, absorbed from developer.libcna.com
+
+Same TARGET (`cnahead` = `009d40f5dd085c4e674d3479675fac84b12b3e0a`); Phase-1 base `94d758a`. Phase 2 added a maintainer layer under `development/` (Human Takeover,
+Maintainer Handbook, repository/source ownership, build, testing, debugging, workflows, invariants, architecture maps, internals, generated references, maintenance) by
+absorbing every useful piece of developer.libcna.com **after re-verifying it against TARGET** (the Developer site documents an older CNA commit and is a knowledge source, not an authority).
+**Ledger:** `audit/developer-absorption-phase2.md` (95/95 Developer files, 0 pending; data in `audit/data/developer-absorption-*.json`) · **Editorial guide:** `audit/data/phase2-editorial-guide.md`
+· **Phase-1 errata found on the way:** `audit/phase2-phase1-errata.md` · **Preservation:** `audit/phase2-presentation-comparison.md` against `audit/data/phase2-baseline-inventory.json`.
+Tooling: `scripts/dev_manifest.py` (page set), `scripts/site_dev.py` (page generator and sidebar/breadcrumb/pager sync), `scripts/generate_dev_reference.py` (five generated inventories from TARGET Git objects),
+`scripts/dev_pack.py`, `check_dev_page.py`, `check_dev_claims.py`, `check_source_links.py`, `developer_ledger.py`, `browser_qa.py`; everything runs through `scripts/validate_all.sh`.
+The maintainer procedure is documented on the site itself: `development/handbook/update-libcna-com.html` and `development/maintenance.html`.
+
 ## Current authoritative audit: CNA snapshot 009d40f5 (Phase 1, 2026-09-24)
 
 **Pinned by `cnahead`:** `009d40f5dd085c4e674d3479675fac84b12b3e0a` (branch `next`, 2,877 commits after `v0.1.0-alpha.1`).

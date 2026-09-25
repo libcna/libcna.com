@@ -427,6 +427,10 @@ def cmd_render(_: argparse.Namespace) -> int:
         L.append("")
     if pending:
         L += ["## 9. Pending units", ""] + [f"- `{u['developer_source']}`" for u in pending] + [""]
+    notes = ROOT / "audit" / "data" / "developer-absorption-notes.md"
+    if notes.exists():
+        L.append(notes.read_text(encoding="utf-8").rstrip())
+        L.append("")
     REPORT.write_text("\n".join(L) + "\n", encoding="utf-8")
     print(f"wrote {REPORT.relative_to(ROOT)} ({len(units)} units, {len(pending)} pending)")
     return 0

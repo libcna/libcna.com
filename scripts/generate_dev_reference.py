@@ -192,28 +192,82 @@ def gen_modules() -> tuple[dict, str]:
 # ---------------------------------------------------------------------------------------------
 # 2. CMake options
 # ---------------------------------------------------------------------------------------------
-OPTION_RE = re.compile(r"(?ims)\b(option|cmake_dependent_option)\s*\(\s*([A-Za-z0-9_]+)\s+(?:\"([^\"]*)\"|([^\s\)]+))\s+([^\s\)]+)")
-CACHE_RE = re.compile(r"(?ims)\bset\s*\(\s*([A-Za-z0-9_]+)\s+([^\s\)]+).*?\bCACHE\s+(BOOL|STRING|PATH|FILEPATH)\s+(?:\"([^\"]*)\"|([^\)]*))\)")
+def cmake_commands(text: str):
+    """Yield (command, [arguments]) for every top-level-ish command in a CMake file (quote- and paren-aware)."""
+    text = re.sub(r"(?m)(?<!\\)#[^\n]*", "", text)  # strip line comments (bracket comments are rare in CNA's CMake)
+    i, n = 0, len(text)
+    head = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\s*\(")
+    while i < n:
+        m = head.search(text, i)
+        if not m:
+            return
+        name = m.group(0).rstrip("( \t\r\n")
+        j, depth, arg, args, quoted = m.end(), 1, "", [], False
+        while j < n and depth:
+            c = text[j]
+            if quoted:
+                arg += c
+                if c == "\\" and j + 1 < n:
+                    arg += text[j + 1]
+                    j += 1
+                elif c == '"':
+                    quoted = False
+            elif c == '"':
+                quoted = True
+                arg += c
+            elif c == "(":
+                depth += 1
+                arg += c
+            elif c == ")":
+                depth -= 1
+                if depth:
+                    arg += c
+            elif c.isspace():
+                if arg:
+                    args.append(arg)
+                    arg = ""
+            else:
+                arg += c
+            j += 1
+        if arg:
+            args.append(arg)
+        yield name.lower(), args
+        i = j
+
+
+def unquote(a: str) -> str:
+    a = a[1:-1] if len(a) >= 2 and a[0] == '"' and a[-1] == '"' else a
+    return re.sub(r"\\\s*\n\s*", " ", a).replace("\\;", ";")
 
 
 def gen_options() -> tuple[dict, str]:
     cmake_files = [p for p in FILES if p.endswith(("CMakeLists.txt", ".cmake"))]
     options: dict[str, tuple[str, str, str, str]] = {}
     for path in cmake_files:
-        text = show(path)
-        for m in OPTION_RE.finditer(text):
-            options.setdefault(m.group(2), ("option" if m.group(1).lower() == "option" else "dependent option",
-                                            m.group(5), (m.group(3) or m.group(4) or "").strip(), path))
-        for m in CACHE_RE.finditer(text):
-            options.setdefault(m.group(1), (f"cache {m.group(3).lower()}", (m.group(2) or "").strip(),
-                                            (m.group(4) or m.group(5) or "").strip(), path))
+        for cmd, args in cmake_commands(show(path)):
+            if cmd in ("option", "cmake_dependent_option") and len(args) >= 2:
+                name = args[0]
+                desc = unquote(args[1])
+                default = args[2] if len(args) > 2 and cmd == "option" else (args[2] if len(args) > 2 else "")
+                kind = "option" if cmd == "option" else "dependent option"
+                if not name.startswith(("_", "$")) and "${" not in name:
+                    options.setdefault(name, (kind, unquote(default), desc, path))
+            elif cmd == "set" and "CACHE" in args and len(args) >= 4:
+                k = args.index("CACHE")
+                name = args[0]
+                if name.startswith(("_", "$")) or "${" in name or k + 2 >= len(args):
+                    continue
+                value = " ".join(unquote(a) for a in args[1:k]) or ""
+                ctype = args[k + 1].lower()
+                doc = unquote(args[k + 2]) if k + 2 < len(args) else ""
+                options.setdefault(name, (f"cache {ctype}", value, doc, path))
     cna = {k: v for k, v in options.items() if k.startswith(("CNA_", "SHARP_"))}
     rows = "".join(f"<tr><td><code>{esc(n)}</code></td><td>{esc(kind)}</td><td><code>{esc(d)}</code></td><td>{esc(desc)}</td><td>{src(p, p)}</td></tr>"
                    for n, (kind, d, desc, p) in sorted(options.items()))
     body = (gen_note() + strip((str(len(options)), "cache options / variables found"), (str(len(cna)), "with a CNA_ or SHARP_ prefix"),
                                (str(len(cmake_files)), "CMake files scanned")) +
             '<h2 id="options">Options</h2><p>Every <code>option()</code>, <code>cmake_dependent_option()</code> and <code>set(… CACHE …)</code> declaration found by '
-            'a syntactic scan of the CMake files. Read the linked CMake logic before relying on a value: conditional defaults can depend on host or toolchain and can be '
+            'a quote- and parenthesis-aware scan of the CMake files (names that start with an underscore or contain a variable reference are internal and skipped). Read the linked CMake logic before relying on a value: conditional defaults can depend on host or toolchain and can be '
             'rewritten after declaration, and a declaration says nothing about which combinations are valid (see '
             f'<a href="{esc(site_dev.rel_href(PAGE.format("cmake-options"), PAGE.format("selection-axes")))}">selection axes</a> and the '
             f'<a href="{esc(site_dev.rel_href(PAGE.format("cmake-options"), "development/build/architecture.html"))}">CMake architecture</a> page).</p>'
