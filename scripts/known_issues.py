@@ -240,6 +240,10 @@ def cmd_merge(_: argparse.Namespace) -> int:
             s, d_ = by_id[src], by_id[dst]
             d_["cand_ids"] = sorted(set(d_.get("cand_ids") or []) | set(s.get("cand_ids") or []))
             d_["origin"] = f"{d_.get('origin', '')}; merged with {src}"
+            have = {x["path"] for x in d_["sources"]}
+            d_["sources"] = d_["sources"] + [x for x in s["sources"] if x["path"] not in have]
+            d_["evidence"] = (d_.get("evidence") or "") + ("<p><em>Independently observed as a separate finding (merged):</em> "
+                              + esc(s["summary"]) + "</p>")
         issues = [i for i in issues if i["id"] not in merged]
         for d in disp:
             if d.get("published_as") in merged:
