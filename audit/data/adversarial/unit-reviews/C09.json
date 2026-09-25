@@ -1,0 +1,971 @@
+{
+ "group": "C09",
+ "units": [
+  {
+   "unit": "ch41-skinning-animation",
+   "status": "PASS WITH FIXES",
+   "large": false,
+   "sections": [
+    {
+     "title": "Skinning and Animation across Two Systems (intro)",
+     "grade": "full",
+     "where": "deep-dives/models/skinning-and-animation.html#two-systems",
+     "note": "Two systems, intentional SampleTrack duplication and the shared keyframe vocabulary all present. Ledger WP13-ch41-003 verified: AnimationPlayer.hpp declares 'using Keyframe = KeyframeEXT' and 'using AnimationClip = AnimationClipEXT'; page says exactly that."
+    },
+    {
+     "title": "The ordinary Model path",
+     "grade": "full",
+     "where": "deep-dives/models/skinning-and-animation.html#skinning-data, #palette",
+     "note": "SkinningData fields, Model.Tag convention, 'Model::Draw never installs a palette / rejects a non-IEffectMatrices effect' and the identity-palette default all match AnimationPlayer.hpp/.cpp and Model.cpp. Load-time ApplyBindPoseBoneTransformsEXT verified at the glTF, .cnj/.model.json and .cnb-v1 readers in ContentManager.cpp (three call sites); the CNB Model-v2 builder carries no SkinningData so the 'glTF, .cnj and .cnb readers' wording is right."
+    },
+    {
+     "title": "The Avatar path",
+     "grade": "full",
+     "where": "deep-dives/services/avatars.html#skinned-model; skinning-and-animation.html#animation-player",
+     "note": "DUPLICATE disposition confirmed (SkinnedModelEXT contract, .skinnedmodel.json reader, four guards table on the avatars page; RegisterTypeReader<shared_ptr<SkinnedModelEXT>> is the only loader). Validation list matches AnimationPlayer::RecomputeTransforms and SkinnedModelEXT::ComputeBoneTransformsEXT. Tiny gap: 'any negative parent means root' is stated for AnimationPlayer only (F2). Negative-BoneCount allocation hazard verified (ctor sizes vectors from static_cast<size_t>(BoneCount) before the size check)."
+    },
+    {
+     "title": "Scene indices are not palette indices",
+     "grade": "partial",
+     "where": "deep-dives/models/skinning-and-animation.html#index-spaces",
+     "note": "Prose correct (BuildSkeleton BFS reorder, oldToNew, JOINTS_0 rewrite; sceneNodeIndexToPaletteIndex/paletteIndexToSceneNodeIndex are per-skin maps that are -1 for non-joints/outside the scene). The redrawn figure attaches the two explicit maps to the source-joint ordinal box instead of the palette index (F1)."
+    },
+    {
+     "title": "The coordinate-space failure that produced D8",
+     "grade": "full",
+     "where": "deep-dives/models/skinning-and-animation.html#d8",
+     "note": "P_root = W_ancestor * inverse(W_meshNode) verified in GltfImportCore.cpp::BuildSkeleton (ancestorWorld * Invert(meshNodeWorld), unit-scaled; out-of-scene ancestry via cgltf_node_transform_world; skin.skeleton deliberately not consulted)."
+    },
+    {
+     "title": "Why the prefix must remain separate",
+     "grade": "full",
+     "where": "deep-dives/models/skinning-and-animation.html#prefix",
+     "note": "W_root = L_root * P_root and 'applied only when the array has exactly BoneCount entries' verified in AnimationPlayer.cpp::RecomputeTransforms (hasPrefix). Test-design paragraph (-50 / 0 / -100) present."
+    },
+    {
+     "title": "Clip extraction",
+     "grade": "full",
+     "where": "deep-dives/models/skinning-and-animation.html#clips",
+     "note": "Union of key times at 1e-9 (BuildTrack), decomposed bind-pose fallback, STEP half-open rule (StepSampleIndex, GLTF-301), cubic Hermite + quaternion renormalisation, keyframes drop modes/tangents, rigid clips via ExtractSceneNodeClips + ClipTargetSpaceEXT, ApplyClipToBonesEXT throws std::invalid_argument for a palette clip, morph weight track first-node rule: all verified at TARGET."
+    },
+    {
+     "title": "Scaling and capacity",
+     "grade": "full",
+     "where": "deep-dives/models/skinning-and-animation.html#scale",
+     "note": "72-joint refusal verified (BuildSkeleton kMaxPaletteBones=72 throws naming the joint count; test ARigPastTheBonePaletteIsRefusedRatherThanTruncated pins 73 refused, 72 accepted). Known issue CNA-GAP-043 says the same."
+    },
+    {
+     "title": "Practical update order",
+     "grade": "full",
+     "where": "deep-dives/models/skinning-and-animation.html#update-order",
+     "note": "Seven-step order incl. rigid clips and thread_local Model::sharedDrawBoneMatrices_ (Model.cpp) verified; rigid clips and a skin cannot coexist on one Model::Tag, which the page states via GAP-040."
+    }
+   ],
+   "residuals": {
+    "reviewed": 1,
+    "covered": 1,
+    "stale": 0,
+    "lost": 0,
+    "narrative": 0
+   },
+   "dropped": {
+    "reviewed": 1,
+    "confirmed": 1,
+    "false_drop": 0,
+    "restore_issue": 0,
+    "unverifiable": 0
+   },
+   "corrections": {
+    "verified": 6,
+    "agree": 6,
+    "disagree": 0
+   },
+   "findings": [
+    {
+     "id": "ch41-skinning-animation-F1",
+     "type": "WRONG-CORRECTION",
+     "severity": "medium",
+     "bible": "Figure fig-skin-index-spaces (Scene indices are not palette indices): three index spaces; ledger says it was redrawn with the explicit scene-node/palette maps (sceneNodeIndexToPaletteIndex, paletteIndexToSceneNodeIndex).",
+     "target": "modules/content/include/CNA/Internal/GltfImport/GltfImportCore.hpp::SkeletonResult documents sceneNodeIndexToPaletteIndex as 'maps each stable sceneNodeIndex to this skin's paletteIndex, or -1' and says it is deliberately NOT oldToNew; paletteIndexToSceneNodeIndex maps each paletteIndex back to its sceneNodeIndex. modules/content/src/GltfImport/GltfImportCore.cpp::BuildSkeleton fills them with paletteIndex = newIdx (post-reorder). So the two maps connect scene-node index and PALETTE index; the source-joint ordinal is reached only through oldToNew.",
+     "site_now": "deep-dives/models/skinning-and-animation.html#index-spaces, <pre class=\"diagram\">: the double arrow labelled 'sceneNodeIndexToPaletteIndex / paletteIndexToSceneNodeIndex (explicit maps)' runs between 'scene-node index' and 'skin.joints[k] = source-joint ordinal k'. That contradicts the map names, the SkeletonResult docs and the figure's own caption ('relate scene-node indices and palette indices').",
+     "fix": {
+      "page": "deep-dives/models/skinning-and-animation.html",
+      "anchor": "index-spaces",
+      "action": "replace",
+      "old_html": "<pre class=\"diagram\">\n  glTF node  --flatten-->  scene-node index  ==  ModelBone index (Model::Bones)\n                                  ^\n                                  |  sceneNodeIndexToPaletteIndex\n                                  |  paletteIndexToSceneNodeIndex   (explicit maps)\n                                  v\n  skin.joints[k]  = source-joint ordinal k  (the value JOINTS_0 stores)\n        |\n        |  BuildSkeleton: breadth-first, parent-before-child reorder -> oldToNew[k]\n        v\n  palette index p  -->  BindPose[p]  InverseBindPose[p]  SkeletonRootPrefix[p]\n        ^                                 |\n        |  packed JOINTS_0 bytes          v\n        |  rewritten via oldToNew    AnimationPlayer: world[p], skin[p] = IBM[p] * world[p]\n                                          |\n                                          v\n                          SkinnedEffect / SkinnedPbrEffect palette (at most 72)\n</pre>",
+      "html": "<pre class=\"diagram\">\n  glTF node  --flatten-->  scene-node index  ==  ModelBone index (Model::Bones)  <--+\n                                                                                    |  sceneNodeIndexToPaletteIndex\n  skin.joints[k]  = source-joint ordinal k  (the value JOINTS_0 stores)             |    (per skin; -1 = not a joint of it)\n        |                                                                           |\n        |  BuildSkeleton: breadth-first, parent-before-child reorder -> oldToNew[k] |  paletteIndexToSceneNodeIndex\n        v                                                                           |    (-1 = joint outside the imported scene)\n  palette index p  -->  BindPose[p]  InverseBindPose[p]  SkeletonRootPrefix[p]  <---+\n        ^                                 |\n        |  packed JOINTS_0 bytes          v\n        |  rewritten via oldToNew    AnimationPlayer: world[p], skin[p] = IBM[p] * world[p]\n                                          |\n                                          v\n                          SkinnedEffect / SkinnedPbrEffect palette (at most 72)\n</pre>"
+     }
+    },
+    {
+     "id": "ch41-skinning-animation-F2",
+     "type": "SHALLOW",
+     "severity": "low",
+     "bible": "The Avatar path: 'Both players nevertheless enforce the same essential inputs ... Any negative parent value is treated as root, not only -1' (both AnimationPlayer and SkinnedModelEXT).",
+     "target": "modules/graphics/src/Xna/SkinnedModelEXT.cpp::ComputeBoneTransformsEXT: 'worldTransforms[i] = parent < 0 ? local : local * world[parent]' after the 'parent >= i' throw, i.e. any negative parent is a root, same as AnimationPlayer::RecomputeTransforms.",
+     "site_now": "deep-dives/services/avatars.html#palette (step 'Compose in topological order') says only 'A root's world transform is its local transform' and the public-data list says 'root is -1'; the 'any negative value' nuance is stated for AnimationPlayer only (skinning-and-animation.html#animation-player).",
+     "fix": {
+      "page": "deep-dives/services/avatars.html",
+      "anchor": "palette",
+      "action": "replace",
+      "old_html": "A root's world transform is its local transform; a child's is <code>local * world[parent]</code> (row-vector convention).</li>",
+      "html": "A root's world transform is its local transform (any negative parent index means root, not only <code>-1</code>, exactly as in <code>AnimationPlayer</code>); a child's is <code>local * world[parent]</code> (row-vector convention).</li>"
+     }
+    }
+   ],
+   "notes": "Re-derived all 6 ledger corrections and the DUPLICATE from TARGET (AnimationPlayer, BuildSkeleton, StepSampleIndex, ContentManager call sites); read both destination pages in full. Only defects: redrawn figure endpoints (F1) and a small SkinnedModelEXT nuance (F2). RecomputeTransforms is a private helper the page calls 'Recompute'; treated as covered. Residual count includes the 1 absent identifier."
+  },
+  {
+   "unit": "ch42-cnj-model-toolchain",
+   "status": "PASS WITH FIXES",
+   "large": false,
+   "sections": [
+    {
+     "title": "The CNJ Model Toolchain (intro)",
+     "grade": "full",
+     "where": "deep-dives/models/cnj-toolchain.html (lead), #routes",
+     "note": "Direct-vs-offline story, unit scale 1 vs explicit, reproducible artefacts all present."
+    },
+    {
+     "title": "A renderer-free build tool",
+     "grade": "full",
+     "where": "deep-dives/models/cnj-toolchain.html#tool; docs/tutorials/111-cnj-pipeline.html#running",
+     "note": "Verified cmake/ToolGltfToCnj.cmake (unconditional add_executable, links CNA + sharp-runtime, also compiles GltfOracleEXT.cpp for --dump-oracle, Draco link), main() usage/exit-1 behaviour, ConvertGltfToCnj declared in tools/gltf_to_cnj/GltfToCnjEntry.hpp and called from modules/content/src/Pipeline/ModelContentPipeline.cpp and tools/gltf_to_cnb/gltf_to_cnb.cpp (WP13-ch42-007 agrees)."
+    },
+    {
+     "title": "The Model envelope is version 2",
+     "grade": "full",
+     "where": "deep-dives/models/cnj-toolchain.html#envelope, #reader-rules",
+     "note": "Per-type ceiling (ValidateCnjEnvelope(...,'Model',...,2)), sourceFile rejection, bones/parentBone, additive V2 keys (import report, targetSpace, variantOf/materialVariant, primitiveTopology, PBR fields, partOfMesh, morphFlatNormals) all verified in gltf_to_cnj.cpp and ContentManager.cpp; three producer-invariant caveats verified against ParseCnjBoneArrayEXT and the bone-building loop; camera claim (WP13-ch42-016) verified: only cameraNodeCount is written, setCamerasEXTProperty is called only on the direct-glTF path."
+    },
+    {
+     "title": "Binary sidecars and bounded reads",
+     "grade": "full",
+     "where": "deep-dives/models/cnj-toolchain.html#sidecars",
+     "note": "Stride<=0 skipped, unknown positive stride refused with ContentLoadException (BuildVertexBufferFromRawBytes GLTF-157), 32-bit indices when numVertices>65535, integer-division truncation, strict morph-sidecar reader with tangent trailer (GLTF-289, all listed checks present in code), skeleton third block 'boneCount*64' test - all match."
+    },
+    {
+     "title": "Offline and runtime parity",
+     "grade": "full",
+     "where": "deep-dives/models/cnj-toolchain.html#parity",
+     "note": "Named tests (TheOfflineAndRuntimePathsProduceIdentical*, OfflineAndRuntimePathsHaveIdenticalL6MaterialStateForTheCorpus, MorphedFlatNormalsAreRecomputedIdenticallyOnBothLoadPaths, StructuredImportDiagnosticsSurviveBothLoadPaths) exist in GltfToCnjToolTests.cpp."
+    },
+    {
+     "title": "Occlusion through DualTextureEffect",
+     "grade": "partial",
+     "where": "deep-dives/models/cnj-toolchain.html#occlusion",
+     "note": "Halving formula, 127/254 arithmetic, separate cache and the narrow reach (useDualTexture = !usePbr && !skinned && !colored && occlusion && base colour; usePbr = material==null || !material.unlit, i.e. KHR_materials_unlit only; WP13-ch42-044 agrees) verified. The decode-failure behaviour is under-described (F1)."
+    },
+    {
+     "title": "Choosing a route",
+     "grade": "full",
+     "where": "deep-dives/models/cnj-toolchain.html#routes; docs/tutorials/111-cnj-pipeline.html#compiled",
+     "note": "cna_tool_cnj_to_cnb and cna_tool_gltf_to_cnb --unit-scale exist (cmake/ToolCnjToCnb.cmake, ToolGltfToCnb.cmake, gltf_to_cnb.cpp option parser); WP13-ch42-045/046 agree; legacy .skinnedmodel.json only for SkinnedModelEXT (single RegisterTypeReader)."
+    }
+   ],
+   "residuals": {
+    "reviewed": 1,
+    "covered": 0,
+    "stale": 0,
+    "lost": 0,
+    "narrative": 1
+   },
+   "dropped": {
+    "reviewed": 0,
+    "confirmed": 0,
+    "false_drop": 0,
+    "restore_issue": 0,
+    "unverifiable": 0
+   },
+   "corrections": {
+    "verified": 9,
+    "agree": 9,
+    "disagree": 0
+   },
+   "findings": [
+    {
+     "id": "ch42-cnj-model-toolchain-F1",
+     "type": "OVERSTATED",
+     "severity": "low",
+     "bible": "Occlusion through DualTextureEffect: 'The runtime and converter both use this shared extraction rule; tests cover successful remapping and decode failure.'",
+     "target": "modules/content/src/GltfImport/GltfImportCore.cpp::RemapOcclusionImageForDualTextureEXT returns std::nullopt when stbi_load_from_memory or PNG encoding fails (test GltfOcclusionRemap.TheRemapIsRefusedRatherThanGuessedForBytesThatAreNotAnImage). But both callers fall back to the ORIGINAL bytes: tools/gltf_to_cnj/gltf_to_cnj.cpp pushes the warning 'has an occlusion texture that could not be decoded for the DualTextureEffect brightness fix -- written unmodified (still ~2x too bright where unoccluded)' and sets remapped = img (so the _texocc file keeps the source extension, not .png); modules/content/src/Xna/ContentManager.cpp::loadOcclusionTextureForDualTextureEXT (lambda in ReadGltfModel) does 'toLoad = remapped ? *remapped : *extracted' with no diagnostic.",
+     "site_now": "deep-dives/models/cnj-toolchain.html#occlusion: 'An image the codec cannot decode is refused by the remap rather than guessed at' and 'the converter writes it as a distinct _texoccN.png'. True of the remap function only; a reader would conclude the import fails, whereas the ~2x brightening silently returns (converter: warning; runtime path: no report).",
+     "fix": {
+      "page": "deep-dives/models/cnj-toolchain.html",
+      "anchor": "occlusion",
+      "action": "replace",
+      "old_html": "An image the codec cannot decode is refused by the remap rather than guessed at.",
+      "html": "An image the codec cannot decode is refused by the remap function rather than guessed at, but neither front end turns that into an import failure: the converter warns that the occlusion texture \"could not be decoded for the DualTextureEffect brightness fix\" and writes the original bytes unmodified (so that <code>_texoccN</code> file keeps the source extension and the surface is again about twice as bright where unoccluded), and the runtime reader loads the original image without a diagnostic."
+     }
+    }
+   ],
+   "notes": "Read Bible chapter and both destination pages in full; re-derived 9/9 ledger corrections from ContentManager.cpp, gltf_to_cnj.cpp, GltfImportCore.cpp, cmake tool files. Only issue found is the remap decode-failure fallback. Residual count is the 1 absent identifier 'CNJs' (a plural in prose: narrative). No dropped dispositions."
+  },
+  {
+   "unit": "ch43-gltf-conformance",
+   "status": "PASS",
+   "large": false,
+   "sections": [
+    {
+     "title": "glTF Conformance and Oracles (intro)",
+     "grade": "full",
+     "where": "deep-dives/models/gltf-conformance.html (lead), #milestones",
+     "note": "Evidence-system framing and the 'scoped, not every extension/renderer/hostile input' qualification are present."
+    },
+    {
+     "title": "Pinned authority and deterministic corpus",
+     "grade": "full",
+     "where": "deep-dives/models/gltf-conformance.html#pin, #corpus",
+     "note": "Spec commit 2b29723d..., 149,830 bytes and SHA-256 55986799... printed unsplit and equal to docs/gltf-conformance.md; 148 gltf + 148 glb + 148 expected.json in 744 files, 15 owning groups, manifest hash guard: all match tests/assets/gltf (counted). Validator pin/fetch, not needed to build (WP13-ch43-012 agrees: sanitizers workflow fetches it)."
+    },
+    {
+     "title": "The ladder, including its L0 gate",
+     "grade": "full",
+     "where": "deep-dives/models/gltf-conformance.html#ladder, #l5, #l6; development/testing/index.html#labels",
+     "note": "CnaGltfConformanceL0..L6 + Perf + Ledger + Tool verified in cmake/UnitTests.cmake CNA_GLTF_CONFORMANCE_RUNGS (WP13-ch43-022 agrees). 140 goldens / 8 absences recomputed from the corpus: the eight are exactly accessor-count-mismatch, bad-accessor-count-overflow, bad-accessor-out-of-bounds, bad-index-out-of-range, gltf-required-extension-unsupported, skin-joint-index-out-of-range, skin-73-joints and interleaved-pos-nrm-uv."
+    },
+    {
+     "title": "Pixel evidence is renderer-specific",
+     "grade": "full",
+     "where": "deep-dives/models/gltf-conformance.html#l7, #reference",
+     "note": "Four docs/gltf-l7-*-report.json files: 148 assets, 140 captured, 8 rejected, 512x512, tolerance 0, two processes, 2026-08-18, cna commit b6c180fd (verified an ancestor of v0.1.0-alpha.1), DXVK 2.6.0; fifth report scoped to 14 mat-* fixtures on Vulkan. CI (WP13-ch43-031) verified against gltf-renderer-stride-ci.yml (STUB/HEADLESS/OPENGLES3/VULKAN/SOFTWARE; separate viewer job OPENGLES3 only) and gltf-sanitizers-ci.yml (STUB, ASan+UBSan, Draco on/off, validator, provenance, --check, --determinism, *Gltf*, ladder). Reference comparison (13 assets, min IoU 0.999579, MAE gate 80, unlit NaN 189.33) and retake (14 rows/15 cases, min IoU 0.998719, MAE gate 100, Sponza 52,686,624 bytes) verified in the JSON."
+    },
+    {
+     "title": "The append-only defect ledger",
+     "grade": "full",
+     "where": "deep-dives/models/gltf-conformance.html#ledger",
+     "note": "manifest.json defectLedger has 9 records D1..D8 + GLTF-241, all 'fixed' (WP13-ch43-044 agrees); table and the D5-D8 remediation sentences match."
+    },
+    {
+     "title": "Current capability and loss reporting",
+     "grade": "full",
+     "where": "deep-dives/models/gltf-conformance.html#capability; deep-dives/models/gltf-import.html#report",
+     "note": "Report surface, 'branch on codes, never on message text' (gltf-import.html#report) and the six limits present."
+    },
+    {
+     "title": "What the milestone name means",
+     "grade": "full",
+     "where": "deep-dives/models/gltf-conformance.html#milestones, #reading-rule",
+     "note": "Qualified declaration and 9-of-12 GLTF ROBUST with rows 3/6/12 match plans/plan_gltf.md (GLTF-459, section 27.2); METAL as the only renderer sampling neither specular map verified in GltfRendererPbrFallbackPolicyTests.cpp::SpecularTextureInventoryClassifiesEveryPbrRenderer (WP13-ch43-051 agrees)."
+    }
+   ],
+   "residuals": {
+    "reviewed": 1,
+    "covered": 1,
+    "stale": 0,
+    "lost": 0,
+    "narrative": 0
+   },
+   "dropped": {
+    "reviewed": 0,
+    "confirmed": 0,
+    "false_drop": 0,
+    "restore_issue": 0,
+    "unverifiable": 0
+   },
+   "corrections": {
+    "verified": 6,
+    "agree": 6,
+    "disagree": 0
+   },
+   "findings": [],
+   "notes": "Recomputed the corpus counts, golden/absence set, defect ledger, L7 report headers, both Khronos comparisons, CTest rung list and both CI workflows from TARGET; all numbers on the page hold. Residual #1 (spec pin hashes, split for LaTeX line breaks) is present unsplit on the page. Nothing lost or overstated found."
+  },
+  {
+   "unit": "ch44-input-system",
+   "status": "PASS WITH FIXES",
+   "large": true,
+   "sections": [
+    {
+     "title": "The Input System (chapter intro: 522 cases, freeze, hardware caveat)",
+     "grade": "full",
+     "where": "docs/input.html#overview; deep-dives/services/input-model.html#evidence",
+     "note": "Ledger WP14-ch44-002 verified: modules/input/tests has 47 .cpp files and 523 statically counted TEST/TEST_F/TEST_P definitions (alpha.1 tag: 43 and 490 - also verified); the Bible's 522 is another counting method. Freeze tests and the 15 blocked hardware tasks (plans/plan_input.md banner: 490 done, 15 blocked) present."
+    },
+    {
+     "title": "Architecture: event-driven, not poll-driven",
+     "grade": "full",
+     "where": "deep-dives/services/input-model.html#snapshot-model; development/internals/input/events.html (frame order); development/architecture/audio-input.html#input-flow",
+     "note": "Game::PollEvents verified: ProcessEvent first, then Keyboard/Mouse Update, then Gamepad/Joystick Update only when PlatformSubsystem::Gamepad is initialized; F9/F10 (non-repeat) call DebugSimulateContextLoss/DebugRestoreContext; relative delta consume-on-read; single-thread rule; STRICT/EXT/CNAEXT glossary matches docs/input-public-api-frozen.md. WP14-ch44-004/005/012 agree."
+    },
+    {
+     "title": "Keyboard",
+     "grade": "full",
+     "where": "deep-dives/services/input-model.html#keys-values, #keyboardstate",
+     "note": "160 enumerators and the odd values (Pause 19, Kana 21, ImeConvert 28, ChatPadGreen 202, ProcessKey 229) counted from Keys.hpp; unordered_set storage, sorted GetPressedKeys, FNA hash words, 0-255 range filter, ToString type name all verified in KeyboardState.cpp. Scancode table asymmetry recounted: 122 forward, 119 reverse (WP14-ch44-019 agrees)."
+    },
+    {
+     "title": "KeyboardState and keyboard extensions",
+     "grade": "full",
+     "where": "deep-dives/services/input-model.html#layouts, #ex-wasd",
+     "note": "GetKeyFromScancodeEXT/GetScancodeNameEXT/GetKeyNameEXT ask the platform first then the CNA table (SdlInputBridge.cpp); GetModStateEXT returns KeyModifiersEXT (WP14-ch44-029 agrees); WASD/AZERTY example matches the Keyboard.hpp signatures."
+    },
+    {
+     "title": "Mouse",
+     "grade": "full",
+     "where": "deep-dives/services/input-model.html#mouse-members, #mousecursor",
+     "note": "Static-only Mouse, SetPosition inverse transform, MouseState members, HorizontalScrollWheelValueEXT excluded from Equals/hash/ToString, twelve description-only stock cursors and no-op Dispose all verified in Mouse.cpp, MouseState.cpp, MouseCursor.cpp (WP14-ch44-031/036 agree)."
+    },
+    {
+     "title": "MouseState and mouse extensions",
+     "grade": "partial",
+     "where": "deep-dives/services/input-model.html#mousestate, #mouse-members; development/internals/input/events.html#mouse; docs/input.html#mouse; docs/tutorials/11-mouse.html",
+     "note": "Relative-mode drain/flush (Sdl3Mouse::SetRelativeMode flushes both native and stored delta), SetCaptureEXT, GetGlobalPositionEXT zeroing, ClickedEXT zero-based index verified (WP14-ch44-040/041/042/047 agree). Gaps: the relative-mode setter can throw (F4); the user guide and Tutorial 11 still call SetPosition/GetState coordinates 'window' coordinates (F2)."
+    },
+    {
+     "title": "Logical coordinates are a renderer contract",
+     "grade": "partial",
+     "where": "deep-dives/services/input-model.html#logical-coordinates",
+     "note": "Registry keyed by WindowId, 12 registering families (recounted from RegisterForWindow call sites), per-family maps for EasyGL/OPENGL4/SDL_GPU/WEBGPU/VULKAN/CANVAS/SDL_RENDERER verified against the renderer sources (WP14-ch44-032/051/053/055/056/058/059/060 agree); the fake-renderer test numbers (100,50)->(50,50), SetPosition(25,75)->(75,75) verified. Defects: METAL is filed as 'no registration' although it implements both transforms (F1); the FREEDIRECT test-shape caveat (WP14-ch44-061, now verifiable by reading) is absent (F6)."
+    },
+    {
+     "title": "GamePad",
+     "grade": "full",
+     "where": "deep-dives/services/gamepads-and-haptics.html#slots, #ext",
+     "note": "Four slots, ToSlot out-of-range -> disconnected default without touching the service (WP14-ch44-066 agrees), real Sdl3Gamepad service (WP14-ch44-065), dead-zone constants, GUID formats (FormatGuid), power/sensor/light-bar extensions and the 19 CNAEXT statics counted."
+    },
+    {
+     "title": "Bugs found and fixed",
+     "grade": "full",
+     "where": "deep-dives/services/gamepads-and-haptics.html#history",
+     "note": "All four fixes have positive TARGET evidence: Sdl3Platform::EnsureControllerSubsystem acquires PlatformSubsystem::Gamepad; SDL_RumbleGamepad has one caller (SetRumble with real strengths) and capability comes from SDL_PROP_GAMEPAD_CAP_RUMBLE_BOOLEAN; NormalizeGamepadAxis divides by 32767 and clamps; ShutdownGamepadSubsystem no longer exists and ~Sdl3Platform releases ownedRefCounts_. -16384/32767 = -0.500015 is 'about -0.50002' as the site says (Bible's -0.50001 was truncated)."
+    },
+    {
+     "title": "GamePadState and dead-zone modes",
+     "grade": "full",
+     "where": "deep-dives/services/gamepads-and-haptics.html#deadzones, #ex-movement",
+     "note": "GamePadThumbSticks/GamePadState verified: None raw + square clamp, IndependentAxes per-axis ExcludeAxisDeadZone + square clamp, Circular radial + unit-circle clamp; virtual trigger and thumbstick buttons; PacketNumber; example matches GamePad.hpp."
+    },
+    {
+     "title": "Touch and gestures",
+     "grade": "full",
+     "where": "deep-dives/services/touch-and-gestures.html#panel, #history, #connected, #gestures",
+     "note": "MAX_TOUCHES 8, MaximumTouchCount fixed 4/0, GetCapabilities order (HasDevice(Touch), sticky flag, live touches), Update advancing via FrameworkDispatcher only after getTouchDeviceExistsProperty, cancel treated as release, all fixed-bug tests exist (WP14-ch44-084/085/086/090 agree)."
+    },
+    {
+     "title": "TouchCollection, TouchLocation, and GestureSample",
+     "grade": "full",
+     "where": "deep-dives/services/touch-and-gestures.html#collection, #gestures, #timestamp, #ex-drag, #ex-pinch; docs/tutorials/49-touch-input.html",
+     "note": "IsReadOnly advisory, Id mapping from 1, GestureType 0/1..512, ReadGesture throws InvalidOperationException when empty, timestamp conversion, examples compile against the Touch headers."
+    },
+    {
+     "title": "TextInputEXT and CNA-only CNAEXT extensions",
+     "grade": "full",
+     "where": "deep-dives/services/text-input-and-ime.html#channels, #type-hint; docs/input.html#textinputext",
+     "note": "Three channels with exact signatures (TextInputEXT.hpp), FNA origin, StartTextInputWithTypeEXT hint, compile-unconditional CNA::Input layer and CNA_DEVICES default OFF verified."
+    },
+    {
+     "title": "TextInputEXT contract",
+     "grade": "full",
+     "where": "deep-dives/services/text-input-and-ime.html#mode, #rectangle, #ex-chat",
+     "note": "SetInputRectangle passes the rectangle unchanged with cursor offset 0 (TextInputEXT.cpp; WP14-ch44-107 agrees), window-bound mode, surrogate pairs; chat example matches TextInputEXT.hpp (Token API belongs to unpinned sharp-runtime and is labelled so)."
+    },
+    {
+     "title": "CNAEXT-only device subsystem examples",
+     "grade": "partial",
+     "where": "deep-dives/services/text-input-and-ime.html#clipboard; deep-dives/services/gamepads-and-haptics.html#joysticks, #haptics, #power-and-sensors",
+     "note": "Clipboard (incl. primary selection and MIME), Joysticks, InputDevices, Power, Sensors (stateless acquire/start/read/stop/release order in Sensors.cpp) and Haptics (ScopedHapticSubsystem lease transferred to HapticDevice, released in Dispose) verified; sensor/haptic subsystem-gap claims are gone at TARGET (WP14-ch44-101/114/115/120/136 agree). The HapticEffectEXT record itself is not described (F5)."
+    },
+    {
+     "title": "Focus loss and held input",
+     "grade": "full",
+     "where": "deep-dives/services/input-model.html#focus",
+     "note": "FocusLost/FocusGained handling verified in Game::PollEvents (IsActive, surface invalidation); bridge synthesizes no key-ups; Win32 mapper emits releases on WM_KILLFOCUS into the event stream while Win32Keyboard::Update polls GetKeyboardState; page keeps the portable rule (gate on IsActive). WP14-ch44-122/124/126 agree. Mobile lifecycle IsActive handling is on development/internals/runtime/frame.html."
+    },
+    {
+     "title": "Platform-specific boundaries",
+     "grade": "full",
+     "where": "deep-dives/services/input-model.html#platform-boundaries; deep-dives/services/gamepads-and-haptics.html#ex-... (GUID); known-issues CNA-PLAT-013/BUG-135",
+     "note": "Wayland (0,0) from the manual verification log and the native Wayland/Terminal throws verified; xinput GUID verified (FormatGuid); browser gamepad and Pointer Lock statements are hedged ('not re-tested'), matching the two unverifiable-hedged ledger entries (WP14-ch44-131/132)."
+    },
+    {
+     "title": "Status",
+     "grade": "full",
+     "where": "deep-dives/services/input-model.html#evidence; deep-dives/services/gamepads-and-haptics.html#evidence",
+     "note": "15 blocked hardware tasks, fake-backend-only coverage for joystick/sensor/power, hardware-unverified extensions all stated; Known issue CNA-VGAP-032 agrees; the Sensors initialization gap is correctly reported as absent at TARGET."
+    }
+   ],
+   "residuals": {
+    "reviewed": 16,
+    "covered": 11,
+    "stale": 4,
+    "lost": 1,
+    "narrative": 0
+   },
+   "dropped": {
+    "reviewed": 13,
+    "confirmed": 13,
+    "false_drop": 0,
+    "restore_issue": 0,
+    "unverifiable": 0
+   },
+   "corrections": {
+    "verified": 34,
+    "agree": 34,
+    "disagree": 0
+   },
+   "findings": [
+    {
+     "id": "ch44-input-system-F1",
+     "type": "WRONG-CORRECTION",
+     "severity": "medium",
+     "bible": "Logical coordinates are a renderer contract: 'native GPU renderers also pass through'; ledger WP14-ch44-059/060 corrected this to 'DIRECTX11, DIRECTX12 (and FREEDIRECT) implement both transform methods but never register'.",
+     "target": "modules/renderers/metal/include/CNA/Internal/Renderers/Metal/MetalRenderer.hpp declares TransformWindowToLogical/TransformLogicalToWindow overrides and modules/renderers/metal/src/MetalRenderer.mm defines them (impl_->transformWindowToLogical), while no RegisterForWindow call exists in the metal module (the 12 registering renderers are canvas, direct2d, easygl, fna3d, gdi, html-dom, opengl4, sdl-gpu, sdl-renderer, svg-dom, vulkan, webgpu). METAL therefore belongs with DIRECTX11/DIRECTX12/FREEDIRECT; the site's own CNA-BUG-133 lists all four.",
+     "site_now": "deep-dives/services/input-model.html#logical-coordinates, renderer table: METAL is grouped with DIRECTX9, SOFTWARE, PORTABLEGL, HEADLESS and STUB as 'No registration: pass-through', so the table (and a maintainer fixing DX11/DX12/FREEDIRECT by registering) misses METAL and contradicts CNA-BUG-133.",
+     "fix": {
+      "page": "deep-dives/services/input-model.html",
+      "anchor": "logical-coordinates",
+      "action": "replace",
+      "old_html": "<tr><td><code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>FREEDIRECT</code></td><td>Implement both transform methods but never call <code>RegisterForWindow</code>, so input finds no renderer for the window and passes coordinates through unchanged.</td></tr>\n<tr><td><code>DIRECTX9</code>, <code>METAL</code>, <code>SOFTWARE</code>, <code>PORTABLEGL</code>, <code>HEADLESS</code>, <code>STUB</code></td><td>No registration: pass-through.</td></tr>",
+      "html": "<tr><td><code>DIRECTX11</code>, <code>DIRECTX12</code>, <code>FREEDIRECT</code>, <code>METAL</code></td><td>Implement both transform methods but never call <code>RegisterForWindow</code>, so input finds no renderer for the window and passes coordinates through unchanged (<a href=\"../../known-issues/bugs/cna-bug-133.html\">CNA-BUG-133</a>).</td></tr>\n<tr><td><code>DIRECTX9</code>, <code>SOFTWARE</code>, <code>PORTABLEGL</code>, <code>HEADLESS</code>, <code>STUB</code></td><td>Neither register nor implement a transform: pass-through.</td></tr>"
+     }
+    },
+    {
+     "id": "ch44-input-system-F2",
+     "type": "LOST",
+     "severity": "low",
+     "bible": "Mouse: 'SetPosition(x, y) ... converting logical coordinates to physical window coordinates before calling SDL's warp function'.",
+     "target": "modules/input/src/Xna/Mouse.cpp::SetPosition calls logical_to_window (the renderer's TransformLogicalToWindow) before IPlatformMouse::SetPosition, and ::GetState maps the window-client snapshot through window_to_logical, so both members speak logical game coordinates; modules/input/tests MouseInputTests.cpp::CoordinateTransformPreservesLetterboxOffsetAndInverse pins it.",
+     "site_now": "docs/input.html#mouse member table says 'Mouse::SetPosition(int x, int y) ... Warps the cursor to the given window coordinates', although its own X/Y rows say logical coordinates and deep-dives/services/input-model.html#mouse-members says 'exact inverse transform'; docs/tutorials/11-mouse.html MouseState table still says X/Y are 'client (window) coordinates' (its next section says logical). A reader following the guide passes window pixels under a virtual resolution.",
+     "fix": {
+      "page": "docs/input.html",
+      "anchor": "mouse",
+      "action": "replace",
+      "old_html": "<td>Warps the cursor to the given window coordinates.</td>",
+      "html": "<td>Warps the cursor to the given <em>logical</em> (game) coordinates: the point is converted through the window's renderer transform to window coordinates before the warp, the exact inverse of what <code>GetState()</code> reports, so under a virtual resolution or letterbox it is not a window pixel. It does nothing in relative mouse mode.</td>"
+     },
+     "also": [
+      {
+       "page": "docs/tutorials/11-mouse.html",
+       "anchor": "mousestate",
+       "action": "replace",
+       "old_html": "<tr><td><code>getXProperty()</code></td><td><code>int</code></td><td>Mouse X position in client (window) coordinates</td></tr>\n          <tr><td><code>getYProperty()</code></td><td><code>int</code></td><td>Mouse Y position in client coordinates</td></tr>",
+       "html": "<tr><td><code>getXProperty()</code></td><td><code>int</code></td><td>Mouse X position in logical game coordinates (the window-client position mapped through the renderer; raw window pixels only when no transform applies). In relative mouse mode, the motion since the previous read</td></tr>\n          <tr><td><code>getYProperty()</code></td><td><code>int</code></td><td>Mouse Y position in logical game coordinates, or the motion delta in relative mode</td></tr>"
+      }
+     ]
+    },
+    {
+     "id": "ch44-input-system-F3",
+     "type": "OVERSTATED",
+     "severity": "low",
+     "bible": "Keyboard: 'The SDL bridge has 125 scancode-to-key cases but 126 cases in the reverse direction, and many enum values have no SDL scancode source at all' (ledger corrected to 122 forward / 119 reverse, many-to-one).",
+     "target": "modules/input/src/Internal/SdlInputBridge.cpp::key_for_scancode (122 platform scancodes map, keypad Enter/period/Application+Menu many-to-one, NonUsBackslash/NonUsHash/Unknown return nullopt) and ::scancode_for_key (119 keys); 40 non-None Keys have no scancode.",
+     "site_now": "docs/input.html Implementation status table, Keyboard row: 'All 160 Keys enumerators; SDL3 scancode mapping complete.' - contradicts deep-dives/services/input-model.html#layouts (asymmetric tables, forty keys without a physical position, OemBackslash deliberately unmapped; CNA-BUG-136).",
+     "fix": {
+      "page": "docs/input.html",
+      "anchor": "implementation-status",
+      "action": "replace",
+      "old_html": "<td>All 160 <code>Keys</code> enumerators; SDL3 scancode mapping complete. Public API pinned by compile-time signature-freeze tests.</td>",
+      "html": "<td>All 160 <code>Keys</code> enumerators. The scancode bridge maps 122 platform scancodes to keys and 119 keys back; IME, ChatPad, browser/media keys and <code>OemBackslash</code> have no physical position (see <a href=\"../deep-dives/services/input-model.html#layouts\">the input model</a>). Public API pinned by compile-time signature-freeze tests.</td>"
+     }
+    },
+    {
+     "id": "ch44-input-system-F4",
+     "type": "SHALLOW",
+     "severity": "medium",
+     "bible": "MouseState and mouse extensions: 'Both accessors are safe to call with no window at all ... the setter is a no-op' (IsRelativeMouseModeEXT).",
+     "target": "modules/input/src/Xna/Mouse.cpp::setIsRelativeMouseModeEXTProperty returns silently only for a missing window, otherwise calls IPlatformMouse::SetRelativeMode with no try/catch. modules/platform: TerminalMouse::SetRelativeMode always throws PlatformNotSupportedException(RelativeMouse); WaylandMouse::SetRelativeMode throws when the compositor lacks zwp_relative_pointer_manager_v1/zwp_pointer_constraints_v1; X11Mouse::SetRelativeMode throws without XInput2 raw motion; Sdl3Mouse::SetRelativeMode throws PlatformException on 'no valid window to capture' or SDL_SetWindowRelativeMouseMode failure; Win32Mouse likewise. IPlatformMouse.hpp documents '@throws PlatformNotSupportedException If the platform reports no RelativeMouse capability'.",
+     "site_now": "deep-dives/services/input-model.html#mouse-members: the row for getIsRelativeMouseModeEXTProperty / set... only says the getter needs no window and the setter does nothing without a window; the FPS example that follows calls the setter unguarded. Platform pages (terminal.html, x11.html) record the refusals, but the API contract page does not (compare CNA-BUG-135, which covers the global-pointer trio only).",
+     "fix": {
+      "page": "deep-dives/services/input-model.html",
+      "anchor": "mouse-members",
+      "action": "replace",
+      "old_html": "Pointer-lock style relative mode for camera look. The getter asks the service and needs no window; the setter does nothing when neither a published window nor a snapshot window is known.",
+      "html": "Pointer-lock style relative mode for camera look. The getter asks the service and needs no window; the setter does nothing when neither a published window nor a snapshot window is known. A platform that cannot provide relative motion makes the setter throw instead: <code>PlatformNotSupportedException</code> from the terminal platform, from Wayland when the compositor lacks the relative-pointer and pointer-constraints protocols and from X11 without XInput2 raw motion, and <code>PlatformException</code> when the SDL3 or Win32 request itself fails. <code>Mouse</code> does not catch it (<code>IPlatformMouse::SetRelativeMode</code> documents the throw), so guard the call where such platforms matter."
+     }
+    },
+    {
+     "id": "ch44-input-system-F5",
+     "type": "SHALLOW",
+     "severity": "low",
+     "bible": "CNAEXT-only device subsystem examples: 'a full HapticEffectEXT lifecycle - CreateEffectEXT / UpdateEffectEXT / RunEffectEXT / StopEffectEXT / DestroyEffectEXT, plus GetEffectStatusEXT'.",
+     "target": "modules/input/include/CNA/Input/HapticEffect.hpp (struct HapticEffectEXT: 'flattened into one struct', type selects the family, InfiniteLengthEXT = 4294967295u), HapticEffectType.hpp (13 HapticEffectTypeEXT enumerators), HapticDevice.hpp (CreateEffectEXT returns the new id or -1; SetGainEXT/SetAutocenterEXT 0..100; PlayRumbleEXT strength 0..1 and lengthMs).",
+     "site_now": "HapticEffectEXT is absent from the whole site (absent-identifier lead); deep-dives/services/gamepads-and-haptics.html#haptics lists the lifecycle method names but never says what CreateEffectEXT takes or returns, and its three fragments use unqualified CNA::Input names without saying where they live.",
+     "fix": {
+      "page": "deep-dives/services/gamepads-and-haptics.html",
+      "anchor": "haptics",
+      "action": "replace",
+      "old_html": "<li>the full effect lifecycle <code>CreateEffectEXT</code>, <code>UpdateEffectEXT</code>, <code>RunEffectEXT</code>, <code>StopEffectEXT</code>, <code>DestroyEffectEXT</code>, <code>GetEffectStatusEXT</code> and <code>StopAllEffectsEXT</code>, plus gain, autocenter, pause and resume. Shaped feedback (constant, periodic, ramp, condition, left-right or custom effects) is available only when <code>IsEffectSupportedEXT</code> accepts that effect.</li>",
+      "html": "<li>the full effect lifecycle <code>CreateEffectEXT</code>, <code>UpdateEffectEXT</code>, <code>RunEffectEXT</code>, <code>StopEffectEXT</code>, <code>DestroyEffectEXT</code>, <code>GetEffectStatusEXT</code> and <code>StopAllEffectsEXT</code>, plus gain, autocenter, pause and resume. An effect is described by one flattened <code>HapticEffectEXT</code> value (<code>CNA/Input/HapticEffect.hpp</code>): its <code>type</code>, a <code>HapticEffectTypeEXT</code> (<code>Constant</code>, <code>Sine</code>, <code>Square</code>, <code>Triangle</code>, <code>SawtoothUp</code>, <code>SawtoothDown</code>, <code>Ramp</code>, <code>Spring</code>, <code>Damper</code>, <code>Inertia</code>, <code>Friction</code>, <code>LeftRight</code> or <code>Custom</code>), decides which of its other fields count, and <code>length</code> is in milliseconds or <code>HapticEffectEXT::InfiniteLengthEXT</code>. <code>CreateEffectEXT</code> returns the new effect id, or -1 on failure; <code>SetGainEXT</code> and <code>SetAutocenterEXT</code> take 0 to 100. Shaped feedback (constant, periodic, ramp, condition, left-right or custom effects) is available only when <code>IsEffectSupportedEXT</code> accepts that effect. The classes in these fragments live in <code>CNA::Input</code> (<code>Haptics</code>, <code>HapticDevice</code>, <code>Power</code>, <code>PowerStateEXT</code>), while <code>GamePad</code> and <code>PlayerIndex</code> come from <code>Microsoft::Xna::Framework::Input</code> and <code>Microsoft::Xna::Framework</code>.</li>"
+     }
+    },
+    {
+     "id": "ch44-input-system-F6",
+     "type": "LOST",
+     "severity": "low",
+     "bible": "Logical coordinates: 'FREEDIRECT ... Its four-property test invokes the helpers directly and does not exercise this public route' (ledger WP14-ch44-061 recorded it as unverifiable-hedged and pointed it at input-model#logical-coordinates).",
+     "target": "modules/renderers/freedirect/examples/freedirect_logical_transform_test.cpp: header comment lists checks A-D (round trip, centering, uniform scale, fit-largest) and the body calls renderer.TransformLogicalToWindow / TransformWindowToLogical directly, never Mouse::GetState/SetPosition; modules/renderers/freedirect/src/FreeDirectRenderer.cpp has both transform methods and no RegisterForWindow; the test is registered as FreeDirect_LogicalTransform in examples/CMakeLists.txt. The shape is verifiable by reading, so the hedge can be dropped.",
+     "site_now": "absent: input-model#logical-coordinates says only that presentation_mode_contract_test.cpp and opengl4_transformcoords_test.cpp exist and were not executed, and lists FREEDIRECT in the never-registers row; a reader who finds the passing FREEDIRECT transform test may take it as evidence for the public input route.",
+     "fix": {
+      "page": "deep-dives/services/input-model.html",
+      "anchor": "logical-coordinates",
+      "action": "replace",
+      "old_html": "exist and were not executed for this page. FNA needs none of this machinery:",
+      "html": "exist and were not executed for this page. The FREEDIRECT example <code>freedirect_logical_transform_test.cpp</code> is not evidence for the public route either: it calls the renderer's <code>TransformLogicalToWindow</code> and <code>TransformWindowToLogical</code> directly, while <code>Mouse</code> never reaches them because FREEDIRECT does not register for its window. FNA needs none of this machinery:"
+     }
+    },
+    {
+     "id": "ch44-input-system-F7",
+     "type": "OVERSTATED",
+     "severity": "low",
+     "bible": "Touch and gestures: 'TouchPanel is static-only (MAX_TOUCHES = 8) ... TouchCollection is immutable only by contract, matching an identical inconsistency already present in FNA's own implementation' (the Bible ties only the IsReadOnly quirk and the constants to FNA; ledger WP14-ch44-004/005 record that CNA is event-driven where FNA polls).",
+     "target": "modules/input/src/Xna/Touch/TouchPanel.cpp::GetState carries the comment 'Intentional deviation from FNA: FNA populates touches_ exclusively via SetFinger, driven by a per-frame platform poll ... CNA's PlatformInputBridge is event-driven', and ::GetCapabilities documents MaximumTouchCount = 4 as FNA's fixed value while MAX_TOUCHES = 8 mirrors FNA's internal constant (TouchPanel.hpp: 'FNA declares this internal const int MAX_TOUCHES').",
+     "site_now": "docs/input.html#touchpanel: 'Documented deviations: GetState() is event-driven rather than poll-based, MaximumTouchCount reports 4, and GetState() caps at 8 touches, all intentionally matching FNA.' The first item is a deviation from FNA, not a match; deep-dives/services/touch-and-gestures.html#panel states it correctly.",
+     "fix": {
+      "page": "docs/input.html",
+      "anchor": "touchpanel",
+      "action": "replace",
+      "old_html": "Documented deviations: <code>GetState()</code> is event-driven rather than poll-based, <code>MaximumTouchCount</code> reports 4, and <code>GetState()</code> caps at 8 touches, all intentionally matching FNA.</p>",
+      "html": "Three points to know: <code>GetState()</code> is event-driven where FNA polls the platform every frame (a deliberate deviation from FNA; see <a href=\"../deep-dives/services/touch-and-gestures.html#panel\">Touch and gestures</a>), while <code>MaximumTouchCount</code> reports 4 and <code>GetState()</code> caps at 8 touches, both matching FNA.</p>"
+     }
+    }
+   ],
+   "notes": "Read Bible chapter and 9 destination pages; re-derived all 34 ledger corrections, 13 dropped items (gamepad/touch/haptic/sensor fixes checked in code and pinning tests) and the 12-renderer transform table from TARGET sources. Site is unusually accurate; defects: METAL misfiled (F1), guide/tutorial rows (SetPosition units, 'scancode mapping complete', TouchPanel 'matching FNA': F2, F3, F7), undocumented relative-mode setter throws (F4), HapticEffectEXT (F5), FREEDIRECT test caveat (F6). Residuals count includes 14 absent identifiers."
+  },
+  {
+   "unit": "ch45-audio-system",
+   "status": "PASS WITH FIXES",
+   "large": false,
+   "sections": [
+    {
+     "title": "The Audio System (intro)",
+     "grade": "full",
+     "where": "docs/audio.html#tier-2-xact, #implementations; deep-dives/services/xact-runtime.html#loading",
+     "note": "Own XactParser instead of XACT/FAudio, mixer split, no aux reverb bus/native 3D graph, shared cooked-callback slot (sfx#formulas) all present."
+    },
+    {
+     "title": "Audio implementation is a separate axis",
+     "grade": "full",
+     "where": "docs/audio.html#implementations, #audio-choosing; development/internals/audio/engine.html#selection-rules",
+     "note": "SDL3/SDL2/NULL/ALSA, default SDL3, reserved OPENAL/WASAPI fail configuration, SOUND_ENABLED only for SDL3+ALSA (AudioDeviceFactory.cpp: recording provider null for SDL2 and NULL) verified."
+    },
+    {
+     "title": "Mixer architecture and lifetime",
+     "grade": "full",
+     "where": "development/internals/audio/engine.html#sdl3-lifetime, #ownership; deep-dives/services/sound-effects-and-streaming.html#history",
+     "note": "WP14-ch45-013 verified: AudioMixer.cpp::GetMixer opens the selected IAudioDevice at S16 stereo 44.1 kHz, then builds a memory-backed MIX_CreateMixer in the NEGOTIATED format and drives it with MIX_Generate. WP14-ch45-017/050 verified: MixerEngine.cpp::CreateMixerStream does SDL_InitSubSystem(SDL_INIT_AUDIO) per stream and DestroyMixerStream quits it; the instance owns its stream. DestroyMixer has no production caller (engine page says so)."
+    },
+    {
+     "title": "ALSA and CNA's mixer",
+     "grade": "full",
+     "where": "development/internals/audio/engine.html#alsa-device, #contract; docs/audio.html#audio-choosing",
+     "note": "Float stereo 44.1 kHz request, ~10 ms periods, 100 ms EAGAIN wait, snd_pcm_recover, paced null/file PCMs, dlopen of libasound.so.2, 8-second capture queue all present. Hedged WP14-ch45-028: CnaMixer.hpp records 'linear interpolation, which is what FAudio -- and so FNA -- does'; the 'may sound different from SDL3's resampler' remark is subjective and only implicit on the site (linear-interpolation resampler named in the docs/audio.html table)."
+    },
+    {
+     "title": "SoundEffect and instances",
+     "grade": "full",
+     "where": "deep-dives/services/sound-effects-and-streaming.html#construction, #globals, #formulas; docs/tutorials/137-alsa-audio.html#code",
+     "note": "Recomputed from SoundEffectInstance.cpp: attenuation 1/dn beyond DistanceScale, pan on Cross(Forward, Up), Doppler = F3DAudio ratio with scale = emitter*global DopplerScale, capped by c/scale, NaN->1, clamp [0.5,4], final rate 2^pitch*doppler floored at 0.01 (WP14-ch45-045 agrees: DopplerScale is inside the Doppler factor, not a further multiplier). Raw-constructor RIFF/Ogg/ID3/XNB warning verified (WP14-ch45-032). Code fragment (ex2) matches the AudioListener/AudioEmitter/Apply3D API."
+    },
+    {
+     "title": "Dynamic streaming",
+     "grade": "full",
+     "where": "deep-dives/services/sound-effects-and-streaming.html#dynamic; docs/tutorials/118-dynamic-audio.html",
+     "note": "Consumed-byte budget, MINIMUM_BUFFER_CHECK = 3 loop, float submissions, Stop(false) throws, missing frame-alignment validation (CNA-BUG-148) and unestablished resampled accounting (CNA-VGAP-035; WP14-ch45-055 hedged) all present and correctly hedged."
+    },
+    {
+     "title": "XACT objects",
+     "grade": "full",
+     "where": "deep-dives/services/xact-runtime.html#ownership, #wavebanks, #categories; docs/tutorials/120-xact.html",
+     "note": "Cue registration from constructor to disposal, SoundBank::Dispose disposes every associated cue (WP14-ch45-060 verified in SoundBank.cpp), streaming WaveBank ctor ignores offset/packetSize and caches on first use (WP14-ch45-059 verified), RendererDetails one entry 'CNA mixer (ALSA)'/'SDL3_mixer' (WP14-ch45-067 verified in AudioEngine.cpp)."
+    },
+    {
+     "title": "Content formats and historical corrections",
+     "grade": "partial",
+     "where": "deep-dives/services/sound-effects-and-streaming.html#content-formats, #history; docs/audio.html#decoders",
+     "note": "XNB SoundEffectReader decodes to PCM16 in the content library with CNA's own decoder in every build (SoundEffectContentTypeReader.cpp + XnbCanonicalData.cpp::DecodeWaveToPcm16; WP14-ch45-068 agrees), XMA2 refused, seven MS-ADPCM coefficient pairs, SDL3_mixer OFF list matches cmake/ThirdPartySDL.cmake (GME, XMP, mpg123, FluidSynth, Opus, libvorbisfile, Tremor, WavPack, libFLAC); built-in decoder list is honestly hedged because the SDL_mixer submodule is not in the extracted tree (WP14-ch45-035). Memory-safety corrections verified (XactParser bounded reads, WaveBank xactImplMutex_; WP14-ch45-076); open crashes hedged (WP14-ch45-077). The user guide docs/audio.html#decoders still describes the superseded XNB decode route (F2)."
+    },
+    {
+     "title": "Deliberate and open limits",
+     "grade": "full",
+     "where": "deep-dives/services/xact-runtime.html#categories, #rpc, #wavebanks; docs/audio.html#honest-partials",
+     "note": "AudioEngine.cpp::CheckCategoryInstanceLimit/CheckCueInstanceLimit re-read: QUEUE/REPLACE_OLDEST/REPLACE_QUIETEST all evict the oldest Playing cue; category search filtered by category, cue-level search by bank only; REPLACE_LOWEST_PRIORITY real (WP14-ch45-078 agrees, site statement more exact than the Bible's). Band-pass, reverb send, DSP-preset RPC, InstancePlayLimitException all stated."
+    },
+    {
+     "title": "Microphone",
+     "grade": "partial",
+     "where": "deep-dives/services/sound-effects-and-streaming.html#microphone, #microphone-order",
+     "note": "BufferDuration uses TotalMilliseconds (Microphone.cpp; the source comment cites FNA's Microphone.cs and XNA's IL; the FIXED BUG disposition WP14-ch45-088 is confirmed with the pinning test name), Start format check and 'Started even on failure' (CNA-BUG-149), no refresh/hot-plug, BufferReady pump in FrameworkDispatcher::Update all verified. The Bible's still-open 'frame alignment' and 'concurrent stop/read' items for the microphone are not carried (F1)."
+    },
+    {
+     "title": "Evidence status",
+     "grade": "full",
+     "where": "deep-dives/services/sound-effects-and-streaming.html#evidence",
+     "note": "'Playback implemented' versus 'audio conformance complete' distinction, release-blocker entries still unchecked (history section), no perceptual parity claims."
+    }
+   ],
+   "residuals": {
+    "reviewed": 3,
+    "covered": 2,
+    "stale": 0,
+    "lost": 1,
+    "narrative": 0
+   },
+   "dropped": {
+    "reviewed": 1,
+    "confirmed": 1,
+    "false_drop": 0,
+    "restore_issue": 0,
+    "unverifiable": 0
+   },
+   "corrections": {
+    "verified": 17,
+    "agree": 17,
+    "disagree": 0
+   },
+   "findings": [
+    {
+     "id": "ch45-audio-system-F1",
+     "type": "LOST",
+     "severity": "low",
+     "bible": "Microphone: 'Device refresh/hotplug, permission denial, returned-format validation, frame alignment, callback cadence, and concurrent stop/read remain open.'",
+     "target": "modules/audio/src/Xna/Microphone.cpp::GetData checks only offset/count ranges (ArgumentException('offset'/'count')) - no alignment check - and the class has no mutex or atomic. XNA reference (xna4-decomp Microphone.cs GetData): throws ArgumentException unless buffer.Length, offset and count satisfy format.IsAligned, count is positive and DurationFromSize(count) is non-zero, and every member runs under microphoneLock. Microphone.hpp's @throws list mentions only range errors; MicrophoneTests.cpp has no alignment case. (Refresh/hot-plug, Started-on-failure and BufferReady cadence are already on the page; the returned-format validation gap was fixed at TARGET.)",
+     "site_now": "deep-dives/services/sound-effects-and-streaming.html#microphone, GetData bullet: 'offsets and counts are checked without integer overflow, and a read with no data leaves the buffer untouched' - silent on alignment and threading, although the dynamic-streaming section states the analogous alignment gap for DynamicSoundEffectInstance (CNA-BUG-148) and no known issue covers Microphone::GetData.",
+     "fix": {
+      "page": "deep-dives/services/sound-effects-and-streaming.html",
+      "anchor": "microphone",
+      "action": "replace",
+      "old_html": "<li><strong><code>GetData</code></strong> drains what is available into the caller's buffer and returns the byte count; offsets and counts are checked without integer overflow, and a read with no data leaves the buffer untouched.</li>",
+      "html": "<li><strong><code>GetData</code></strong> drains what is available into the caller's buffer and returns the byte count; offsets and counts are range-checked without integer overflow, and a read with no data leaves the buffer untouched. It does not check frame alignment: XNA's <code>Microphone.GetData</code> throws <code>ArgumentException</code> for a buffer length, offset or count that is not a whole number of 2-byte mono frames, while CNA accepts an odd count and may return an odd byte count, so keep buffers and counts even. The class also takes no lock (XNA guards every member with one), so start, stop, read and the <code>BufferReady</code> pump all belong on the game-loop thread.</li>"
+     }
+    },
+    {
+     "id": "ch45-audio-system-F2",
+     "type": "WRONG-CORRECTION",
+     "severity": "medium",
+     "bible": "Content formats: 'The XNB SoundEffectReader accepts mono/stereo PCM 16-bit directly and wraps PCM 8-bit, IEEE float 32-bit, MS-ADPCM 4-bit, and IMA-ADPCM 4-bit for SDL decoding.' (ledger WP14-ch45-068 corrected this: the reader decodes everything to PCM16 with CNA's own WAV decoder, in every build).",
+     "target": "modules/content/src/Xnb/SoundEffectContentTypeReader.cpp::SoundEffectReader::Read: DecodeSoundEffectXnbData -> ConvertXnbSoundToImportedSound -> CnbSoundEffectSamplesAsPcm16 -> raw-PCM SoundEffect constructor; modules/content/src/Xnb/XnbCanonicalData.cpp::DecodeWaveToPcm16 builds a WAV with BuildWavFromWaveFormatEx and decodes it with Audio::DecodeWavToPcm16, whose comment says it is 'CNA's own decoder ... compiled for every CNA_AUDIO_PLATFORM' (an SDL-free build used to refuse float and ADPCM effects it could decode, NPV-0104). Only XACT wave banks (modules/audio/src/Xna/WaveBank.cpp::GetSoundEffect: BuildAdpcmWav then SoundEffect::FromStream) still go through the selected mixer.",
+     "site_now": "docs/audio.html#decoders: the 'WAV: MS-ADPCM, IMA-ADPCM' row says the XNB SoundEffect reader takes the SDL3 'mixer facade' route, and the paragraph below the table says an .xnb SoundEffect 'wraps 8-bit PCM, 32-bit float, MS-ADPCM and IMA-ADPCM in an in-memory WAV before decoding' - the Bible-era description. deep-dives/services/sound-effects-and-streaming.html#content-formats states the TARGET route correctly, so the guide contradicts the deep dive (and its own 'SoundEffect construction ... Yes for raw PCM including .xnb content' row for SDL2/NULL).",
+     "fix": {
+      "page": "docs/audio.html",
+      "anchor": "decoders",
+      "action": "replace",
+      "old_html": "<td>Yes, through the mixer facade (the XNB <code>SoundEffect</code> reader and XACT wave banks take this route)</td>",
+      "html": "<td>Yes, through the mixer facade (XACT wave banks take this route; the XNB <code>SoundEffect</code> reader does not: it decodes to 16-bit PCM in the content library with CNA's own WAV decoder, in every build)</td>"
+     },
+     "also": [
+      {
+       "page": "docs/audio.html",
+       "anchor": "decoders",
+       "action": "replace",
+       "old_html": "An <code>.xnb</code> <code>SoundEffect</code> supports 16-bit PCM directly and wraps 8-bit PCM, 32-bit float, MS-ADPCM and IMA-ADPCM in an in-memory WAV before decoding; XMA2 is rejected",
+       "html": "An <code>.xnb</code> <code>SoundEffect</code> is decoded to 16-bit PCM by the content library itself (16-bit PCM directly, 8-bit PCM widened, 32-bit float, MS-ADPCM and IMA-ADPCM through CNA's own WAV decoder, which is compiled into every build) and built through the raw-PCM constructor, so it does not depend on the selected mixer; XMA2 is rejected"
+      }
+     ]
+    },
+    {
+     "id": "ch45-audio-system-F3",
+     "type": "OVERSTATED",
+     "severity": "low",
+     "bible": "XACT objects: 'Wave banks can be memory-resident or offset/packet streamed' (ledger WP14-ch45-059 corrected: the streaming constructor ignores offset and packetSize and reads each entry on first use, then caches it).",
+     "target": "modules/audio/src/Xna/WaveBank.cpp: the streaming constructor names its offset and packetSize parameters only in comments (/*offset*/, /*packetSize*/) and calls InitStreaming(filename); GetSoundEffect's streaming branch reopens the source, reads the entry and stores it in the per-bank cache under xactImplMutex_.",
+     "site_now": "docs/tutorials/120-xact.html#streaming is headed 'Streaming wave banks' and says only that the second WaveBank constructor 'takes the streaming form, matching XNA's', with no caveat, so a reader expects packet streaming; the accurate statement lives only on deep-dives/services/xact-runtime.html#wavebanks.",
+     "fix": {
+      "page": "docs/tutorials/120-xact.html",
+      "anchor": "streaming",
+      "action": "replace",
+      "old_html": "<p>The second <code>WaveBank</code> constructor takes the streaming form, matching XNA&rsquo;s:</p>",
+      "html": "<p>The second <code>WaveBank</code> constructor takes the streaming form, matching XNA&rsquo;s signature. The signature is all it shares with real streaming: CNA ignores <code>offset</code> and <code>packetSize</code> (FNA never forwards them either) and reads each entry from the file on first use and caches it, like an in-memory bank, so memory use is bounded by the entries you actually play, not by a streaming buffer (see <a href=\"../../deep-dives/services/xact-runtime.html#wavebanks\">XACT at run time: wave banks</a>):</p>"
+     }
+    }
+   ],
+   "notes": "Read Bible chapter and 3 audio deep-dive/guide/internals pages plus tutorials 118/119/120/137; re-derived all 17 corrections (mixer creation, per-stream SDL audio ref, instance-limit search, RendererDetails, wave-bank streaming ctor, XNB decode route, CMake OFF list, microphone setter) from TARGET and the XNA reference. Residual count includes 2 absent identifiers (MIX_Audio, SDL_GetAudioStreamQueued: stale SDL vocabulary, covered). Findings: Microphone::GetData alignment/threading (F1), unpropagated XNB decode-route correction in docs/audio.html (F2), tutorial 120 'Streaming wave banks' caveat (F3)."
+  },
+  {
+   "unit": "ch46-media-system",
+   "status": "PASS WITH FIXES",
+   "large": false,
+   "sections": [
+    {
+     "title": "The Media System (intro, audio/media static-library cycle)",
+     "grade": "full",
+     "where": "deep-dives/services/media-contract.html#module-shape; development/internals/modules/media.html#composition",
+     "note": "Cycle (FrameworkDispatcher in audio advances MediaPlayer; media plays through the audio mixer), removal cost and the 'older README count' remark present; HISTORICAL ONLY disposition WP14-ch46-002 confirmed (book methodology, no TARGET fact)."
+    },
+    {
+     "title": "Song contract",
+     "grade": "full",
+     "where": "deep-dives/services/media-contract.html#song, #oracle, #formats; development/internals/modules/media.html#scan",
+     "note": "FromUri scheme/query/UNC behaviour, non-owning Album/Artist/Genre, POPM/Vorbis rating mapping (AudioTagParser.cpp: POPM round(byte*10/255) clamp 1..10, Vorbis (raw*10+50)/100), IsProtected false, mutable Duration/PlayCount, handle Equals/GetHashCode, FNA-vs-XNA oracle all verified. Two small gaps: undocumented Vorbis-scale trap (F1) and a hedge that the decompiled XNA reference now resolves (F2). Extension lists verified: ContentManager SongTypeReader {.mp3,.ogg,.wav,.flac,.opus,.aac,.wma}; MediaLibraryIndex {.ogg,.oga,.mp3,.wav,.flac,.opus}; CnaMixerDecoders refuses Ogg Opus by name; SDLMIXER_OPUS=OFF (WP14-ch46-018 agrees)."
+    },
+    {
+     "title": "MediaLibrary and metadata",
+     "grade": "full",
+     "where": "deep-dives/services/media-contract.html#library; development/internals/modules/media.html#roots, #graph; docs/tutorials/122-media-library.html",
+     "note": "Roots resolved through GetCurrentPlatform().GetFileSystem()->GetUserFolder(Music/Pictures) with a CNAEXT override (MediaLibraryPaths.cpp; WP14-ch46-019/020 agree), tag formats, filename/parent/grandparent fallback, m3u/m3u8, no Refresh, SavePicture. Album-art candidate list is wider than the Bible's cover/folder pair (13 names, case-insensitive) and is on the internals page and Tutorial 122; front-cover picture type wins (pictureType == 3; WP14-ch46-030). TRCK lesson present in prose."
+    },
+    {
+     "title": "Playback and queue ownership",
+     "grade": "full",
+     "where": "deep-dives/services/media-contract.html#player; development/internals/modules/media.html#queue, #state, #music-sharp-edges",
+     "note": "MediaPlayer::LoadSong copies each Song (new Song(handle, name)); clamp/wrap/shuffle rules; end-of-song by mixer stopped callback under SOUND_ENABLED, DetectSongEndedByElapsedTime otherwise; duration is set only inside the SOUND_ENABLED path, so the page's stronger statement that mixer-less builds never auto-advance is correct (CNA-BUG-142). WP14-ch46-040/041 agree."
+    },
+    {
+     "title": "Visualization",
+     "grade": "full",
+     "where": "deep-dives/services/media-contract.html#visualization; development/internals/modules/media.html#visualization",
+     "note": "VisualizationCapture.cpp atomic<float> relaxed ring; VisualizationFFT.cpp scale = 2/N with the Hann coherent gain uncompensated, so the peak is ~0.5 despite the source comment saying ~1.0 (WP14-ch46-050 agrees and the page states both); MediaPlayerTests comment confirms the failed-install branch is correct by construction only (WP14-ch46-052)."
+    },
+    {
+     "title": "Video contract",
+     "grade": "full",
+     "where": "deep-dives/services/media-contract.html#video; development/internals/modules/media.html#video-play; development/internals/modules/video-ffmpeg.html#validation",
+     "note": "Metadata check with 1.0 fps tolerance, VideoSoundtrackType metadata only, CheckDisposed on Play/Stop/Pause/Resume/track switches/GetTexture, idempotent Dispose, SetAudioTrackEXT reopens audio only, SetVideoTrackEXT recreates the texture on every genuine switch (ReconfigureVideoOutputForCurrentTrack always allocates; WP14-ch46-053/056/059 agree)."
+    },
+    {
+     "title": "Platform limitations",
+     "grade": "full",
+     "where": "docs/video-playback.html#platform-availability; deep-dives/services/media-contract.html#video-platforms",
+     "note": "Both FIXED BUG dispositions (WP14-ch46-065/066) have positive TARGET evidence: modules/media/CMakeLists.txt always compiles Video/VideoPlayer with VideoDecoderUnavailable.cpp (throws NotSupportedException) as fallback, ContentManager.cpp includes Media/Video/Video.hpp unconditionally and has no _WIN32/MinGW video guard. The FFmpeg gate (modules/CMakeLists.txt: MINGW OR WIN32 OR EMSCRIPTEN OR ANDROID OR CNA_APPLE_IOS; ON is a FATAL_ERROR) matches WP14-ch46-062/063/070 and the site, including iOS."
+    },
+    {
+     "title": "Evidence status",
+     "grade": "full",
+     "where": "deep-dives/services/media-contract.html#evidence; docs/video-playback.html#ffmpeg-setup",
+     "note": "No execution claimed on excluded targets; extension lists distinguished from decoder support."
+    }
+   ],
+   "residuals": {
+    "reviewed": 1,
+    "covered": 1,
+    "stale": 0,
+    "lost": 0,
+    "narrative": 0
+   },
+   "dropped": {
+    "reviewed": 3,
+    "confirmed": 3,
+    "false_drop": 0,
+    "restore_issue": 0,
+    "unverifiable": 0
+   },
+   "corrections": {
+    "verified": 15,
+    "agree": 15,
+    "disagree": 0
+   },
+   "findings": [
+    {
+     "id": "ch46-media-system-F1",
+     "type": "SHALLOW",
+     "severity": "low",
+     "bible": "MediaLibrary and metadata: 'The conversion from ID3's 0-255 rating and the various informal Vorbis rating scales to XNA's 0-10 property is CNA policy, not an XNA rule.'",
+     "target": "modules/media/src/Internal/AudioTagParser.cpp::AudioTagParser::ApplyRatingIfPresent reads Vorbis RATING with std::stoi, ignores raw <= 0 and non-numeric text, and computes scaled = (raw * 10 + 50) / 100 clamped to 1..10; its comment says different taggers write 0-100, 0-5 or 0-10 and that 0-100 is assumed. RATING=5 therefore yields 1 and RATING=10 also yields 1.",
+     "site_now": "deep-dives/services/media-contract.html#song, Ratings bullet: 'a Vorbis value is read on a 0-100 scale' - the ambiguity the Bible flagged (informal scales) and its practical consequence are absent.",
+     "fix": {
+      "page": "deep-dives/services/media-contract.html",
+      "anchor": "song",
+      "action": "replace",
+      "old_html": "and a Vorbis value is read on a 0–100 scale. The mapping is CNA's policy, not an XNA rule: XNA defines only the 0–10 property.",
+      "html": "and a Vorbis value is read on a 0–100 scale (<code>round(value / 10)</code> clamped to 1–10; a non-numeric value is ignored). Vorbis <code>RATING</code> has no standard scale, so a tagger that writes 0–5 or 0–10 values is misread: <code>RATING=5</code> becomes a <code>Rating</code> of 1. The mapping is CNA's policy, not an XNA rule: XNA defines only the 0–10 property."
+     }
+    },
+    {
+     "id": "ch46-media-system-F2",
+     "type": "SHALLOW",
+     "severity": "low",
+     "bible": "Song contract history note: FNA's Song omits Album, Artist, Genre and ToString() from the XNA 4.0 surface; a comparison with the pinned xna4-spec data found it.",
+     "target": "/rv/data/development/github.com/libcna/xna4-decomp/reference/xna4/decompiled/windows/Microsoft.Xna.Framework/Microsoft.Xna.Framework.Media/Song.cs: 'public override string ToString() { ThrowIfDisposed(); return Name; }' (and GetHashCode is Name.GetHashCode()). CNA modules/media/src/Xna/Song.cpp::ToString returns name_ and its comment still says the choice is 'NOT verified against a decompiled XNA binary'.",
+     "site_now": "deep-dives/services/media-contract.html#song, Identity bullet: 'ToString() returns the song's name, a convention inferred from Album, Artist, Genre and Playlist ... it was not checked against a decompiled XNA binary' - the hedge can now be resolved from the recorded XNA reference.",
+     "fix": {
+      "page": "deep-dives/services/media-contract.html",
+      "anchor": "song",
+      "action": "replace",
+      "old_html": "<code>ToString()</code> returns the song's name, a convention inferred from <code>Album</code>, <code>Artist</code>, <code>Genre</code> and <code>Playlist</code>, which all return their names; it was not checked against a decompiled XNA binary.",
+      "html": "<code>ToString()</code> returns the song's name. CNA's source comment records this as an inference from <code>Album</code>, <code>Artist</code>, <code>Genre</code> and <code>Playlist</code>, which all return their names; the decompiled XNA 4.0 <code>Song.ToString()</code> in the <code>xna4-decomp</code> reference confirms it (<code>return Name;</code> after a disposed check), so the inference holds."
+     }
+    }
+   ],
+   "notes": "Read Bible chapter and 4 destination pages; re-derived all 15 corrections and the FIXED BUG/HISTORICAL dispositions from media/audio/content sources and CMake; checked the decompiled XNA Song and Microphone references. Site is accurate and honestly hedged; only small gaps (Vorbis rating scales, resolvable ToString hedge). Residual count is the 1 absent identifier TRCK (ID3 frame name, covered as 'track number' prose)."
+  },
+  {
+   "unit": "ch47-sensors",
+   "status": "PASS WITH FIXES",
+   "large": false,
+   "sections": [
+    {
+     "title": "Sensors and Microsoft.Devices (intro)",
+     "grade": "full",
+     "where": "docs/sensors.html; deep-dives/services/sensors-and-vibration.html; development/internals/modules/devices.html#graph",
+     "note": "WP7 sensor model over the platform sensor service (not direct SDL) and the separate CNA::Devices layer stated; WP14-ch47-001 agrees (Accelerometer.cpp uses Detail::PlatformSensorSubsystem, Android via AndroidSensorBridge)."
+    },
+    {
+     "title": "Sensor model and delivery",
+     "grade": "full",
+     "where": "deep-dives/services/sensors-and-vibration.html#model, #delivery; development/internals/modules/devices.html#sensor-dispatch",
+     "note": "SensorBase surface, 2 ms default, software throttle in ticks, atomic value+validity publication, SDL event watch (Sdl3SensorSession::EventWatch; WP14-ch47-006 agrees), 9.80665 conversion, UTC timestamps, route table incl. legacy ReadingChanged after CurrentValueChanged (WP14-ch47-013), ten-instance limit (constructor throws SensorFailedException) and the web-target refusal in Accelerometer::getIsSupportedProperty all verified."
+    },
+    {
+     "title": "Concurrency contract",
+     "grade": "full",
+     "where": "deep-dives/services/sensors-and-vibration.html#lifetime; development/internals/modules/devices.html#base, #sensor-dispose",
+     "note": "Atomic disposal claim, terminal-state guard, in-flight tracking, two-phase Compass/Motion start-stop and the TSan/UBSan history match the code. Public Dispose(bool) defect re-verified (Accelerometer.hpp/Compass.hpp declare 'void Dispose(bool disposing) override;' under public:; CNA-BUG-049). The TARGET CONTRADICTED disposition WP14-ch47-028 is confirmed: NativeDiagnosticSink::Record is used by PlatformSensorSubsystem::LogAndRecordDispatchException and AndroidSensorBridge, the only remaining counters are '...ForTesting' mirrors and constructor-rollback catch(...) sites rethrow; devices-ext has no catch-all callback sites. Release builds only count/store the record (Logger::Debug under !NDEBUG), as the page says."
+    },
+    {
+     "title": "Compass and motion math",
+     "grade": "full",
+     "where": "deep-dives/services/sensors-and-vibration.html#compass, #motion",
+     "note": "AndroidCompassMath.hpp (CosFortyFiveDegrees, accuracy 5/15/20/180, 5x interval freshness with 500 ms floor) and AndroidMotionMath.hpp (pitch = asin(clamp(-M32)), yaw = atan2(M31, M33), roll = atan2(M12, M22)) verified; six bridge objects (rotation, game rotation, gravity, linear acceleration, gyroscope, magnetic field) with at most five started (WP14-ch47-011: the page's wording is exact); landscape-remap reflection argument present."
+    },
+    {
+     "title": "Vibration",
+     "grade": "partial",
+     "where": "deep-dives/services/sensors-and-vibration.html#vibration; development/internals/modules/devices.html#vibrate",
+     "note": "Singleton, [0,5 s] range, NaN-canonicalizing clamp, StartLeftRight without single-motor fallback, zero-strength Start, atexit fallback + identity guard replacing the Bible's 'must precede SDL_Quit' and global mutex (WP14-ch47-043/044 agree: DevicesShutdownCoordinator.cpp, per-class subsystem mutexes) all verified; the SDL Android motor-blend remark is correctly labelled unverified (WP14-ch47-040 hedged). One statement is too strong for the SDL3 platform (F1)."
+    },
+    {
+     "title": "Known limitation and evidence status",
+     "grade": "full",
+     "where": "deep-dives/services/sensors-and-vibration.html#lifetime, #evidence",
+     "note": "Dispose(bool) defect and the not-device-verified Android evidence status carried."
+    }
+   ],
+   "residuals": {
+    "reviewed": 2,
+    "covered": 0,
+    "stale": 0,
+    "lost": 0,
+    "narrative": 2
+   },
+   "dropped": {
+    "reviewed": 1,
+    "confirmed": 1,
+    "false_drop": 0,
+    "restore_issue": 0,
+    "unverifiable": 0
+   },
+   "corrections": {
+    "verified": 7,
+    "agree": 7,
+    "disagree": 0
+   },
+   "findings": [
+    {
+     "id": "ch47-sensors-F1",
+     "type": "OVERSTATED",
+     "severity": "low",
+     "bible": "Vibration: VibrateController is a process-lifetime singleton with Start(TimeSpan)/CNAEXT Start/StartLeftRight and 'independent left/right controller rumble is available through GamePad, not this phone-style API' (the Bible says nothing about how the backend chooses its device). The site added the sentence 'picks a default vibration device that supports rumble'.",
+     "target": "modules/platform/src/Sdl3/Sdl3DeviceServices.cpp::Sdl3Haptics::GetDefaultVibrationDevice returns the first enumerated non-gamepad haptic device that SDL_OpenHaptic can open, building HapticInfo{id, name, SDL_HapticRumbleSupported(haptic)} without testing that flag; modules/devices/src/Detail/PlatformVibrateBackend.cpp::IsSupported then requires SupportsRumble(that one id). modules/platform/src/Linux/EvdevHaptics.cpp::GetDefaultVibrationDevice, by contrast, skips nodes unless info.rumbleSupported. Only the interface comment (IPlatformHaptics.hpp: 'no value when the host has no suitable rumble device') describes the intended behaviour.",
+     "site_now": "deep-dives/services/sensors-and-vibration.html#vibration (and development/internals/modules/devices.html#vibrate: 'reports support only when its backend finds a default vibration device that supports rumble') state the rumble filter as fact for every platform; on the default SDL3 platform a rumble-less non-gamepad haptic device that enumerates first becomes the default and makes IsSupported false.",
+     "fix": {
+      "page": "deep-dives/services/sensors-and-vibration.html",
+      "anchor": "vibration",
+      "action": "replace",
+      "old_html": "<li>The backend borrows the platform's haptics service and picks a default vibration device that supports rumble; gamepad haptic devices are excluded on purpose, so the phone-style API never fights <code>GamePad::SetVibration</code> for the same motor. Independent left and right controller rumble belongs to <a href=\"gamepads-and-haptics.html\">GamePad</a>.</li>",
+      "html": "<li>The backend borrows the platform's haptics service and asks it for a default vibration device; gamepad haptic devices are excluded on purpose, so the phone-style API never fights <code>GamePad::SetVibration</code> for the same motor. How the platform picks differs: the SDL3 service returns the first non-gamepad haptic device that opens, whether or not it supports rumble (<code>getIsSupportedProperty()</code> then reports that one device's rumble support, so a rumble-less first device hides a capable second one), while the Linux evdev hub considers only non-gamepad nodes that support rumble. Independent left and right controller rumble belongs to <a href=\"gamepads-and-haptics.html\">GamePad</a>.</li>"
+     }
+    },
+    {
+     "id": "ch47-sensors-F2",
+     "type": "WRONG-CORRECTION",
+     "severity": "low",
+     "bible": "Concurrency contract / Vibration: 'One global mutex serializes sensor and haptic subsystem initialization and preserves the documented per-instance-before-global lock order' (ledger WP14-ch47-044 corrected this: per-class mutex in PlatformSensorSubsystem, backendMutex_ in VibrateController) and 'Microsoft::Devices::Sensors ports the WP7 sensor model to SDL3 ...' (WP14-ch47-001: platform service, not direct SDL).",
+     "target": "modules/devices/include/Microsoft/Devices/Sensors/Detail/PlatformSensorSubsystem.hpp: each sensor class owns its own static subsystem object with its own mutex_ (Accelerometer::getStateProperty locks GetSubsystem().mutex_); modules/devices/src/Sensors/Accelerometer.cpp comment: 'Process-wide native subsystem serialization belongs to IPlatform. The per-class manager protects only registrations and callback lifetime'; modules/platform/src/Sdl3/Sdl3Platform.cpp::AcquireSubsystem/ReleaseSubsystem hold SdlGlobalStateLock. modules/devices makes no direct SDL call (grep of include/ and src/ finds SDL_ only in AndroidSensorBridge): the haptic SDL calls (SDL_InitHapticRumble, SDL_PlayHapticRumble, SDL_HAPTIC_LEFTRIGHT) are in modules/platform/src/Sdl3/Sdl3DeviceServices.cpp behind IPlatformHaptics, and modules/platform/src/Linux/EvdevHaptics.cpp provides the X11/Wayland service.",
+     "site_now": "docs/sensors.html, '<h2>Concurrency hardening</h2>' (no id): 'Sensor open/close and state reads are guarded by a process-wide mutex' - state reads are under a per-class mutex; '<h2>VibrateController</h2>': 'it initialises rumble with SDL_InitHapticRumble and plays it with SDL_PlayHapticRumble ...' attributes platform-layer SDL calls to the class and omits the evdev route. deep-dives/services/sensors-and-vibration.html#lifetime/#vibration already state the TARGET arrangement, so the guide contradicts the deep dive.",
+     "fix": {
+      "page": "docs/sensors.html",
+      "anchor": "main-content",
+      "action": "replace",
+      "old_html": "The platform sensor path is not a thin wrapper. Sensor open/close and state reads are guarded by a process-wide mutex, and the implementation issues dispatch tokens that protect against use-after-free when <code>Dispose()</code> is re-entered from a callback.",
+      "html": "The platform sensor path is not a thin wrapper. Each sensor class guards its registrations, callback lifetime and state reads with its own subsystem mutex, native subsystem acquisition and release go through the platform (the SDL3 platform serializes them under its process-wide state lock), and the implementation tracks callbacks in flight so that <code>Dispose()</code> can be re-entered from a callback without a use-after-free."
+     },
+     "also": [
+      {
+       "page": "docs/sensors.html",
+       "anchor": "main-content",
+       "action": "replace",
+       "old_html": "<code>VibrateController</code> is a real implementation rather than a no-op: it initialises rumble with <code>SDL_InitHapticRumble</code> and plays it with <code>SDL_PlayHapticRumble</code>, and additionally drives a genuine <code>SDL_HAPTIC_LEFTRIGHT</code> effect where the device supports one.",
+       "html": "<code>VibrateController</code> is a real implementation rather than a no-op: it borrows the selected platform's haptics service, and on the SDL3 platform that service initialises rumble with <code>SDL_InitHapticRumble</code>, plays it with <code>SDL_PlayHapticRumble</code> and drives a genuine <code>SDL_HAPTIC_LEFTRIGHT</code> effect where the device supports one; the native X11 and Wayland platforms provide an evdev-based service instead, and the other platforms none."
+      }
+     ]
+    }
+   ],
+   "notes": "Read Bible chapter and 3 destination pages plus docs/sensors.html; re-derived all 7 corrections and the TARGET CONTRADICTED disposition from modules/devices, modules/platform and the Android math headers. Residual count = 2 absent identifiers (TSensorReading, std::exception::what), both narrative. Findings: default-vibration-device selection wording (F1) and stale 'process-wide mutex' / direct-SDL VibrateController text in docs/sensors.html (F2)."
+  },
+  {
+   "unit": "ch48-host-devices",
+   "status": "PASS WITH FIXES",
+   "large": false,
+   "sections": [
+    {
+     "title": "Host Integration through CNA.Devices (intro)",
+     "grade": "full",
+     "where": "deep-dives/services/host-devices.html (lead)",
+     "note": "'No XNA/Windows Phone precedent' and 'absent from a default build' both stated first, as the Bible asks; WP14-ch48-001 agrees (services borrowed from GetCurrentPlatform(), SDL3 platform implements every service)."
+    },
+    {
+     "title": "The option removes the types",
+     "grade": "full",
+     "where": "deep-dives/services/host-devices.html#option; development/internals/modules/devices-ext.html#boundary; docs/tutorials/117-devices-layer.html",
+     "note": "CNA_DEVICES defaults OFF (CMakeLists.txt option). Recounted modules/devices-ext: 18 headers, 10 sources, 10 test files, every one containing a CNA_DEVICES guard (WP14-ch48-005 corrects the Bible's 25/14/10 and the site's 18/10/10 is right). Microsoft::Devices::Sensors is not gated (separate module). Macro-without-archive link-time failure statement is correct."
+    },
+    {
+     "title": "The SDL wrapper map",
+     "grade": "full",
+     "where": "deep-dives/services/host-devices.html#wrapper-map; development/internals/modules/devices-ext.html#small, #dialogs",
+     "note": "All ten classes checked against src/*.cpp. MessageBox::getIsSupportedProperty reads capabilities.messageBox, Show returns -1 for failure and dismissal, Sdl3Dialogs::ShowMessageBoxWithButtons throws for an empty button list and sets no default/cancel flag, parent is nullptr (WP14-ch48-024/027). FileDialog::getIsSupportedProperty target policy vs capability-only Show*, ReportUnavailable callback with an empty list, swallowed PlatformException with the callback moved-from (WP14-ch48-028). SystemTray ctor throws PlatformNotSupportedException/PlatformException; PowerInfo's three separate GetPowerInfo() calls; UrlLauncher forwards unvalidated; DisplayInfo takes max(window scale, display content scale)."
+    },
+    {
+     "title": "Camera: poll, do not wait for a callback",
+     "grade": "full",
+     "where": "deep-dives/services/host-devices.html#camera; development/internals/modules/devices-ext.html#camera",
+     "note": "First device, RGBA32 request (SDL_PIXELFORMAT_RGBA32) with Lost latching for another format, per-call state mapping, CameraState::Closed never returned, TryAcquireFrame checks (WP14-ch48-032/036) verified in Camera.cpp/Sdl3Camera.cpp. The FIXED BUG disposition WP14-ch48-035 is confirmed by code (Sdl3Camera.cpp::EnsureCameraSubsystem starts SDL_INIT_CAMERA once and never quits it) but nothing pins it: no test refers to Sdl3Camera/Sdl3CameraProvider (CNA-VGAP-007) - the page does not say so (F1)."
+    },
+    {
+     "title": "Platform support is per class",
+     "grade": "full",
+     "where": "deep-dives/services/host-devices.html#platform-support; docs/tutorials/117-devices-layer.html",
+     "note": "Sdl3Tray::IsSupported is a compile-time Windows/Linux/macOS test; X11 has a tray service; Android/iOS/Emscripten/Wayland/Win32 none (WP14-ch48-037). FileDialog policy allows Android (SDL fact not re-verified; WP14-ch48-038 hedged as on the page); CNA-BUG-181 covers the capability over-report."
+    },
+    {
+     "title": "Overlap with CNA::Input",
+     "grade": "full",
+     "where": "deep-dives/services/host-devices.html#overlap",
+     "note": "Clipboard (void swallowing setter vs bool-reporting setter, primary selection/MIME only on Input side) and Power vs PowerInfo (PowerStateEXT vs PowerState, one vs three readings) verified; InputDevices/Sensors distinction correct."
+    },
+    {
+     "title": "Lifetime and test boundary",
+     "grade": "full",
+     "where": "deep-dives/services/host-devices.html#lifetime, #evidence",
+     "note": "Callback trampolines without try/catch re-verified (Sdl3SystemServices.cpp::ResultTrampoline, Sdl3Tray.cpp EntryClickTrampoline; CNA-BUG-183); devices-asan/tsan/ubsan presets set CNA_DEVICES=ON and devices-tests.yml builds the devices-ubsan preset (WP14-ch48-054 agrees); shutdown-before-platform statement matches the session ownership in Camera/SystemTray (WP14-ch48-050)."
+    }
+   ],
+   "residuals": {
+    "reviewed": 3,
+    "covered": 1,
+    "stale": 1,
+    "lost": 0,
+    "narrative": 1
+   },
+   "dropped": {
+    "reviewed": 1,
+    "confirmed": 1,
+    "false_drop": 0,
+    "restore_issue": 0,
+    "unverifiable": 0
+   },
+   "corrections": {
+    "verified": 12,
+    "agree": 12,
+    "disagree": 0
+   },
+   "findings": [
+    {
+     "id": "ch48-host-devices-F1",
+     "type": "SHALLOW",
+     "severity": "low",
+     "bible": "Camera: 'The production tree never calls SDL_InitSubSystem(SDL_INIT_CAMERA). Unless the host initializes that subsystem itself, available-camera enumeration is empty and Camera settles in NotSupported.' (ledger WP14-ch48-035 classifies this as FIXED BUG on the evidence of EnsureCameraSubsystem).",
+     "target": "modules/platform/src/Sdl3/Sdl3Camera.cpp::(anonymous)::EnsureCameraSubsystem starts SDL_INIT_CAMERA once in a function-local static and never quits it, and its comment records the earlier empty-enumeration defect. There is no test for it: grep of modules/**/tests finds no reference to Sdl3Camera or Sdl3CameraProvider; Sdl3PlatformTests/PlatformConformanceTests only check GetCamera() presence; modules/devices-ext/tests CameraTests use CannedCameraPlatform. The site's own CNA-VGAP-007 records the gap.",
+     "site_now": "deep-dives/services/host-devices.html#camera states the fix as fact ('the SDL3 camera provider starts the subsystem once, on first use') without saying that it is unpinned by any test; #evidence says only that the tests use canned platforms and never links CNA-VGAP-007.",
+     "fix": {
+      "page": "deep-dives/services/host-devices.html",
+      "anchor": "camera",
+      "action": "replace",
+      "old_html": "because a camera id is meaningful only inside the session that issued it (<a class=\"src-link\" href=\"https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3Camera.cpp\"><code>Sdl3Camera.cpp</code></a>). SDL3 is the only platform with a camera provider.</p>",
+      "html": "because a camera id is meaningful only inside the session that issued it (<a class=\"src-link\" href=\"https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3Camera.cpp\"><code>Sdl3Camera.cpp</code></a>, <code>EnsureCameraSubsystem</code>). That fix is read from source: no test refers to <code>Sdl3Camera</code> or <code>Sdl3CameraProvider</code>, and the <code>Camera</code> tests run against a canned camera platform (<a href=\"../../known-issues/verification-gaps/cna-vgap-007.html\">CNA-VGAP-007</a>). SDL3 is the only platform with a camera provider.</p>"
+     }
+    }
+   ],
+   "notes": "Read Bible chapter, the deep dive, Tutorial 117 and known issues; re-derived all 12 corrections and the FIXED BUG from devices-ext, platform Sdl3 services, root CMake and CMakePresets. The page is accurate (file counts, wrapper behaviours, platform reach, callback-boundary defect). Residual count = 3 absent identifiers (NotImplemented covered as 'no not-implemented throws'; OFF narrative; SDL_GetPowerInfo replaced by platform-service vocabulary). Only note: the camera fix is unpinned."
+  }
+ ]
+}

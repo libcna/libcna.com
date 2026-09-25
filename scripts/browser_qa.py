@@ -66,7 +66,13 @@ JS_METRICS = r"""
     if (ratio < worst) { worst = ratio; worstEl = el.tagName.toLowerCase() + ' "' + el.textContent.trim().slice(0,30) + '" ' + cs.color; }
   }
   const broken = [...document.images].filter(i => i.complete && i.naturalWidth === 0).map(i => i.src);
-  return JSON.stringify({vw, sw: de.scrollWidth, over: over.slice(0,6), navRows: rows, worstContrast: Math.round(worst*100)/100, worstEl, brokenImages: broken,
+  // literal markup or entities in the visible text (an escaped field that should have been HTML, or a double-escaped entity)
+  const txt = (document.querySelector('main') || document.body).innerText || '';
+  const leaks = [];
+  for (const rx of [/<\/?(code|em|strong|a|p|ul|li|br|span|div|h[1-6])[ >\/]/g, /&(lt|gt|amp|quot|#\d+|#x[0-9a-f]+);/gi, /\{\{[a-z]+:/g]) {
+    let m; while ((m = rx.exec(txt)) && leaks.length < 4) leaks.push(txt.slice(Math.max(0, m.index - 20), m.index + 30).replace(/\s+/g, ' '));
+  }
+  return JSON.stringify({vw, sw: de.scrollWidth, over: over.slice(0,6), navRows: rows, worstContrast: Math.round(worst*100)/100, worstEl, brokenImages: broken, leaks,
                          title: document.title, theme: de.getAttribute('data-theme') || 'auto'});
 })()
 """
@@ -167,6 +173,8 @@ def line(m: dict) -> str:
         flags.append(f"BROKEN-IMG {m['brokenImages']}")
     if m["console"]:
         flags.append(f"CONSOLE {m['console']}")
+    if m.get("leaks"):
+        flags.append(f"MARKUP-LEAK {m['leaks']}")
     status = "FLAG" if flags else "ok"
     return f"{status:4s} {m['width']:4d} {m['scheme']:5s} navRows={m['navRows']} contrast>={m['worstContrast']} {m['url']}" + ("\n      " + "\n      ".join(flags) if flags else "")
 
