@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>I need to debug shutdown and lifetime behavior - CNA Development</title>
+  <meta name="description" content="A maintainer recipe for shutdown and lifetime bugs: which lifetime ended, the destruction order, borrowed pointers, callback barriers, a catalogue of real failure shapes, sanitizers and exit-status harnesses, and a triage.">
+  <meta name="keywords" content="shutdown, lifetime, destruction order, use after free, addresssanitizer, cna_sanitize, callback barrier, static destruction, borrowed pointer, weak token, dispose, teardown harness">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/handbook/debug-shutdown-and-lifetime.html">
+  <meta property="og:title" content="I need to debug shutdown and lifetime behavior - CNA Development">
+  <meta property="og:description" content="A maintainer recipe for shutdown and lifetime bugs: which lifetime ended, the destruction order, borrowed pointers, callback barriers, a catalogue of real failure shapes, sanitizers and exit-status harnesses, and a triage.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/handbook/debug-shutdown-and-lifetime.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"I need to debug shutdown and lifetime behavior","description":"A maintainer recipe for shutdown and lifetime bugs: which lifetime ended, the destruction order, borrowed pointers, callback barriers, a catalogue of real failure shapes, sanitizers and exit-status harnesses, and a triage.","url":"https://libcna.com/development/handbook/debug-shutdown-and-lifetime.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Maintainer Handbook</a>
+      <ul class="dev-nav-sub">
+        <li><a href="change-map.html" class="docs-nav-link">Change map</a></li>
+        <li><a href="fix-a-renderer-bug.html" class="docs-nav-link">Fix a renderer bug</a></li>
+        <li><a href="change-public-xna-behavior.html" class="docs-nav-link">Change public XNA behavior</a></li>
+        <li><a href="modify-a-platform-backend.html" class="docs-nav-link">Modify a platform backend</a></li>
+        <li><a href="add-a-regression-test.html" class="docs-nav-link">Add a regression test</a></li>
+        <li><a href="modify-contentmanager.html" class="docs-nav-link">Modify ContentManager</a></li>
+        <li><a href="modify-the-content-pipeline.html" class="docs-nav-link">Modify the Content Pipeline</a></li>
+        <li><a href="update-the-c-api.html" class="docs-nav-link">Update the C API</a></li>
+        <li><a href="debug-shutdown-and-lifetime.html" class="docs-nav-link active" aria-current="page">Debug shutdown / lifetime</a></li>
+        <li><a href="investigate-a-sample-failure.html" class="docs-nav-link">Investigate a sample failure</a></li>
+        <li><a href="change-build-configuration.html" class="docs-nav-link">Change build configuration</a></li>
+        <li><a href="make-a-release.html" class="docs-nav-link">Make a release</a></li>
+        <li><a href="update-libcna-com.html" class="docs-nav-link">Update libcna.com</a></li>
+        <li><a href="conventions.html" class="docs-nav-link">Conventions</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/platforms/index.html" class="docs-nav-link">Platform internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../internals/bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Development</a></li>
+        <li><a href="index.html">Maintainer Handbook</a></li>
+        <li aria-current="page">Debug shutdown / lifetime</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>I need to debug shutdown and lifetime behavior</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#owner">Find the owner: which lifetime is it?</a></li>
+          <li><a href="#order">The destruction order to hold in your head</a></li>
+          <li><a href="#borrowed">Borrowed and owned pointers</a></li>
+          <li><a href="#barriers">Callback barriers</a></li>
+          <li><a href="#shapes">Catalogue of real failure shapes</a></li>
+          <li><a href="#tooling">Tooling that exists at TARGET</a></li>
+          <li><a href="#triage">Step-by-step triage</a></li>
+          <li><a href="#review">Review checklist</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Maintainer Handbook &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Read at 009d40f5 from the runtime, graphics, audio, devices, platform, C API and CMake sources and from CNA's plan records; no sanitizer, test or harness was run, and gaps marked open are source-read, not observed.</p></div>
+
+<p class="lede">Use this recipe for a crash, hang, leak or wrong callback that appears when an object dies: at <code>Dispose</code>, at the end of a scope, at process exit, when a device is torn down under live resources, or when a native or foreign callback fires late. The order in which CNA destroys things is written down once, on <a href="../internals/runtime/shutdown.html">Ownership and shutdown</a>, and every owner is mapped on <a href="../takeover/ownership.html">the ownership master map</a>; this page is the procedure: classify the failure shape, pick the tool that can actually see it, reproduce it in the right kind of process, and fix it without merely silencing a sanitizer. Everything was read from TARGET <code>009d40f5</code>; no test, sanitizer or harness was run for it.</p>
+
+<h2 id="owner">Find the owner: which lifetime is it?</h2>
+<p>Start by naming the lifetime that ended, not the crash site. The same use-after-free can look identical from a renderer, an audio mixer and a C API handle.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Symptom</th><th scope="col">Suspect lifetime</th><th scope="col">Read first</th><th scope="col">Sees it best</th></tr></thead>
+<tbody>
+<tr><td>Crash after <code>main</code> returns, in a static destructor, or only when a game handle or platform is left alive</td><td>Process-exit static destruction order</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a> (<code>PlatformStack</code>, <code>UninstallPlatform</code>), <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/CurrentPlatform.cpp"><code>CurrentPlatform.cpp</code></a></td><td>A subprocess whose exit status is the assertion, under AddressSanitizer</td></tr>
+<tr><td>Crash in <code>~Game</code>, <code>~GraphicsDevice</code> or a resource destructor</td><td>Member destruction order, borrowed platform, weak device token</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/include/Microsoft/Xna/Framework/Game.hpp"><code>Game.hpp</code></a> member order, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a> <code>Dispose(bool)</code></td><td>ASan; the first report, not the cascade</td></tr>
+<tr><td>Virtual call on a half-destroyed object (&ldquo;pure virtual method called&rdquo;), or a component called after removal</td><td>Raw-pointer snapshot outliving its referent</td><td><a href="../takeover/case-study-components.html">Case study: Game component lifetime</a></td><td>ASan for the free, TSan for the race, a same-frame regression test</td></tr>
+<tr><td>Late audio or sensor callback reading freed state; deadlock in <code>Stop</code>/<code>Dispose</code></td><td>Callback barrier</td><td><a href="../takeover/threading.html">Thread and callback map</a>, <a href="../internals/audio/engine.html">Audio engine internals</a></td><td>TSan and ASan on the barrier conformance tests</td></tr>
+<tr><td><code>CNA_RESULT_THREAD</code>, <code>INVALID_STATE</code> on destroy, a leaked handle, a binding aborting at exit</td><td>C API child-before-parent rule, creation-thread affinity</td><td><a href="update-the-c-api.html">Update the C API</a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/pure_c/TeardownLifetimeSmoke.c"><code>TeardownLifetimeSmoke.c</code></a></td><td>The seven teardown modes, ASan</td></tr>
+<tr><td>Native validation error or crash after disposing a texture or buffer that was just drawn</td><td>In-flight native lifetime on a deferred renderer</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/adr/0001-modern-gpu-ordering-lifetime.md"><code>ADR 0001</code></a> section 4, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/cnaext-ownership.md"><code>cnaext-ownership.md</code></a></td><td>The renderer's own error count, then ASan</td></tr>
+<tr><td>Browser page keeps calling a dead <code>Game</code></td><td>Emscripten main-loop lifetime</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/emscripten-mainloop-game-lifetime.md"><code>emscripten-mainloop-game-lifetime.md</code></a>, <code>Game::~Game</code></td><td>A browser run that calls <code>Exit()</code> and returns from <code>Run()</code></td></tr>
+</tbody></table></div>
+
+<h2 id="order">The destruction order to hold in your head</h2>
+<p>Declaration order in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/include/Microsoft/Xna/Framework/Game.hpp"><code>Game.hpp</code></a> is construction order and its reverse is the teardown script: <code>platform_</code> (destroyed last), <code>platformInstallation_</code> (undoes the ambient install if construction throws), <code>platformCapabilities_</code>, <code>eventBatch_</code>, <code>Components_</code>, <code>GraphicsDevice_</code>, <code>Content_</code>, <code>Window_</code>, <code>LaunchParameters_</code>, <code>Services_</code>. Five consequences drive most bugs; the full trace is on the shutdown page.</p>
+<ul>
+<li><strong>The platform outlives everything that borrows it.</strong> <code>~Game</code> uninstalls the ambient accessor in its body, before any member dies, so teardown code must use its stored platform, never <code>GetCurrentPlatform()</code>, which would lazily create a fresh default when nothing is installed (code that must not do that asks <code>HasCurrentPlatform()</code>).</li>
+<li><strong><code>Components_</code> is declared before <code>GraphicsDevice_</code>,</strong> so a component held through the <code>shared_ptr</code> overload of <code>Add</code> is destroyed after the device, content manager, window and services and must not call back through its <code>Game</code>.</li>
+<li><strong><code>Game::Dispose(true)</code> does not dispose the Game-owned device.</strong> It disposes <code>IDisposable</code> components, then <code>Content_</code>, then the registered device service (which raises <code>DeviceDisposing</code>, where <code>UnloadContent</code> runs). The device is disposed by <code>~GraphicsDevice</code> or by game code; <code>~Game</code> calls <code>Dispose(false)</code>, which only marks the game disposed.</li>
+<li><strong>The registry is drained while the renderer lives.</strong> <code>GraphicsDevice::Dispose(bool)</code> sets <code>isDisposed_</code> first, raises <code>Disposing</code>, moves <code>resources_</code> into a local and disposes each resource, then runs <code>destroyNativeResources()</code> (renderer, presenter, window) and releases its one video-subsystem reference. The registry tracks and never deletes.</li>
+<li><strong>A weak token protects late resources.</strong> Each <code>GraphicsResource</code> holds a <code>std::weak_ptr&lt;void&gt;</code> of the device's <code>resourceDeviceLifetime_</code> and checks <code>expired()</code> before calling back into the device; <code>~GraphicsDevice</code> resets it after <code>Dispose()</code>. It extends nothing: a <code>CNA::Graphics</code> object must not outlive its device, and public resources must not outlive theirs (ADR 0001).</li>
+</ul>
+
+<h2 id="borrowed">Borrowed and owned pointers</h2>
+<p>Never infer ownership from a getter or a &ldquo;manager&rdquo; name. For each pointer you touch, write down the lender, the borrower and what stops the lender dying first.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Pointer</th><th scope="col">Lender and borrower</th><th scope="col">What protects it</th><th scope="col">What does not</th></tr></thead>
+<tbody>
+<tr><td><code>GraphicsDevice::platform_</code></td><td>Game (or the ambient lazy default) &rarr; device</td><td>Declaration order: <code>platform_</code> is destroyed last</td><td>A device constructed on its own must not outlive the ambient default; not a token</td></tr>
+<tr><td><code>Game::Services_</code> entries, <code>graphicsDeviceService_</code>, <code>graphicsDeviceManager_</code></td><td>Caller-owned <code>GraphicsDeviceManager</code> &rarr; game</td><td>The manager being nested inside the game's lifetime (usually a member of the derived game)</td><td>A manager destroyed while its game runs, or outliving an undisposed game: the game keeps raw pointers that <code>unregisterServices</code> does not clear, and <code>~GraphicsDeviceManager</code> dereferences its <code>Game</code>. No test covers those shapes</td></tr>
+<tr><td><code>GraphicsDevice::resources_</code></td><td>Resource &rarr; device registry</td><td>Each resource unregisters itself; the device drains it at disposal</td><td>An entry whose object died without unregistering</td></tr>
+<tr><td><code>ContentManager</code> to device</td><td>Game-owned device &rarr; content</td><td>Members declared in that order; <code>Unload()</code> only clears the cache</td><td>Copies the caller still holds survive <code>Unload()</code>; <code>Unload()</code> is not disposal of every retained resource</td></tr>
+<tr><td>Ordered component vectors and frame snapshots</td><td>Collection &rarr; <code>Game</code> raw <code>IUpdateable*</code>/<code>IDrawable*</code></td><td><code>componentListsMutex_</code> for list changes; snapshot entries nulled on removal</td><td>Removal from another thread during a frame; the collection's own storage has no lock</td></tr>
+<tr><td><code>VideoPlayer</code> &harr; <code>Video</code></td><td>Raw pointers in both directions</td><td>Nothing stated in the header</td><td>Destroying a <code>Video</code> before its player is stopped, disposed or destroyed (source-read, no test)</td></tr>
+<tr><td>C API borrowed handles</td><td>Game &rarr; C caller</td><td>Generation invalidation when the callback returns; owner token</td><td>Retaining one past the callback; destroying the game first</td></tr>
+</tbody></table></div>
+
+<h2 id="barriers">Callback barriers</h2>
+<p>A callback bug is usually decided in creation, generation change or teardown, not in the callback body. Name the barrier the code relies on and keep it on the normal <em>and</em> the failure path:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Callback source</th><th scope="col">Barrier</th><th scope="col">Pinned by</th></tr></thead>
+<tbody>
+<tr><td>Audio device (<code>IAudioDevice</code>)</td><td><code>Stop</code> waits for an in-flight callback; after <code>Close</code> none runs again. SDL3/SDL2 lock and unlock SDL's stream lock; the NULL and ALSA devices join their worker thread. The callback must not block, allocate, throw or call device lifecycle methods</td><td><code>AudioDeviceConformanceTests.StartStopAndCloseFormCallbackBarriers</code>, <code>Sdl2AudioDeviceTests.OpenIsPausedAndStopIsACallbackBarrier</code></td></tr>
+<tr><td>SDL3 mixer</td><td>Generation counter bumped before device stop and close; deferred free list for tracks destroyed from their own stopped callback</td><td><code>CnaMixer.ATrackDestroyedFromItsOwnStoppedCallbackLeavesTheMixAndIsFreedLater</code> (CNA mixer), the mixer-destroy harnesses</td></tr>
+<tr><td>Dynamic streams</td><td><code>FrameworkDispatcher::Update</code> copies the stream list under a non-recursive mutex and updates unlocked, because a <code>BufferNeeded</code> handler may dispose its own stream</td><td><code>FrameworkDispatcherTest.UpdateDoesNotDeadlockWhenBufferNeededDisposesTheInstance</code></td></tr>
+<tr><td>Accelerometer, Gyroscope</td><td>Per-class mutex, snapshot of registrations, in-flight dispatch token that <code>Dispose</code> waits on</td><td><code>AccelerometerTests.NoDispatchAfterDispose</code>, <code>DisposeFromWithinOwnCallbackDoesNotDeadlock</code></td></tr>
+<tr><td>Compass, Motion</td><td>Generation-checked shared control block; user code runs outside the lock</td><td>Accepted, documented gap: a callback already past its check while another thread finishes destroying the owner</td></tr>
+<tr><td>C API lifecycle callbacks and registrations</td><td>Synchronous on the creation thread; non-reentrant calls refused; registrations survive game destroy but are invalidated after the disposal event; contexts stay caller-owned</td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/c-api/CALLBACKS_AND_THREADING.md"><code>CALLBACKS_AND_THREADING.md</code></a>, <code>CApi_StressSmoke</code>, <code>CApi_AudioSmoke</code></td></tr>
+<tr><td>Foreign finalizers and garbage collectors</td><td>Creation-thread check: an off-thread destroy answers <code>CNA_RESULT_THREAD</code> and the handle stays live</td><td>The bindings queue releases for the owner thread at their pinned revisions (<a href="../internals/bindings/csharp.html">C#</a>, <a href="../internals/bindings/java.html">Java</a>)</td></tr>
+</tbody></table></div>
+<p>Before changing any callback, write five answers in the patch: who invokes it and on which thread; which locks are held; whether it can re-enter CNA; who owns its userdata and for how long; and what <code>Stop</code>, <code>Close</code> or <code>Dispose</code> does to in-flight calls. A moved-out object destroyed after the lock scope ends (as the C API registry does), and callbacks run with no lock held (as the sensor and dispatcher code does), are the two patterns that keep barriers deadlock-free.</p>
+
+<h2 id="shapes">Catalogue of real failure shapes</h2>
+<p>Each row is a shape that has occurred in CNA and the current code's answer. &ldquo;Fixed&rdquo; rows are teaching material and name the test or harness that pins the answer; &ldquo;open&rdquo; rows are source-read gaps recorded for maintainers, not verified defects.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Shape</th><th scope="col">Concrete example</th><th scope="col">Status at TARGET</th></tr></thead>
+<tbody>
+<tr><td>Static destruction order</td><td>The C API handle registry (a function-local static owning games) was constructed before the platform stack that <code>~Game</code> unregisters from, so at exit the stack died first and AddressSanitizer reported a heap-use-after-free at <code>UninstallPlatform</code> for every smoke test leaving a game handle alive. Ordering cannot fix it: the registry must exist before the object it stores (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/plans/plan_capi_smoke_stability.md"><code>plan_capi_smoke_stability.md</code></a>).</td><td>Fixed: <code>PlatformStack</code>, its mutex and the <code>CurrentPlatform</code> holders are deliberately immortal (allocated once, never destroyed). Pinned by <code>CApi_TeardownLifetime_*</code> and <code>GamePlatformOwnershipTest.OutOfOrderDestructionLeavesNoDanglingInstallation</code></td></tr>
+<tr><td>Same, native platform</td><td>An X11 connection destroyed after its error-policy display list and mutex</td><td>Fixed by the same idiom in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Error.cpp"><code>X11Error.cpp</code></a>; <code>X11Live.AProcessExitingWithTheCurrentPlatformOpenTearsDownCleanly</code> checks a harness's exit status</td></tr>
+<tr><td>Static destruction versus a library shutdown call</td><td><code>VibrateController</code>'s default singleton borrows the platform's haptic service and is destroyed at exit, possibly after <code>SDL_Quit()</code></td><td>Mitigated: an <code>atexit</code> fallback and a check that the captured platform is still the installed one. No production code calls <code>DevicesShutdownCoordinator::Shutdown()</code>; the ordering harness covers SDL3/POSIX only</td></tr>
+<tr><td>Native owner never destroyed</td><td>The SDL3 mixer's <code>DestroyMixer</code> has no production caller: at exit a namespace-scope static closes the device and the native mixer pointer is never destroyed (the ALSA engine is immortal with an <code>atexit</code> close)</td><td>Open (as read); a real shutdown needs every audio object idle first</td></tr>
+<tr><td>Foreign process exit</td><td>The Java binding records at its pinned revision that, on the identities served by EasyGL, a process exiting with a vertex buffer alive after its creating thread ended aborts in a static destructor (a C probe reproduces it without Java; the renderer keeps <code>thread_local</code> context-lease state in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/easygl/src/EasyGLRenderer.cpp"><code>EasyGLRenderer.cpp</code></a>)</td><td>Not examined at TARGET; evidence for cna-java@6661173 only</td></tr>
+<tr><td>Snapshot of raw pointers</td><td>A loading screen dropped a screen from inside the update iterating its 87 components, then aborted on a pure virtual call. Two mechanisms: concurrent list mutation during the snapshot copy, and removal freeing a component that the in-flight snapshot still names</td><td>Fixed: list lock plus nulling snapshot entries; <code>GameTest.AComponentRemovedMidFrameIsNotCalledLaterInThatSameFrame</code> and <code>GameTest.ComponentsAddedFromALoadingThreadSurviveTheFrameThatIsIteratingThem</code>. Open: removal from another thread</td></tr>
+<tr><td>Resource outliving its device</td><td>A shared-owned component (destroyed after the device) or a late copy of a texture</td><td>Guarded by the weak token. Tests found cover use after device disposal (<code>GraphicsDeviceLifecycleTest.RendererFacingOperationsRejectUseAfterDeviceDisposal</code>) and cross-device moves (<code>GraphicsResourceTest.CrossDeviceMoveAssignmentTransfersTrackingAndDetachesOldBindings</code>); none was found that destroys a wrapper after its device object is gone</td></tr>
+<tr><td>Re-entrant disposal</td><td>A <code>Disposing</code> handler disposing again, or a resource unregistering while the registry is walked</td><td>Guarded by <code>isDisposed_</code> first and moving the registry out; <code>GraphicsDeviceLifecycleTest.DisposalIsReentrantAndReleasesABoundRenderTarget</code></td></tr>
+<tr><td>Failed-constructor leak</td><td>A throwing member constructor never reaches <code>~Game</code>, leaving the ambient pointer aimed at a dead platform</td><td>Guarded by <code>platformInstallation_</code>; <code>GamePlatformOwnershipTest.AFailedConstructionLeavesNothingInstalled</code></td></tr>
+<tr><td>Reference-count imbalance</td><td>Two independent campaigns each acquired the video subsystem while one release stayed in <code>Dispose</code>; the subsystem stayed up for the process. Nothing observable failed</td><td>Fixed by a single owned flag (<code>setVideoSubsystemAcquired</code>); <code>GraphicsDeviceSubsystemLifecycleTest</code> counts acquisitions on a decorated real platform</td></tr>
+<tr><td>Deferred-record lifetime</td><td>On a deferred renderer a texture disposed right after <code>SpriteBatch.End()</code> is still referenced by a queued command, so each queued command holds a shared keep-alive. The oracle is the renderer's own uncaptured-error count, because ASan did not catch the removed keep-alive (the native handle table asserted first)</td><td>Pinned by the WebGPU lifetime stress program (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/webgpu/examples/webgpu_resource_lifetime_stress_test.cpp"><code>webgpu_resource_lifetime_stress_test.cpp</code></a>); the general rule is ADR 0001 section 4</td></tr>
+<tr><td>Browser main loop</td><td>An older implementation unwound the caller of <code>Run()</code>, destroying a local <code>Game</code> while the registered frame callback still held its address</td><td>Fixed: the loop runs on the existing Wasm stack; <code>~Game</code> stops the loop and logs an error if destroyed while <code>Run()</code> is active</td></tr>
+<tr><td>Borrowed pointer to a queue-owned object</td><td><code>MediaPlayer::Play(Song*)</code> clears the queue (which owns its songs through <code>unique_ptr</code>) and then reads the argument, so passing a queue-owned song reads a destroyed object</td><td>Open (source-read, no test)</td></tr>
+<tr><td>Singleton bound to a shorter-lived owner</td><td><code>PhoneApplicationService::getCurrentProperty()</code> is a function-static; attached to a <code>Game</code> destroyed earlier, its destructor calls <code>DetachEXT</code> on a dangling pointer</td><td>Open (source-read, no test)</td></tr>
+<tr><td>Operations after disposal</td><td><code>StorageContainer</code> operations keep working after <code>Dispose</code>; streams outlive the container and device; the same holds through the C route</td><td>Open</td></tr>
+<tr><td>Comment versus code</td><td><code>cna_game_destroy</code>'s comment says shutdown already disposed the canonical device; <code>Game::Dispose(true)</code> disposes only the registered service</td><td>Open (documentation)</td></tr>
+</tbody></table></div>
+
+<h2 id="tooling">Tooling that exists at TARGET</h2>
+<h3 id="sanitizers">Sanitizer configurations</h3>
+<p><code>CNA_SANITIZE</code> takes a comma-separated list (for example <code>address,undefined</code>), adds <code>-fsanitize=&hellip; -fno-omit-frame-pointer -g</code> to every CNA-owned target and to the enabled Sharp Runtime closure, and links the same flag; <code>CNA_SANITIZE_OPTIMIZATION</code> accepts <code>DEFAULT</code>, <code>O0</code>&hellip;<code>O3</code>. The configure step (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/BuildPerformance.cmake"><code>BuildPerformance.cmake</code></a>) refuses Emscripten, non-GNU/Clang compilers, AddressSanitizer with ThreadSanitizer, ThreadSanitizer with MemorySanitizer, <code>CNA_ENABLE_IPO</code>, and non-full <code>CNA_DEBUG_INFO</code>. Vendored SDL and ENet sub-builds stay uninstrumented (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/build-performance.md"><code>build-performance.md</code></a>).</p>
+<p>The shipped presets are <code>devices-asan</code> (<code>address</code>, <code>O0</code>), <code>devices-tsan</code> (<code>thread</code>, <code>O1</code>) and <code>devices-ubsan</code> (<code>undefined</code>, <code>O1</code>) in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/CMakePresets.json"><code>CMakePresets.json</code></a>: Debug, <code>OPENGLES3</code>, tests on and <code>CNA_DEVICES=ON</code>. They are named for the Devices module, and each builds the whole <code>CnaTests</code> aggregate; use them for runtime lifetime work only if the host has a display. There is no runtime-specific sanitizer preset, so a lifetime investigation on another renderer or platform is <code>-DCNA_SANITIZE=address</code> in a separate build tree for that configuration. ASan finds the free, TSan finds the race, UBSan does not find lifetime bugs; run the two that match the hypothesis. CNA's own workflows show the option strings in use: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/.github/workflows/input-ci.yml"><code>input-ci.yml</code></a> runs <code>address,undefined</code> with <code>detect_leaks=0:halt_on_error=1</code>, and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/.github/workflows/gltf-sanitizers-ci.yml"><code>gltf-sanitizers-ci.yml</code></a> runs the glTF path with <code>detect_leaks=1</code> and <code>UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=0:exitcode=1</code> (without <code>exitcode</code> UBSan prints and the process still exits 0).</p>
+<ul>
+<li><strong>Keep the first report:</strong> under ASan preserve the first use-after-free, not the destructor cascade.</li>
+<li><strong>LeakSanitizer noise.</strong> CNA's integration notes record leak stacks rooted in the Mesa GLX driver with no CNA frames (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/integration/lanes/opengl4.md"><code>integration/lanes/opengl4.md</code></a>), and a WebGPU stress program's 368 bytes from adapter enumeration, told apart from a leak because the total did not scale when the churn loop was made sixteen times longer. LeakSanitizer swallows buffered stdout (CNA reads such programs' PASS lines in a <code>detect_leaks=0</code> control run) and cannot run under ptrace.</li>
+<li>No Valgrind guidance was found in the TARGET documentation.</li>
+</ul>
+<h3 id="harnesses">Processes whose exit status is the assertion</h3>
+<p>What happens after <code>main</code> returns cannot be tested inside a long-running <code>CnaTests</code> process. CNA's answer is a small standalone program spawned by a test, declared in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Harnesses.cmake"><code>Harnesses.cmake</code></a>:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Harness</th><th scope="col">Hazard it isolates</th><th scope="col">Spawned or registered by</th></tr></thead>
+<tbody>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/c-api/tests/pure_c/TeardownLifetimeSmoke.c"><code>TeardownLifetimeSmoke.c</code></a>: modes <code>explicit</code>, <code>game-alive</code>, <code>game-alive-no-frame</code>, <code>children-alive</code>, <code>partial</code>, <code>cycles</code>, <code>device-alive</code></td><td>C game and children left alive at exit</td><td><code>CApi_TeardownLifetime_&lt;mode&gt;</code> (needs <code>CNA_BUILD_C_API=ON</code>)</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/platform/x11_exit_harness.cpp"><code>x11_exit_harness.cpp</code></a></td><td>Native X11 platform still open at exit</td><td><code>X11PlatformIntegrationTests</code> (X11 selection only)</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/devices/shutdown_ordering_harness.cpp"><code>shutdown_ordering_harness.cpp</code></a> (<code>--skip-shutdown-call</code>)</td><td>Vibrate singleton destroyed after the real <code>SDL_Quit()</code></td><td><code>DevicesShutdownOrderingTest.*</code> (SDL3 only)</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/audio/mixer_destroy_active_static_voice_harness.cpp"><code>static</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/audio/mixer_destroy_active_dynamic_voice_harness.cpp"><code>dynamic voice harnesses</code></a></td><td>Destroying the SDL3 mixer while an instance is alive, then using the orphaned instance</td><td><code>AudioMixerTests</code> (SDL3 audio only)</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics-ext/examples/cnaext_leak_loop_test.cpp"><code>cnaext_leak_loop_test.cpp</code></a></td><td>1,000 frames and 50 resizes repeated, for LeakSanitizer to watch; asserts only that the memory estimate does not grow</td><td>Run under <code>CNA_SANITIZE=address</code> with <code>CNA_CNAEXT=ON</code></td></tr>
+</tbody></table></div>
+<h3 id="diagnostics">Diagnostics resource records and events</h3>
+<p>With <code>-DCNA_DIAGNOSTICS=STATS</code> or <code>FULL</code> (the default is <code>OFF</code>; the level is a compile definition and changes class layout, so reconfigure and rebuild everything), every <code>GraphicsResource</code> registers a resource record, and <code>GetProvider().CaptureSnapshot()</code> returns them with stable, never-reused ids. Use them to correlate explicit create and dispose cycles with what the registry still holds; do not read them as a GPU allocation census, since state objects and effects appear as zero-byte <code>Unknown</code> records and a resource created during a runtime <code>Off</code> window is never registered. The XNA <code>GraphicsDevice::ResourceCreated</code> and <code>ResourceDestroyed</code> events are the level-independent alternative. See <a href="../internals/modules/diagnostics.html">Diagnostics internals</a>.</p>
+
+<h2 id="triage">Step-by-step triage</h2>
+<ol>
+<li><strong>Record the configuration:</strong> platform, audio and renderer axes, sanitizer, display, build type, and whether the game was disposed explicitly, destroyed by scope exit or left alive at process exit. Those are different paths and a change must be checked against each.</li>
+<li><strong>Get the first error</strong> under ASan (free) or TSan (race), with its three stacks (access, free, allocation). A bad access in a destructor at exit suggests static destruction; in a member destructor, order or a borrowed pointer.</li>
+<li><strong>Classify</strong> with the owner table. Draw the destruction order and every asynchronous user of the object (device callbacks, sensor sessions, deferred renderer records, foreign threads); an unnamed lender is the finding.</li>
+<li><strong>Reduce:</strong> one game with one resource, then a bare device, then no window (<code>HEADLESS</code>). Use the exit-status harness pattern when the failure needs process teardown.</li>
+<li><strong>Repeat.</strong> One pass does not show a race away: use <code>--gtest_repeat</code> and TSan, and read the skip count, since a window-needing test skips where none can be created.</li>
+<li><strong>Prefer removing the dependency over ordering it.</strong> CNA's fixes for teardown-order bugs were an immortal holder (the registry cannot be ordered), a weak token (a late resource asks whether its device lives), moving state out before iterating, setting the disposed flag before raising events, running callbacks with no lock held, and generation counters that turn a stale pointer into &ldquo;already gone&rdquo;. A fix that only reorders declarations needs a test that would fail under the old order.</li>
+<li><strong>Do not quiet the sanitizer.</strong> Several barriers exist because one found a real free or race (the pan-state list, the dynamic-stream flag, the platform stack); a suppression or <code>detect_leaks=0</code> describes the environment, not a fix.</li>
+<li><strong>Write the regression in the shape of the failure.</strong> Same-frame semantics for component removal; a subprocess exit status for static destruction; a counted-acquisition fake on a real decorated platform for reference balance (a fake that answers every call would have passed before the fix). See <a href="add-a-regression-test.html">Add a regression test</a>.</li>
+<li><strong>Check the blast radius.</strong> The C API child-before-parent gates, the bindings' deferred releases, Emscripten <code>Run()</code>, a second platform backend, and both mixer implementations when a shared contract moves (<a href="../takeover/blast-radius.html">Blast radius and readiness</a>).</li>
+</ol>
+
+<h2 id="review">Review checklist</h2>
+<ul>
+<li>Which lifetime ended, who lent the pointer, and what stops the lender dying first, written in the description.</li>
+<li>Both teardown paths (explicit dispose and destruction) and the process-exit path considered; the ambient platform not assumed to name this game.</li>
+<li>Callback barrier named, kept on the failure path, and no user code run under a non-recursive lock.</li>
+<li>A regression test whose failure mode matches the bug, with the sanitizer configuration and skip counts stated, and anything not run said plainly.</li>
+<li>No new process-lifetime static that a destructor of a shorter-lived object touches, unless it follows the immortal-holder idiom.</li>
+</ul>
+<p>Related: <a href="../invariants.html">Architectural invariants</a>, <a href="../takeover/uncertainty.html">Known uncertainty and history</a>, <a href="../debugging.html">Debugging cookbook</a>, <a href="../internals/runtime/shutdown.html">Ownership and shutdown</a> and <a href="../takeover/ownership.html">Ownership and lifetime master map</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/building.html">Building CNA</a> &middot; <a href="../../docs/diagnostics.html">Diagnostics</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../architecture/runtime.html">Runtime lifecycle</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../internals/runtime/shutdown.html">Ownership and shutdown</a> &middot; <a href="../internals/audio/engine.html">Audio engine internals</a> &middot; <a href="../internals/modules/diagnostics.html">Diagnostics and profiler internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../takeover/ownership.html">Ownership and lifetime master map</a> &middot; <a href="../takeover/threading.html">Thread and callback map</a> &middot; <a href="../takeover/case-study-components.html">Case study: Game component lifetime</a> &middot; <a href="../invariants.html">Architectural invariants</a> &middot; <a href="../debugging.html">Debugging cookbook</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../testing/architecture.html">Test architecture</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../reference/cmake-options.html">CMake option index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="update-the-c-api.html" rel="prev"><span>Previous</span>I need to update the C API</a><a class="dev-pager-next" href="investigate-a-sample-failure.html" rel="next"><span>Next</span>I need to investigate a sample failure</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
