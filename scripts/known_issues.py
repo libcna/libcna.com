@@ -319,7 +319,9 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
 # ---------------------------------------------------------------------------------------------
 # merge
 # ---------------------------------------------------------------------------------------------
-def cmd_merge(_: argparse.Namespace) -> int:
+def build_entries(with_adversarial: bool) -> tuple[list[dict], list[dict], dict, dict, dict] | int:
+    """Merge every verified-*.json into public entries with stable ids (merge-map folds, allocation, patches.json), optionally followed by the
+    adversarial-audit operations.  Returns (issues, dispositions, remap, counters, audit_trail) or a non-zero exit code.  Pure: writes nothing."""
     packs = sorted(ISS.glob("verified-*.json"))
     if not packs:
         print("no verified-*.json files")
@@ -423,9 +425,19 @@ def cmd_merge(_: argparse.Namespace) -> int:
                     d["evidence"] = "Refuted by the independent QA review: " + refuted[d["published_as"]]
                     d["qa_refuted_entry"] = d["published_as"]
                     d["published_as"] = None
-    issues, disp, audit_trail, rc = apply_adversarial(issues, disp, counters)
-    if rc:
-        return rc
+    audit_trail: dict = {}
+    if with_adversarial:
+        issues, disp, audit_trail, rc = apply_adversarial(issues, disp, counters)
+        if rc:
+            return rc
+    return issues, disp, remap, counters, audit_trail
+
+
+def cmd_merge(_: argparse.Namespace) -> int:
+    built = build_entries(True)
+    if isinstance(built, int):
+        return built
+    issues, disp, remap, _counters, audit_trail = built
     ids = Counter(i["id"] for i in issues)
     bad = [k for k, n in ids.items() if n > 1]
     if bad:

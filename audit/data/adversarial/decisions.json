@@ -20,5 +20,127 @@
    "note": "Reclassified bug -> functional gap. Independently checked: CnjSourceFileTests pins Color(255,0,255,0) for keyed texels ('should become transparent'), the pipeline comment says an authored key deliberately keeps its colour, and no CNA document promises invisibility for straight-alpha loose textures; the visible tint under the default premultiplied AlphaBlend is a real caveat of the loose-tier alpha convention, not a contract violation."
   }
  },
- "dismissals": {}
+ "dismissals": {},
+ "new_findings": [
+  {
+   "cand_ids": [],
+   "class": "bug",
+   "status": "open",
+   "confidence": "verified-by-reading",
+   "tests_present": true,
+   "subsystem": "Math & geometry",
+   "id": "NEW-AUDIT-01",
+   "title": "BoundingSphere(Vector3 center, float radius) accepts a negative radius, where XNA 4.0 throws ArgumentException",
+   "summary": "CNA's BoundingSphere(Vector3, float) constructor stores any radius, while XNA 4.0's throws ArgumentException for radius < 0, so a negative radius is silently accepted.",
+   "severity": "low",
+   "public_contract": "CNA::BoundingSphere::BoundingSphere(Vector3 center, float radius) (Microsoft::Xna::Framework::BoundingSphere)",
+   "expected": "<p>XNA 4.0's constructor (read from the decompiled genuine <code>Microsoft.Xna.Framework</code> assembly, <code>BoundingSphere.cs</code>) is <code>if (radius &lt; 0f) throw new ArgumentException(FrameworkResources.NegativeRadius);</code> followed by the two assignments, so a sphere with a negative radius cannot be constructed through it.</p>",
+   "actual": "<p><code>BoundingSphere::BoundingSphere(Vector3, float)</code> in {{src:modules/math/src/BoundingSphere.cpp|BoundingSphere.cpp}} is a bare initializer list, <code>Center(center), Radius(radius)</code>: it validates nothing, so a caller that passes a negative radius gets a sphere with a negative <code>Radius</code> instead of the exception. Sibling math code already throws sharp-runtime exceptions for invalid arguments (<code>System::ArgumentException</code> in <code>BoundingBox.cpp</code>), so the mechanism exists.</p>",
+   "sources": [
+    {
+     "path": "modules/math/src/BoundingSphere.cpp",
+     "note": "BoundingSphere::BoundingSphere(Vector3, float): an unvalidated initializer list"
+    },
+    {
+     "path": "modules/math/include/Microsoft/Xna/Framework/BoundingSphere.hpp",
+     "note": "the constructor declaration"
+    },
+    {
+     "path": "modules/math/tests/Microsoft/Xna/Framework/BoundingSphereTests.cpp",
+     "note": "ConstructorStoresCenterAndRadius: positive radius only"
+    }
+   ],
+   "evidence": "<p>Checked by reading at 009d40f5; nothing was built or executed for this entry. XNA's guard was read in the decompiled reference (<code>xna4-decomp</code>). Found by the independent adversarial review of the math entries, not by an earlier audit; no published entry covers it (CNA-BUG-070 is about <code>Contains</code>, CNA-BUG-025 about the <code>PlaneIntersectionType</code> Doxygen). The other construction paths of the type (default constructor, the <code>CreateFrom*</code> helpers, <code>Transform</code>) were not examined for the same invariant.</p>",
+   "reproduction": null,
+   "tests_current": "<p><code>BoundingSphereTests.cpp</code> constructs spheres with a positive radius (<code>ConstructorStoresCenterAndRadius</code>); no case passes a negative one.</p>",
+   "regression_test": "<p>A test that <code>BoundingSphere(Vector3::Zero, -1.0f)</code> throws an <code>ArgumentException</code>-family exception, and that a zero radius still constructs.</p>",
+   "blast_radius": "<p>Code that builds a <code>BoundingSphere</code> from a computed radius, and XNA code that relies on the constructor's <code>ArgumentException</code> to reject bad input. Correct programs that only pass non-negative radii are unaffected.</p>",
+   "workaround": "<p>Validate the radius (<code>radius &gt;= 0</code>) before constructing.</p>",
+   "related": {
+    "deep": [
+     [
+      "deep-dives/framework/bounding-volumes-and-intersections.html",
+      "Bounding volumes and intersections"
+     ]
+    ],
+    "guide": [
+     [
+      "docs/math-types.html",
+      "Math types"
+     ]
+    ],
+    "internals": [
+     [
+      "development/internals/modules/math.html",
+      "Math module internals"
+     ]
+    ]
+   },
+   "origin": "new finding at the independent adversarial audit (reported by the R10 math reviewer, re-verified by the orchestrator)"
+  },
+  {
+   "cand_ids": [],
+   "class": "bug",
+   "status": "open",
+   "confidence": "verified-by-reading",
+   "tests_present": true,
+   "subsystem": "Math & geometry",
+   "id": "NEW-AUDIT-02",
+   "title": "Vector3, Vector4, Quaternion and Matrix GetHashCode add raw int bit patterns with signed arithmetic, which overflows (undefined behaviour) for ordinary values",
+   "summary": "The four GetHashCode functions sum FloatHash results as int with plain +; three 1.0f components already exceed INT_MAX, so the sum is signed-overflow undefined behaviour, while Vector2::GetHashCode already sums as unsigned to avoid it.",
+   "severity": "low",
+   "public_contract": "CNA::Vector3::GetHashCode, Vector4::GetHashCode, Quaternion::GetHashCode and Matrix::GetHashCode (Microsoft::Xna::Framework)",
+   "expected": "<p>Signed integer overflow is undefined behaviour in C++, so a hash that sums the <code>int</code> bit patterns of several floats must wrap through unsigned arithmetic. <code>Vector2::GetHashCode</code> does exactly that, and its comment says why (&ldquo;Unsigned wraparound avoids signed-overflow UB (UBSan, INPUT-BUILD-006); result unchanged&rdquo;). .NET's unchecked <code>int</code> addition wraps, which is the behaviour XNA's hashes rely on.</p>",
+   "actual": "<p><code>FloatHash</code> returns the IEEE bit pattern of the float as an <code>int</code>. <code>Vector3::GetHashCode</code> in {{src:modules/math/src/Vector3.cpp|Vector3.cpp}} returns <code>FloatHash(X) + FloatHash(Y) + FloatHash(Z)</code> with <code>int</code> operands; <code>1.0f</code> is <code>0x3F800000</code> = 1,065,353,216, so <code>Vector3(1, 1, 1)</code> sums to 3,196,059,648 and overflows a 32-bit <code>int</code>. <code>Vector4</code> (four terms), <code>Quaternion</code> (four) and <code>Matrix</code> (sixteen) do the same. In practice the sum usually wraps, but it is undefined behaviour: a UBSan <code>signed-integer-overflow</code> run reports it, and an optimiser may assume it cannot happen. <code>Vector2</code> was already repaired; these four were not.</p>",
+   "sources": [
+    {
+     "path": "modules/math/src/Vector3.cpp",
+     "note": "FloatHash and Vector3::GetHashCode (signed int sum)"
+    },
+    {
+     "path": "modules/math/src/Vector4.cpp",
+     "note": "Vector4::GetHashCode (signed int sum)"
+    },
+    {
+     "path": "modules/math/src/Quaternion.cpp",
+     "note": "Quaternion::GetHashCode (signed int sum)"
+    },
+    {
+     "path": "modules/math/src/Matrix.cpp",
+     "note": "Matrix::GetHashCode (signed int sum of sixteen terms)"
+    },
+    {
+     "path": "modules/math/src/Vector2.cpp",
+     "note": "Vector2::GetHashCode: the unsigned-wraparound form and its UBSan comment"
+    }
+   ],
+   "evidence": "<p>Checked by reading at 009d40f5; nothing was built or executed for this entry (no UBSan run). The arithmetic is exact: three <code>1.0f</code> bit patterns are 3,196,059,648, above <code>INT_MAX</code> (2,147,483,647). Found by the independent adversarial review of the math entries and re-verified by the orchestrator. CNA-BUG-074 covers a different defect in the same functions (negative zero hashing differently from positive zero); the two fixes can share a change.</p>",
+   "reproduction": "<pre><code class=\"language-cpp\">// Illustrative; not compiled or run for this entry. Under -fsanitize=signed-integer-overflow:\nVector3 v(1.0f, 1.0f, 1.0f);\nint h = v.GetHashCode();   // FloatHash(1.0f) * 3 exceeds INT_MAX: signed overflow</code></pre>",
+   "tests_current": "<p>The math tests exercise <code>GetHashCode</code> for equal values (for example <code>CurveKeyTests.cpp</code> and <code>BoundingFrustumTests.cpp</code>), but none of them checks the arithmetic, and whether any lane runs the math suites under UBSan was not examined.</p>",
+   "regression_test": "<p>Sum through <code>unsigned</code> exactly as <code>Vector2::GetHashCode</code> does, and add a case that hashes <code>Vector3(1, 1, 1)</code> (and the other three types) in a UBSan lane, expecting no report and an unchanged hash value.</p>",
+   "blast_radius": "<p>Any program that hashes these value types (dictionary keys, sets) in a sanitizer build, and any build whose optimiser exploits the undefined behaviour. The hash value that ordinary builds produce is unchanged by the fix.</p>",
+   "workaround": "<p>None needed in ordinary builds. In a UBSan build, suppress <code>signed-integer-overflow</code> for these four functions or hash through your own combiner.</p>",
+   "related": {
+    "deep": [
+     [
+      "deep-dives/framework/math-value-types-and-layout.html#equality",
+      "Math value types: equality"
+     ]
+    ],
+    "guide": [
+     [
+      "docs/math-types.html",
+      "Math types"
+     ]
+    ],
+    "internals": [
+     [
+      "development/internals/modules/math.html",
+      "Math module internals"
+     ]
+    ]
+   },
+   "origin": "new finding at the independent adversarial audit (reported by the R10 math reviewer, re-verified by the orchestrator)"
+  }
+ ]
 }

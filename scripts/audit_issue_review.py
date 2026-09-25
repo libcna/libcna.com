@@ -15,7 +15,8 @@ Automatic (no decision needed): the `tests_present` flag, text corrections of CO
 Needs an explicit decision (listed by `plan`, applied only when decisions.json says so): a severity change, RECLASSIFIED, DUPLICATE, FIXED AT TARGET / NOT A BUG / INSUFFICIENT EVIDENCE (retirement),
 and every restored dismissal.  decisions.json:
   {"issues": {"CNA-BUG-nnn": {"action": "accept" | "reject" | "override", "note": "...", "set": {...}, "severity": "...", "class": "...", "duplicate_of": "...", "retire": "NOT A BUG|...", "evidence": "..."}},
-   "dismissals": {"CNA-BUG-0nn": {"action": "accept" | "reject", "entry": {... complete entry with temp id NEW-AUDIT-nn ...}}}}
+   "dismissals": {"CNA-BUG-0nn": {"action": "accept" | "reject", "entry": {... complete entry with temp id NEW-AUDIT-nn ...}}},
+   "new_findings": [{... complete entry, temp id NEW-AUDIT-nn, cand_ids [] and an origin starting "new finding" ...}]}
   reject = keep the entry exactly as published (the reviewer's proposal is dropped); accept = apply the proposal; override = apply `set` / `severity` / ... as written here instead.
 """
 
@@ -144,10 +145,20 @@ def cmd_summary(_: argparse.Namespace) -> int:
     return 0
 
 
+def base_entries() -> dict[str, dict]:
+    """The published entries as they stand BEFORE any adversarial operation, so a plan never depends on its own earlier output."""
+    sys.path.insert(0, str(ROOT / "scripts"))
+    import known_issues as KI
+    built = KI.build_entries(False)
+    if isinstance(built, int):
+        raise SystemExit("cannot rebuild the base entries")
+    return {i["id"]: i for i in built[0]}
+
+
 def build(rv: dict[str, dict], dec: dict, files: set[str]) -> tuple[dict, list[str]]:
     """A pure function of (reviews, decisions): re-running it never accumulates anything, because the merge applies the result to freshly rebuilt entries.
     Reviewer values are always emitted (never compared with the already patched issues-source.json), so a re-plan reproduces the same file."""
-    byid = {i["id"]: i for i in load(SOURCE)["issues"]}
+    byid = base_entries()
     patch: dict = {"entries": {}, "folded": {}, "retired": {}, "reclassified": {}, "added": []}
     pending: list[str] = []
     ids = sorted(set(rv) | set(dec.get("issues", {})))
@@ -208,6 +219,8 @@ def build(rv: dict[str, dict], dec: dict, files: set[str]) -> tuple[dict, list[s
     for cand, d in dec.get("dismissals", {}).items():
         if d.get("action") == "accept" and d.get("entry"):
             patch["added"].append(d["entry"])
+    for e in dec.get("new_findings", []):        # defects the audit itself found while re-reading (no earlier candidate)
+        patch["added"].append(e)
     return {k: v for k, v in patch.items() if v}, pending
 
 
@@ -229,7 +242,7 @@ def cmd_show(args: argparse.Namespace) -> int:
     rv = reviews("issues")
     dec = load(ADV / "decisions.json") if (ADV / "decisions.json").exists() else {}
     patch, _ = build({args.id: rv[args.id]}, dec, target_files())
-    cur = {i["id"]: i for i in load(SOURCE)["issues"]}[args.id]
+    cur = base_entries()[args.id]
     spec = patch.get("entries", {}).get(args.id) or {}
     sets = dict(spec.get("set", {}))
     for f, add in (spec.get("append") or {}).items():
