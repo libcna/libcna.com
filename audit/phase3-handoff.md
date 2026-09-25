@@ -1,6 +1,8 @@
-# Phase 3 — handoff / resume state (work PAUSED by the owner on 2026-09-25, ~12:20)
+# Phase 3 — handoff / resume state
 
-**Phase 3 is NOT complete.** This file is the exact resume position. Truth is in the ledger data (`audit/data/bible/records/*.json`, `audit/data/bible/issues/verified-*.json`); `python3 scripts/bible_ledger.py progress` prints the counts.
+> **Superseded: Phase 3 is complete — see `audit/phase3-completion.md`.** The text below is the historical pause-and-resume record from 2026-09-25 (work was paused by the owner and resumed).
+
+This file was the exact resume position. Truth is in the ledger data (`audit/data/bible/records/*.json`, `audit/data/bible/issues/verified-*.json`); `python3 scripts/bible_ledger.py progress` prints the counts.
 
 ## Boundary (unchanged)
 `PHASE2_BASE` = `2c4970c131eac9b69a9bbfb3c30eee080cbc1469` · TARGET/`cnahead` = `009d40f5dd085c4e674d3479675fac84b12b3e0a` · Bible HEAD `4df1475c` (working tree read, 86 dirty paths) · nothing pushed · CNA, Developer, Bible untouched.
