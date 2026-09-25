@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Headless platform internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s always-compiled Headless platform answers the IPlatform contract: all-false capabilities, one in-memory window, queued events, real timing and filesystem, and its role in conformance tests.">
+  <meta name="keywords" content="headless, headlessplatform, cna_platform, platform conformance, injectevent, platformtestdecorator, capabilities, in-memory window, ci without display, surface presenter refusal">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/platforms/headless.html">
+  <meta property="og:title" content="Headless platform internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s always-compiled Headless platform answers the IPlatform contract: all-false capabilities, one in-memory window, queued events, real timing and filesystem, and its role in conformance tests.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/platforms/headless.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Headless platform internals","description":"How CNA's always-compiled Headless platform answers the IPlatform contract: all-false capabilities, one in-memory window, queued events, real timing and filesystem, and its role in conformance tests.","url":"https://libcna.com/development/internals/platforms/headless.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Platform internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="sdl3.html" class="docs-nav-link">SDL3</a></li>
+        <li><a href="sdl2.html" class="docs-nav-link">SDL2</a></li>
+        <li><a href="x11.html" class="docs-nav-link">X11</a></li>
+        <li><a href="wayland.html" class="docs-nav-link">Wayland</a></li>
+        <li><a href="win32.html" class="docs-nav-link">Win32</a></li>
+        <li><a href="headless.html" class="docs-nav-link active" aria-current="page">Headless</a></li>
+        <li><a href="terminal.html" class="docs-nav-link">Terminal</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="index.html">Platforms</a></li>
+        <li aria-current="page">Headless</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Headless platform internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#contract">What &ldquo;headless&rdquo; does and does not promise</a></li>
+          <li><a href="#window">An in-memory window preserves important lifecycle semantics</a></li>
+          <li><a href="#events">Injecting exact input and lifecycle sequences</a></li>
+          <li><a href="#three-headless">Three different things called &ldquo;headless&rdquo;</a></li>
+          <li><a href="#tests">When to choose it, and when not to</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Platform internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The tests named here were located and their CTest registration read; none was executed. The CI cell is described as the workflow file configures it, not as a recorded result. Headless says nothing about a real compositor, GPU or input device.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Headless"><code>modules/platform/src/Headless/</code></a> is a complete implementation of the <code>IPlatform</code> contract with an in-memory window, a caller-fed event queue, a steady-clock timer and real filesystem and system-information services, and with every one of the 32 capability flags false. It is compiled into every binary whatever <code>CNA_PLATFORM</code> says, which makes it two things at once: a display-free host for game logic, and the second implementation that the platform conformance suite needs. This page is for maintainers changing the platform contract, the <code>Game</code> lifecycle or a display-free CI harness; the user-level summary is the seven-implementation table in <a href="../../../docs/platforms.html#implementation-table">Platform Support</a>.</p>
+
+<h2 id="contract">What &ldquo;headless&rdquo; does and does not promise</h2>
+<p><code>HeadlessPlatform::GetCapabilities</code> returns a value-initialised <code>PlatformCapabilities{}</code>, so every field is false (see <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/include/CNA/Platform/PlatformCapabilities.hpp"><code>PlatformCapabilities.hpp</code></a>: every field defaults to false). False does not mean that every method throws. The rule the contract states is &ldquo;unsupported means refused, never silently ignored&rdquo;, and Headless implements it in three distinct ways:</p>
+<ul>
+<li><strong>Subsystems succeed.</strong> <code>AcquireSubsystem</code> increments an in-memory count for any of the five <code>PlatformSubsystem</code> values (Video, Audio, Gamepad, Haptic, Sensor) and never throws, because game logic must still be able to initialise and shut down. <code>ReleaseSubsystem</code> decrements it; an unpaired release returns silently, which is the no-op the contract in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/include/CNA/Platform/IPlatform.hpp"><code>IPlatform.hpp</code></a> requires. <code>IsSubsystemInitialized</code> is simply <em>count &gt; 0</em>. No operating-system subsystem exists behind any of this.</li>
+<li><strong>Optional services are null.</strong> The accessors for keyboard, mouse, gamepad, joystick, text input, sensors, haptics, input devices, clipboard, displays, dialogs, tray, camera, OpenGL context and Vulkan surface all return <code>nullptr</code>; <code>GetPrimarySelection</code> is not overridden and inherits the contract's null default.</li>
+<li><strong>Operations that cannot be honoured throw.</strong> <code>CreateSurfacePresenter</code> always throws <code>PlatformNotSupportedException(PlatformCapability::SurfacePresentation, "Headless")</code> instead of accepting and dropping frames. <code>AdoptWindow</code> and <code>AdoptWindowHandle</code> are not overridden either: the defaults in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/IPlatform.cpp"><code>IPlatform.cpp</code></a> range-check the token and then throw a <code>PlatformException</code> saying that external window adoption is unsupported by <code>Headless</code>.</li>
+</ul>
+<p>The distinction between a null service and a thrown refusal is deliberate. A false capability gives the caller a refusal path it can branch on; a fake presenter would hide a missing image and a stub clipboard would let a caller believe it had working copy and paste. The two services that are never null are real: <code>GetFileSystem</code> returns a <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Common/StandardFileSystem.hpp"><code>StandardFileSystem</code></a> constructed with the preference-root name <code>cna-headless</code>, and <code>GetSystemInfo</code> returns a <code>StandardSystemInfo</code>. The distinct root name keeps two platforms that live in one process (the conformance suite does exactly that) from colliding on one directory. Note where it points: <code>GetPreferencesPath</code> builds <code>std::filesystem::temp_directory_path() / "cna-headless" / organization / application</code>, creating it on demand and throwing <code>PlatformException</code> if that fails, so save data written through preference paths on this platform lands under the system temporary directory.</p>
+<pre class="diagram">HeadlessPlatform  (always compiled; CNA_PLATFORM=HEADLESS makes it the factory default)
+  |- refCounts_[PlatformSubsystem]        in-memory only, no OS subsystem
+  |- windowTaken_ : shared_ptr&lt;bool&gt;      shared with the one live HeadlessWindow
+  |    '- HeadlessWindow                  title, x/y, size, pending size, resizable,
+  |                                       borderless, visible, minimized, fullscreen mode
+  |- queued_ : vector&lt;PlatformEvent&gt;      InjectEvent -&gt; PollEvents -&gt; Game::PollEvents
+  |- steady_clock nanoseconds (1 GHz), ms since construction, sleep_for
+  '- StandardFileSystem("cna-headless") + StandardSystemInfo    never null
+
+No native drawable, OpenGL context, Vulkan surface, CPU presenter or input service.</pre>
+<p>Selection is ordinary: with <code>CNA_PLATFORM=HEADLESS</code>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/PlatformFactory.cpp"><code>PlatformFactory.cpp</code></a> resolves the default name to <code>"Headless"</code>, so <code>PlatformFactory::Create()</code> and therefore <code>Game::Game()</code> construct this class. In every other configuration it is still reachable by name through <code>PlatformFactory::Create("Headless")</code> and is always listed by <code>GetAvailable()</code>, because <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/CMakeLists.txt"><code>modules/platform/CMakeLists.txt</code></a> globs <code>src/Headless/*.cpp</code> unconditionally. It links no third-party library, which is why carrying it everywhere costs nothing.</p>
+
+<h2 id="window">An in-memory window preserves important lifecycle semantics</h2>
+<p><code>HeadlessWindow</code> lives in an anonymous namespace inside <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Headless/HeadlessPlatform.cpp"><code>HeadlessPlatform.cpp</code></a>. It copies from the <code>WindowDescription</code> the title, the size, the position (0,0 when <code>centered</code> is set), <code>resizable</code>, <code>borderless</code>, <code>visible</code> and <code>fullscreenMode</code>; the minimum/maximum sizes, <code>highDpi</code>, <code>renderIntent</code> and the OpenGL framebuffer request are ignored because nothing here could honour them. <code>GetNativeHandle</code> returns a handle whose <code>system</code> is <code>NativeWindowSystem::Headless</code> with every pointer null and <code>windowId</code> zero, so a renderer that needs a real window refuses deterministically instead of dereferencing anything. Window ids come from a per-platform counter starting at 1, which satisfies the contract's &ldquo;zero means no window&rdquo; rule.</p>
+<p>Only one window may be alive. <code>CreateWindow</code> checks the shared <code>windowTaken_</code> flag and throws <code>PlatformNotSupportedException(PlatformCapability::MultipleWindows, "Headless")</code> for a second one. The occupied slot is published only after <code>std::make_unique&lt;HeadlessWindow&gt;</code> has succeeded, so a failed allocation or title copy leaves the platform able to retry. The flag is a <code>shared_ptr&lt;bool&gt;</code> held by both sides rather than a raw back-pointer from window to platform: the window's destructor clears it through its own reference, so destroying the platform before its window does not make that destructor write into freed memory. (A window outliving its platform is still a caller error; the shared flag only limits the damage.)</p>
+<p>The window models the asynchrony that real window systems impose. <code>SetSize</code> records pending dimensions; <code>Sync</code> applies the positive ones. A test that reads <code>GetClientBounds</code> immediately after <code>SetSize</code> sees the old size here too, which is what keeps game code from depending on behaviour no windowing system guarantees. <code>GetPixelSize</code> equals the logical size and <code>GetDisplayScale</code> is always <code>1.0f</code>. <code>HasFocus</code> is true only while the window is visible and not minimised; <code>Maximize</code> and <code>Restore</code> both just clear the minimised flag, so there is no separate maximised state. <code>SetFullscreenMode(WindowFullscreenMode::BorderlessFullscreen)</code> throws <code>PlatformNotSupportedException(PlatformCapability::BorderlessFullscreen, "Headless")</code>; the other modes are stored and reported back.</p>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Two behaviours to keep in mind when writing tests against this window.</strong> First, the creation path copies <code>WindowDescription::fullscreenMode</code> without the borderless check that <code>SetFullscreenMode</code> performs, so a description requesting <code>BorderlessFullscreen</code> is accepted at creation and reported back by <code>GetFullscreenMode</code>; the conformance case <code>BorderlessFullscreenFollowsItsCapability</code> exercises only the setter. Second, no window-state change generates an event: <code>PollEvents</code> returns only what was queued, so <code>SetSize</code> followed by <code>Sync</code> never produces the <code>Resized</code> or <code>PixelSizeChanged</code> event that drives <code>Game</code>'s viewport refresh (<code>GameWindow</code> update, <code>GraphicsDevice::UpdateViewportFromWindow</code>, <code>OnSurfaceInvalidated</code>). A test that needs the runtime to react must supply the event itself.</p></div>
+<p>These make Headless a useful contract probe for <code>GameWindow</code> and <code>GraphicsDeviceManager</code> without a display, but none of it validates a real compositor's DPI, mode switch, focus policy or presentation.</p>
+
+<h2 id="events">Injecting exact input and lifecycle sequences</h2>
+<p><code>HeadlessPlatform::InjectEvent</code> appends a value <code>PlatformEvent</code> to <code>queued_</code>. The next <code>PollEvents</code> clears the caller's vector, appends every queued event in order and empties the queue; nothing is coalesced, filtered or reordered. In principle that lets a harness drive quit, resize, focus or keyboard order without desktop timing. In practice two facts shape how it is used at this snapshot:</p>
+<ul>
+<li><code>InjectEvent</code> is a member of the concrete class, declared only in the private header <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Headless/HeadlessPlatform.hpp"><code>HeadlessPlatform.hpp</code></a>; the factory hands out <code>IPlatform</code>. No test at this snapshot calls it. Tests that script events wrap a real platform in <code>PlatformTestDecorator</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/PlatformTestDecorator.hpp"><code>PlatformTestDecorator.hpp</code></a>, which forwards every <code>IPlatform</code> method so a test overrides only what it needs); the cross-implementation event oracle's <code>TranscriptPlatform::Queue</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/tests/Microsoft/Xna/Framework/GameEventSemanticsGoldenTests.cpp"><code>GameEventSemanticsGoldenTests.cpp</code></a> is the reference example, and consumer modules use the <code>Canned*</code> services beside it.</li>
+<li>Events are not snapshots. <code>Game::PollEvents</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a> first hands each event to <code>PlatformInputBridge::ProcessEvent</code>, which updates <code>InputManager</code>'s key and mouse accumulators and the text-input callbacks, then applies quit and window handling, and only after the batch advances the keyboard and mouse snapshot services through <code>GetKeyboard()-&gt;Update()</code> and <code>GetMouse()-&gt;Update()</code>. Both accessors are null here. <code>Keyboard::GetState</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/input/src/Xna/Keyboard.cpp"><code>Keyboard.cpp</code></a>) returns an empty <code>KeyboardState</code> when the platform has no keyboard service, and <code>Mouse::GetState</code> returns a default <code>MouseState</code> when it has no mouse service. A <code>KeyEvent</code> queued on Headless therefore reaches the bridge and text input but never makes <code>Keyboard::GetState</code> report a pressed key. This is the event-versus-snapshot split described in <a href="../input/events.html">Input internals</a>.</li>
+</ul>
+<p>The same ordering holds for the gated controller pump: acquiring the Gamepad subsystem on Headless marks it initialised, so <code>Game::PollEvents</code> asks for <code>GetGamepad()</code> and <code>GetJoystick()</code> each frame, finds null and updates nothing.</p>
+<p>Timing is real, not simulated. <code>GetPerformanceCounter</code> returns <code>std::chrono::steady_clock</code> nanoseconds, <code>GetPerformanceFrequency</code> returns 1,000,000,000, <code>GetTicksMilliseconds</code> measures from construction, and <code>Delay</code> calls <code>std::this_thread::sleep_for</code> on the calling thread. There is no clock injection in this class, so a fixed-timestep test running on Headless observes real elapsed time unless it controls time at another layer (for example by overriding the timing methods in a <code>PlatformTestDecorator</code>). How <code>Game::Tick</code> consumes these values is traced in <a href="../runtime/frame.html">One frame source trace</a>.</p>
+
+<h2 id="three-headless">Three different things called &ldquo;headless&rdquo;</h2>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Name</th><th scope="col">What it is</th><th scope="col">What it needs from the platform</th></tr></thead>
+<tbody>
+<tr><td><code>CNA_PLATFORM=HEADLESS</code></td><td>This page: the platform implementation.</td><td>Nothing; it is the platform.</td></tr>
+<tr><td><code>CNA_GRAPHICS_RENDERER=HEADLESS</code></td><td>The renderer in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/headless"><code>modules/renderers/headless</code></a>; see <a href="../graphics/headless.html">Headless renderer internals</a>.</td><td>Nothing: its descriptor declares <code>RendererWindowKind::None</code>, <code>needsWindow = false</code> and <code>needsVideoSubsystem = false</code>, so it runs on any platform.</td></tr>
+<tr><td><code>PresentationParameters::HeadlessEXT</code></td><td>An opt-in off-screen <code>GraphicsDevice</code> mode for renderers that normally want a window.</td><td>No window; only renderers that can run without a swap chain accept it (the property's documentation names the Direct3D 12 and SDL GPU renderers, and says Direct3D 11 and EasyGL throw from their constructors).</td></tr>
+</tbody>
+</table></div>
+<p>Renderer pairing on this platform follows from the capability set rather than from a CMake rule: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>RendererSelection.cmake</code></a> gates only <code>TERMINAL</code> to CPU renderers, and nothing at configure time rejects <code>HEADLESS</code> with a GPU renderer. The refusal happens at run time. <code>SOFTWARE</code>, <code>PORTABLEGL</code>, <code>STUB</code> and <code>HEADLESS</code> run off-screen (<code>GraphicsDevice</code> builds a presenter for a CPU family only where the platform reports <code>surfacePresentation</code> without <code>nativeWindowHandle</code>, which Headless does not). A context-backed family is refused: EasyGL's factory throws <code>PlatformNotSupportedException(PlatformCapability::OpenGlContext, "EasyGL renderer")</code> when it is handed no GL context service. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/tests/Microsoft/Xna/Framework/GamePlatformOwnershipTests.cpp"><code>GamePlatformOwnershipTests.cpp</code></a> uses exactly that pairing to reach a failed <code>Game</code> construction in <code>AFailedConstructionLeavesNothingInstalled</code>, and skips where the build's renderer accepts Headless. See <a href="../graphics/selection.html">Renderer selection internals</a> for the descriptor fields.</p>
+
+<h2 id="tests">When to choose it, and when not to</h2>
+<p><code>PlatformConformance</code> and <code>PlatformWindowConformance</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/PlatformConformanceTests.cpp"><code>PlatformConformanceTests.cpp</code></a> are parameterised over <code>PlatformFactory::GetAvailable()</code> as <code>EveryImplementation/&hellip;/Headless</code>, so the always-built Headless instance is held to the same assertions as every other implementation in the binary; the suite does not compare implementations with each other or treat one as the reference. The cases pin the rules this page describes: every optional service is null exactly when its capability is false (keyboard and mouse are exempt because their flags describe quality, and dialogs follow <code>messageBox || nativeFileDialog</code>); filesystem and system info are never null; an unsupported presenter refuses naming <code>SurfacePresentation</code>; subsystems are refcounted and an unpaired release is a no-op; <code>PollEvents</code> clears stale content and reuses capacity; timing is monotonic with a non-zero frequency; a size change lands after <code>Sync</code>; a second window follows <code>MultipleWindows</code>; destroying a window frees its slot; and borderless fullscreen follows its capability.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Registration (cmake/UnitTests.cmake)</th><th scope="col">What covers Headless</th></tr></thead>
+<tbody>
+<tr><td><code>CnaPlatformTests</code> (shuffled, <code>--gtest_repeat=3</code>)</td><td>The <code>*PlatformConformance*</code> instances and <code>CurrentPlatformTest.*</code> (which decorates a Headless platform). The filter also lists a <code>HeadlessPlatform*</code> token, but no suite of that name exists at this snapshot, so it matches nothing.</td></tr>
+<tr><td><code>CnaPlatformWindowTests</code> (<code>SDL_VIDEODRIVER=dummy</code>)</td><td>The <code>*PlatformWindowConformance*</code> instances, including Headless. The other entry's <code>*PlatformConformance*</code> token does not match that suite name.</td></tr>
+<tr><td>Discovered <code>CnaTests</code> cases</td><td><code>StandardFileSystemTests.HeadlessAndTerminalReadXdgUserDirectories</code>; the <code>GameWindowTest</code> cases that borrow a Headless window (title, native handle, minimise/restore, wrapper destruction, supported orientations); <code>GamePlatformOwnershipTest.AFailedConstructionLeavesNothingInstalled</code>; <code>EveryImplementation/GameEventSemanticsGoldenTest.*</code> against the checked-in transcript <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/tests/golden/platform-event-semantics.txt"><code>platform-event-semantics.txt</code></a>.</td></tr>
+</tbody>
+</table></div>
+<p>In <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/.github/workflows/platform-ci.yml"><code>platform-ci.yml</code></a> the matrix cell &ldquo;Headless + Headless + Null audio&rdquo; is configured as the independence cell: no display and no SDL audio implementation. It runs <code>CnaPlatformTests</code> and the event oracle with <code>DISPLAY</code> and <code>WAYLAND_DISPLAY</code> unset, runs <code>cna_demo_2d --smoke 6</code> without a display, and is the one cell that runs the seven platform source gates (<code>sdl_inventory.py</code>, <code>sdl_classify.py</code>, <code>renderer_sdl_audit.py</code>, <code>sdl_ratchet.py --strict</code>, <code>hot_path_lint.py</code>, <code>nonproduction_sdl_audit.py</code>, <code>check_contract.py</code>). That is what the workflow file configures; its run results were not inspected for this page.</p>
+<p>Headless is the fastest route for a platform-neutral runtime or <code>Game</code> lifecycle change, particularly on a CI host with no display. <code>HEADLESS</code> platform plus <code>HEADLESS</code> renderer is a suitable game-logic harness. It is the wrong evidence for anything native: a window, graphics or input change needs the owning backend's tests and a real-host smoke run, and a renderer test that needs a GPU must not report headless-platform success as image-conformance evidence. A <code>HeadlessEXT</code> device on a real GPU renderer is a different configuration with a genuine device behind it.</p>
+<p>For a maintainer adding a platform interface method, give Headless a truthful refusal or value first, update the capability contract, then compare the SDL3, Win32, X11, Wayland and Terminal implementations and extend the conformance suite. Do not add a default method that silently returns success when nothing happened. The wider recipe is <a href="../../handbook/modify-a-platform-backend.html">I need to modify a platform backend</a>.</p>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Headless/HeadlessPlatform.hpp"><code>HeadlessPlatform.hpp</code></a>: the contract as Headless answers it, including the private <code>InjectEvent</code>.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Headless/HeadlessPlatform.cpp"><code>HeadlessPlatform.cpp</code></a>: the in-memory window, the shared window slot, event draining and timing.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/CMakeLists.txt"><code>modules/platform/CMakeLists.txt</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/PlatformFactory.cpp"><code>PlatformFactory.cpp</code></a>: why it is always compiled and how it is named.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/PlatformConformanceTests.cpp"><code>PlatformConformanceTests.cpp</code></a>: the behaviour any backend, new or old, must preserve.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/PlatformTestDecorator.hpp"><code>PlatformTestDecorator.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/tests/Microsoft/Xna/Framework/GameEventSemanticsGoldenTests.cpp"><code>GameEventSemanticsGoldenTests.cpp</code></a>: how tests script a platform without native event injection.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/platforms.html#implementation-table">Platform Support: the seven implementations</a> &middot; <a href="../../../docs/platforms.html#capabilities">Capability matrix (32 flags)</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/platform.html">Platform architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="index.html">Platform backends overview</a> &middot; <a href="terminal.html">Terminal (the other always-built backend)</a> &middot; <a href="sdl3.html">SDL3 (the default backend)</a> &middot; <a href="../graphics/headless.html">Headless renderer internals</a> &middot; <a href="../input/events.html">Input internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/modify-a-platform-backend.html">I need to modify a platform backend</a> &middot; <a href="../../handbook/debug-shutdown-and-lifetime.html">I need to debug shutdown and lifetime behavior</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture and change recipes</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="win32.html" rel="prev"><span>Previous</span>Win32 platform internals</a><a class="dev-pager-next" href="terminal.html" rel="next"><span>Next</span>Terminal platform internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,386 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>X11 platform internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s native Xlib platform owns its X connection, freezes capabilities, creates windows, multiplexes events, feeds input snapshots and serves GLX, Vulkan and CPU presentation.">
+  <meta name="keywords" content="x11, xlib, cna_platform, glx, xinput2, xrandr, xim, ewmh, x11platform, evdev, cnax11integrationtests, sdl-free">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/platforms/x11.html">
+  <meta property="og:title" content="X11 platform internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s native Xlib platform owns its X connection, freezes capabilities, creates windows, multiplexes events, feeds input snapshots and serves GLX, Vulkan and CPU presentation.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/platforms/x11.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"X11 platform internals","description":"How CNA's native Xlib platform owns its X connection, freezes capabilities, creates windows, multiplexes events, feeds input snapshots and serves GLX, Vulkan and CPU presentation.","url":"https://libcna.com/development/internals/platforms/x11.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Platform internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="sdl3.html" class="docs-nav-link">SDL3</a></li>
+        <li><a href="sdl2.html" class="docs-nav-link">SDL2</a></li>
+        <li><a href="x11.html" class="docs-nav-link active" aria-current="page">X11</a></li>
+        <li><a href="wayland.html" class="docs-nav-link">Wayland</a></li>
+        <li><a href="win32.html" class="docs-nav-link">Win32</a></li>
+        <li><a href="headless.html" class="docs-nav-link">Headless</a></li>
+        <li><a href="terminal.html" class="docs-nav-link">Terminal</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="index.html">Platforms</a></li>
+        <li aria-current="page">X11</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>X11 platform internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#connection">A stable capability snapshot requires an early connection</a></li>
+          <li><a href="#window">Creation is a visual and window-manager transaction</a></li>
+          <li><a href="#events">Polling is an ordered protocol multiplexer</a></li>
+          <li><a href="#input">Snapshots, optional devices and thread context</a></li>
+          <li><a href="#graphics">GLX, Vulkan and CPU presentation are different seams</a></li>
+          <li><a href="#time">Timing, errors and extension boundaries</a></li>
+          <li><a href="#tests">Validation and reading order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Platform internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The CTest entries and CI jobs named here were read, not run. Behaviour on a live X server matrix (real window managers, physical GPUs and GLX drivers, input-method engines, multi-monitor layouts and hot-plug) is not established by this page.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11"><code>modules/platform/src/X11</code></a> is a native Xlib implementation of <code>CNA::Platform::IPlatform</code>, not SDL's X11 video driver. Windows come from <code>XCreateWindow</code>, events from <code>XPending</code>/<code>XNextEvent</code>, physical keys from XKB key names, text from XIM, monitors from XRandR, OpenGL from GLX loaded at run time, Vulkan from <code>VK_KHR_xlib_surface</code>, and on Linux controllers from the kernel's evdev nodes. This page is for the maintainer who has to change that code: it traces the connection and service lifetimes, window creation, the event multiplexer, the input snapshots, the three graphics seams and the test entries, and says where each failure mode lives.</p>
+
+<div class="callout callout--info"><span class="callout-icon">&#8505;</span><p>The user-facing view of this backend (what it needs, what it can do, how to build it SDL-free) is in <a href="../../../docs/native-platforms.html#x11">Native Platforms: Native X11</a>, the seven-platform capability matrix in <a href="../../../docs/platforms.html#capabilities">Platform Support: capability matrix</a>, and a step-by-step build in <a href="../../../docs/tutorials/135-native-x11-build.html">Tutorial 135</a>. This page does not repeat those tables; it explains the code behind them. The contract every backend implements is described in <a href="../../architecture/platform.html">Platform architecture</a>, and the other backends are compared in <a href="index.html">Platform backends</a>.</p></div>
+
+<h2 id="connection">A stable capability snapshot requires an early connection</h2>
+
+<p><code>X11Platform</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Platform.hpp"><code>X11Platform.hpp</code></a>) opens its X connection in the constructor, not in <code>AcquireSubsystem(Video)</code>. Half of its capabilities are answers about one particular X server (does the window manager advertise EWMH fullscreen, is XRandR 1.2 there, does GLX 1.3 answer), and the contract says a capability set is read once and cached by its owners (<code>Game</code> copies it in its constructor, see <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a>). A set that changed when video was acquired would silently invalidate every cached copy. The constructor in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Platform.cpp"><code>X11Platform.cpp</code></a> therefore runs in this order:</p>
+
+<pre class="diagram">X11Platform::X11Platform()
+  1. DesktopPortal::Connect()            (only with CNA_PLATFORM_HAVE_DBUS; session bus, not X)
+  2. systemInfo_ = LinuxSystemInfo       (with evdev; StandardSystemInfo otherwise)
+  3. OpenConnection()                    X11Connection: XOpenDisplay($DISPLAY)
+       → X11ErrorPolicy::Register, atoms (one XInternAtoms), XKB / XI2 / RandR / Xwayland probes
+       → keyboard, mouse, touch, XIM text input, CLIPBOARD + PRIMARY selections,
+         drag-and-drop, dialogs, tray (if a tray owns _NET_SYSTEM_TRAY_Sn),
+         XI2 input devices (if XI2), displays, GLX context service, Vulkan surface service
+     a PlatformException here is caught and stored in connectionError_, never thrown
+  4. controllers_ (EvdevControllerHub)   only if /dev/input is a directory; nothing opened yet
+  5. capabilities_ = ComputeCapabilities()   frozen for the instance's lifetime
+
+Game → AcquireSubsystem(Video)   throws the saved connectionError_ if step 3 failed
+     → CreateWindow(...) → PollEvents() every frame
+~X11Platform → DetachHost() on registered windows → CloseConnection() → controllers_.reset()</pre>
+
+<p>A missing <code>DISPLAY</code> or an unreachable server is recorded, not thrown: a process with no display still constructs a platform to reach <code>StorageDevice</code> and <code>TitleContainer</code> through the portable filesystem (<code>StandardFileSystem</code> rooted as <code>cna-x11</code>) and system-information services. With no connection every display-dependent capability reads false and each corresponding accessor returns null. <code>AcquireSubsystem(PlatformSubsystem::Video)</code> is then the call that reports the original error text (for example "no X server: the DISPLAY environment variable is not set"). Every other subsystem is pure reference counting, except that the first <code>Gamepad</code> acquisition starts the evdev hub. Releasing <code>Video</code> to zero deliberately does not close the connection: the connection is the instance's own resource, opened in the constructor and closed in the destructor, because closing it would flip every display-dependent capability to false mid-life. An unpaired release is a no-op, as the contract requires. By contrast, SDL3 acquires its video subsystem lazily and balances host-owned SDL references (<a href="sdl3.html">SDL3 platform internals</a>); the two implement the same <code>IPlatform</code> API under different native lifetime constraints.</p>
+
+<p>Where each capability comes from is visible in <code>X11Platform::ComputeCapabilities</code>. The code sets a flag only in the same place that wires its accessor, so a maintainer adding a service must change both together:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Capability</th><th scope="col">What sets it at this snapshot</th></tr></thead>
+<tbody>
+<tr><td><code>gamepad</code>, <code>joystick</code>, <code>gamepadRumble</code>, <code>gamepadSensors</code>, <code>haptics</code></td><td><code>controllers_ != nullptr</code>: built with evdev (<code>linux/input.h</code> found) and <code>/dev/input</code> exists. Independent of the X connection.</td></tr>
+<tr><td><code>powerInfo</code></td><td>Compiled with evdev (<code>LinuxSystemInfo</code> reads sysfs). Also independent of X.</td></tr>
+<tr><td><code>multipleWindows</code>, <code>nativeWindowHandle</code>, <code>surfacePresentation</code>, <code>textInput</code>, <code>exactKeyboardState</code>, <code>pixelAccurateMouse</code>, <code>cursorShapes</code>, <code>globalPointer</code>, <code>clipboard</code>, <code>clipboardData</code>, <code>dragAndDrop</code>, <code>primarySelection</code></td><td>A connection exists.</td></tr>
+<tr><td><code>highDpi</code></td><td>Always false: one coordinate space.</td></tr>
+<tr><td><code>multipleDisplays</code></td><td><code>X11Connection::HasRandr()</code> (RandR 1.2 or newer negotiated).</td></tr>
+<tr><td><code>borderlessFullscreen</code></td><td>The window manager listed <code>_NET_WM_STATE_FULLSCREEN</code> in <code>_NET_SUPPORTED</code> when the platform was built.</td></tr>
+<tr><td><code>openGlContext</code></td><td><code>X11GlContext::IsAvailable()</code>: GLX headers at configure time, <code>libGLX.so.0</code> or <code>libGL.so.1</code> opened at run time, and the server answers GLX 1.3 or newer.</td></tr>
+<tr><td><code>vulkanSurface</code></td><td>A connection exists (the service is always constructed; see <a href="#graphics">the graphics section</a>).</td></tr>
+<tr><td><code>relativeMouse</code></td><td><code>X11Mouse::HasRawMotion()</code> (XInput2).</td></tr>
+<tr><td><code>ime</code></td><td><code>X11TextInput::HasCompositionEvents()</code>: on-the-spot composition was asked for and negotiated.</td></tr>
+<tr><td><code>inputDeviceEnumeration</code></td><td>XInput2 opcode present.</td></tr>
+<tr><td><code>messageBox</code> / <code>nativeFileDialog</code></td><td>Dialogs service exists / and a desktop portal was found on the session bus.</td></tr>
+<tr><td><code>tray</code></td><td>A client owned <code>_NET_SYSTEM_TRAY_S&lt;screen&gt;</code> when the platform was built.</td></tr>
+<tr><td><code>sensors</code>, <code>camera</code>, <code>managedEntrypoint</code></td><td>Always false; <code>GetSensors()</code> and <code>GetCamera()</code> return null.</td></tr>
+</tbody>
+</table></div>
+
+<h3 id="teardown">Teardown order</h3>
+
+<p>The connection must outlive every Xlib-backed service. <code>X11Platform::CloseConnection</code> first offers the owned <code>CLIPBOARD</code> contents to a clipboard manager (<code>X11Clipboard::HandOverToClipboardManager</code>; X has no clipboard storage, so without this a copy dies with the process), then destroys the services in reverse construction order: Vulkan surface, GLX context service (GLX contexts must be destroyed while their display is alive), displays, tray, dialogs, input devices, drag-and-drop, <code>PRIMARY</code>, <code>CLIPBOARD</code> (each owns a window on the connection), XIM text input, touch, mouse, keyboard, and only then the <code>X11Connection</code>. The connection's own destructor (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Display.cpp"><code>X11Display.cpp</code></a>) first destroys the mode switcher, which gives back every display mode exclusive fullscreen still holds, then calls <code>XCloseDisplay</code>, and only after that unregisters from the error policy: closing flushes and can deliver a late protocol error, which must still reach CNA's non-fatal handler rather than Xlib's default one that calls <code>exit()</code>.</p>
+
+<p>The platform destructor calls <code>X11Window::DetachHost()</code> on every window still in its registry before any of that, so a window destroyed later cannot call back into a dead <code>X11Platform</code>. That is defensive, not permission to let <code>Game</code> windows outlive their platform. Linux evdev controller nodes are closed last and separately (closing a node also stops any rumble still playing). Conversely, <code>X11Window::~X11Window</code> unregisters from the platform first, then gives back an exclusive display mode, destroys its XIM input context before the window (an XIC holds a reference to the window inside the input method), calls <code>XDestroyWindow</code> only if it owns the window, and frees its own colormap last. The shutdown sequence on the runtime side is in <a href="../runtime/shutdown.html">Ownership and shutdown</a>.</p>
+
+<h3 id="process-state">Process-global state the backend touches</h3>
+
+<ul>
+<li><strong>X error handler.</strong> <code>X11ErrorPolicy</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Error.cpp"><code>X11Error.cpp</code></a>) installs one handler on the first registered connection and restores the previous one when the last CNA connection unregisters. Errors on a display CNA did not open are forwarded unchanged to the host's handler; untrapped errors on CNA's own connections are printed to stderr and swallowed instead of reaching Xlib's default <code>exit()</code>. <code>XSetIOErrorHandler</code> is deliberately left alone. The policy's state is allocated once and never destroyed, because the ambient default platform created by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/CurrentPlatform.cpp"><code>CurrentPlatform.cpp</code></a> is itself never destroyed at process exit and may unregister after ordinary statics are gone. <code>X11ErrorTrap</code> brackets a request, calls <code>XSync</code> and turns an asynchronous error into a synchronous answer; traps nest and are tracked per thread.</li>
+<li><strong>Threads.</strong> <code>XInitThreads()</code> is not called: it must run before any other Xlib call in the process, and CNA does not own process startup. A host that wants process-wide Xlib thread safety calls it before constructing the platform. The class comment in <code>X11Platform.hpp</code> says every Xlib call "goes through one per-instance mutex", but no such lock exists in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11"><code>src/X11</code></a> at this snapshot (the only mutex there guards the error policy's list of owned displays). The effective rule is the contract's: poll events and call the platform from one thread, once per frame. Message boxes and the tray open connections of their own for that reason.</li>
+<li><strong>Locale.</strong> Opening the input method calls <code>setlocale(LC_CTYPE, "")</code> only if <code>LC_CTYPE</code> is still <code>"C"</code> or <code>"POSIX"</code>, so XIM can deliver multi-byte text. No other category is touched and the change is not reverted; a host that set its own <code>LC_CTYPE</code> keeps it.</li>
+<li><strong>Nothing else.</strong> No signal handler and no environment variable are set in the game process. The exclusive-fullscreen mode guardian is a separate forked process (see <a href="#window">window creation</a>).</li>
+</ul>
+
+<h2 id="window">Creation is a visual and window-manager transaction</h2>
+
+<p><code>X11Platform::CreateWindow</code> requires a connection and a positive size, then:</p>
+
+<ol>
+<li><strong>Chooses the visual before the window exists.</strong> An X window's visual is fixed for its lifetime, which is why <code>WindowDescription</code> carries <code>renderIntent</code> and <code>openGlFramebuffer</code> rather than a post-creation setter. For <code>WindowRenderIntent::OpenGl</code>, a server without GLX 1.3 is refused with <code>PlatformNotSupportedException(OpenGlContext)</code>, and <code>X11GlContext::ChooseVisual</code> searches for a GLX framebuffer configuration. Every other intent uses the screen's default visual.</li>
+<li><strong>Creates a colormap and an explicit border pixel</strong> when the visual is not the default one. Without both, <code>XCreateWindow</code> fails with <code>BadMatch</code> across depth differences.</li>
+<li><strong>Creates the window inside an <code>X11ErrorTrap</code></strong> and syncs, so an asynchronous protocol error becomes a local <code>PlatformException</code> with a description, instead of a failure that shows up much later without an explanation.</li>
+<li><strong>Wraps the XID in an owning <code>X11Window</code></strong> with a separate CNA <code>WindowId</code>, sets <code>WM_DELETE_WINDOW</code> (so the close button produces a message the application can answer instead of the window manager killing the connection and every other window with it), <code>_NET_WM_PID</code>, <code>WM_CLIENT_MACHINE</code> and <code>WM_CLASS</code> (class <code>CNA</code>, instance = title), the title, the size hints and, for a borderless window, the Motif decoration hint.</li>
+<li><strong>Registers it</strong> in <code>windows_</code> and with the mouse, text input, GLX and Vulkan services, attaches an XIM input context, drag-and-drop (XDND) and touch selection, and seeds the window's content scale from the display it is on.</li>
+<li><strong>Maps it (if <code>visible</code>), then applies fullscreen.</strong> A window manager only starts managing a window at <code>MapRequest</code>, so a <code>_NET_WM_STATE</code> message sent earlier has no receiver; <code>SetNetWmState</code> writes the property directly while the window has never been asked to map.</li>
+</ol>
+
+<p><strong>Adoption.</strong> <code>AdoptWindow(WindowId)</code> returns a <code>BorrowedWindow</code> that forwards every call to the live owning wrapper, so the two views cannot disagree about cached state such as focus or fullscreen mode. <code>AdoptWindowHandle(uintptr_t)</code> interprets the token as an XID. If the XID belongs to a registered window, the result is again a <code>BorrowedWindow</code>. Otherwise the XID is validated on this display with <code>XGetWindowAttributes</code> under an error trap and wrapped in a non-owning <code>X11Window</code>. That wrapper is deliberately not added to the registry the event pump resolves against, and CNA selects no input on it, so a foreign window yields a native handle for rendering but no CNA events. The XID is an integer resource identifier, and <code>GetNativeHandle</code> puts it in <code>NativeWindowHandle::windowId</code> with the <code>Display*</code> in <code>display</code>, never in a pointer field.</p>
+
+<p><strong>Geometry and scale.</strong> X11 has one coordinate space. <code>GetPixelSize</code> equals the client size, <code>GetDisplayScale</code> always returns 1, and <code>highDpi</code> is false. The session's scale (<code>Xft.dpi</code> from <code>RESOURCE_MANAGER</code>, the XSETTINGS manager's <code>Gdk/WindowScalingFactor</code> or <code>Xft/DPI</code>, <code>GDK_SCALE</code>, KDE's per-screen <code>QT_SCREEN_SCALE_FACTORS</code>, read in SDL3's order by <code>X11ContentScale</code>) is a content scale for sizing an interface, reported per display, and a change emits <code>WindowEventKind::DisplayScaleChanged</code>. Do not copy SDL3's pixel-density assumptions into this backend. <code>GetClientBounds</code> translates the client origin to root coordinates, because a reparenting window manager puts the window inside a decoration frame. <code>Sync()</code> calls <code>XSync</code> and, if a <code>SetSize</code> is pending, polls the geometry for up to 500 ms: under a window manager a resize is a redirected request that the window manager may apply later or refuse, so <code>XSync</code> alone would read the old size. The pending size is cleared either way, so a refusal does not stall every later <code>Sync</code>. This polls instead of waiting for <code>ConfigureNotify</code>, so that event still reaches <code>PollEvents</code>.</p>
+
+<p><strong>Fullscreen.</strong> Both borderless and exclusive fullscreen are requests to the window manager, so <code>X11Window::SetFullscreenMode</code> refuses both with <code>PlatformNotSupportedException(BorderlessFullscreen)</code> when <code>_NET_WM_STATE_FULLSCREEN</code> is not advertised, and the message tells a missing window manager apart from one without the hint. Exclusive mode additionally asks <code>X11ModeSwitcher</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11ModeSwitch.cpp"><code>X11ModeSwitch.cpp</code></a>) for a RandR mode, choosing it by SDL's rule (smallest mode that fits, closest aspect ratio, refresh rate closest to the desktop's). If no mode fits, the window stays fullscreen on the desktop mode and reports <code>BorderlessFullscreen</code>. The switcher starts an <code>X11ModeGuardian</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11ModeGuardian.cpp"><code>X11ModeGuardian.cpp</code></a>): a forked, never-exec'd process that watches a socket pair and, if the game dies in any way (including <code>SIGKILL</code> or the OOM killer), restores the CRTC over a raw connection of its own using only async-signal-safe calls, but only if the CRTC is still in the mode the game set. On focus loss an exclusive window iconifies and gives the mode back, and takes it again when focus returns. A focus loss within 400 ms of a mode change is held back (some window managers move focus while they re-lay out the screen) and decided by <code>X11Window::CheckPendingFocusLoss</code> from the event pump. Under Xwayland the mode is only emulated inside the game's own window, so a focus loss gives nothing back there.</p>
+
+<h2 id="events">Polling is an ordered protocol multiplexer</h2>
+
+<p><code>X11Platform::PollEvents</code> clears the caller's vector and runs the following sequence, once per frame:</p>
+
+<pre class="diagram">PollEvents(destination)
+  ├─ PollXEvents                    (only with a connection)
+  │    while XPending(display) &gt; 0:     XPending flushes and counts, so XNextEvent never blocks
+  │      XNextEvent
+  │      XFilterEvent  ── key events offered only if text input is active for their window;
+  │                       everything else (the IM's own traffic) always offered
+  │      TakeEditingEvents  → composition events, in order with the rest
+  │      if filtered: continue
+  │      CLIPBOARD.HandleEvent / PRIMARY.HandleEvent   (both see every event)
+  │      if a selection consumed it: continue
+  │      TranslateEvent  → zero or more PlatformEvents
+  │      TakeEditingEvents
+  │    mouse.RefreshRelativeMode(); touch.TakePendingEvents(); window.CheckPendingFocusLoss()
+  ├─ evdev hub Pump + TakeEvents    (only once the Gamepad subsystem was started)
+  ├─ desktop portal Pump            (file-dialog answers and their callbacks)
+  └─ tray Pump                      (tray clicks and menu callbacks, own connection)</pre>
+
+<p>An X event is not immediately a game event. XIM may consume the key presses that make up a composition, and delivering them as keys too would type the composition twice. Key events are offered to <code>XFilterEvent</code> only while text input is started for their window: an input-method server such as ibus processes every key of a window with a context, focused or not, and would otherwise turn a game's WASD keys into Hangul or Japanese composition. The selection handlers may consume ownership-transfer traffic (<code>SelectionRequest</code>, <code>INCR</code> chunks). Only then does <code>X11Platform::TranslateEvent</code> run, in this order:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">X input</th><th scope="col">Handling in <code>TranslateEvent</code></th></tr></thead>
+<tbody>
+<tr><td>XInput2 generic event</td><td><code>XI_RawMotion</code>: walks the valuator bitmask to find axes 0 and 1 (the values are packed, and indexing them as if every axis were present reads the wrong axis whenever only one moved) and adds them to the mouse's relative delta. Touch and pen events go to <code>X11Touch</code>; <code>XI_HierarchyChanged</code> refreshes pens and emits device events. Consumed.</td></tr>
+<tr><td>RandR <code>RRScreenChangeNotify</code></td><td><code>XRRUpdateConfiguration</code>, display cache invalidated, one <code>DisplayChanged</code> per window. Consumed.</td></tr>
+<tr><td>Content-scale sources</td><td><code>RESOURCE_MANAGER</code> or XSETTINGS change: <code>DisplayScaleChanged</code> for windows whose scale changed. Not consumed.</td></tr>
+<tr><td>XKB state, map or new-keyboard notify</td><td>Rebuilds the keyboard mapping only when the layout group or keymap really changed. Consumed.</td></tr>
+<tr><td><code>MappingNotify</code></td><td>Core keymap refresh (xmodmap, or a server without XKB). Consumed.</td></tr>
+<tr><td><code>Expose</code> (count 0), <code>ConfigureNotify</code></td><td><code>Exposed</code>; on a size change both <code>Resized</code> and <code>PixelSizeChanged</code> (identical on X11, but a renderer listens for the latter); <code>Moved</code> only from the window manager's synthetic configure, the only one with root-relative coordinates.</td></tr>
+<tr><td><code>MapNotify</code>, <code>UnmapNotify</code>, <code>PropertyNotify</code> on <code>_NET_WM_STATE</code>/<code>WM_STATE</code></td><td>Minimized/Maximized/Restored, derived from the difference against the last observed state so that one user action produces exactly one event. A root <code>_NET_SUPPORTED</code> change re-reads the window manager's hints.</td></tr>
+<tr><td><code>FocusIn</code>/<code>FocusOut</code></td><td>Grab-related and inferior focus changes are ignored. Otherwise: exclusive-mode handling, relative-mode grab, XIC focus, and on loss <code>X11Keyboard::ReleaseAllKeys()</code> so no key sticks down.</td></tr>
+<tr><td><code>ClientMessage</code></td><td>XDND messages go to <code>X11DragAndDrop</code> (<code>DropEvent</code>). <code>WM_DELETE_WINDOW</code> becomes <code>CloseRequested</code>, and a <code>QuitEvent</code> follows only if this is the last registered window. The window is not destroyed.</td></tr>
+<tr><td><code>DestroyNotify</code></td><td><code>X11Window::MarkDestroyedByServer</code>, so its destructor does not destroy a released XID, then the window is dropped from the registry and services.</td></tr>
+<tr><td><code>KeyPress</code>/<code>KeyRelease</code></td><td>Keycode 0 is an input-method commit, delivered as text only. Without detectable auto-repeat, a release immediately followed by a matching press is collapsed into one repeat. Otherwise a <code>KeyEvent</code>, plus <code>TextInputEvent</code> from <code>Xutf8LookupString</code> while text input is active.</td></tr>
+<tr><td><code>ButtonPress</code>/<code>ButtonRelease</code>, <code>MotionNotify</code>, <code>EnterNotify</code>/<code>LeaveNotify</code></td><td>Buttons 4 to 7 become <code>MouseWheelEvent</code> (press only); buttons 8 and higher are renumbered down. Double clicks are counted by the backend (500 ms, 4 px), because X has no double-click concept. Enter and leave only move the mouse snapshot's reference window and reset the motion baseline.</td></tr>
+</tbody>
+</table></div>
+
+<p>This ordering prevents both duplicate IME text and lost selection requests. A "no input after fullscreen" bug therefore belongs in this event, filter and focus chain before the public <code>Keyboard::GetState</code> facade is changed.</p>
+
+<p><strong>What the Game does with the batch.</strong> <code>Game::PollEvents</code> passes every event to <code>PlatformInputBridge::ProcessEvent</code> before its own handling, so events after a quit in the same batch still reach input state. It calls <code>Exit()</code> on <code>CloseRequested</code> itself (the backend's conditional <code>QuitEvent</code> is not relied on), and invalidates the renderer surface on <code>Resized</code>, <code>PixelSizeChanged</code>, <code>DisplayScaleChanged</code>, <code>FocusGained</code>, <code>Exposed</code>, <code>Minimized</code>, <code>Maximized</code>, <code>Restored</code> and <code>DisplayChanged</code>. At the end of the same function it calls <code>Update()</code> on the keyboard and mouse services and, once the Gamepad subsystem is initialized, on gamepad and joystick. There is no separate <code>Game::UpdateInput</code> at this snapshot, although a comment in <code>X11Platform.cpp</code> still names one. The full event-to-public-state trace is in <a href="../input/events.html">Input internals</a>, and the frame order in <a href="../runtime/frame.html">One frame source trace</a>.</p>
+
+<h2 id="input">Snapshots, optional devices and thread context</h2>
+
+<p><strong>Keyboard.</strong> <code>X11Keyboard</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Keyboard.cpp"><code>X11Keyboard.cpp</code></a>) owns two different mappings. <code>keycode → Scancode</code> is derived from XKB key names (<code>AD01</code> is the physical position of US <code>Q</code> on every ruleset), so it does not move when the user switches to AZERTY. <code>keycode → KeyCode</code> is re-read on every layout change using SDL3's rules: a non-Latin layout gets the US meaning for character keys so WASD bindings still work, and a layout whose number row types digits only when shifted (AZERTY, Czech QWERTZ) still reports <code>D1</code> to <code>D0</code>. The shared XKB tables are in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Xkb"><code>src/Xkb</code></a>. <code>Update()</code> does not accumulate events: it reads the server's key vector with <code>XQueryKeymap</code> and the effective modifiers with <code>XkbGetState</code>, so the snapshot is correct after missed events. The event path tracks held keys only to flag repeats. XKB detectable auto-repeat is requested per connection; if the server refuses, the release/press pairs it sends are coalesced by looking one event ahead, never by a timeout. Key releases are real, which is why <code>exactKeyboardState</code> is true.</p>
+
+<p><strong>Mouse.</strong> <code>X11Mouse</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Mouse.cpp"><code>X11Mouse.cpp</code></a>) answers level queries from <code>XQueryPointer</code> relative to the window the snapshot refers to. Buttons 1 to 3 come from the server's pointer mask. The extra buttons X1 and X2 come from tracked press and release events, because core mask bits 4 and 5 are the wheel. Relative mode selects <code>XI_RawMotion</code> on the root (deltas before acceleration and clipping) and holds a confining grab, but only while the window has focus, or is viewable when no window manager exists. Raw motion is selected only while the grab is held, because an ungrabbed XI2 client receives raw motion from the whole desktop. The state is refreshed on focus, map and unmap, and after every pump. Without XInput2, <code>SetRelativeMode</code> refuses rather than imitating relative mode with pointer warps. Custom ARGB cursors need libXcursor at build time.</p>
+
+<p><strong>Text input.</strong> <code>X11TextInput</code> is a separate XIM service with per-window active state, not an alias for key presses. Committed text comes from <code>Xutf8LookupString</code> on a per-window XIC. Composition events (<code>ime</code> true) exist only when the application sets <code>CNA_IME_IMPLEMENTED_UI=composition</code> (read once at platform creation) and the input method accepts the on-the-spot style. The candidate list is never delivered, because XIM has no protocol for it. With no input-method server, <code>XOpenIM</code> fails and the backend falls back to <code>XLookupString</code> (Latin-1, no dead keys), with <code>textInput</code> still true.</p>
+
+<p><strong>Touch and pens.</strong> <code>X11Touch</code> selects XInput 2.2 touch events on every window CNA created and turns each contact into <code>TouchEvent</code>. The contact the server marks as pointer-emulating also drives the mouse, because a window that selects touch no longer receives the emulated pointer events. Pens are slave pointers with an "Abs Pressure" valuator and count as touches while the tip is down. When a window disappears in the middle of a touch, its contacts are cancelled on the next pump.</p>
+
+<p><strong>Controllers.</strong> X has no gamepad API. With evdev compiled in (Linux, <code>linux/input.h</code>) and <code>/dev/input</code> present, the constructor builds an <code>EvdevControllerHub</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Linux/EvdevControllers.hpp"><code>EvdevControllers.hpp</code></a>) but opens nothing. The first <code>GetGamepad()</code>, <code>GetJoystick()</code> or input-device enumeration calls <code>EnsureControllerSubsystem</code>, which acquires <code>Gamepad</code> (starting the hub) and runs one immediate update. Hot-plug is one inotify watch on the input directory, with no libudev, and everything runs on the pumping thread. A node without read permission means "no device", which is a normal answer. Releasing <code>Gamepad</code> to zero stops the hub and clears the snapshots and rumble without changing the frozen capability set. Releasing <code>Haptic</code> closes the force-feedback devices. The same nodes provide rumble, gamepad motion sensors and haptics, so controllers work even in a process that could not reach an X server. <code>GetSensors()</code> and <code>GetCamera()</code> are null here; service presence is never inferred from another platform's features.</p>
+
+<p><strong>Thread context.</strong> None of these services locks. The event pump, the snapshot updates and the service calls are serial game-loop operations on the thread that owns the platform. <code>X11Dialogs</code> draws a message box on a connection of its own and blocks the calling thread until it is answered, and <code>X11Tray</code> reads its own connection from <code>PollEvents</code>. Neither touches the game's event queue. The cross-module thread map is in <a href="../../takeover/threading.html">Thread and callback map</a>.</p>
+
+<h2 id="graphics">GLX, Vulkan and CPU presentation are different seams</h2>
+
+<p><strong>GLX.</strong> <code>X11GlContext</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11GraphicsServices.cpp"><code>X11GraphicsServices.cpp</code></a>) implements <code>IPlatformGlContext</code> for the GL-family renderers (<a href="../graphics/easygl.html">EasyGL</a>, <a href="../graphics/opengl4.html">OpenGL4</a>). Its entry points are resolved with <code>dlopen("libGLX.so.0")</code>, falling back to <code>libGL.so.1</code>, rather than linked, so a HEADLESS or SOFTWARE X11 build does not need a GL implementation installed to start. The GLX headers are still needed at configure time for the service to be compiled in (<code>CNA_X11_HAVE_GLX</code>). <code>ChooseVisual</code> defaults to what an XNA back buffer needs (double-buffered, 24-bit depth, 8-bit stencil) and degrades step by step only where the server offers less. It never lowers a value the caller stated explicitly, and it drops multisampling before it drops the depth buffer. The chosen <code>GLXFBConfig</code> travels with the window, because the context can only be made current on a window whose visual matches the context's config. The service creates contexts, makes them current, swaps buffers and returns proc addresses. <code>SetSwapInterval</code> tries <code>GLX_EXT_swap_control</code> (negative intervals need <code>GLX_EXT_swap_control_tear</code>), then the MESA and SGI extensions, matching extension names as whole tokens. GLX availability depends on the actual server, so the existence of this source file is not a capability.</p>
+
+<p><strong>Vulkan.</strong> <code>X11VulkanSurface</code> names <code>VK_KHR_surface</code> and <code>VK_KHR_xlib_surface</code> as the required instance extensions. It creates the surface for a registered <code>WindowId</code> through <code>vkCreateXlibSurfaceKHR</code>, resolved through the <code>vkGetInstanceProcAddr</code> already present in the process, or else from <code>libvulkan.so.1</code> (then <code>libvulkan.so</code>) (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Posix/VulkanLoader.cpp"><code>Posix/VulkanLoader.cpp</code></a>). The Vulkan struct is declared locally, so this service needs no Vulkan headers. CMake still records <code>CNA_X11_HAVE_VULKAN_HEADERS</code> when it finds them, but no X11 source reads that definition at this snapshot, and <code>vulkanSurface</code> is true whenever a connection exists. A missing loader or a missing instance extension is reported when <code>CreateSurface</code> is called. The surface is not the window: <a href="../graphics/vulkan.html">the Vulkan renderer</a> must destroy it with the same instance, before the platform closes the display.</p>
+
+<p><strong>CPU presentation.</strong> <code>X11SurfacePresenter</code> puts a finished RGBA8 <code>SurfaceFrame</code> into the window with <code>XPutImage</code>. It uses MIT-SHM (<code>XShmPutImage</code>) when the extension is compiled in and the server accepts the attach, and otherwise the plain path, for example over a network connection. The frame is validated, including its stride, by the shared <code>ValidateSurfaceFrame</code>. Scaling and conversion to the visual's own channel masks (<code>X11PixelPacker</code>, correct for 5-6-5 and BGRX visuals and for either server byte order) happen in one pass. <code>SetVSync</code> returns false. <code>CreateSurfacePresenter</code> rejects a window this platform did not create. At this snapshot no renderer reaches this presenter through <code>GraphicsDevice</code> on X11. The software renderer's descriptor sets <code>needsSurfacePresenter</code>, but <code>GraphicsDevice</code> creates a window and presenter for it only on a platform that reports <code>surfacePresentation</code> without <code>nativeWindowHandle</code> (TERMINAL on a TTY). On X11, as on the other windowing platforms, <a href="../graphics/software.html">SOFTWARE</a> stays off-screen. The presenter is exercised by the platform's own live tests and is available to direct <code>IPlatform</code> users.</p>
+
+<p>When diagnosing "window opens but nothing draws", tell the following cases apart: no GLX visual or context (the window was created without <code>OpenGl</code> intent, or the server has no GLX 1.3); a Vulkan instance created without <code>VK_KHR_xlib_surface</code>, or no loader; an ordinary renderer frame-path problem; and "no window at all", which with SOFTWARE, PORTABLEGL, HEADLESS or STUB is by design. A platform capability says the service exists; the graphics backend still has to acquire its own context or surface and present. Changes to <code>WindowDescription::renderIntent</code> affect window construction before any renderer exists, so test them with at least one GL and one non-GL renderer.</p>
+
+<h2 id="time">Timing, errors and extension boundaries</h2>
+
+<p>The performance counter is <code>Posix::MonotonicNanoseconds()</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Posix/MonotonicClock.cpp"><code>Posix/MonotonicClock.cpp</code></a>) with a fixed frequency of 1,000,000,000 Hz. <code>GetTicksMilliseconds</code> measures from a <code>steady_clock</code> epoch taken at construction, and <code>Delay</code> is <code>Posix::SleepMilliseconds</code>. Fixed or variable timestep policy stays in <code>Game</code>, not here.</p>
+
+<p>Expected failures take one of three forms. A <code>PlatformException</code> means the thing exists but failed (no connection when video is acquired, <code>XCreateWindow</code> or GLX config failure, an unknown XID). A <code>PlatformNotSupportedException</code> names the missing capability (OpenGL intent without GLX, fullscreen without EWMH, relative mode without XInput2, file dialogs without a portal). A false capability paired with a null accessor covers the rest. There is no SDL fallback when X11 is selected. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/PlatformSelection.cmake"><code>cmake/PlatformSelection.cmake</code></a> refuses <code>CNA_PLATFORM=X11</code> when <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/PlatformX11.cmake"><code>cmake/PlatformX11.cmake</code></a> reports the backend unavailable, with the package to install. The code separately handles a successful build started without a reachable X server, by keeping the non-video services. The configure log's line <code>CNA: X11 platform dependencies -- X11 + Xext; optional present: …; absent: …</code> is the quickest way to see what a build will have:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Found at configure time</th><th scope="col">Definition</th><th scope="col">What it enables</th></tr></thead>
+<tbody>
+<tr><td>libX11, libXext, <code>X11/XKBlib.h</code></td><td>(mandatory)</td><td>The backend itself; without them X11 is not offered. Also never offered for Windows, Emscripten, Android or iOS targets.</td></tr>
+<tr><td>libXi, libXrandr, libXcursor, libXfixes, libXau, libXss</td><td><code>CNA_X11_HAVE_XI</code> … <code>CNA_X11_HAVE_XSS</code></td><td>Raw motion, touch and device enumeration; displays and exclusive modes; ARGB cursors; pointer hiding; the mode guardian's authorisation; per-client screen-saver suspension.</td></tr>
+<tr><td><code>X11/extensions/XShm.h</code></td><td><code>CNA_X11_HAVE_XSHM</code></td><td>The shared-memory presenter path.</td></tr>
+<tr><td>GLX headers (FindOpenGL <code>GLX</code>)</td><td><code>CNA_X11_HAVE_GLX</code></td><td>The GLX service (the library itself is opened at run time).</td></tr>
+<tr><td>dbus-1 headers</td><td><code>CNA_PLATFORM_HAVE_DBUS</code></td><td>Desktop portal (file dialogs, <code>OpenUrl</code>) and session-bus screen-saver inhibition; libdbus is opened at run time.</td></tr>
+<tr><td><code>linux/input.h</code> (Linux only, checked in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/CMakeLists.txt"><code>modules/platform/CMakeLists.txt</code></a>)</td><td><code>CNA_PLATFORM_HAVE_EVDEV</code></td><td>Controllers, rumble, gamepad sensors, haptics, sysfs power information.</td></tr>
+</tbody>
+</table></div>
+
+<p>Several optional boundaries deserve separate attention when modifying them. They are not one monolithic "X11 feature": XRandR for displays and modes (plus the mode guardian); XKB and XIM for keys, layouts and composition; XInput2 for raw motion, touch, pens and device enumeration; ICCCM selections for <code>CLIPBOARD</code> and <code>PRIMARY</code>, including <code>INCR</code> transfers in both directions and any MIME target; XDND 5 (target side) for drops; the freedesktop portal (<a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Freedesktop"><code>src/Freedesktop</code></a>) for file dialogs; the XEmbed system tray; MIT-SCREEN-SAVER or the session bus for keeping the screen on; and Linux evdev (<a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Linux"><code>src/Linux</code></a>) for gamepads and haptics. Check the relevant capability and test, and keep host process state intact as described under <a href="#process-state">process-global state</a>.</p>
+
+<h2 id="tests">Validation and reading order</h2>
+
+<p>The X11 suites compile only into a <code>CNA_PLATFORM=X11</code> build (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>cmake/UnitTests.cmake</code></a> filters <code>X11*.cpp</code> out otherwise). They are split into CTest entries by what each one needs, and they run in the binary named by <code>CNA_PLATFORM_CTEST_BINARY</code> (<code>CnaTests</code> by default, or the focused <code>CnaPlatformModuleTests</code>). Entries that need a server go through <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/platform/x11_test_server.sh"><code>tools/platform/x11_test_server.sh</code></a>, which starts a private Xvfb on a display number it searches for and exits 77 (CTest's skip code) where Xvfb, a window manager or ibus is missing.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">CTest entry</th><th scope="col">Suites (source files)</th><th scope="col">Needs</th></tr></thead>
+<tbody>
+<tr><td><code>CnaX11MappingTests</code></td><td>Key, modifier, button, focus-filter and auto-repeat tables (<code>X11KeyboardMappingTests.cpp</code>), <code>X11IsSdlFree</code>, pixel packing, exclusive-mode choice, screen plan and guardian wire format, touch math, content-scale parsing, text encoding, input-device classification, message-box geometry, portal requests, screen-saver names, XKB and evdev mapping and layout</td><td>No display.</td></tr>
+<tr><td><code>CnaX11EvdevTests</code></td><td><code>X11EvdevVirtualDevice</code></td><td>Evdev compiled in; a writable <code>/dev/uinput</code> and readable event nodes, otherwise each test skips.</td></tr>
+<tr><td><code>CnaX11IntegrationTests</code></td><td><code>X11Live</code> (<code>X11PlatformIntegrationTests.cpp</code>), <code>X11ClipboardInterop</code>, <code>X11VulkanSurfaceTest</code>, and the live drag-and-drop, touch-selection, content-scale, selection, input-device, message-box, portal, screen-saver and tray suites</td><td>Private Xvfb; some cases need a Vulkan loader, D-Bus or a second client process and skip without them.</td></tr>
+<tr><td><code>CnaX11WindowManagerTests</code></td><td><code>X11WithWindowManager</code></td><td>Private Xvfb plus an <code>openbox</code> binary; the fixture starts and stops the window manager for each test.</td></tr>
+<tr><td><code>CnaX11InputMethodTests</code></td><td><code>X11InputMethod</code></td><td>Private Xvfb plus a private ibus with its XIM server.</td></tr>
+<tr><td><code>CnaX11TouchscreenTests</code></td><td><code>X11Touchscreen</code></td><td><code>CNA_X11_TEST_TOUCHSCREEN=1</code> (set by the entry), uinput, and a rootless Xorg with dummy and evdev drivers that takes the virtual device exclusively.</td></tr>
+<tr><td><code>CnaX11ExclusiveFullscreenTests</code></td><td><code>X11ExclusiveFullscreen</code></td><td>The launcher's own server with a window manager; skips anywhere <code>CNA_X11_PRIVATE_TEST_SERVER</code> is not set, so it never changes a real desktop's mode.</td></tr>
+</tbody>
+</table></div>
+
+<p>Several suites start the test binary again as a separate X client through <code>DISABLED_</code> helper cases (<code>X11SelectionPeer</code>, <code>X11DragSource</code>, <code>X11ScreenSaverPeer</code>, <code>X11ExclusiveFullscreenHelper</code>), so selections, drags and guardian recovery after <code>SIGKILL</code> are tested between real clients. <code>cna_platform_x11_exit_harness</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/platform/x11_exit_harness.cpp"><code>tools/platform/x11_exit_harness.cpp</code></a>) covers static destruction order at process exit, which no in-process test can reach. The implementation-neutral suites in <code>CnaPlatformTests</code> (<code>*PlatformConformance*</code>, parameterised over <code>PlatformFactory::GetAvailable()</code>, which lists X11 in an X11 build) also apply. <code>cna_x11_desktop_validation</code> (<a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/platform/x11_desktop_validation"><code>tools/platform/x11_desktop_validation</code></a>, scenarios in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/testing-x11-desktop.md"><code>docs/testing-x11-desktop.md</code></a>) is a standalone program for a real desktop, not a CTest entry. Some of its scenarios inject input or overwrite the clipboard.</p>
+
+<p>In <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/.github/workflows/platform-ci.yml"><code>.github/workflows/platform-ci.yml</code></a>, the job <code>x11-sdl-free</code> is configured to build <code>CnaPlatformModuleTests</code> with <code>CNA_ENABLE_SDL=OFF</code>, HEADLESS and NULL audio on Xvfb with openbox. It asserts that no SDL artifact or SDL link exists, runs the platform and all seven X11 CTest entries, and, when the runner has uinput, re-runs the uinput, D-Bus and private-server suites and fails if any case skipped. The job <code>x11-sdl-free-gpu</code> is configured to build <code>cna_demo_2d</code> and <code>cna_house3d_demo</code> with <code>OPENGL33;VULKAN;SOFTWARE;HEADLESS</code> and ALSA audio, to check that neither SDL nor libasound is a <code>NEEDED</code> entry, and to run the House3D smoke and exclusive-fullscreen tests and <code>cna_demo_2d --smoke 6</code> under each renderer on Mesa's software drivers. That is what the workflow file configures; it is not a record of passing runs, and both jobs run on Xvfb, not on a real desktop or GPU.</p>
+
+<p>The suites have different host prerequisites (X server, window manager, XI2, evdev/uinput, ibus, D-Bus, a portal), and a skipped test is not evidence. Check the selected build's <a href="../../reference/test-targets.html">test target index</a> and the test source's skip conditions before reporting coverage. For a window or GLX fix, run a real X11 renderer smoke test in addition to the unit suites. The source and the test registrations were checked by reading them at 009d40f5; no X server-dependent suite was executed for this page. The general change-and-verify loop is in <a href="../../handbook/modify-a-platform-backend.html">I need to modify a platform backend</a> and <a href="../../takeover/validation.html">What to test after changing X</a>.</p>
+
+<h3 id="reading">Read in this order</h3>
+
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/PlatformSelection.cmake"><code>PlatformSelection.cmake</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/PlatformX11.cmake"><code>PlatformX11.cmake</code></a>: when the backend is offered, why a request is refused, and which optional definition switches on which capability.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Platform.hpp"><code>X11Platform.hpp</code></a>: the owned services, the frozen <code>capabilities_</code> and the stated process-state policy (and compare the threading comment with the code).</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Platform.cpp"><code>X11Platform.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Display.cpp"><code>X11Display.cpp</code></a>: constructor, <code>ComputeCapabilities</code>, <code>CloseConnection</code>, <code>CreateWindow</code>, adoption, <code>PollXEvents</code> and <code>TranslateEvent</code>, before diving into feature helpers.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Error.cpp"><code>X11Error.cpp</code></a>: the error policy and traps every other file relies on.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Window.cpp"><code>X11Window.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11ModeSwitch.cpp"><code>X11ModeSwitch.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11ModeGuardian.cpp"><code>X11ModeGuardian.cpp</code></a>: window-manager requests, <code>Sync</code>, fullscreen and display-mode recovery.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11GraphicsServices.cpp"><code>X11GraphicsServices.cpp</code></a>: the three graphics routes.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Keyboard.cpp"><code>X11Keyboard.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Mouse.cpp"><code>X11Mouse.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11TextInput.cpp"><code>X11TextInput.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/X11/X11Clipboard.cpp"><code>X11Clipboard.cpp</code></a>: event-to-snapshot state, XIM and selections.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/X11PlatformIntegrationTests.cpp"><code>X11PlatformIntegrationTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/X11KeyboardMappingTests.cpp"><code>X11KeyboardMappingTests.cpp</code></a>: what live-host and table evidence actually assert, and the rest of the <code>X11*Tests.cpp</code> files for the narrower protocols.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/native-platforms.html#x11">Native Platforms: Native X11</a> &middot; <a href="../../../docs/platforms.html#capabilities">Platform Support: capability matrix</a> &middot; <a href="../../../docs/tutorials/135-native-x11-build.html">Tutorial 135: native X11 build</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/platform.html">Platform architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="index.html">Platform backends (overview)</a> &middot; <a href="wayland.html">Wayland (sibling native backend)</a> &middot; <a href="sdl3.html">SDL3 (default backend)</a> &middot; <a href="../input/events.html">Input internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/modify-a-platform-backend.html">I need to modify a platform backend</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture and change recipes</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="sdl2.html" rel="prev"><span>Previous</span>SDL2 platform internals</a><a class="dev-pager-next" href="wayland.html" rel="next"><span>Next</span>Wayland platform internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

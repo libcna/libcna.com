@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Terminal platform internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s POSIX terminal platform selects renderers, leases and restores the terminal session, decodes Kitty and legacy input, and presents CPU frames as ANSI character cells.">
+  <meta name="keywords" content="terminal platform, cna_platform=terminal, terminalsession, terminalsessioncontroller, kitty keyboard protocol, sgr-1006 mouse, sigwinch, terminalsurfacepresenter, ansi presenter, termios raw mode, frame budget">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/platforms/terminal.html">
+  <meta property="og:title" content="Terminal platform internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s POSIX terminal platform selects renderers, leases and restores the terminal session, decodes Kitty and legacy input, and presents CPU frames as ANSI character cells.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/platforms/terminal.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Terminal platform internals","description":"How CNA's POSIX terminal platform selects renderers, leases and restores the terminal session, decodes Kitty and legacy input, and presents CPU frames as ANSI character cells.","url":"https://libcna.com/development/internals/platforms/terminal.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Platform internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="sdl3.html" class="docs-nav-link">SDL3</a></li>
+        <li><a href="sdl2.html" class="docs-nav-link">SDL2</a></li>
+        <li><a href="x11.html" class="docs-nav-link">X11</a></li>
+        <li><a href="wayland.html" class="docs-nav-link">Wayland</a></li>
+        <li><a href="win32.html" class="docs-nav-link">Win32</a></li>
+        <li><a href="headless.html" class="docs-nav-link">Headless</a></li>
+        <li><a href="terminal.html" class="docs-nav-link active" aria-current="page">Terminal</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="index.html">Platforms</a></li>
+        <li aria-current="page">Terminal</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Terminal platform internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#selection">Selection and the renderer boundary</a></li>
+          <li><a href="#window">Window and resize: pixels versus cells</a></li>
+          <li><a href="#session">The session is the critical lifetime boundary</a></li>
+          <li><a href="#input">From terminal bytes to CNA input</a></li>
+          <li><a href="#present">How a CPU frame reaches the terminal</a></li>
+          <li><a href="#failure">Debugging and safe modification</a></li>
+          <li><a href="#tests">Evidence and reading order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Platform internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The tests named here drive pseudo-terminals; a live terminal-emulator/TTY matrix is not established here, and nothing was executed.</p></div>
+
+<p class="lede"><code>TerminalPlatform</code> is the third substantive implementation of <code>CNA::Platform::IPlatform</code>: it has a real display, real keyboard and mouse input and real resize events, and all of them come from the POSIX terminal the process is attached to rather than from a window system. It has no GPU surface, no desktop window and no gamepad channel. This page is for maintainers who change the backend itself: its selection and renderer boundary, the terminal session and its restoration guarantees, the byte-stream input decoder and the character-cell presenter. To build and run a game on it, start with <a href="../../../docs/tutorials/139-terminal-platform.html">Tutorial 139: The Terminal Platform</a>; for its place among the seven implementations, see <a href="index.html">Platform backends</a> and the <a href="../../../docs/platforms.html#capabilities">capability matrix</a>.</p>
+
+<h2 id="selection">Selection and the renderer boundary</h2>
+
+<p><code>CNA_PLATFORM=TERMINAL</code> is offered only when the target is not Windows: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/PlatformSelection.cmake"><code>cmake/PlatformSelection.cmake</code></a> adds it to the available list on every non-Windows target and puts it on the reserved list for a Windows target, where asking for it fails with "a reserved identifier that is NOT implemented" instead of falling back to SDL3. The selection defines <code>CNA_PLATFORM_TERMINAL</code>, which makes <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/PlatformFactory.cpp"><code>modules/platform/src/PlatformFactory.cpp</code></a> resolve its default name to <code>"Terminal"</code>, so <code>PlatformFactory::Create()</code> constructs a <code>Terminal::TerminalPlatform</code>.</p>
+
+<p>Being selected is not what compiles it. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/CMakeLists.txt"><code>modules/platform/CMakeLists.txt</code></a> globs <code>src/Terminal/*.cpp</code> into <code>cna_platform</code> on every non-Windows target, whatever <code>CNA_PLATFORM</code> says, and <code>PlatformFactory::Create("Terminal")</code> and <code>PlatformFactory::GetAvailable()</code> include it on every POSIX build. That is deliberate: the conformance suite needs more than one implementation live in one process, and this one links no third-party library at all (termios, <code>poll(2)</code>, <code>ioctl(TIOCGWINSZ)</code> and <code>sigaction</code> are libc). A consequence for maintainers is that every Linux build compiles and, when tests are on, tests the terminal backend even when X11, Wayland or SDL3 is the selection.</p>
+
+<p>At configure time <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>cmake/RendererSelection.cmake</code></a> refuses a TERMINAL build whose renderer is anything other than <code>SOFTWARE</code>, <code>PORTABLEGL</code>, <code>HEADLESS</code> or <code>STUB</code>, with the message "CNA_PLATFORM=TERMINAL has no native graphical window". The check sits at the top of the per-identity configuration macro <code>cna_configure_renderer_identity</code>, which the file runs once for every identity in the build, so each entry of a <code>CNA_GRAPHICS_RENDERERS</code> list is checked as well, and it runs before that identity's own dependency probes: a TERMINAL plus VULKAN request fails with this explanation rather than first asking for a Vulkan SDK.</p>
+
+<p>Of the four accepted renderers only one draws. <code>SOFTWARE</code> is the only renderer descriptor that sets <code>needsSurfacePresenter</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/src/SoftwareRendererDescriptor.cpp"><code>modules/renderers/software/src/SoftwareRendererDescriptor.cpp</code></a>). In <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>modules/graphics/src/Xna/GraphicsDevice.cpp</code></a> the device builds a platform window and later calls <code>CreateSurfacePresenter</code> for such a renderer only when the platform reports <code>surfacePresentation</code> true and <code>nativeWindowHandle</code> false, which reads as "the presenter is the only route to the screen". At this snapshot that describes exactly TERMINAL attached to a TTY; on SDL3, X11, Wayland and Win32 a CPU renderer stays off-screen. <code>PORTABLEGL</code>, <code>HEADLESS</code> and <code>STUB</code> configure and run on this platform but put nothing on the terminal. (A CMake comment next to the pseudo-TTY integration test records that the test was once registered disabled for a period in which no renderer requested a presenter; its assertions are meaningful again because <code>SOFTWARE</code> now does.)</p>
+
+<p>The window's <code>GetNativeHandle</code> returns a <code>NativeWindowHandle</code> tagged <code>NativeWindowSystem::Terminal</code> with every pointer null, and both <code>GetGlContext</code> and <code>GetVulkanSurface</code> return null. A GPU backend must not assume that the tag hides an X11 or Wayland surface; there is none.</p>
+
+<p>Presentable output is not guaranteed merely because the target was built. The constructor performs one free check, <code>isatty(outputDescriptor)</code>, and <code>GetCapabilities</code> reports <code>surfacePresentation</code> true only when it succeeded. Redirected CI output therefore yields a valid platform object without a presenter: <code>CreateSurfacePresenter</code> throws <code>PlatformNotSupportedException(SurfacePresentation)</code>, which is what keeps ANSI escape bytes out of logs. A window from another platform instance is refused earlier with a <code>PlatformException</code> ("window was not created by this Terminal platform"). The portable services are real: a <code>Common::StandardFileSystem</code> whose preferences root is named <code>cna-terminal</code>, and a <code>Common::StandardSystemInfo</code>.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Capability</th><th scope="col">Terminal reports</th><th scope="col">Decided by</th></tr></thead>
+<tbody>
+<tr><td><code>surfacePresentation</code></td><td>True only when standard output is a TTY</td><td><code>isatty(outputDescriptor)</code> at construction</td></tr>
+<tr><td><code>exactKeyboardState</code></td><td>True only after the Kitty keyboard probe confirmed all four requested enhancements</td><td><code>DetectTerminalCapabilities</code></td></tr>
+<tr><td>every other field of <code>PlatformCapabilities</code></td><td>False, including <code>multipleWindows</code>, <code>highDpi</code>, <code>nativeWindowHandle</code>, <code>textInput</code>, <code>pixelAccurateMouse</code>, <code>relativeMouse</code> and <code>cursorShapes</code></td><td>Default-false aggregate, never set</td></tr>
+</tbody>
+</table></div>
+
+<p>A keyboard and a mouse service exist on a queryable terminal even though <code>exactKeyboardState</code> may be false and <code>pixelAccurateMouse</code> is always false: the flags describe quality, not presence. Note also that <code>GetCapabilities</code> is not free on this platform. It calls <code>EnsureCapabilitiesDetected</code>, which runs the terminal probe the first time; <code>Game</code>'s constructor reads the capability set once (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>modules/runtime/src/Game.cpp</code></a>), so for a game on a TTY the probe happens while the <code>Game</code> object is being constructed.</p>
+
+<pre class="diagram">PlatformFactory::Create()  ("Terminal")
+  └─ TerminalPlatform            construction: isatty(stdout) only, no terminal state touched
+       ├─ WindowSlot ⇄ TerminalWindow        one window; sized in pixels, not cells
+       ├─ TerminalResizeWatcher              installed by CreateWindow on a TTY
+       │     SIGWINCH → flag → PollEvents → Resized + PixelSizeChanged
+       └─ EnsureCapabilitiesDetected()       first GetCapabilities / GetKeyboard / GetMouse /
+             │                               PollEvents / CreateSurfacePresenter
+             ├─ DetectTerminalCapabilities   colour depth, canQuery, Kitty keyboard
+             └─ TerminalSessionController    (shared)
+                   ├─ TerminalInputDecoder   Keyboard + Mouse leases  (only when canQuery)
+                   │     ├─ TerminalKeyboard  held-key snapshot
+                   │     └─ TerminalMouse     cell-quantised snapshot
+                   └─ TerminalSurfacePresenter   Presenter lease
+                         union of leases → one process-wide TerminalSession
+
+GraphicsDevice + SOFTWARE  (surfacePresentation &amp;&amp; !nativeWindowHandle)
+  → CreateSurfacePresenter → Present(SurfaceFrame)
+  → QuantizeInto → TerminalGrid → TerminalAnsiWriter (full frame or changed cells)
+  → TerminalFrameBudget → write(output descriptor)</pre>
+
+<h2 id="window">Window and resize: pixels versus cells</h2>
+
+<p><code>CreateWindow</code> returns the single window a terminal can have; a second request while one exists throws <code>PlatformNotSupportedException(MultipleWindows)</code> rather than aliasing two callers onto one screen. The requested width and height are the game's drawing resolution, not the terminal's columns and rows: the window reports exactly that size, and the presenter later scales and quantises the image into whatever grid the terminal has. The requested size stands until the terminal itself changes size, so a game that asked for 800×480 presents at 800×480 (letterboxed into the grid) until the first resize event makes the terminal authoritative.</p>
+
+<p>The window and the platform share a <code>WindowSlot</code> through a <code>std::shared_ptr</code>. The window's destructor clears the slot, which frees it for a new <code>CreateWindow</code>, and because the slot is jointly owned the window may outlive the platform without its destructor writing into dead memory; <code>TerminalPlatformTest.AWindowOutlivingItsPlatformIsNotUndefinedBehaviour</code> pins that. <code>SetSize</code> only records a pending request that <code>Sync</code> applies, matching the asynchronous window contract of the other backends. Title, visibility, focus and border state are modelled values: <code>GetClientBounds</code> is always at the origin, <code>GetDisplayScale</code> is 1.0, <code>HasFocus</code> is true when the window is visible and not minimised, and <code>Maximize</code> and <code>Restore</code> merely clear the minimised flag. <code>SetFullscreenMode(BorderlessFullscreen)</code> throws <code>PlatformNotSupportedException(BorderlessFullscreen)</code>; <code>SetBorderless</code> only stores the flag. <code>SetTitle</code> stores the title and deliberately writes no OSC sequence to a standard output nobody has claimed; its comment defers emission to the session, but the session prologue at this snapshot carries no title sequence either, so the title is never shown.</p>
+
+<p>On an attached terminal, <code>CreateWindow</code> also constructs a <code>TerminalResizeWatcher</code> when none is active in the process. The platform owns it (<code>resizeWatcher_</code>), so it stays installed until the platform is destroyed, not merely until the window is. Its <code>SIGWINCH</code> handler only sets a <code>volatile sig_atomic_t</code> flag and is installed with <code>SA_RESTART</code>, so a resize never turns an unrelated blocking read into <code>EINTR</code>. <code>PollEvents</code> consumes the flag with <code>TakePendingResize</code>, calls <code>QueryTerminalSize</code> outside the handler (<code>ioctl(TIOCGWINSZ)</code>, falling back to 80×24 when a pseudo-terminal reports zero), converts cells to nominal pixels with <code>CellGridToPixelSize</code> at 8×16 per cell (clamped so a huge grid cannot overflow <code>int</code>), applies the size at once with <code>ApplyTerminalSize</code> (discarding any pending <code>SetSize</code>), and then emits a <code>Resized</code> and a <code>PixelSizeChanged</code> <code>WindowEvent</code> carrying the same width and height. Any number of signals between two polls coalesce into one pair of events, because what a caller wants is the current size. <code>Game::PollEvents</code> treats that pair as it would on any platform (window update, viewport update, <code>OnSurfaceInvalidated</code>); see <a href="../runtime/frame.html">One frame source trace</a>.</p>
+
+<p>The nominal pixels encode an assumed 1:2 cell aspect, not measured display pixels; no escape sequence reports a cell's pixel size. The absolute numbers are arbitrary, but the ratio is load-bearing: the presenter's letterboxing uses the same factor of two, and changing one without the other squashes or stretches every picture. The watcher is process-global: a second <code>TerminalResizeWatcher</code> throws <code>PlatformException</code> (the platform avoids that by checking <code>IsWatching</code> first), and its destructor reinstates the previous <code>SIGWINCH</code> disposition. <code>SimulateResizeForTesting</code> exists because <code>SIGWINCH</code> is delivered to the foreground process group of the controlling terminal, which a test process's pseudo-terminal is not.</p>
+
+<h2 id="session">The session is the critical lifetime boundary</h2>
+
+<p>Constructing the platform changes no terminal mode. Capability detection may briefly enter raw mode to send queries (see <a href="#input">input</a>) and restores it before returning; the actual takeover of the terminal happens only when input is pumped or a presenter is created. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalSessionController.cpp"><code>modules/platform/src/Terminal/TerminalSessionController.cpp</code></a> hands out movable RAII <code>TerminalSessionController::Lease</code> tokens for three uses, <code>TerminalSessionUse::Keyboard</code>, <code>Mouse</code> and <code>Presenter</code>, and computes the union of what the active leases need:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Lease held</th><th scope="col">Raw mode</th><th scope="col">Alternate screen and hidden cursor</th><th scope="col">SGR mouse reporting (1000, 1003, 1006)</th><th scope="col">Kitty keyboard (push <code>&gt;15u</code>)</th></tr></thead>
+<tbody>
+<tr><td>Keyboard</td><td>yes</td><td>no</td><td>no</td><td>only if the probe detected support</td></tr>
+<tr><td>Mouse</td><td>yes</td><td>no</td><td>yes</td><td>no</td></tr>
+<tr><td>Presenter</td><td>yes</td><td>yes</td><td>no</td><td>no</td></tr>
+</tbody>
+</table></div>
+
+<p>When the union changes, the controller destroys the one <code>TerminalSession</code> and builds a new one with the new options instead of mutating the live session: the session's signal handler reads an immutable restoration record, and making that record mutable would put a race on exactly the crash path whose safety matters most. Every rebuild or teardown increments the controller's generation; <code>TerminalSurfacePresenter::Present</code> compares it with the generation it last saw and, because leaving and re-entering the alternate screen invalidated every cell it remembered, forces a full redraw. A failed acquisition rolls its use count back and restores the previous union (<code>RestoreAfterFailedAcquire</code>); if even that cannot be rebuilt, or a rebuild fails during a release, the controller keeps no session at all, which leaves a restored terminal as the degraded state.</p>
+
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalSession.cpp"><code>modules/platform/src/Terminal/TerminalSession.cpp</code></a> takes the terminal over in a fixed order. It refuses if a session is already active in the process, and refuses an output descriptor that is not a TTY. It builds the epilogue and requires it to fit the 128-byte signal-safe buffer, saves the current <code>termios</code> with <code>tcgetattr</code>, and fills the process-global restoration record completely. Only then does it install handlers for <code>SIGINT</code>, <code>SIGTERM</code>, <code>SIGHUP</code>, <code>SIGQUIT</code>, <code>SIGABRT</code>, <code>SIGSEGV</code>, <code>SIGBUS</code>, <code>SIGFPE</code> and <code>SIGILL</code> (without <code>SA_RESTART</code>) plus a <code>std::set_terminate</code> handler, mark the record active, enter raw mode and write the prologue. Raw mode clears <code>ICANON</code>, <code>ECHO</code>, <code>ISIG</code>, <code>IXON</code> and <code>ICRNL</code> and sets <code>VMIN</code> and <code>VTIME</code> to zero, so <code>poll</code> owns the timing.</p>
+
+<p>Restoration (<code>RestoreNow</code>) uses only async-signal-safe calls over state captured before any handler existed: it atomically claims the active flag (so a second request is harmless), writes the epilogue and restores the saved <code>termios</code>. The epilogue undoes the prologue in reverse: pop the Kitty keyboard stack, disable mouse reporting, reset SGR attributes unconditionally, show the cursor, and leave the alternate screen last. The signal handler restores, reinstates the previous disposition for that signal and re-raises it, so the process still dies of the signal it was sent and a crash still produces a core dump. The terminate handler restores before chaining to the previous handler, so the runtime's message for an uncaught exception is printed on the user's normal screen instead of vanishing with the alternate one. Normal destruction restores and puts the previous handlers and terminate handler back.</p>
+
+<p>A second simultaneous session is refused because it would save the first session's already-raw settings as the "original" ones and later hand the user a shell with no echo. Releasing the last lease destroys the session. <code>TerminalSurfacePresenter</code>'s destructor releases its lease before it prints its diagnostics line to <code>stderr</code>, so the line survives leaving the alternate screen. Forced exits are outside the guarantee: <code>_exit</code> runs no destructor or handler, and <code>TerminalRestoration.ExitingWithoutUnwindingLeavesTheTerminalRawAsItMust</code> documents that limit explicitly; <code>SIGKILL</code> cannot be caught, and <code>SIGTSTP</code> and <code>SIGCONT</code> are not in the restoring set.</p>
+
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p>Because raw mode clears <code>ISIG</code> and <code>IXON</code>, Ctrl+C, Ctrl+Z, Ctrl+S and Ctrl+Q typed while a session is active are not signals or flow control: they reach the input decoder as bytes and become control-chord key events. A game on this platform must offer its own way out (the 2D demo exits on Escape). The <code>SIGINT</code> restoration path covers a signal sent from outside, for example with <code>kill</code>, which is what the restoration tests exercise.</p></div>
+
+<p>In an ordinary <code>Game::Run</code> on a TTY with <code>SOFTWARE</code>, reading the call order gives this sequence (not executed): the <code>Game</code> constructor's capability read runs the probe; <code>DoInitialize</code> creates the graphics device, whose presenter takes the first lease and starts a session with raw mode, the alternate screen and a hidden cursor; the first <code>Tick</code>'s <code>PollEvents</code> calls <code>TerminalInputDecoder::PumpAll</code>, whose keyboard and mouse leases change the union, so the session is rebuilt once and the next <code>Present</code> redraws the whole grid. On teardown the presenter's lease normally goes first (the session is rebuilt without the alternate screen if input leases remain, then the diagnostics line is printed), and the input leases go with the platform's decoder; whichever release is last restores the terminal.</p>
+
+<p>These process-global signal and session facilities imply single active terminal ownership, not a thread-safe platform. Nothing in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal"><code>the Terminal sources</code></a> takes a lock: the only synchronisation is the atomic "watching" and "active" flags and the <code>sig_atomic_t</code> resize flag. Treat polling and presentation as serial game-loop operations, and do not move them to independent threads without first designing synchronisation and signal ownership; <a href="../../takeover/threading.html">the thread and callback map</a> records the loop's single-thread assumption.</p>
+
+<h2 id="input">From terminal bytes to CNA input</h2>
+
+<p><code>EnsureCapabilitiesDetected</code> runs <code>DetectTerminalCapabilities</code>, creates the shared <code>TerminalSessionController</code> and, when the terminal can be queried, the <code>TerminalInputDecoder</code>, <code>TerminalKeyboard</code> and <code>TerminalMouse</code>. It publishes the cached result only after every allocation succeeded, so a failed first call stays retryable instead of exposing a true capability whose service was never constructed.</p>
+
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalCapabilityProbe.cpp"><code>modules/platform/src/Terminal/TerminalCapabilityProbe.cpp</code></a> measures rather than trusts. If standard output is not a TTY it returns immediately with everything false. Otherwise the colour depth comes from the environment only: <code>COLORTERM</code> containing <code>truecolor</code> or <code>24bit</code> means true colour; an empty or <code>dumb</code> <code>TERM</code> means monochrome; a <code>TERM</code> containing <code>direct</code> means true colour, <code>256color</code> means the indexed palette, and anything else is assumed to have the 16 ANSI colours. Queries are possible only when standard input is a TTY too (<code>canQuery</code>). The probe then enters a scoped raw mode (clearing only <code>ICANON</code> and <code>ECHO</code>, restored on every exit path), writes its queries to the input descriptor so a redirected output can never swallow them, and waits up to 250 ms by default for the first byte of each reply (40 ms for continuation bytes, at most 4096 bytes). Primary Device Attributes (<code>ESC [ c</code>) is sent first as a control: if it is not answered, nothing else is asked, because silence would be ambiguous. The Kitty query pushes flags 15, asks which flags became active and pops them again even on silence; <code>hasKittyKeyboard</code> is set only if all four requested enhancements are reported, so a partially supporting terminal is not advertised as exact. An XTVERSION query records the terminal's self-reported name.</p>
+
+<p><code>GetKeyboard</code> and <code>GetMouse</code> return services only when <code>canQuery</code> is true, and <code>canQuery</code> requires both standard output and standard input to be terminals: a game whose output is redirected to a file has neither a presenter nor a keyboard service. <code>PollEvents</code> first clears the caller's batch, then handles a pending resize, then (after <code>EnsureCapabilitiesDetected</code>) calls <code>TerminalInputDecoder::PumpAll</code>, which acquires the keyboard and mouse leases on first use and reads everything available without blocking, and finally drains the decoded events, stamping each with the window's id. The same decoder backs the keyboard and mouse snapshots: <code>TerminalKeyboard::Update</code> calls <code>Pump</code> and <code>TerminalMouse::Update</code> calls <code>PumpMouse</code>, and <code>Game::PollEvents</code> calls both at its end, after the batch has gone through the input bridge (there is no separate <code>Game::UpdateInput</code> at this snapshot; see <a href="../input/events.html">Input internals</a>). Bytes are read from the descriptor once; events decoded during an <code>Update</code> wait in the decoder's queue for the next <code>PollEvents</code>, while the snapshot reflects them immediately. The input buffer keeps at most its last 4096 bytes, so a peer that starts a sequence and never terminates it cannot grow memory without bound.</p>
+
+<p>With the Kitty protocol active the decoder accepts only CSI sequences, discarding plain bytes (all keys arrive as <code>CSI … u</code> in that mode). Press, repeat and release are real events, held-key state is exact, and the virtual <code>KeyCode</code> and physical <code>Scancode</code> are translated separately (the physical key comes from the base-layout alternate key). SGR mouse reports and Kitty key events share one ordered byte stream through the same decoder.</p>
+
+<p>Without Kitty, <code>DecodeLegacyKeyEvent</code> handles printable ASCII, control chords (bytes 1 to 26 become Ctrl plus a letter, except backspace, tab and carriage return), xterm CSI navigation, editing and function sequences, SS3 F1 to F4, modifiers carried by xterm's <code>;N</code> parameter, and Alt-prefixed keys. Legacy sequences normally report presses but no reliable releases, so each press starts a synthetic hold that expires 100 ms later; a repeated press refreshes the deadline and is flagged as a repeat, and expiry emits a synthetic release. The source explains the trade-off: shorter windows create false releases between auto-repeats, longer ones make taps look held, and a key held through the operating system's initial repeat delay can briefly stutter. <code>exactKeyboardState</code> therefore stays false. A lone Escape byte waits 30 ms before it is treated as the Escape key, so a split escape sequence is not misread. Momentary modifiers on a legacy terminal come from the modifiers recorded with the synthetic holds.</p>
+
+<p>SGR-1006 mouse reports become <code>MouseMotionEvent</code>, <code>MouseButtonEvent</code> and <code>MouseWheelEvent</code> values plus a <code>MouseSnapshot</code>. Cell coordinates are expanded to nominal client coordinates, <code>(column − 1) × 8</code> and <code>(row − 1) × 16</code>, matching the window's nominal pixels, so <code>pixelAccurateMouse</code> stays false. Wheel events carry one step per report while the snapshot's scroll accumulators advance by 120 per step. <code>ConsumeRelativeDelta</code> always returns zero. Pointer control refuses deterministically: <code>SetPosition</code> and <code>SetCursorVisible</code> throw <code>PlatformException</code>; <code>SetCursor</code>, <code>SetRelativeMode</code>, <code>SetCapture</code>, <code>TryGetGlobalPosition</code> and <code>SetGlobalPosition</code> throw <code>PlatformNotSupportedException</code> naming <code>CursorShapes</code>, <code>RelativeMouse</code> or <code>GlobalPointer</code>.</p>
+
+<p>Text input, gamepad, joystick, haptics, sensors, input-device enumeration, displays, clipboard, dialogs, tray, camera, GL context and Vulkan surface services are all null. Do not infer availability of a device from an input event alone.</p>
+
+<div class="callout callout--note"><span class="callout-icon">&#8505;</span><p>Maintainer note, from reading only (not executed): <code>Game</code>'s <code>IsMouseVisible</code> setter forwards a changed value to <code>IPlatformMouse::SetCursorVisible</code> whenever the graphics device holds a platform window, and its comment still describes the terminal's mouse service as null. On a queryable terminal it is not null, and <code>TerminalMouse::SetCursorVisible</code> always throws <code>PlatformException</code> (<code>TerminalMouseTest.UnsupportedPointerControlsRefuseDeterministically</code> asserts that). A game that changes <code>IsMouseVisible</code> on this platform would therefore see that exception. Decide whether the setter or the service should absorb the request before changing either.</p></div>
+
+<h2 id="present">How a CPU frame reaches the terminal</h2>
+
+<p><code>CreateSurfacePresenter</code> rejects a foreign window or non-TTY output, detects capabilities if nothing has yet, and constructs a <code>TerminalSurfacePresenter</code> over the shared session controller, the detected colour depth and the window's current pixel size (which <code>GetTargetSize</code> reports as the resolution callers should rasterise at). The presenter's constructor refuses a non-positive target size before touching the terminal and then takes the <code>Presenter</code> lease. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalSurfacePresenter.cpp"><code>modules/platform/src/Terminal/TerminalSurfacePresenter.cpp</code></a> is the whole frame path.</p>
+
+<p><code>Present</code> validates the <code>SurfaceFrame</code> with the shared <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Common/SurfaceFrameValidation.hpp"><code>SurfaceFrameValidation.hpp</code></a> (null pixels, non-positive size, negative stride, a stride shorter than one RGBA row, an address span too large), notices a changed session generation, re-queries the grid size, and maps the frame according to the scale mode: <code>Stretch</code>, <code>Letterbox</code> (the default), <code>Overscan</code>, <code>None</code> or <code>Native</code>. Letterbox and Overscan fit against a cell twice as tall as it is wide (<code>kCellAspect</code> is 2), and None and Native use the same factor to crop one source column per cell and two source rows per cell. <code>SetScaleMode</code> ignores the filter argument, since quantisation already box-averages.</p>
+
+<p><code>QuantizeInto</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalFrameGrid.cpp"><code>TerminalFrameGrid.cpp</code></a>) box-averages the source pixels that fall in each cell and picks a glyph by luminance from the ten-step ramp <code>" .:-=+*#%@"</code>, the same ramp as graphics-ext's <code>kAsciiGlyphRamp</code>. The platform keeps its own implementation because calling into <code>cna_graphics_ext</code> from <code>cna_platform</code> would close a dependency cycle through <code>cna_graphics_core</code> and <code>cna_input</code>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalAnsiWriter.cpp"><code>TerminalAnsiWriter.cpp</code></a> encodes each cell's averaged colour as a foreground colour for the detected depth (24-bit, nearest of the 256-colour cube and grey ramp, nearest of the 16 ANSI colours, or no colour escape at all for monochrome), skips restating a colour the terminal is already in, homes the cursor instead of clearing (no flicker) and positions each row explicitly instead of writing newlines (no scrolling). <code>WriteChangedCells</code> sends runs of adjacent changed cells behind one positioning escape.</p>
+
+<p>The presenter caches what it actually sent in <code>onScreen_</code>. The first frame, a grid-size change, a scale-mode change and a session rebuild force a full redraw (and make the writer forget its colour state). An unchanged frame writes nothing and costs nothing. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalFrameBudget.cpp"><code>TerminalFrameBudget.cpp</code></a> estimates link throughput from its own completed writes: until something is measured it allows every frame; afterwards it uses the median of the last five observed write rates (capped at 10<sup>9</sup> bytes per second) with at most one second of accumulated burst, and may drop a costly diff, never a required full redraw. On a drop the <code>onScreen_</code> grid is left untouched, so the next diff includes everything that was missed; queuing deltas instead would break that invariant. The write loop retries on <code>EINTR</code> and throws <code>PlatformException</code> if the output stops accepting bytes; the grids are swapped only after the whole frame was written. <code>SetVSync</code> returns false: no terminal swap interval is simulated. The destructor prints one line to <code>stderr</code> after releasing its lease, <code>CNA terminal diagnostics: colour=… grid=…x… dropped_frames=… kitty_keyboard=…</code>, which is what the pseudo-TTY integration test looks for.</p>
+
+<h2 id="failure">Debugging and safe modification</h2>
+
+<ul>
+<li><strong>No presentation in CI or a pipe.</strong> Check <code>isatty</code> on standard output and <code>GetCapabilities().surfacePresentation</code> before looking at renderer code, and confirm the renderer is <code>SOFTWARE</code>: the other accepted renderers never request a presenter.</li>
+<li><strong>No keyboard or mouse service.</strong> Both standard output and standard input must be terminals; redirecting either leaves <code>canQuery</code> false.</li>
+<li><strong>Shell left raw or cursor gone.</strong> Inspect the lease balance and the <code>TerminalSession</code> restoration path; reproduce with the pseudo-terminal restoration harness, not an ordinary redirected-stdout test. Remember the documented limits (<code>_exit</code>, <code>SIGKILL</code>, job-control stops).</li>
+<li><strong>Ctrl+C does not stop the game.</strong> Expected while a session is active (<code>ISIG</code> is cleared); the key arrives as a control chord.</li>
+<li><strong>Key-up sticks or keys stutter on a legacy terminal.</strong> First determine whether the Kitty probe succeeded (the diagnostics line prints <code>kitty_keyboard=</code>); synthetic release timing is intentionally inexact.</li>
+<li><strong>Resize changes image scale unexpectedly.</strong> Compare the <code>SIGWINCH</code> → <code>PollEvents</code> nominal-pixel conversion with the presenter's current grid and the shared 1:2 aspect assumption; remember the window keeps its requested size until the first resize.</li>
+<li><strong>Stale characters after changing input leases or presentation mode.</strong> The session generation, the forced full redraw and the <code>onScreen_</code> cache are the first suspects.</li>
+<li><strong>Low frame rate over SSH.</strong> A non-zero <code>dropped_frames</code> means the budget, not the game, is limiting updates.</li>
+</ul>
+
+<p>Changes to <code>IPlatform</code> must keep truthful capability and refusal behaviour and should be tested on this backend alongside SDL3 and <a href="headless.html">Headless</a>; the conformance suite already runs it. A new terminal escape mode belongs in the session's prologue and epilogue and in the lease option union, not in a window setter that could write to a redirected standard output; keep the epilogue within its 128-byte signal-safe buffer and in exact reverse order of the prologue. A new input sequence belongs in the one decoder and must preserve byte ordering between keyboard and mouse. A presenter optimisation must update the cached screen only after a successful write, or a later diff can never recover the missing cells. Anything that changes the 8×16 nominal cell must change the presenter's <code>kCellAspect</code> and the mouse's coordinate expansion with it. The general recipe is in <a href="../../handbook/modify-a-platform-backend.html">I need to modify a platform backend</a>.</p>
+
+<h2 id="tests">Evidence and reading order</h2>
+
+<p>The terminal suites live in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform"><code>modules/platform/tests/CNA/Platform</code></a>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>cmake/UnitTests.cmake</code></a> compiles them into <code>CnaTests</code> on every non-Windows build, whatever <code>CNA_PLATFORM</code> is (they are excluded only on Windows), where <code>gtest_discover_tests</code> registers each case, and the aggregate CTest entry <code>CnaPlatformTests</code> selects them through its filter (run with <code>--gtest_shuffle --gtest_repeat=3</code>). By reading the filter string, every terminal suite matches it except <code>TerminalPresenterThroughPlatformTest</code>, which is reached only through the per-case discovery. The tests were read, not executed, for this page.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Source</th><th scope="col">Suites</th><th scope="col">What they pin</th></tr></thead>
+<tbody>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/TerminalPlatformTests.cpp"><code>TerminalPlatformTests.cpp</code></a></td><td><code>TerminalPlatformTest</code></td><td>Construction touches no terminal state, advertised capabilities, window resolution versus grid, single-window refusal, window outliving platform, null native handle, title not written, real filesystem with its own preferences path.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/TerminalCapabilityProbeTests.cpp"><code>TerminalCapabilityProbeTests.cpp</code></a></td><td><code>TerminalCapabilityProbeTests</code></td><td>Pipe versus TTY, silence after answered Device Attributes as a real negative, partial Kitty support not advertised, terminal restored after probing, colour depth from the environment.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/TerminalKeyboardTests.cpp"><code>TerminalKeyboardTests.cpp</code></a></td><td><code>TerminalKeyboardTest</code>, <code>TerminalPlatformTest</code></td><td>Kitty decoding, legacy decoding, one timed synthetic release and deadline refresh, split sequences and the Escape delay, shared session ownership between keyboard and presenter, exact versus fallback reporting, one read shared by event pump and snapshot, cell-grid overflow.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/TerminalMouseTests.cpp"><code>TerminalMouseTests.cpp</code></a></td><td><code>TerminalMouseTest</code></td><td>SGR decoding, nominal cell coordinates, Kitty keys and SGR mouse in one ordered stream, deterministic refusals.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/TerminalPresenterTests.cpp"><code>TerminalPresenterTests.cpp</code></a></td><td><code>TerminalFrameGridTest</code>, <code>TerminalAnsiWriterTest</code>, <code>TerminalPresenter</code>, <code>TerminalPresenterThroughPlatformTest</code></td><td>Quantisation, colour encodings and diffs, scale modes, VSync refusal, session held exactly as long as the presenter, still pictures costing nothing, forced redraw on scale-mode change, refusal on a non-TTY.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/TerminalFrameBudgetTests.cpp"><code>TerminalFrameBudgetTests.cpp</code></a></td><td><code>TerminalFrameBudgetTest</code>, <code>TerminalBudgetPresenter</code></td><td>Median rate, burst cap, the first frame never dropped, drops rather than queues, a dropped frame recovered by the next diff.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/TerminalResizeTests.cpp"><code>TerminalResizeTests.cpp</code></a></td><td><code>TerminalResizeWatcherTest</code>, <code>TerminalResizeTest</code></td><td>Coalescing, second watcher refused, handler removed, a real signal, the whole resize path in a spawned harness.</td></tr>
+<tr><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/TerminalRestorationTests.cpp"><code>TerminalRestorationTests.cpp</code></a></td><td><code>TerminalRestoration</code>, <code>TerminalSessionTest</code></td><td>Normal exit, <code>SIGINT</code>, <code>SIGTERM</code>, <code>SIGHUP</code>, abort and uncaught exception in a child process; the <code>_exit</code> limit; second session refused; exact raw-mode round trip; prologue and epilogue symmetry and order.</td></tr>
+</tbody>
+</table></div>
+
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/PseudoTerminalHarness.hpp"><code>PseudoTerminalHarness.hpp</code></a> gives tests a real pseudo-terminal whose size can be set and whose output can be read back, and spawns helpers where the code insists on the process's own descriptors. Two helper executables are defined in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Harnesses.cmake"><code>cmake/Harnesses.cmake</code></a> when tests are on and the target is not Windows: <code>cna_platform_terminal_restoration_harness</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/platform/terminal_restoration_harness.cpp"><code>terminal_restoration_harness.cpp</code></a>), which the restoration tests launch so the destroy-the-process exit paths can be observed from outside, and <code>cna_platform_terminal_resize_harness</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/platform/terminal_resize_harness.cpp"><code>terminal_resize_harness.cpp</code></a>), for the resize path. The implementation-neutral <code>PlatformConformance</code> and <code>PlatformWindowConformance</code> suites and the runtime's <code>GameEventSemanticsGoldenTest</code> are parameterised over <code>PlatformFactory::GetAvailable()</code>, so they include Terminal on every POSIX build.</p>
+
+<p>The end-to-end test is <code>TerminalSoftwareDemoIntegration</code>, registered in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/examples/CMakeLists.txt"><code>modules/graphics/examples/CMakeLists.txt</code></a> only when tests and examples are on, <code>CNA_PLATFORM=TERMINAL</code>, the renderer is <code>SOFTWARE</code> and Python 3 is found. Its runner, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/platform/terminal_demo_integration_test.py"><code>terminal_demo_integration_test.py</code></a>, runs <code>cna_demo_2d</code> on a pseudo-terminal, waits for the alternate screen, resizes to 100×30 and sends <code>SIGWINCH</code>, feeds a key and then Escape, and checks the transcript for the alternate-screen enter and leave sequences and the diagnostics line with <code>grid=100x30</code>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/.github/workflows/platform-ci.yml"><code>.github/workflows/platform-ci.yml</code></a> configures a "Terminal + Software + Null audio" matrix cell that runs <code>CnaPlatformTests</code> and the event-semantics oracle with <code>DISPLAY</code> and <code>WAYLAND_DISPLAY</code> unset, then the integration test; that is what the workflow is configured to do, not a record of passing runs. All of this is source-level and pseudo-terminal evidence: it does not establish any particular terminal emulator's colour handling, Kitty implementation or behaviour over a real network, so perform a live terminal smoke test after changing protocol handling. <a href="../../testing/architecture.html">Test architecture</a> and <a href="../../takeover/validation.html">What to test after changing X</a> place these entries among the rest; <a href="../../reference/test-targets.html">the test target index</a> lists them.</p>
+
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalPlatform.hpp"><code>TerminalPlatform.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalPlatform.cpp"><code>TerminalPlatform.cpp</code></a>: the contract entry, the window slot, resize handling in <code>PollEvents</code> and the lazy capability cache.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalCapabilityProbe.cpp"><code>TerminalCapabilityProbe.cpp</code></a>: honest feature detection and why silence is an answer.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalSessionController.cpp"><code>TerminalSessionController.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalSession.hpp"><code>TerminalSession.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalSession.cpp"><code>TerminalSession.cpp</code></a>: the lease union, rebuild-not-mutate and the restoration invariant.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalResizeWatcher.cpp"><code>TerminalResizeWatcher.cpp</code></a>: the signal flag and its process-global ownership.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalKeyboard.cpp"><code>TerminalKeyboard.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalMouse.cpp"><code>TerminalMouse.cpp</code></a>: the shared byte-stream decoder, Kitty versus legacy, and pointer refusals.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalSurfacePresenter.cpp"><code>TerminalSurfacePresenter.cpp</code></a>, then <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalFrameGrid.cpp"><code>TerminalFrameGrid.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalAnsiWriter.cpp"><code>TerminalAnsiWriter.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Terminal/TerminalFrameBudget.cpp"><code>TerminalFrameBudget.cpp</code></a>: frame mapping, encoding, diff and drop semantics.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/TerminalRestorationTests.cpp"><code>TerminalRestorationTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/TerminalPresenterTests.cpp"><code>TerminalPresenterTests.cpp</code></a>: what is enforced, and where the documented limits are.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>cmake/RendererSelection.cmake</code></a> and the presenter decision in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a>: build constraints and why only <code>SOFTWARE</code> draws here. Renderer-side context is in <a href="../graphics/software.html">Software renderer internals</a>, <a href="../graphics/headless.html">Headless renderer internals</a>, <a href="../graphics/stub.html">Stub renderer internals</a> and <a href="../graphics/selection.html">Renderer selection internals</a>.</li>
+</ol>
+
+<p>For the contract all seven implementations share, see <a href="../../architecture/platform.html">Platform architecture</a>; for a backend with a real window system and the same event-versus-snapshot split, compare <a href="sdl3.html">SDL3 platform internals</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/tutorials/139-terminal-platform.html">Tutorial 139: The Terminal Platform</a> &middot; <a href="../../../docs/platforms.html#combination-rules">Platform Support: combination rules</a> &middot; <a href="../../../docs/platforms.html#capabilities">Platform Support: capability matrix</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/platform.html">Platform architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="index.html">Platform backends (overview)</a> &middot; <a href="headless.html">Headless (sibling contract backend)</a> &middot; <a href="sdl3.html">SDL3 (reference backend)</a> &middot; <a href="../graphics/software.html">Software renderer (the one that presents here)</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/modify-a-platform-backend.html">I need to modify a platform backend</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="headless.html" rel="prev"><span>Previous</span>Headless platform internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

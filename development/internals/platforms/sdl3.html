@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SDL3 platform internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s default SDL3 platform backend owns services, subsystems and windows, maps SDL events to value events and snapshots, and hands GL, Vulkan and CPU-presentation services to renderers.">
+  <meta name="keywords" content="sdl3, sdl3platform, cna_platform, sdl3window, platform backend, subsystem refcount, render intent, native window handle, sdl3glcontext, sdl3vulkansurface, xlib error handler, high dpi">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/platforms/sdl3.html">
+  <meta property="og:title" content="SDL3 platform internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s default SDL3 platform backend owns services, subsystems and windows, maps SDL events to value events and snapshots, and hands GL, Vulkan and CPU-presentation services to renderers.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/platforms/sdl3.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"SDL3 platform internals","description":"How CNA's default SDL3 platform backend owns services, subsystems and windows, maps SDL events to value events and snapshots, and hands GL, Vulkan and CPU-presentation services to renderers.","url":"https://libcna.com/development/internals/platforms/sdl3.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Platform internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="sdl3.html" class="docs-nav-link active" aria-current="page">SDL3</a></li>
+        <li><a href="sdl2.html" class="docs-nav-link">SDL2</a></li>
+        <li><a href="x11.html" class="docs-nav-link">X11</a></li>
+        <li><a href="wayland.html" class="docs-nav-link">Wayland</a></li>
+        <li><a href="win32.html" class="docs-nav-link">Win32</a></li>
+        <li><a href="headless.html" class="docs-nav-link">Headless</a></li>
+        <li><a href="terminal.html" class="docs-nav-link">Terminal</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="index.html">Platforms</a></li>
+        <li aria-current="page">SDL3</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>SDL3 platform internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#composition">Object and ownership map</a></li>
+          <li><a href="#startup">Window creation and render intent</a></li>
+          <li><a href="#events">One event batch and two input paths</a></li>
+          <li><a href="#window">Logical size, drawable size, DPI, focus and fullscreen</a></li>
+          <li><a href="#graphics">Native-handle and graphics-service boundaries</a></li>
+          <li><a href="#time">Timing, synchronization and failure model</a></li>
+          <li><a href="#tests">Validation and source-reading route</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Platform internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The named tests exist and their CTest registration was read; none was executed. Real-host behaviour (windows, focus, DPI, fullscreen and presentation on real desktops and GPUs) and the optional services (tray, camera, dialogs, sensors, haptics) still need validation on hosts that have them.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3"><code>modules/platform/src/Sdl3</code></a> implements <code>CNA::Platform::IPlatform</code> on SDL3: windows, events, keyboard and mouse snapshots, controllers, timing, native handles and the OpenGL, Vulkan and CPU-presentation services a renderer asks for. It is selected at configure time with <code>CNA_PLATFORM=SDL3</code> (the default on every operating system), and a separate renderer identity decides how pixels are produced. This page is for maintainers changing the SDL3 backend itself; how a game chooses a platform is in the <a href="../../../docs/platforms.html#implementation-table">Platforms guide</a>, and which capabilities each backend reports is in its <a href="../../../docs/platforms.html#capabilities">capability matrix</a>.</p>
+
+<h2 id="composition">Object and ownership map</h2>
+<pre class="diagram">Game  (owns unique_ptr&lt;IPlatform&gt;, installs it as the current platform)
+  └─ Sdl3Platform
+       ├─ input services      Sdl3Keyboard  Sdl3Mouse  Sdl3Gamepad  Sdl3Joystick
+       │                      Sdl3TextInput Sdl3Sensors Sdl3Haptics Sdl3InputDevices
+       ├─ system services     Sdl3Clipboard Sdl3PrimarySelection Sdl3Displays
+       │                      Sdl3FileSystem Sdl3SystemInfo Sdl3Dialogs
+       │                      Sdl3Tray Sdl3CameraProvider
+       ├─ graphics services   Sdl3GlContext  Sdl3VulkanSurface
+       ├─ ownedRefCounts_     subsystem references THIS instance acquired
+       ├─ CreateWindow        → Sdl3Window (ownsWindow = true,  destroys its SDL_Window)
+       └─ AdoptWindow /
+          AdoptWindowHandle   → Sdl3Window (ownsWindow = false, never destroys it)
+
+GraphicsDevice → renderer descriptor → WindowDescription.renderIntent
+               → CreateWindow or AdoptWindowHandle → the narrow services it declares</pre>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3Platform.hpp"><code>Sdl3Platform.hpp</code></a> holds every service as a plain member object, so the accessors hand out raw pointers that are borrowed, never separately freed, and valid for the platform's lifetime. Most accessors are never null. Four follow the contract rule that a service is null exactly when its capability is false: <code>GetPrimarySelection</code> (X11/Wayland-capable Unix builds only), <code>GetTray</code>, <code>GetCamera</code> and <code>GetVulkanSurface</code>. <code>GetGamepad</code> and <code>GetJoystick</code> are never null but have a side effect, described under <a href="#events">events</a>.</p>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3Window.hpp"><code>Sdl3Window</code></a> is the one place in the module that stores an <code>SDL_Window*</code>; everything outside receives a <code>NativeWindowHandle</code> value. <code>CreateWindow</code> returns an owning wrapper. <code>AdoptWindow(WindowId)</code> resolves an SDL window id with <code>SDL_GetWindowFromID</code>; <code>AdoptWindowHandle(std::uintptr_t)</code> interprets the integer as the <code>SDL_Window*</code> token that <code>Sdl3Window::GetWindowHandle</code> returns and validates it by round-tripping <code>SDL_GetWindowID</code>/<code>SDL_GetWindowFromID</code>. Both adoption paths construct <code>Sdl3Window(raw, false)</code>, and <code>~Sdl3Window</code> calls <code>SDL_DestroyWindow</code> only when it owns the window. A maintainer changing window lifetime must check the creation path and both adoption paths, because a destructor that is correct for one is wrong for the other. The main adoption caller is <code>GraphicsDevice</code>: when <code>PresentationParameters</code> carries a non-zero device window handle it calls <code>AdoptWindowHandle</code> and records that it does not own the window, so it will neither destroy it nor rebuild it for a fallback renderer candidate (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a>).</p>
+
+<h3 id="subsystems">Subsystems are acquired, counted per instance and never quit globally</h3>
+<p>The constructor acquires no SDL subsystem. It only seeds hints that must precede initialization, each only when the host has not set it: the Android back-button trap, the Linux classic joystick discovery hint (see <a href="#events">events</a>) and, on mobile targets, the full XNA orientation set. <code>AcquireSubsystem</code> takes the process-wide SDL lock, calls <code>SDL_InitSubSystem</code> and increments <code>ownedRefCounts_</code> for this instance. <code>ReleaseSubsystem</code> treats an unpaired release as a documented no-op; when the last Sensor or Haptic reference goes, it first calls <code>Deactivate()</code> on the sensor or haptic service so a cached native handle is not closed after SDL has invalidated it. <code>IsSubsystemInitialized</code> reads <code>SDL_WasInit</code>, which is process-global: it reports a subsystem the host initialized too.</p>
+<p>The destructor deactivates the sensor and haptic caches, then calls <code>SDL_QuitSubSystem</code> once for every reference this instance still owns. It deliberately never calls <code>SDL_Quit()</code>: global SDL lifetime belongs to the host application, which may hold subsystems of its own. The tests <code>Sdl3PlatformTest.DestructorReleasesOnlyWhatThisInstanceAcquired</code> and <code>ConcurrentInstancesShareOneBalancedSubsystemLifecycle</code> assert that balance against real SDL.</p>
+<p>Reading the capability set is not free of side effects. <code>GetCapabilities</code> probes Vulkan with a temporary, balanced video reference, and asks <code>Sdl3CameraProvider::IsSupported()</code>, which starts <code>SDL_INIT_CAMERA</code> once per process when SDL has a camera driver and deliberately never quits it, because an SDL camera id is only meaningful inside the session that issued it (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3Camera.cpp"><code>Sdl3Camera.cpp</code></a>). <code>Game</code>'s constructor reads the capability set once, so constructing a <code>Game</code> on such a host starts the camera subsystem outside <code>ownedRefCounts_</code>.</p>
+
+<h3 id="x11-error-handler">The Xlib error handler and the exit-under-lock invariant</h3>
+<p>When <code>AcquireSubsystem(Video)</code> succeeds, <code>InstallX11NonFatalErrorHandlerOnce</code> runs. If SDL's current video driver is <code>x11</code>, it resolves <code>XSetErrorHandler</code> through <code>dlsym(RTLD_DEFAULT, …)</code> and installs a handler that logs the protocol error to stderr and returns. The lookup is dynamic so an SDL3 build does not gain a mandatory Xlib link; on every other driver it does nothing, and <code>XSetIOErrorHandler</code> (a genuinely dead connection) is left alone. The handler mirrors <code>XErrorEvent</code>'s ABI-frozen layout locally; its field order (<code>resourceid</code> before <code>serial</code>) is asserted by <code>Sdl3XErrorHandlerTest</code>.</p>
+<p>The reason is a concrete shutdown hazard, and the current code guards it twice. Xlib's default handler calls <code>exit()</code>. When the failing request came from inside <code>Sdl3Platform::CreateWindow</code>, which holds the SDL global-state mutex across <code>SDL_CreateWindow</code>, <code>exit()</code> ran the static platform destructor, which locked the same non-recursive mutex on the same thread and never returned; depending only on timing, one X error either killed a test binary or hung it. Besides the non-fatal handler, <code>~Sdl3Platform</code> now asks <code>SdlGlobalStateHeldByThisThread()</code> and skips the lock only when this very thread already holds it. That is safe precisely in that case: no other thread can be inside the critical section while this one holds it. It is not a general recommendation to make the mutex recursive; the source records that option as rejected because it would sanction re-entrancy in every other locked method. <code>Sdl3PlatformExitUnderLockTest</code> proves the invariant with two forked children, one holding the lock and a control that does not.</p>
+
+<h2 id="startup">Window creation and render intent</h2>
+<p><code>GraphicsDevice</code>, not <code>Game</code>, asks for the window. For the renderer candidate being created it acquires <code>PlatformSubsystem::Video</code> when the renderer descriptor says <code>needsVideoSubsystem</code>, then either adopts the caller's window (above) or fills a <code>WindowDescription</code>: <code>resizable = false</code> (XNA's <code>AllowUserResizing</code> default), <code>highDpi</code> from the descriptor's <code>wantsHighDpi</code>, <code>renderIntent</code> mapped from the descriptor's <code>windowKind</code>, and the OpenGL framebuffer bits. A renderer that needs no window (the CPU and headless families) gets none on SDL3, because SDL3 offers a native handle and GraphicsDevice keeps CPU renderers off-screen on windowing platforms.</p>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3Platform.cpp"><code>Sdl3Platform::CreateWindow</code></a> holds the SDL lock and translates the description into creation-time flags only: <code>SDL_WINDOW_RESIZABLE</code>, <code>SDL_WINDOW_BORDERLESS</code>, <code>SDL_WINDOW_HIGH_PIXEL_DENSITY</code>, and <code>SDL_WINDOW_HIDDEN</code> whenever the window is invisible <em>or</em> a fullscreen mode was requested. Render intent maps to <code>SDL_WINDOW_OPENGL</code>, <code>SDL_WINDOW_VULKAN</code> or <code>SDL_WINDOW_METAL</code>; <code>None</code> adds nothing. For OpenGL intent it first calls <code>SDL_GL_ResetAttributes()</code>, because GL attributes are process-global and survive window creation (a previous multisampled window would otherwise force MSAA onto a new zero-sample one), then sets depth, stencil and double-buffering when requested and always sets the multisample pair explicitly. That reset is also why <code>GraphicsDevice</code> passes the framebuffer requirement through <code>WindowDescription</code>: FNA3D primes the same attributes itself, and the reset erases that priming.</p>
+<p><code>SDL_CreateWindow</code> failure becomes a <code>PlatformException</code> carrying SDL's error text. A temporary <code>unique_ptr&lt;SDL_Window, decltype(&amp;SDL_DestroyWindow)&gt;</code> protects the native window until <code>Sdl3Window</code> has taken ownership. Explicit position (when not centred) and minimum/maximum size are applied afterwards and throw on failure; a requested fullscreen mode is applied once a real window and display exist, and only then is the window shown, which avoids a visible windowed flash. When <code>AcquireSubsystem(Video)</code> itself fails, the exception text lists the video drivers compiled into that SDL build, which separates "this session is not running X11/Wayland" from "this SDL was configured without that backend".</p>
+<p>The descriptor decides intent before any window exists. The five EasyGL identities (<code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL1</code>, <code>WEBGL2</code>) and <code>OPENGL4</code> declare an OpenGL window and set <code>needsGlContext</code>, so they later receive <code>Sdl3GlContext</code>; <code>FNA3D</code> also declares an OpenGL window but does not ask for the platform GL service; <code>VULKAN</code> declares a Vulkan window and sets <code>needsVulkanSurface</code>; <code>METAL</code> declares Metal. <code>SDL_GPU</code> declares a plain window and claims it inside the renderer with <code>SDL_ClaimWindowForGPUDevice</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp"><code>SdlGpuRenderer.cpp</code></a>), which needs no creation flag. Trying to "fix" a renderer by setting a creation-time flag after <code>SDL_CreateWindow</code> cannot work. The consumers are traced in <a href="../graphics/selection.html">renderer selection</a>, <a href="../graphics/easygl.html">EasyGL</a>, <a href="../graphics/vulkan.html">Vulkan</a> and <a href="../graphics/sdl-gpu.html">SDL_gpu</a>.</p>
+
+<h2 id="events">One event batch and two input paths</h2>
+<pre class="diagram">Game::Tick → Game::PollEvents
+  → Sdl3Platform::PollEvents(batch)          batch.clear() keeps its capacity
+      while SDL_PollEvent:
+        MapSdlEvent(SDL_Event → value PlatformEvent)
+        → Sdl3Mouse::ObserveEvent            wheel totals accumulate
+        → Sdl3Joystick::ObserveEvent         joystick hotplug opens/closes devices
+        → batch.push_back
+  → for each event: PlatformInputBridge::ProcessEvent, then Game's own handling
+  → keyboard-&gt;Update(), mouse-&gt;Update()     Sdl3Keyboard / Sdl3Mouse snapshots
+  → gamepad-&gt;Update(), joystick-&gt;Update()   only once IsSubsystemInitialized(Gamepad)
+Keyboard::GetState / Mouse::GetState → GetSnapshot() of those services</pre>
+<p><code>Sdl3Platform::PollEvents</code> clears the caller-owned vector without discarding capacity, drains SDL, maps each accepted event and appends a value event; SDL events CNA does not consume return <code>false</code> from the mapper and are dropped. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3EventMapper.cpp"><code>Sdl3EventMapper.cpp</code></a> maps quit; thirteen window event types (<code>SDL_EVENT_WINDOW_SHOWN</code> and <code>…_EXPOSED</code> both become <code>Exposed</code>); key down/up; text input, text editing and editing candidates; mouse motion, button and wheel; finger down/up/motion/cancel; the five drop events; gamepad, joystick, keyboard and mouse hotplug; sensor updates; gamepad axis and button; and the four application-lifecycle events (background, foreground, low memory, terminating). Details a maintainer must preserve:</p>
+<ul>
+<li>It keeps <code>SDL_EVENT_WINDOW_RESIZED</code> (logical size) distinct from <code>SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED</code> (drawable size) and <code>SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED</code>; under high DPI the drawable can change while the logical size does not.</li>
+<li>Candidate strings and drop payloads are copied into the value event, because SDL owns them only until the event is recycled. Drop coordinates are zeroed on begin and complete.</li>
+<li><code>KeyEvent::pressed</code> comes from the event type, not from SDL's <code>down</code> field, which injected events may leave stale.</li>
+<li>Wheel values are passed through unchanged: SDL3 has already applied the host's natural-scrolling preference, and reversing it again would change established FNA/CNA behaviour. (The SDL2 backend negates flipped wheels; see <a href="sdl2.html#events">SDL2 events</a>.)</li>
+<li>Touch events carry the window's logical client size, queried at mapping time; sensor events keep SDL's <code>sensor_timestamp</code>, not the queueing time; unmapped gamepad axes and buttons are dropped.</li>
+</ul>
+<p>Two services observe the batch before <code>Game</code> sees it: <code>Sdl3Mouse::ObserveEvent</code> accumulates wheel totals (scroll is event-driven, not pollable) and <code>Sdl3Joystick::ObserveEvent</code> opens or closes a device on joystick hotplug. Then <code>Game::PollEvents</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a>) hands every event to <code>PlatformInputBridge::ProcessEvent</code> before its own handling, so a <code>QuitEvent</code> or <code>CloseRequested</code> that calls <code>Exit()</code> does not stop the rest of the batch reaching input state. <code>Game</code> acts on <code>CloseRequested</code> itself rather than waiting for SDL to synthesize a quit.</p>
+<p>Do not confuse event notification with public polling state. <code>Keyboard::GetState</code> and <code>Mouse::GetState</code> read the snapshots returned by the platform services' <code>GetSnapshot()</code>, and those snapshots advance when <code>Game::PollEvents</code> calls <code>Update()</code> after the batch loop. <code>Sdl3Keyboard::Update</code> makes one pass over <code>SDL_GetKeyboardState</code>, maps each held scancode's unmodified key to a <code>KeyCode</code> (de-duplicated) and reads modifiers from <code>SDL_GetModState</code>. <code>Sdl3Mouse::Update</code> reads <code>SDL_GetMouseState</code>, repacks SDL's 1-based button mask into CNA's bit order and, in relative mode, accumulates <code>SDL_GetRelativeMouseState</code> deltas that <code>ConsumeRelativeDelta</code> drains. The bridge feeds callbacks, text input and the input manager's accumulators; it is not the source of these snapshots.</p>
+<p>Controllers are lazy. <code>GetGamepad</code> and <code>GetJoystick</code> call <code>EnsureControllerSubsystem</code>, which runs at most once per instance: it marks itself done <em>before</em> trying, acquires the Gamepad subsystem, absorbs a <code>PlatformException</code> (the services then simply report no devices; a host can ask <code>IsSubsystemInitialized(Gamepad)</code>), and on success performs one initial <code>Update()</code> so the first query does not read an empty device list. <code>Game::PollEvents</code> pumps gamepads and joysticks only once that subsystem is initialized, so its per-frame pump is never what triggers the acquisition. On Linux (not Android or Emscripten) the constructor seeds <code>SDL_HINT_JOYSTICK_LINUX_CLASSIC=1</code> unless the host set it; the source records that SDL's default event-device scan blocked a first <code>GamePad.GetState()</code> for about 1.6 seconds on the Linux reference host. Comments in <code>Sdl3Platform.cpp</code> still name a <code>Game::UpdateInput()</code>; no such function exists at this snapshot, and the gate lives in <code>Game::PollEvents</code>. The full event-to-public-state trace is in <a href="../input/events.html">Input internals</a>, and the per-frame order in <a href="../runtime/frame.html">One frame source trace</a>.</p>
+
+<h2 id="window">Logical size, drawable size, DPI, focus and fullscreen</h2>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3Window.cpp"><code>Sdl3Window.cpp</code></a> keeps three measurements apart:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Query</th><th scope="col">SDL call</th><th scope="col">Failure behaviour</th><th scope="col">Consumer</th></tr></thead>
+<tbody>
+<tr><td><code>GetClientBounds</code></td><td><code>SDL_GetWindowPosition</code>, <code>SDL_GetWindowSize</code> (logical)</td><td>Never throws; keeps the last successfully queried rectangle (seeded in the constructor)</td><td><code>GameWindow.ClientBounds</code>, read every frame and during event-driven refreshes</td></tr>
+<tr><td><code>GetPixelSize</code></td><td><code>SDL_GetWindowSizeInPixels</code> (drawable)</td><td>Throws <code>PlatformException</code></td><td>Renderer storage and swapchains, via <code>GraphicsDevice::createRenderer</code></td></tr>
+<tr><td><code>GetDisplayScale</code></td><td><code>SDL_GetWindowPixelDensity</code></td><td>Returns 1.0 when SDL reports 0</td><td>Logical-to-drawable transforms</td></tr>
+</tbody>
+</table></div>
+<p><code>GetDisplayScale</code> deliberately returns SDL's pixel density, not <code>SDL_GetWindowDisplayScale</code>: the latter folds in the user's UI/content-scale preference and can be 1.25 for a window whose drawable has no extra pixels, which would shift every input-to-render transform. The mapper emits separate logical-resize, pixel-size and display-scale events, and <code>Game::PollEvents</code> answers all three the same way: <code>GameWindow</code> refreshes from the platform, <code>GraphicsDevice::UpdateViewportFromWindow()</code> re-reads the geometry and the renderer's <code>OnSurfaceInvalidated</code> runs. Width and height are never interchangeable between the logical and drawable spaces.</p>
+<p>On Emscripten, <code>GetPixelSize</code> contains a guarded repair: after an Escape-driven exit from browser fullscreen, the DOM restores the canvas backing store before SDL updates its cached window size, so SDL keeps reporting the fullscreen size. On that one transition the window queries the canvas element size and CSS size, corrects SDL's logical size with <code>SDL_SetWindowSize</code> (SDL also scales browser pointer events by it) and returns the canvas size until SDL catches up. The transition guard exists because, in a pthread build, a DOM query from the game worker is a synchronous proxy to the main thread.</p>
+<p>Fullscreen is policy, not a flag flip. <code>SetFullscreenMode(BorderlessFullscreen)</code> sets the desktop mode (<code>SDL_SetWindowFullscreenMode(window, nullptr)</code>) and then fullscreen. <code>ExclusiveFullscreen</code> maps to browser fullscreen on the Web (SDL defers it until a user gesture; a repeated pending request that sets no SDL error is tolerated), to the desktop mode on Android, and elsewhere to the closest real display mode from <code>SDL_GetClosestFullscreenDisplayMode</code>, honouring the window's high-density flag. If the display offers no such mode (an Xvfb screen, a compositor that publishes one mode, a phone-shaped 480×800 back buffer on a desktop) it falls back to the desktop mode instead of throwing, because XNA gives a game only the <code>IsFullScreen</code> boolean and no way to handle a refusal. <code>SetSize</code> on an exclusive-fullscreen window selects the closest mode the same way, since <code>SDL_SetWindowSize</code> has no effect in fullscreen; otherwise it calls <code>SDL_SetWindowSize</code> and throws on failure.</p>
+<p><code>Sync()</code> calls <code>SDL_SyncWindow</code> and deliberately ignores its result. The only false return is a timeout, which is ordinary on X11 and Wayland, where the compositor owns geometry. An earlier version threw here and turned an ordinary window-edge drag into an uncaught exception; the current code treats <code>Sync</code> as a best-effort ordering point, matching the contract and <code>PlatformConformanceTests</code>' <code>EXPECT_NO_THROW(window_-&gt;Sync())</code>. Title, resizability, border and show/hide/minimize/maximize/restore throw <code>PlatformException</code> on SDL failure; <code>HasFocus</code> and <code>IsMinimized</code> read window flags; minimum and maximum size are applied only at creation; cursor shape and visibility belong to <code>Sdl3Mouse</code>, not the window; <code>SetSupportedOrientations</code> acts only on mobile targets.</p>
+<p>When diagnosing a resize bug, inspect both the mapped event and the window's current logical and pixel queries before blaming the renderer. When diagnosing a blank window, establish whether it was intentionally staged hidden, whether fullscreen and the final show completed, and whether SDL's video driver actually created the requested surface.</p>
+
+<h2 id="graphics">Native-handle and graphics-service boundaries</h2>
+<p><code>Sdl3Window::GetNativeHandle</code> decides the window system from <code>SDL_GetCurrentVideoDriver()</code>'s name, not from whichever window property answers (Xwayland answers both X11 and Wayland queries), and then reads SDL window properties into the tagged <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/include/CNA/Platform/NativeWindowHandle.hpp"><code>NativeWindowHandle</code></a>:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">SDL driver</th><th scope="col"><code>NativeWindowSystem</code></th><th scope="col">Fields filled</th></tr></thead>
+<tbody>
+<tr><td><code>windows</code></td><td><code>Win32</code></td><td><code>window</code> = HWND</td></tr>
+<tr><td><code>x11</code></td><td><code>X11</code></td><td><code>display</code> = <code>Display*</code>; <code>windowId</code> = the XID, read as a number property (an XID is an integer resource id, not an address)</td></tr>
+<tr><td><code>wayland</code></td><td><code>Wayland</code></td><td><code>display</code> and <code>surface</code></td></tr>
+<tr><td><code>cocoa</code></td><td><code>Cocoa</code></td><td><code>window</code></td></tr>
+<tr><td><code>android</code></td><td><code>Android</code></td><td><code>window</code></td></tr>
+<tr><td><code>emscripten</code></td><td><code>Web</code></td><td>none by design</td></tr>
+<tr><td><code>dummy</code>, <code>offscreen</code>, anything else</td><td><code>Headless</code></td><td>none, so a GPU renderer refuses deterministically instead of dereferencing a null it was told was valid</td></tr>
+</tbody>
+</table></div>
+<p>This is a borrowed description of the host window, not an ownership transfer. <code>GraphicsDevice::createRenderer</code> copies the handle, the pixel size and the display scale into the renderer's create arguments, and hands the renderer only the services its descriptor declares (<code>needsGlContext</code>, <code>needsVulkanSurface</code>, <code>needsSurfacePresenter</code>). A graphics backend must match the tag and lifetime rather than reinterpret every handle as <code>void*</code>.</p>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3GraphicsServices.cpp"><code>Sdl3GraphicsServices.cpp</code></a> implements the three seams:</p>
+<ul>
+<li><strong><code>Sdl3GlContext</code></strong> creates a context under the SDL lock: it resets GL attributes again, sets version, profile, colour, depth, stencil, multisample, double-buffer, robust-access and reset-notification attributes from <code>GlContextDescription</code> <em>before</em> <code>SDL_GL_CreateContext</code> (attributes set afterwards are silently ignored), and throws <code>PlatformException</code> on failure. It provides make-current, current binding, swap, proc address and a proc-address loader, and <code>GetContextAttributes</code> reports what the driver actually granted. On Emscripten, <code>MakeCurrent</code> first makes the real WebGL context current in Emscripten's thread-local state, because SDL's cached-current check can claim a context is current on a fresh Wasm pthread when it is not; <code>SetSwapInterval</code> returns true without acting there, because CNA's Asyncify loop registers no Emscripten main loop for SDL to retime.</li>
+<li><strong><code>Sdl3VulkanSurface</code></strong> returns SDL's required instance extensions inside a balanced <code>SDL_Vulkan_LoadLibrary</code>/<code>UnloadLibrary</code> lease, creates a surface for a live window id with <code>SDL_Vulkan_CreateSurface</code>, and destroys it with the instance the caller supplies (a null surface is a no-op). Surface handles cross the contract as <code>std::uint64_t</code>, because <code>VkSurfaceKHR</code> is a pointer on 64-bit targets and an integer on 32-bit ones.</li>
+<li><strong><code>Sdl3SurfacePresenter</code></strong> is the CPU-frame route. <code>CreateSurfacePresenter</code> <code>dynamic_cast</code>s the window and throws <code>PlatformException</code> for anything that is not an <code>Sdl3Window</code>, preventing accidental use of a foreign platform's wrapper. The presenter is built on an <code>SDL_Renderer</code> with a streaming RGBA32 texture recreated on size change; frames pass the shared stride validation in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Common/SurfaceFrameValidation.hpp"><code>SurfaceFrameValidation.hpp</code></a>, and Letterbox, Overscan and Stretch map to SDL's logical presentation modes (None centres the frame, Native places it top-left).</li>
+</ul>
+<p><code>HasVulkanSupport</code> probes the loader even before normal startup: under the SDL lock it takes a temporary video reference, tries <code>SDL_Vulkan_LoadLibrary</code>, unloads it and releases video, so an early <code>GetCapabilities()</code> neither caches the misleading "video not initialized" failure nor changes the host's state. The answer is cached per platform instance, so a host whose video subsystem cannot start at the first probe keeps <code>vulkanSurface</code> false for that instance.</p>
+<h3 id="capabilities">Capabilities are conservative</h3>
+<p><code>GetCapabilities</code> advertises a feature only when its service is wired: 28 of the 32 flags are unconditionally true; <code>vulkanSurface</code> follows the probe; <code>primarySelection</code> is true only on Unix builds that are neither Android nor Emscripten (only X11 and Wayland desktops have a real primary selection); <code>tray</code> is compiled in for Windows, Linux and macOS; <code>camera</code> needs an SDL camera driver whose subsystem actually starts. A new service should follow the capability-to-accessor invariant and gain a conformance test, not merely flip a boolean because SDL has a similarly named API. <code>Sdl3PlatformTest.HostDependentCapabilitiesAgreeWithTheirServices</code> and <code>VulkanCapabilityProbePreservesTheHostsVideoSubsystemState</code> hold that line; the user-facing values are in the <a href="../../../docs/platforms.html#capabilities">capability matrix</a>.</p>
+
+<h2 id="time">Timing, synchronization and failure model</h2>
+<p><code>GetPerformanceCounter</code>, <code>GetPerformanceFrequency</code>, <code>GetTicksMilliseconds</code> and <code>Delay</code> adapt <code>SDL_GetPerformanceCounter</code>, <code>SDL_GetPerformanceFrequency</code>, <code>SDL_GetTicks</code> and <code>SDL_Delay</code> directly. They do not decide fixed versus variable timestep: <code>Game::Tick</code> sleeps with <code>Delay(1)</code> while it calibrates its own sleep precision, spins with <code>std::this_thread::yield()</code> for the remainder, and then polls events. <code>SDL_GetTicks</code> counts from SDL's initialization, not from platform creation as the <code>IPlatform</code> comment words it; <code>Sdl3Platform.hpp</code> documents that, and <code>Game</code>'s timing uses the performance counter.</p>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3Synchronization.hpp"><code>Sdl3Synchronization.hpp</code></a> defines <code>SdlGlobalStateLock</code>, a guard over one heap-allocated, never-destroyed mutex that also records its owning thread. It serializes the process-global SDL state: subsystem counts (<code>AcquireSubsystem</code>, <code>ReleaseSubsystem</code>, <code>IsSubsystemInitialized</code>, the destructor), <code>CreateWindow</code>, the Vulkan probe, GL context creation and the Vulkan extension, create and destroy calls. Every acquisition must go through this type; a raw <code>std::lock_guard</code> on the same mutex would leave the owner unset and make the destructor's reentrancy check lie. It is not a promise that every public <code>Game</code> or graphics API is thread-safe, and <code>MakeCurrent</code> and <code>SwapBuffers</code> do not take it. The GL context lease that separates frame rendering from background uploads is a different mechanism, described in <a href="../graphics/easygl.html">EasyGL renderer internals</a>; the wider thread map is in <a href="../../takeover/threading.html">Thread and callback map</a>.</p>
+<p>The failure model is split on purpose. Window, context, surface and presenter failures throw <code>PlatformException</code> with SDL's error text. Some operations return status instead: <code>SetSwapInterval</code> (a driver declining adaptive vsync must not abort a frame), <code>Sync</code>, <code>GetClientBounds</code>, the exclusive-mode search that falls back to the desktop mode, and the controller subsystem whose failure is absorbed. Optional services return null with a false capability. Preserve that distinction when adding an operation: turning an optional host feature into a startup exception changes framework behaviour for every game.</p>
+
+<h2 id="tests">Validation and source-reading route</h2>
+<p>The SDL3 test sources are compiled into <code>CnaTests</code> only when <code>CNA_PLATFORM=SDL3</code> (<code>cmake/UnitTests.cmake</code> filters them out otherwise), and every case is also discovered as its own CTest entry. Three grouped entries select them by filter:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">CTest entry</th><th scope="col">What it selects</th><th scope="col">Environment</th></tr></thead>
+<tbody>
+<tr><td><code>CnaPlatformTests</code></td><td>The display-independent contract: <code>Sdl3PlatformTest</code>, <code>Sdl3EventMapperTests</code>, <code>Sdl3InputTest</code>, <code>Sdl3ServiceTest</code>, the conformance suite, Headless, Terminal and current-platform suites</td><td><code>--gtest_shuffle --gtest_repeat=3</code>, <code>SDL_AUDIODRIVER=dummy</code>; shuffled because SDL's subsystem refcount is process-global and an imbalance shows up as order dependence</td></tr>
+<tr><td><code>CnaPlatformWindowTests</code></td><td><code>Sdl3WindowTest</code>, <code>Sdl3DisplayTest</code>, <code>Sdl3GraphicsServiceTest</code>, <code>Sdl3PresenterTest</code>, <code>PlatformWindowConformance</code> and the graphics/game window ownership suites</td><td>Own process with <code>SDL_VIDEODRIVER=dummy</code>, because inside the shared binary another suite has usually committed SDL to a driver already</td></tr>
+<tr><td><code>CnaPlatformXErrorHandlerTests</code></td><td><code>Sdl3XErrorHandlerTest</code></td><td>A real X connection: <code>SDL_VIDEODRIVER=x11</code>, <code>DISPLAY</code> forced to the test display, 60 s timeout</td></tr>
+</tbody>
+</table></div>
+<p>The source files are <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3PlatformTests.cpp"><code>Sdl3PlatformTests.cpp</code></a> (subsystem balance, capabilities versus services, timing, controller laziness, the Linux joystick hint), <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3WindowTests.cpp"><code>Sdl3WindowTests.cpp</code></a> (ownership and adoption, pixel versus logical size, fullscreen at a phone-shaped size, native-handle consistency), <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3EventMapperTests.cpp"><code>Sdl3EventMapperTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3KeyCodeRoundTripTests.cpp"><code>Sdl3KeyCodeRoundTripTests.cpp</code></a> (translation), <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3InputServicesTests.cpp"><code>Sdl3InputServicesTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3InputDevicesTests.cpp"><code>Sdl3InputDevicesTests.cpp</code></a> (snapshots and devices), <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3DeviceServicesTests.cpp"><code>Sdl3DeviceServicesTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3SystemServicesTests.cpp"><code>Sdl3SystemServicesTests.cpp</code></a> (sensors, haptics, displays and system services), <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3GraphicsServicesTests.cpp"><code>Sdl3GraphicsServicesTests.cpp</code></a> (the graphics seam and presenter), and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3PlatformExitUnderLockTests.cpp"><code>Sdl3PlatformExitUnderLockTests.cpp</code></a> with <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3XErrorHandlerTests.cpp"><code>Sdl3XErrorHandlerTests.cpp</code></a> (failure and shutdown). <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/PlatformConformanceTests.cpp"><code>PlatformConformanceTests.cpp</code></a> is parameterised over <code>PlatformFactory::GetAvailable()</code>, so an SDL3 build runs it for SDL3, Headless and, on POSIX, Terminal.</p>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p>These tests exist and their registration was read at <code>009d40f5</code>; none was executed for this page. A host with only SDL's dummy video driver cannot establish real window, focus, DPI or presentation behaviour by passing mapper and dummy-driver tests, and several cases skip without a display. Real-host behaviour and the optional services (tray, camera, dialogs, sensors, haptics) still need validation on the hosts that have them. For a window or native-handle change, run the targeted platform entries and then a real selected-renderer smoke test; the recipe is in <a href="../../handbook/modify-a-platform-backend.html">Modify a platform backend</a> and the change-to-test map in <a href="../../takeover/validation.html">What to test after changing X</a>.</p></div>
+<h3 id="reading">Read in this order</h3>
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3Platform.hpp"><code>Sdl3Platform.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3Platform.cpp"><code>Sdl3Platform.cpp</code></a>: service ownership, subsystem balance, the X error handler, <code>CreateWindow</code>, adoption and the event batch.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3Synchronization.hpp"><code>Sdl3Synchronization.hpp</code></a>: the global lock and the owner-thread query the destructor depends on.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3Window.cpp"><code>Sdl3Window.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3GraphicsServices.cpp"><code>Sdl3GraphicsServices.cpp</code></a>: logical versus drawable dimensions, fullscreen policy, native handles and the GL, Vulkan and presenter seams.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3EventMapper.cpp"><code>Sdl3EventMapper.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Sdl3/Sdl3InputServices.cpp"><code>Sdl3InputServices.cpp</code></a>: compare value events with polled snapshots, especially during resize and focus changes.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>Game.cpp</code></a> (<code>Game::PollEvents</code>) and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>GraphicsDevice.cpp</code></a> (window creation, <code>createRenderer</code>): the two consumers that decide when the platform is pumped and which service a renderer receives.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3PlatformTests.cpp"><code>Sdl3PlatformTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/Sdl3GraphicsServicesTests.cpp"><code>Sdl3GraphicsServicesTests.cpp</code></a>: the contract assertions to extend before changing a service.</li>
+</ol>
+<p>For comparison, the native backends solve the same contract without SDL: <a href="x11.html">X11</a>, <a href="wayland.html">Wayland</a> and <a href="win32.html">Win32</a>; the map of all seven is on <a href="index.html">Platform backends</a>.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/platforms.html#implementation-table">Platforms guide: the seven implementations</a> &middot; <a href="../../../docs/platforms.html#capabilities">Platforms guide: capability matrix</a> &middot; <a href="../../../docs/native-platforms.html#choosing">Choosing between SDL3 and a native backend</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/platform.html">Platform architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="index.html">Platform backends overview</a> &middot; <a href="sdl2.html">SDL2 (narrower sibling)</a> &middot; <a href="x11.html">X11 (native sibling)</a> &middot; <a href="win32.html">Win32 (native sibling)</a> &middot; <a href="../input/events.html">Input internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/modify-a-platform-backend.html">Modify a platform backend</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="index.html" rel="prev"><span>Previous</span>Platform backends</a><a class="dev-pager-next" href="sdl2.html" rel="next"><span>Next</span>SDL2 platform internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>

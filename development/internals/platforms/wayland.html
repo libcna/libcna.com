@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wayland platform internals - CNA Development</title>
+  <meta name="description" content="How CNA&#x27;s native Wayland backend connects, freezes capabilities, waits for xdg configure, routes input, serves EGL, Vulkan and wl_shm, tears down, and which suites test it.">
+  <meta name="keywords" content="wayland, cna_platform=wayland, xdg-shell, xdg configure, wl_surface, xkbcommon, egl, vk_khr_wayland_surface, wl_shm, fractional scale, waylandplatform, wayland_test_server">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/development/internals/platforms/wayland.html">
+  <meta property="og:title" content="Wayland platform internals - CNA Development">
+  <meta property="og:description" content="How CNA&#x27;s native Wayland backend connects, freezes capabilities, waits for xdg configure, routes input, serves EGL, Vulkan and wl_shm, tears down, and which suites test it.">
+  <link rel="stylesheet" href="../../../css/style.css">
+  <link rel="icon" href="../../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/development/internals/platforms/wayland.html">
+  <link rel="stylesheet" href="../../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Wayland platform internals","description":"How CNA's native Wayland backend connects, freezes capabilities, waits for xdg configure, routes input, serves EGL, Vulkan and wl_shm, tears down, and which suites test it.","url":"https://libcna.com/development/internals/platforms/wayland.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Development","url":"https://libcna.com/development/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../../index.html" class="nav-link">Home</a>
+    <a href="../../../about.html" class="nav-link">About</a>
+    <a href="../../../features.html" class="nav-link">Features</a>
+    <a href="../../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../../development/index.html" class="nav-link active">Development</a>
+    <a href="../../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../../demos.html" class="nav-link">Demos</a>
+    <a href="../../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../../videos.html" class="nav-link">Videos</a>
+    <a href="../../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../../contact.html" class="nav-link">Contact</a>
+    <a href="../../../network.html" class="nav-link">Network</a>
+    <a href="../../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--dev:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Development</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../../index.html" class="docs-nav-link">Development home</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Do the work</li>
+    <li class="dev-nav-item"><a href="../../handbook/index.html" class="docs-nav-link">Maintainer Handbook</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../takeover/index.html" class="docs-nav-link">Human Takeover</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../repository/index.html" class="docs-nav-link">Repository &amp; Ownership</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../build/index.html" class="docs-nav-link">Build System</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../testing/index.html" class="docs-nav-link">Testing</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../debugging.html" class="docs-nav-link">Debugging</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../workflows.html" class="docs-nav-link">Workflows</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../invariants.html" class="docs-nav-link">Invariants</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">How CNA is built</li>
+    <li class="dev-nav-item"><a href="../../architecture/overview.html" class="docs-nav-link">Architecture Maps</a>
+    </li>
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Internals overview</a>
+    </li>
+    <li class="dev-nav-item"><a href="../runtime/module.html" class="docs-nav-link">Runtime internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/selection.html" class="docs-nav-link">Graphics internals</a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Platform internals</a>
+      <ul class="dev-nav-sub">
+        <li><a href="sdl3.html" class="docs-nav-link">SDL3</a></li>
+        <li><a href="sdl2.html" class="docs-nav-link">SDL2</a></li>
+        <li><a href="x11.html" class="docs-nav-link">X11</a></li>
+        <li><a href="wayland.html" class="docs-nav-link active" aria-current="page">Wayland</a></li>
+        <li><a href="win32.html" class="docs-nav-link">Win32</a></li>
+        <li><a href="headless.html" class="docs-nav-link">Headless</a></li>
+        <li><a href="terminal.html" class="docs-nav-link">Terminal</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../audio/engine.html" class="docs-nav-link">Audio internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../content/runtime.html" class="docs-nav-link">Content internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../input/events.html" class="docs-nav-link">Input internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../modules/core.html" class="docs-nav-link">Module internals</a>
+    </li>
+    <li class="dev-nav-item"><a href="../bindings/c-api-internals.html" class="docs-nav-link">C API &amp; bindings internals</a>
+    </li>
+    <li class="dev-nav-heading" role="presentation">Look things up</li>
+    <li class="dev-nav-item"><a href="../../reference/index.html" class="docs-nav-link">Generated References</a>
+    </li>
+    <li class="dev-nav-item"><a href="../../maintenance.html" class="docs-nav-link">Maintenance &amp; Releases</a>
+    </li>
+  </ul>
+</details>
+<!--/dev:sidebar-->
+    </aside>
+
+<!--dev:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../../index.html">Home</a></li>
+        <li><a href="../../index.html">Development</a></li>
+        <li><a href="../index.html">Internals</a></li>
+        <li><a href="index.html">Platforms</a></li>
+        <li aria-current="page">Wayland</li>
+      </ol>
+    </nav>
+<!--/dev:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>Wayland platform internals</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#connection">Connection, registry and stable capabilities</a></li>
+          <li><a href="#window">Creating a window means waiting for configure</a></li>
+          <li><a href="#events">Protocol callbacks enqueue CNA events</a></li>
+          <li><a href="#graphics">EGL, Vulkan and shared-memory presenters</a></li>
+          <li><a href="#shutdown">Protocol destruction order and no-compositor mode</a></li>
+          <li><a href="#validation">How to debug and what proves behavior</a></li>
+          <li><a href="#reading">Read in this order</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Development &rsaquo; Platform internals &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+      <div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. The Wayland suites named here exist and are registered in cmake/UnitTests.cmake, but none was executed for this page, and no GitHub workflow selects CNA_PLATFORM=WAYLAND. Behaviour across a live compositor matrix (GNOME, KDE, wlroots compositors, real GPUs, real input methods, fractional-scale outputs) is not established here.</p></div>
+
+<p class="lede"><a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland"><code>modules/platform/src/Wayland</code></a> implements CNA's platform contract directly over libwayland-client, xkbcommon, EGL, <code>VK_KHR_wayland_surface</code> and <code>wl_shm</code>. It is not SDL's Wayland video driver and never falls back to X11 through Xwayland. A Wayland window is a compositor-negotiated <code>wl_surface</code> plus an <code>xdg_toplevel</code> role, not an object whose position and drawable size CNA can dictate; that one fact organises startup, input, resize, presentation and teardown. This page is for the maintainer who changes the backend or debugs it; what the backend offers a game, and how to build it, is in the <a href="../../../docs/native-platforms.html#wayland">Native Wayland section of the platforms guide</a>.</p>
+
+<div class="callout callout--info"><span class="callout-icon">&#8505;</span><p>Read this page together with the user-level pages it complements: the <a href="../../../docs/native-platforms.html#wayland">dependency and behaviour tables for native Wayland</a>, the <a href="../../../docs/platforms.html#capabilities">seven-platform capability matrix</a> and <a href="../../../docs/tutorials/136-native-wayland-build.html">Tutorial 136</a>. Those pages say <em>what</em> the backend does; this one says <em>where in the source</em> it happens, in which order, and what breaks when the order changes. The contract every backend implements is on <a href="../../architecture/platform.html">Platform architecture</a>; the sibling backends are <a href="x11.html">X11</a> and <a href="sdl3.html">SDL3</a>.</p></div>
+
+<h2 id="connection">Connection, registry and stable capabilities</h2>
+
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandPlatform.cpp"><code>WaylandPlatform::WaylandPlatform</code></a> does its work in a fixed order, and the order is load-bearing:</p>
+
+<ol>
+<li>With D-Bus headers present it looks for the freedesktop desktop portal on the session bus (<code>Freedesktop::DesktopPortal::Connect</code>) and builds the system-information service. Neither belongs to the compositor, so both exist even when no compositor is reachable.</li>
+<li><code>CreateServices</code> creates <code>WaylandKeyboard</code>, <code>WaylandMouse</code>, <code>WaylandTouch</code>, <code>WaylandTablet</code> and <code>WaylandTextInput</code> <em>before</em> the connection exists, because the compositor announces its seats, and each seat's keyboard, pointer and touch devices, during the connection's own startup exchange.</li>
+<li>It constructs <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandConnection.cpp"><code>WaylandConnection</code></a> with a 5-second startup timeout (<code>kStartupTimeout</code>). The connection calls <code>wl_display_connect(nullptr)</code>, so it follows <code>WAYLAND_DISPLAY</code> or an inherited <code>WAYLAND_SOCKET</code>, installs the registry listener and performs <em>two</em> bounded roundtrips. The first delivers and binds the globals; the second delivers what the bound objects immediately say about themselves (the <code>wl_shm</code> formats, seat capabilities, output geometry), which the capability set is computed from. A compositor without <code>wl_compositor</code> or <code>xdg_wm_base</code> is refused with a <code>PlatformException</code> naming the missing global.</li>
+<li>With a connection, it attaches the per-seat services (text-input-v3, tablet, data devices), attaches <code>xdg-output</code> to the outputs, creates the display service, <code>WaylandGlContext</code>, <code>WaylandVulkanSurface</code> (only when Vulkan headers were found at configure time), <code>WaylandDialogs</code> (discarded again when it offers neither a message box nor a file dialog) and the idle inhibitor, then performs one more bounded roundtrip so <code>xdg-output</code> geometry is known before anyone asks.</li>
+<li>If <code>/dev/input</code> is a directory (and the build found <code>linux/input.h</code>), it creates the evdev controller hub without opening any device node.</li>
+<li>Finally <code>ComputeCapabilities</code> fills <code>capabilities_</code> once. <code>GetCapabilities</code> returns that copy for the platform's whole life.</li>
+</ol>
+
+<pre class="diagram">WaylandPlatform()
+  ├─ portal (session bus) + system info          ← not the compositor's
+  ├─ keyboard / mouse / touch / tablet / text-input services
+  ├─ WaylandConnection(wl_display + registry, 2 bounded roundtrips)
+  │     ├─ singletons bound at negotiated versions (wl_compositor, wl_shm, xdg_wm_base, …)
+  │     ├─ OnSeatAnnounced   → WaylandSeat → keyboard/pointer/touch attach
+  │     └─ OnOutputAnnounced → WaylandOutput (scale, geometry, name)
+  ├─ seat services: text-input-v3, tablet, wl_data_device / primary selection
+  ├─ displays, EGL (probed now), Vulkan surface, dialogs, idle inhibitor, roundtrip
+  ├─ evdev controller hub (Linux, nothing opened yet)
+  └─ capabilities_ = ComputeCapabilities()         ← frozen
+CreateWindow → wl_surface (+ viewport, fractional scale, built-in frame)
+  → register → Show: xdg_surface + xdg_toplevel → first configure + ack
+  → logical size / pixel size → renderer surface</pre>
+
+<p>An unreachable compositor is <em>recorded, not thrown</em>: the constructor catches the connection's <code>PlatformException</code> and keeps its text in <code>connectionError_</code>, because <code>StorageDevice</code> and <code>TitleContainer</code> still need a platform for the filesystem and host services. <code>AcquireSubsystem(PlatformSubsystem::Video)</code> calls <code>RequireConnection</code>, which throws a <code>PlatformException</code> carrying that saved reason; the keyboard, mouse, text-input and display accessors return null without a connection. Releasing Video never disconnects, since the capability set would otherwise change under callers that cached it. Like <a href="x11.html">X11</a>, and unlike <a href="sdl3.html">SDL3</a>, which acquires its video subsystem lazily and balances references a host may share, the native backend opens its connection eagerly so the snapshot is stable.</p>
+
+<p>Versions are negotiated per global by <code>NegotiateVersion</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandConnection.hpp"><code>WaylandConnection.hpp</code></a>: the lowest of what the compositor advertises, what the backend implements and what the compiled libwayland headers describe, so no event can arrive for which the listener struct has no slot. The backend implements <code>wl_compositor</code> v6 (<code>preferred_buffer_scale</code>), <code>wl_shm</code> v2 (<code>release</code>), <code>xdg_wm_base</code> v6 (the <code>suspended</code> state), <code>wl_data_device_manager</code> v3, <code>wl_seat</code> v9 and <code>wl_output</code> v4. <code>xdg_wm_base.ping</code> is answered from inside dispatch, so a game that polls once per frame answers within a frame. When a compositor withdraws a singleton, <code>OnGlobalRemove</code> destroys the proxy and nulls its field in <code>WaylandGlobals</code>; seats and outputs go to the platform's <code>OnGlobalRemoved</code>, which detaches their services and makes every window forget a vanished output. The capability snapshot is not recomputed: a later call that needs the withdrawn global refuses by name.</p>
+
+<h3 id="capability-sources">What backs each capability</h3>
+
+<p>The <a href="../../../docs/platforms.html#capabilities">capability matrix</a> gives the user-visible answer. For a maintainer, the useful fact is which member or global <code>ComputeCapabilities</code> reads, because each accessor returns non-null exactly when its flag is true:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Flag(s)</th><th scope="col">Condition in <code>ComputeCapabilities</code></th></tr></thead>
+<tbody>
+<tr><td><code>gamepad</code>, <code>joystick</code>, <code>gamepadRumble</code>, <code>gamepadSensors</code>, <code>haptics</code></td><td>the evdev hub exists (<code>/dev/input</code> present in a Linux build); computed before the connection check</td></tr>
+<tr><td><code>powerInfo</code>, <code>inputDeviceEnumeration</code></td><td>Linux evdev build; the input-device service always exists</td></tr>
+<tr><td><code>multipleWindows</code>, <code>nativeWindowHandle</code>, <code>highDpi</code>, <code>borderlessFullscreen</code>, <code>textInput</code>, <code>exactKeyboardState</code>, <code>pixelAccurateMouse</code></td><td>any live connection</td></tr>
+<tr><td><code>multipleDisplays</code></td><td>the display service, which is created with every connection</td></tr>
+<tr><td><code>surfacePresentation</code></td><td><code>wl_shm</code> bound <em>and</em> it announced <code>XRGB8888</code> (<code>WaylandConnection::HasXrgb8888</code>)</td></tr>
+<tr><td><code>cursorShapes</code></td><td><code>cursor-shape-v1</code> or a loadable cursor theme, or custom images on <code>wl_shm</code></td></tr>
+<tr><td><code>relativeMouse</code></td><td>both <code>relative-pointer</code> and <code>pointer-constraints</code> bound</td></tr>
+<tr><td><code>ime</code></td><td><code>zwp_text_input_manager_v3</code> bound</td></tr>
+<tr><td><code>openGlContext</code></td><td><code>WaylandGlContext::IsAvailable</code>: both EGL libraries loaded and an EGL display initialised on this connection</td></tr>
+<tr><td><code>vulkanSurface</code></td><td>built with Vulkan headers (the service object exists)</td></tr>
+<tr><td><code>clipboard</code>, <code>clipboardData</code>, <code>dragAndDrop</code>; <code>primarySelection</code></td><td>a seat plus <code>wl_data_device_manager</code>; additionally the primary-selection manager</td></tr>
+<tr><td><code>nativeFileDialog</code>; <code>messageBox</code></td><td>the desktop portal was found; <code>WaylandDialogs::HasMessageBox</code> is hard-wired false</td></tr>
+<tr><td><code>globalPointer</code>, <code>tray</code>, <code>camera</code>, <code>sensors</code>, <code>managedEntrypoint</code></td><td>always false, each with a stated reason in the source (no desktop coordinates or warping; no tray protocol; not window-system facilities; an ordinary <code>main()</code>)</td></tr>
+</tbody>
+</table></div>
+
+<p>The mandatory and optional build inputs that decide which of these globals the backend can bind at all are detected by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/PlatformWayland.cmake"><code>cmake/PlatformWayland.cmake</code></a>: <code>wayland-client</code> &ge; 1.18, <code>xkbcommon</code> &ge; 0.5, <code>wayland-scanner</code> and <code>wayland-protocols</code> with stable <code>xdg-shell</code> are mandatory; each optional protocol XML defines its own <code>CNA_WAYLAND_HAVE_&lt;PROTOCOL&gt;</code>. The bindings are generated at build time into <code>generated/wayland-protocols</code> of the build tree, with the interface tables emitted as wayland-scanner <code>private-code</code> (hidden visibility) so a host that links its own copy of, for example, <code>xdg_wm_base_interface</code> cannot collide with CNA's. EGL, <code>libwayland-egl</code>, <code>libwayland-cursor</code>, Vulkan and <code>libdbus</code> are headers-only at build time and opened at run time; <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/CMakeLists.txt"><code>modules/platform/CMakeLists.txt</code></a> links only <code>libwayland-client</code>, <code>xkbcommon</code> and <code>${CMAKE_DL_LIBS}</code>, all <code>PRIVATE</code>.</p>
+
+<h2 id="window">Creating a window means waiting for configure</h2>
+
+<p><code>WaylandPlatform::CreateWindow</code> calls <code>RequireConnection</code>, rejects a non-positive size with a <code>PlatformException</code>, and throws <code>PlatformNotSupportedException(OpenGlContext)</code> when <code>WindowRenderIntent::OpenGl</code> is requested without a usable EGL. It then allocates a <code>WindowId</code> and constructs the <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandWindow.cpp"><code>WaylandWindow</code></a>, whose constructor creates the <code>wl_surface</code>, records the surface-to-window mapping for input routing, declares the whole surface opaque, attaches a <code>wp_viewport</code> and a <code>wp_fractional_scale_v1</code> when offered, creates the built-in title bar (<code>WaylandFrame</code>) and makes the first scale decision. Only after the window is entered in <code>windows_</code> and registered with the GL, Vulkan and idle-inhibit services does <code>CreateWindow</code> call <code>Show</code>. Registering before showing is necessary: showing dispatches compositor events until the first configure, and a <code>wl_keyboard.enter</code> on the new surface during that wait must already resolve to the new window.</p>
+
+<p>The <code>wl_surface</code> lives exactly as long as the <code>WaylandWindow</code>; the <code>xdg_surface</code>/<code>xdg_toplevel</code> role exists only while the window is shown, because xdg-shell has no "hide". The configure state machine is explicit:</p>
+
+<pre class="diagram">NoRole ── Show(): CreateRole()                       null buffer attach + commit,
+   ▲                                                  xdg_surface, xdg_toplevel, title,
+   │                                                  app_id (/proc/self/comm), decoration,
+   │                                                  min/max, maximize/fullscreen requests,
+   │                                                  initial commit without a buffer
+   │           ▼
+   │     AwaitingInitialConfigure ── DispatchUntil(configured, 5 s)
+   │           │                        └─ timeout or dead connection:
+   │           │                           DestroyRole(), PlatformException
+   │           ▼
+   └── Hide(): DestroyRole()   Configured ── RequestActivation (xdg-activation)</pre>
+
+<p><code>WaylandWindow::Show</code> returns only once the compositor's first <code>xdg_surface.configure</code> has been acknowledged, so a renderer never attaches a buffer to an unconfigured surface. A missing configure becomes <code>PlatformException("WaylandWindow::Show", …)</code> with either the connection's recorded error or "the compositor did not configure the window within 5 s", and the half-created role is destroyed. Because the surface itself survives <code>Hide</code>/<code>Show</code>, a <code>wl_egl_window</code> or <code>VkSurfaceKHR</code> made from it stays valid across them. A window created hidden with a fullscreen mode records the request and applies it when the role is created. After a successful show, <code>RequestActivation</code> asks for focus through xdg-activation: the first window spends the launcher's <code>XDG_ACTIVATION_TOKEN</code> and removes it from the environment, as the specification asks; later windows use the latest input serial, and without any input the compositor's own focus policy decides.</p>
+
+<p><code>xdg_toplevel.configure</code> only records a pending size and state set; <code>xdg_surface.configure</code> carries the serial and triggers <code>ApplyConfigure</code>. That function lays out the built-in frame for the new state first (no title bar while fullscreen), then resolves the size with <code>ResolveConfigureSize</code> from <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandScaling.hpp"><code>WaylandScaling.hpp</code></a>: a zero dimension keeps the client's choice (the floating size comes back when leaving maximized or fullscreen), a floating suggestion is clamped to the window's own limits, and a constrained window (maximized, fullscreen or tiled) takes what it is told. A fixed-size window keeps its size whatever a floating configure suggests. Some compositors repeat the current geometry in every floating configure, so a configure sent before the compositor saw a local <code>SetSize</code> would silently undo it; <code>SetSize</code> therefore records the geometry it replaced in <code>supersededGeometries_</code> (at most eight), and <code>ApplyConfigure</code> ignores a suggestion that matches one of them. It then calls <code>xdg_surface_ack_configure</code>, marks the window <code>Configured</code>, applies viewport, buffer scale and window geometry, and posts the resulting events: <code>Resized</code> when the logical size changed, <code>PixelSizeChanged</code> when the drawable changed, <code>Maximized</code>/<code>Restored</code>, <code>Minimized</code>/<code>Restored</code> from the <code>suspended</code> state (only with <code>xdg_wm_base</code> v6), <code>FocusGained</code>/<code>FocusLost</code> when <code>HasFocus</code> changed, and always <code>Exposed</code>. <code>CommitState</code> commits without a buffer only when the window is configured and something has already drawn into it.</p>
+
+<p>A Wayland "resize ignored" bug can therefore live in the compositor's suggestion, the stale-geometry filter, the built-in frame height, the scale decision or the renderer's surface update; <code>SetSize</code> alone cannot force a compositor to present a size. On a floating window <code>SetSize</code> applies the size immediately and posts <code>Resized</code>/<code>PixelSizeChanged</code>; on a constrained one it only remembers the size for when the window floats again. <code>WaylandWindow::Sync</code> performs a roundtrip bounded at 1 second and, if a maximize or fullscreen request is outstanding, waits at most another 250&nbsp;ms for its configure.</p>
+
+<h3 id="scale">Logical size, pixel size and scale</h3>
+
+<p><code>GetClientBounds</code> always reports position 0,0: the compositor never tells a client its global window coordinates, and <code>WindowDescription</code>'s position is not applied. <code>GetPixelSize</code> returns the calculated drawable extent and <code>GetDisplayScale</code> the current pixels-per-logical-unit value, integer or fractional. <code>DecideScale</code> chooses one of three methods:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Situation</th><th scope="col"><code>ScaleMethod</code></th><th scope="col">Buffer and surface</th></tr></thead>
+<tbody>
+<tr><td><code>WindowDescription::highDpi</code> false</td><td><code>Unscaled</code></td><td>one buffer pixel per logical unit; the compositor scales if it must</td></tr>
+<tr><td>high DPI and <code>wp_viewporter</code> bound</td><td><code>Viewport</code> (or <code>Unscaled</code> at scale 1)</td><td>scale = <code>preferred_scale</code>/120 from fractional-scale-v1, else the integer scale; buffer = <code>lround(logical &times; scale)</code>; the viewport destination is always the logical size</td></tr>
+<tr><td>high DPI without a viewporter</td><td><code>BufferScale</code></td><td><code>wl_surface.set_buffer_scale(n)</code> with the integer scale (the compositor's <code>preferred_buffer_scale</code>, else the largest scale of the outputs the surface has entered)</td></tr>
+</tbody>
+</table></div>
+
+<p>The viewport carries integer scales too where it exists, because an integer <code>set_buffer_scale</code> makes a buffer whose size is not a multiple of the scale a fatal <code>wl_surface.invalid_size</code> protocol error, and an EGL buffer one frame behind a scale change is exactly such a buffer. A scale change posts <code>DisplayScaleChanged</code> and, when the drawable changed, <code>PixelSizeChanged</code>. Do not copy X11's one-coordinate-space assumption or SDL3's pixel-density API into this backend.</p>
+
+<h3 id="adoption">Fullscreen, close and adoption</h3>
+
+<p>Exclusive fullscreen is requested exactly like borderless fullscreen, on the output the window is on, and <code>GetFullscreenMode</code> reports only what the compositor confirmed, never exclusive: an ordinary Wayland client cannot own a display mode. <code>Minimize</code> is one-way, since xdg-shell has no request that undoes <code>set_minimized</code>; <code>Restore</code> leaves maximized and fullscreen only. <code>xdg_toplevel.close</code> (or the built-in frame's close button) calls <code>RequestClose</code>, which posts <code>CloseRequested</code> and, for the last window only, a <code>QuitEvent</code>; the window is never destroyed by the platform. On the runtime side, <code>Game::PollEvents</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/runtime/src/Game.cpp"><code>modules/runtime/src/Game.cpp</code></a> calls <code>Exit()</code> on <code>CloseRequested</code> in any case (<code>Exit</code> is idempotent), so for a <code>Game</code> the close button always ends the game.</p>
+
+<p><code>AdoptWindow</code> returns a <code>BorrowedWindow</code> that forwards every call to a window this platform already owns and destroys nothing. <code>AdoptWindowHandle</code> accepts only this platform's own token, which is the window id; a foreign client's <code>wl_surface</code> cannot be adopted, because a Wayland client can learn nothing about another client's surface and a wrapper could only lie. When the compositor draws no decorations (no server-side mode from <code>xdg-decoration</code>), <code>WaylandFrame</code> draws a title bar of CNA's own on subsurfaces; its height is inside the window geometry, which is why min/max sizes and <code>set_window_geometry</code> add <code>FrameHeight()</code>.</p>
+
+<h2 id="events">Protocol callbacks enqueue CNA events</h2>
+
+<p>This is a callback-to-value-event route, not Xlib's explicit <code>XNextEvent</code> translation loop. Seats attach <code>WaylandKeyboard</code>, <code>WaylandMouse</code>, <code>WaylandTouch</code>, <code>WaylandTablet</code> and <code>WaylandTextInput</code> to the announced protocol objects; their listeners resolve a <code>wl_surface</code> to a CNA <code>WindowId</code> through the platform's surface map and call <code>PostEvent</code>, which appends to <code>pending_</code>. One frame's poll then runs:</p>
+
+<pre class="diagram">WaylandPlatform::PollEvents(destination)
+  destination.clear()
+  if connection alive:
+      WaylandConnection::Pump()          prepare_read / poll(0) / read / dispatch_pending — never blocks
+         └─ listeners → PostEvent → pending_
+      WaylandKeyboard::GenerateRepeats(steady_clock::now())
+      WaylandDataDevices::Pump()         outgoing selection writes, finished drops
+  if connection dead (first time):       one "[CNA][Wayland] …" line on stderr, QuitEvent queued
+  move pending_ → destination
+  evdev hub: Pump + TakeEvents(destination)   (only once the Gamepad subsystem is started)
+  desktop portal: Pump()
+Game::PollEvents
+  → PlatformInputBridge::ProcessEvent (every event, before Game's own handling)
+  → window events: updateFromPlatform, UpdateViewportFromWindow, OnSurfaceInvalidated, Exit on close
+  → keyboard->Update(), mouse->Update()   (end of Game::PollEvents)
+  → gamepad/joystick Update() once the Gamepad subsystem is initialized</pre>
+
+<p>Keyboard repeat is generated by the client, as Wayland requires: the rate and delay come from <code>wl_keyboard.repeat_info</code> (defaults 25 per second after 600&nbsp;ms for a keyboard older than v4), at most four repeats are produced per poll so a stalled frame does not type a burst, and a rate of 0 disables repeat. On <code>wl_keyboard.enter</code> the keys already held become held in the snapshot without press events; on <code>leave</code> every held key is released without events, because the compositor sends no release for a key let go elsewhere. Text is produced from xkbcommon only while text input is active for the focused window, with dead keys and <code>Multi_key</code> sequences resolved by an xkbcommon compose table looked up for the locale named by <code>LC_ALL</code>, <code>LC_CTYPE</code> or <code>LANG</code>, without calling <code>setlocale</code>. Where <code>zwp_text_input_manager_v3</code> exists, the input method composes instead: preedit arrives as <code>TextEditingEvent</code>, commits as <code>TextInputEvent</code>, and keys it consumes never reach the client as keys. Tablet pens report through the same host as touchscreens, so a game reading <code>TouchPanel</code> cannot tell them apart. The pointer only ever has surface-local coordinates; <code>SetCapture</code>, <code>TryGetGlobalPosition</code> and <code>SetGlobalPosition</code> throw <code>PlatformNotSupportedException(GlobalPointer)</code>.</p>
+
+<p>Event delivery is not the public polling path. <code>Keyboard::GetState</code> and <code>Mouse::GetState</code> read snapshots owned by <code>WaylandKeyboard</code> and <code>WaylandMouse</code>; the services rebuild them inside their own callbacks and again when <code>Game::PollEvents</code> calls <code>Update()</code> at its end, after the batch has passed through <code>PlatformInputBridge</code>. There is no separate input-update step in <code>Game</code> at this snapshot. The event-versus-snapshot split, and the bridge, are traced in <a href="../input/events.html">Input internals</a> and <a href="../runtime/frame.html">One frame source trace</a>.</p>
+
+<p>Several requests are accepted by a compositor only in answer to recent input, and <code>RecordSerial</code> keeps the latest serial and its seat (from key, pointer, touch and tablet events). The recorded serial is used by xdg-activation, by clipboard and primary-selection ownership, by the window menu and by the built-in frame's interactive move and resize. Cursor changes are different: <code>wl_pointer.set_cursor</code> and <code>cursor-shape-v1</code> use each pointer's own <em>enter</em> serial. Focus, enter and leave are compositor decisions. If input vanishes after <code>Hide</code>/<code>Show</code>, the surface and its surface-to-window mapping are unchanged (only the role was recreated), so inspect keyboard focus, seat attachment and the configure path before changing the public input fa&ccedil;ade.</p>
+
+<p>When the connection dies (a protocol error, or the compositor went away), <code>PollEvents</code> writes the recorded error once to stderr and queues exactly one <code>QuitEvent</code>. It does not reconnect: every Wayland proxy, and so every window, died with the connection, and nothing could restore them. Later calls that need the connection throw <code>PlatformException</code> with the recorded reason, which names the interface, object id and protocol error code when the compositor raised one. This is a different failure class from a slow or missed frame.</p>
+
+<h2 id="graphics">EGL, Vulkan and shared-memory presenters</h2>
+
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandGraphicsServices.cpp"><code>WaylandGraphicsServices.cpp</code></a> implements three independent seams. <code>GraphicsDevice</code> in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/graphics/src/Xna/GraphicsDevice.cpp"><code>modules/graphics/src/Xna/GraphicsDevice.cpp</code></a> passes a renderer only the service its descriptor names: <code>GetGlContext()</code> for a family with <code>needsGlContext</code> (the five EasyGL identities and OPENGL4), <code>GetVulkanSurface()</code> for <code>needsVulkanSurface</code> (VULKAN).</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Service</th><th scope="col">Mechanism</th><th scope="col">Who owns what</th></tr></thead>
+<tbody>
+<tr><td><code>WaylandGlContext</code> (<code>IPlatformGlContext</code>)</td><td><code>libEGL.so.1</code> and <code>libwayland-egl.so.1</code> opened with <code>dlopen</code>; an EGL display from the platform's own <code>wl_display</code> (<code>EGL_PLATFORM_WAYLAND_KHR</code>/<code>_EXT</code>)</td><td>the platform owns contexts, <code>EGLSurface</code>s, <code>wl_egl_window</code>s and the EGL display</td></tr>
+<tr><td><code>WaylandVulkanSurface</code> (<code>IPlatformVulkanSurface</code>)</td><td>instance extensions <code>VK_KHR_surface</code> + <code>VK_KHR_wayland_surface</code>; <code>vkCreateWaylandSurfaceKHR</code> resolved through the caller's <code>vkGetInstanceProcAddr</code></td><td>the caller owns the <code>VkSurfaceKHR</code> and must destroy it before the window</td></tr>
+<tr><td><code>WaylandSurfacePresenter</code> (<code>IPlatformSurfacePresenter</code>)</td><td>a ring of at most three <code>XRGB8888</code> <code>wl_shm</code> buffers (memfd, sealed against shrinking; unlinked <code>shm_open</code> fallback)</td><td>the caller owns the presenter; the window must outlive it</td></tr>
+</tbody>
+</table></div>
+
+<p><strong>EGL.</strong> Availability is decided in the <code>WaylandGlContext</code> constructor by actually calling <code>eglInitialize</code> on this connection, because <code>openGlContext</code> is a promise: a machine where libEGL loads but no display initialises reports the capability false instead of accepting a GL window and failing at the context. <code>CreateContext</code> requires a window created with <code>WindowRenderIntent::OpenGl</code>; the window's EGL config is chosen by its first context (depth 24, stencil 8 by default, like the X11 visual) and later contexts must use the same API (OpenGL versus OpenGL ES) so any of them can be current on the window's one surface. The <code>wl_egl_window</code> and <code>EGLSurface</code> are created lazily from <code>GetPixelSize()</code>, presented opaque where <code>EGL_EXT_present_opaque</code> exists, and resized by a pixel-size listener that <code>WaylandWindow</code> calls on every configure or scale change, before the next frame is drawn. EGL's own swap interval is set to 0; vsync is CNA's: <code>SwapBuffers</code> waits for the previous frame's <code>wl_surface.frame</code> callback on a private event queue for at most 100&nbsp;ms, so an occluded or minimised window keeps running at about ten frames per second instead of hanging in <code>eglSwapBuffers</code>, and the application's own events are never dispatched from inside a swap. A failed config or context is a <code>PlatformException</code> naming the EGL error, a platform problem, not a stock-shader problem.</p>
+
+<p><strong>Vulkan.</strong> The platform links no Vulkan loader and needs no Vulkan header for the create-info struct, which it restates. <code>CreateSurface</code> throws when no loader is reachable, when the instance was created without <code>VK_KHR_wayland_surface</code>, or when the call fails, and it uses the same <code>wl_display</code> and <code>wl_surface</code> as every other seam. The platform does not track surfaces it created, so a renderer that destroys its <code>VkSurfaceKHR</code> after the window (or the platform) addresses a dead <code>wl_surface</code>.</p>
+
+<p><strong>Shared memory.</strong> <code>CreateSurfacePresenter</code> throws <code>PlatformNotSupportedException(SurfacePresentation)</code> when the compositor offers no <code>wl_shm</code> with <code>XRGB8888</code>, and <code>PlatformException</code> for a window this platform did not create (an adopted wrapper is resolved by id). <code>Present</code> validates the <code>SurfaceFrame</code>, fits it into the window's pixel size with the shared scaling code, clears letterbox bars to black, damages the whole buffer and, with vsync on, paces on the frame callback (100&nbsp;ms at most); a buffer of a size the window no longer has is retired and destroyed only after the compositor releases it. On Wayland no stock renderer reaches this presenter inside a <code>Game</code>: <code>GraphicsDevice</code> gives a CPU family a window and presenter only where <code>surfacePresentation</code> is true <em>and</em> <code>nativeWindowHandle</code> is false (the terminal), so SOFTWARE stays off-screen here, as the <a href="../../../docs/native-platforms.html#renderers">renderers-on-native-platforms table</a> says. The presenter is exercised by the backend's tests and by the validation harness's <code>presenter</code> scenario, and is available to code that calls <code>IPlatform::CreateSurfacePresenter</code> directly.</p>
+
+<p>Before a renderer resizes, establish whether the compositor changed logical bounds, output scale or pixel extent; <code>ApplyConfigure</code> and <code>UpdateScale</code> post the matching events and <code>GetPixelSize</code> is the value a renderer should consume. <code>Game::PollEvents</code> answers <code>Resized</code>, <code>PixelSizeChanged</code> and <code>DisplayScaleChanged</code> by refreshing <code>GameWindow</code>, updating the viewport and calling the renderer's <code>OnSurfaceInvalidated</code>. The native handle (<code>NativeWindowSystem::Wayland</code>, with <code>display</code> = <code>wl_display*</code> and <code>surface</code> = <code>wl_surface*</code>) is a borrowed description: a renderer may create an EGL or Vulkan surface from it but never owns the platform's proxies. Renderer-side details are on <a href="../graphics/easygl.html">EasyGL</a>, <a href="../graphics/opengl4.html">OpenGL4</a> and <a href="../graphics/vulkan.html">Vulkan</a>.</p>
+
+<h2 id="shutdown">Protocol destruction order and no-compositor mode</h2>
+
+<p><code>WaylandPlatform::~WaylandPlatform</code> runs in this order, and reversing any step leaves a proxy callback or release request addressing service state that no longer exists:</p>
+
+<ol>
+<li>Every window the application still holds is taken through <code>OnWindowDestroyed</code> and <code>WaylandWindow::Abandon</code>: its proxies are destroyed while the display exists and the wrapper stays behind inert (its <code>host_</code> is cleared, so its later destructor touches nothing). A window that outlives its platform is still a caller contract violation; abandonment limits the damage rather than legitimising that order.</li>
+<li>The session-bus screen-saver inhibition is dropped.</li>
+<li><code>connection_.reset()</code>. <code>~WaylandConnection</code> calls the platform's <code>OnDisconnecting</code> first, which destroys everything made from the connection while the services still exist: idle inhibitor, dialogs, the GL service (which terminates its EGL display while the <code>wl_display</code> is still connected, because EGL's Wayland platform destroys proxies of its own on it), the Vulkan service, data devices, text-input and tablet seat objects, the seats (handing keyboards, pointers and touch back to their services), the pointer's connection objects, outputs and the display service. Then the connection destroys its singletons in reverse bind order, destroys the registry, flushes the buffered destroy requests and disconnects.</li>
+<li>Only then are the dialog, input-device, text-input, tablet, touch, mouse and keyboard services reset, and finally the evdev controllers, whose node closure stops any rumble still playing.</li>
+</ol>
+
+<p>A window's own destructor mirrors this: <code>~WaylandWindow</code> first calls <code>OnWindowDestroyed</code>, which makes every service forget the window (the GL service destroys the <code>EGLSurface</code> and <code>wl_egl_window</code>, which must go before their <code>wl_surface</code>), and then <code>ReleaseNativeObjects</code> destroys the frame, the decoration, the <code>xdg_toplevel</code> and <code>xdg_surface</code> (role objects before the surface, or the compositor raises <code>defunct_role_object</code>), the fractional-scale and viewport objects, unmaps and destroys the <code>wl_surface</code> and flushes. A renderer's own Vulkan surface or EGL use must therefore end before its window, and the window before the platform; <a href="../runtime/shutdown.html">Ownership and shutdown</a> traces that order from the <code>Game</code> side.</p>
+
+<p>Every wait in the backend is bounded, so "the compositor never answered" is diagnosed instead of hanging:</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Wait</th><th scope="col">Bound</th><th scope="col">On expiry</th></tr></thead>
+<tbody>
+<tr><td>startup roundtrips (two, plus one after services are attached)</td><td>5 s each</td><td>connection refused, reason recorded</td></tr>
+<tr><td>first configure in <code>Show</code></td><td>5 s</td><td>role destroyed, <code>PlatformException</code></td></tr>
+<tr><td><code>Sync</code></td><td>1 s roundtrip + 250&nbsp;ms for an expected configure</td><td>returns</td></tr>
+<tr><td>frame callback before a swap or present</td><td>100&nbsp;ms</td><td>frame proceeds; the pending callback is reused, not duplicated</td></tr>
+<tr><td>a free <code>wl_shm</code> buffer when all three are held</td><td>100&nbsp;ms</td><td>that frame is dropped</td></tr>
+</tbody>
+</table></div>
+
+<p>Timing is POSIX, not the compositor's: <code>GetPerformanceCounter</code> is <code>Posix::MonotonicNanoseconds</code> at a fixed 1,000,000,000&nbsp;Hz, <code>GetTicksMilliseconds</code> counts from a <code>steady_clock</code> epoch taken at construction, and <code>Delay</code> is <code>Posix::SleepMilliseconds</code> (helpers in <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Posix"><code>src/Posix</code></a>). Frame callbacks decide when a submitted buffer is shown, but <code>Game</code>'s fixed or variable timestep stays in the runtime. As for host-process state, the backend installs no signal handler, never calls <code>setlocale</code> and sets no environment variable; the one environment change it makes is removing <code>XDG_ACTIVATION_TOKEN</code> once it has spent it. It never starts a compositor or another display server; only the test launcher does that (see below).</p>
+
+<div class="callout callout--note"><span class="callout-icon">&#8505;</span><p>Maintainer note on EGL and process exit: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/CurrentPlatform.cpp"><code>modules/platform/src/CurrentPlatform.cpp</code></a> deliberately never destroys the lazily created default platform, so a process that draws through a standalone <code>GraphicsDevice</code> exits without <code>eglTerminate</code>. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/platform/lsan_x11_mesa.supp"><code>tools/platform/lsan_x11_mesa.supp</code></a> records, with the measurement that justified it, a Mesa radeonsi allocation that only <code>eglTerminate</code> frees, reproduced on the Wayland and surfaceless EGL platforms without CNA code. A LeakSanitizer report of that shape under Wayland EGL is that recorded driver behaviour, not necessarily a CNA leak.</p></div>
+
+<h2 id="validation">How to debug and what proves behavior</h2>
+
+<p>The backend's tests are compiled only when <code>CNA_PLATFORM=WAYLAND</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>cmake/UnitTests.cmake</code></a> filters <code>Wayland*.cpp</code> out of every other selection) and are split into CTest entries by what each needs. All live entries run through <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/platform/wayland_test_server.sh"><code>tools/platform/wayland_test_server.sh</code></a>, which starts a <em>private</em> compositor in a private runtime directory and exits 77, CTest's skip code, when that compositor is not installed or does not come up. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/WaylandTestEnvironment.cpp"><code>WaylandTestEnvironment.cpp</code></a> points <code>WAYLAND_DISPLAY</code> at nothing (unless the launcher names its private compositor), removes <code>WAYLAND_SOCKET</code> and points the session bus at a path that does not exist before any test runs, so no test can reach the desktop it is started from.</p>
+
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">CTest entry</th><th scope="col">Runs</th><th scope="col">Needs</th></tr></thead>
+<tbody>
+<tr><td><code>CnaWaylandMappingTests</code></td><td>pure mapping, scaling, configure-size, text, MIME and shm-file suites, <code>WaylandIsSdlFree</code> (source scan), <code>WaylandTestEnvironment</code>, plus the shared XKB, freedesktop and Linux evdev suites</td><td>nothing</td></tr>
+<tr><td><code>CnaWaylandProtocolTests</code></td><td><code>WaylandProtocol.*</code>: 78 cases against the in-process <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/WaylandTestCompositor.hpp"><code>WaylandTestCompositor</code></a>, reached through <code>WAYLAND_SOCKET</code>, which posts the protocol errors a strict compositor would and can withdraw globals or change output scale mid-test</td><td><code>wayland-server</code> at build time (linked into the test binary only)</td></tr>
+<tr><td><code>CnaWaylandPortalTests</code></td><td><code>WaylandPortal.*</code>: desktop portal with the xdg-foreign parent window</td><td>libdbus and <code>dbus-daemon</code>; skips otherwise</td></tr>
+<tr><td><code>CnaWaylandWestonTests</code>, <code>CnaWaylandWestonGpuTests</code>, <code>CnaWaylandWestonScaledTests</code></td><td><code>WaylandLive.*</code> (the first two also the <code>PlatformConformance</code>/<code>PlatformWindowConformance</code> instances for Wayland) on headless Weston: software renderer, Weston's GL renderer, output scale 2</td><td>Weston</td></tr>
+<tr><td><code>CnaWaylandMutterTests</code>, <code>CnaWaylandMutterCzechTests</code></td><td><code>WaylandMutter.*</code> (plus live and conformance in the first) on headless gnome-shell with input from its RemoteDesktop API on a private bus; once with a Czech keymap</td><td>gnome-shell, <code>dbus-daemon</code></td></tr>
+<tr><td><code>CnaWaylandIbusTests</code></td><td><code>WaylandIme.*</code>: a real input method (ibus, Korean engine) composing into a CNA window</td><td>gnome-shell, ibus, the hangul engine</td></tr>
+<tr><td><code>CnaWaylandLinkClosure</code></td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/WaylandLinkClosure.cmake"><code>WaylandLinkClosure.cmake</code></a>: no executable NEEDs SDL, X11, xcb or GLX; the platform-only harness's whole closure is libwayland-client, xkbcommon and the C/C++ runtime; run-time-loaded libraries are not NEEDED</td><td><code>readelf</code> and the validation harness target</td></tr>
+<tr><td><code>CnaWaylandPlatformSelection</code></td><td><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Tests/WaylandPlatformSelection.cmake"><code>WaylandPlatformSelection.cmake</code></a>: the selection is offered where buildable, refused naming the package where not, default unchanged</td><td>registered in every build, whatever <code>CNA_PLATFORM</code> is</td></tr>
+</tbody>
+</table></div>
+
+<p>The mapping and protocol entries prove translation and protocol-state handling; they cannot prove configure timing, EGL, Vulkan or presentation on a real compositor. A live entry that exits 77 for a missing compositor, or a case that skips for a missing global, is not evidence. For a real desktop, <a class="src-link" href="https://github.com/libcna/cna/tree/009d40f5dd085c4e674d3479675fac84b12b3e0a/tools/platform/wayland_desktop_validation"><code>cna_wayland_desktop_validation</code></a> (built with tests when the platform is Wayland, wired in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/Harnesses.cmake"><code>cmake/Harnesses.cmake</code></a>) drives the backend against whatever <code>WAYLAND_DISPLAY</code> names and prints one PASS/FAIL/SKIP line per check; its scenarios are listed in the <a href="../../../docs/native-platforms.html#validation">validation harness table</a>. No GitHub workflow selects <code>CNA_PLATFORM=WAYLAND</code>: <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/.github/workflows/platform-ci.yml"><code>.github/workflows/platform-ci.yml</code></a> installs the Wayland development packages in one job but unsets <code>WAYLAND_DISPLAY</code> and runs everything under Xvfb. None of these suites was executed for this page. For a renderer integration change, run an applicable EasyGL, OPENGL4 or VULKAN smoke test under Wayland as well; the <a href="../../takeover/validation.html">what-to-test-after-changing-X</a> page and the <a href="../../reference/test-targets.html">test target index</a> list the neighbouring suites.</p>
+
+<p>Typical diagnosis, in the order that usually finds the cause fastest:</p>
+
+<ul>
+<li><strong>No window, or <code>AcquireSubsystem(Video)</code> throws:</strong> read <code>GetConnectionError()</code>; then the registry globals (a compositor without <code>xdg_wm_base</code> is refused) and the 5-second first-configure timeout.</li>
+<li><strong>GL window refused at creation:</strong> <code>openGlContext</code> false means EGL did not load or did not initialise a display on this connection (or the build found no EGL headers). <code>CreateWindow</code>'s refusal only names the capability; <code>WaylandGlContext::CreateContext</code> carries the EGL loader's own reason, and <code>cna_wayland_desktop_validation info</code> prints the capability set.</li>
+<li><strong>Wrong size:</strong> compare the configure's suggested size and states, <code>supersededGeometries_</code>, <code>FrameHeight()</code>, the <code>ScaleDecision</code> and the <code>Resized</code>/<code>PixelSizeChanged</code> pair actually posted.</li>
+<li><strong>Missing input:</strong> check the seat and its capabilities were announced, the surface-to-window map, keyboard focus (<code>keyboardFocusCount_</code>, or <code>activated</code> without a keyboard) and whether text input is active for that window.</li>
+<li><strong>Black or frozen frame:</strong> establish which of EGL, Vulkan or <code>wl_shm</code> was selected, whether the window was configured when the first buffer was attached, and whether frames are being paced by a frame callback that never comes (the 100&nbsp;ms bound keeps such a window at about 10 fps).</li>
+<li><strong>Game quits unexpectedly:</strong> look for the single <code>[CNA][Wayland]</code> stderr line; a protocol error names the interface, object and code.</li>
+<li><strong>Crash at shutdown:</strong> verify the renderer's Vulkan surface and GL contexts were destroyed before the window, and the window before the platform, so nothing references a proxy after <code>OnDisconnecting</code>.</li>
+</ul>
+
+<p>A maintainer adding a capability should follow the recipe in <a href="../../handbook/modify-a-platform-backend.html">Modify a platform backend</a>: bind the global in <code>WaylandConnection::Bind</code> behind its <code>CNA_WAYLAND_HAVE_*</code> definition, derive the flag in <code>ComputeCapabilities</code> so that the accessor is non-null exactly when the flag is true, cover the state machine in <code>WaylandProtocolTests</code> against the test compositor, and add a live case. The wider test layout is on <a href="../../testing/architecture.html">Test architecture</a>.</p>
+
+<h2 id="reading">Read in this order</h2>
+
+<ol class="source-list">
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/PlatformSelection.cmake"><code>PlatformSelection.cmake</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/PlatformWayland.cmake"><code>PlatformWayland.cmake</code></a>: how the selection is offered or refused, the mandatory and optional inputs and protocol generation.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandPlatform.hpp"><code>WaylandPlatform.hpp</code></a>: the capability boundary, the owned services and the "what else is left alone" contract.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandConnection.hpp"><code>WaylandConnection.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandConnection.cpp"><code>WaylandConnection.cpp</code></a>: registry, version negotiation, bounded dispatch and the error state.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandPlatform.cpp"><code>WaylandPlatform.cpp</code></a>: constructor order, <code>ComputeCapabilities</code>, <code>PollEvents</code>, <code>OnDisconnecting</code> and the destructor.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandWindow.hpp"><code>WaylandWindow.hpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandWindow.cpp"><code>WaylandWindow.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandScaling.hpp"><code>WaylandScaling.hpp</code></a>: role, configure and acknowledge, size resolution and scale decisions.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandKeyboard.cpp"><code>WaylandKeyboard.cpp</code></a>, <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandMouse.cpp"><code>WaylandMouse.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandTextInput.hpp"><code>WaylandTextInput.hpp</code></a>: repeats, focus, snapshots, serials and composition.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandGraphicsServices.hpp"><code>WaylandGraphicsServices.hpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/src/Wayland/WaylandGraphicsServices.cpp"><code>WaylandGraphicsServices.cpp</code></a>: EGL, Vulkan and <code>wl_shm</code> ownership and pacing.</li>
+<li><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/WaylandProtocolTests.cpp"><code>WaylandProtocolTests.cpp</code></a> and <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/platform/tests/CNA/Platform/WaylandLiveTests.cpp"><code>WaylandLiveTests.cpp</code></a>: which behaviour has test evidence against the test compositor and against real compositors.</li>
+</ol>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subsystem is explained at four altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../../docs/native-platforms.html#wayland">Native Wayland (platforms guide)</a> &middot; <a href="../../../docs/platforms.html#capabilities">Capability matrix</a> &middot; <a href="../../../docs/tutorials/136-native-wayland-build.html">Tutorial 136: build native Wayland</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../architecture/platform.html">Platform architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="index.html">Platform backends</a> &middot; <a href="x11.html">X11 (sibling native backend)</a> &middot; <a href="sdl3.html">SDL3 (default backend)</a> &middot; <a href="../input/events.html">Input internals</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../handbook/modify-a-platform-backend.html">Modify a platform backend</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../testing/architecture.html">Test architecture</a> &middot; <a href="../../takeover/validation.html">What to test after changing X</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../reference/test-targets.html">Test target index</a></dd></div></dl>
+</section>
+<!--dev:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="x11.html" rel="prev"><span>Previous</span>X11 platform internals</a><a class="dev-pager-next" href="win32.html" rel="next"><span>Next</span>Win32 platform internals</a></nav>
+<!--/dev:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../../about.html">About</a></li><li><a href="../../../features.html">Features</a></li><li><a href="../../../architecture.html">Architecture</a></li><li><a href="../../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../../docs/getting-started.html">Getting Started</a></li><li><a href="../../../docs/building.html">Building</a></li><li><a href="../../../docs/platforms.html">Platforms</a></li><li><a href="../../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../../demos.html">Demos</a></li><li><a href="../../../videos.html">Videos</a></li><li><a href="../../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../../js/main.js"></script>
+<script src="../../../js/prism/prism.min.js" defer></script>
+<script src="../../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../../js/prism/prism-json.min.js" defer></script>
+<script src="../../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
