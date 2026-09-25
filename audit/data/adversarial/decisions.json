@@ -1343,6 +1343,74 @@
    ],
    "evidence": "<p>Read at 009d40f5; nothing executed. Reported by the HM2 issue reviewer as a possible missing finding next to CNA-BUG-176 and re-verified by the orchestrator. Distinct from CNA-BUG-135 (the CNAEXT global-pointer trio, where the interface documents the throw) and CNA-BUG-176 (<code>Game::IsMouseVisible</code>).</p>",
    "origin": "new finding at the independent adversarial audit (reported by the HM2 issue reviewer, re-verified by the orchestrator)"
+  },
+  {
+   "cand_ids": [],
+   "id": "NEW-AUDIT-20",
+   "class": "bug",
+   "subsystem": "Graphics & renderers",
+   "status": "open",
+   "severity": "medium",
+   "confidence": "verified-by-reading",
+   "tests_present": true,
+   "title": "Vulkan passes XNA's normalised RasterizerState.DepthBias to vkCmdSetDepthBias unscaled, so a realistic bias has no effect",
+   "summary": "VulkanRenderer hands DepthBias to vkCmdSetDepthBias raw, but that constant factor counts minimum depth steps; EasyGL, OpenGL4, SDL_GPU and Direct3D 11/12 scale XNA's normalised value by the depth format, so -0.0001 offsets nothing on Vulkan.",
+   "public_contract": "Microsoft::Xna::Framework::Graphics::RasterizerState::DepthBias and SlopeScaleDepthBias on the VULKAN renderer (VulkanRenderer::ApplyRasterizerState)",
+   "expected": "<p>XNA 4.0 is Direct3D 9, where <code>DepthBias</code> is a normalised depth value added to the depth. CNA's renderer contract says so indirectly: {{src:modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp|IGraphicsRenderer.hpp}} documents in <code>IRenderTargetRenderer::DepthBufferBitsEXT</code> that an API whose bias is a multiple of the smallest resolvable depth step, naming Vulkan's <code>depthBiasConstantFactor</code>, needs the depth width to convert. FNA3D multiplies the XNA value by 65,535 (16-bit depth) or 16,777,215 (24-bit), and CNA's EasyGL, OpenGL4, SDL_GPU and Direct3D 11/12 renderers convert it as well, so a sample that lifts a flat shadow with <code>DepthBias = -0.0001f</code> lifts it on each of them.</p>",
+   "actual": "<p>{{src:modules/renderers/vulkan/src/VulkanRenderer.cpp|VulkanRenderer::ApplyRasterizerState}} stores <code>DepthBias</code> and <code>SlopeScaleDepthBias</code> as given, and the draw replay calls <code>vkCmdSetDepthBias(cb, draw.depthBias, 0.0f, draw.slopeScaleDepthBias)</code> with no depth-format scale; no Vulkan render-target class overrides <code>DepthBufferBitsEXT</code>. A constant factor of -0.0001 is about 1e-4 of one depth step, that is, no bias. {{src:modules/renderers/vulkan/examples/vulkan_depth_bias_test.cpp|vulkan_depth_bias_test.cpp}} uses -1e6 and -2e3 on purpose (&ldquo;bias magnitudes are deliberately large&rdquo;) and so cannot see the defect, and CNA's records close the failing <code>Vulkan_DepthBias</code> case as a test defect (VULKAN-091) without examining the product behaviour. The source comment that says the mapping matches FNA omits the scale. {{src:modules/renderers/opengl4/src/OpenGL4Renderer.cpp|OpenGL4Renderer::ApplyCurrentDepthBias}} carries the rule Vulkan lacks: passing the XNA value through raw &ldquo;is indistinguishable from no bias at all&rdquo;.</p>",
+   "sources": [
+    {
+     "path": "modules/renderers/vulkan/src/VulkanRenderer.cpp",
+     "note": "ApplyRasterizerState stores the bias raw; the draw replay calls vkCmdSetDepthBias with it"
+    },
+    {
+     "path": "modules/renderers/vulkan/examples/vulkan_depth_bias_test.cpp",
+     "note": "deliberately huge magnitudes, so it cannot see the missing scale"
+    },
+    {
+     "path": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp",
+     "note": "IRenderTargetRenderer::DepthBufferBitsEXT documents the conversion that Vulkan's depthBiasConstantFactor needs"
+    },
+    {
+     "path": "modules/renderers/opengl4/src/OpenGL4Renderer.cpp",
+     "note": "ApplyCurrentDepthBias: the FNA3D 16/24-bit scale table"
+    },
+    {
+     "path": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp",
+     "note": "XnaToSdlDepthBiasScale"
+    },
+    {
+     "path": "docs/easygl_bugs.md",
+     "note": "CNA's own record (2026-09-08): Vulkan and PortableGL still carry the unscaled premise"
+    }
+   ],
+   "evidence": "<p>Read at 009d40f5; nothing was built or executed. Reported as a <code>RESTORE-ISSUE</code> by the C05 conservation reviewer (an earlier absorption record had closed the extreme-bias Vulkan failure as a test defect) and re-verified by the orchestrator against the Vulkan and OpenGL4 sources, CNA's <code>docs/easygl_bugs.md</code> and the Direct3D 11/12 mapping (<code>D3DCommon</code>, which scales it at this snapshot although CNA's 2026-09-08 note still lists DirectX 11 as unscaled). The same note lists PortableGL, whose <code>glPolygonOffset(slopeScaleDepthBias, depthBias)</code> call is raw in the source too; PortableGL's offset units were not analysed here.</p>",
+   "reproduction": null,
+   "tests_current": "<p><code>Vulkan_DepthBias</code> uses deliberately huge magnitudes and still fails on CNA's own record; no test uses a realistic normalised bias on Vulkan, whereas EasyGL has <code>EasyGLDepthBias.IsScaledByTheDepthBuffersOwnResolution</code>.</p>",
+   "regression_test": "<p>Draw a quad slightly in front of a coplanar one with <code>DepthBias = -0.0001f</code> on VULKAN and expect it to win the depth test, as on EasyGL; or unit-test the conversion the way EasyGL's <code>EasyGLDepthBias</code> tests do.</p>",
+   "blast_radius": "<p>Content on VULKAN that relies on <code>DepthBias</code> for decals, planar shadows or z-fight avoidance; any value inside XNA's normalised range has effectively no effect there, while the same content works on the renderers that scale.</p>",
+   "workaround": "<p>Prefer offsetting the geometry, or, on VULKAN only, a bias several orders of magnitude larger (the test uses -1e6); both are renderer-specific hacks.</p>",
+   "related": {
+    "guide": [
+     [
+      "docs/xna-compatibility.html",
+      "XNA compatibility"
+     ]
+    ],
+    "deep": [
+     [
+      "deep-dives/renderers/vulkan-deferred-state-and-descriptors.html",
+      "Vulkan: deferred state and descriptors"
+     ]
+    ],
+    "internals": [
+     [
+      "development/internals/graphics/vulkan.html",
+      "Vulkan internals"
+     ]
+    ]
+   },
+   "origin": "restored at the independent adversarial audit (RESTORE-ISSUE from the C05 conservation review of ch23; re-verified by the orchestrator)"
   }
  ]
 }
