@@ -36,6 +36,33 @@
    "action": "accept",
    "fold_into": "CNA-BUG-215",
    "note": "Same root defect as CNA-BUG-215: the IsLatched() Doxygen says the selection latches when the first GraphicsDevice begins construction, but GraphicsDevice::resolveRenderer latches only after a successful resolution (RTR-P5-18). Identical header comment and identical Latch call site; the entries were cross-package duplicates (CNA-BUG-219's own origin note says so) that the Phase-3 merge map missed."
+  },
+  "CNA-GAP-050": {
+   "action": "accept",
+   "class": "bug",
+   "severity": "low",
+   "note": "Reclassified functional gap -> low bug: CNA's own header documents SendData as reaching every gamer including the sender with no session-type carve-out, and known_gaps records nothing missing for Local, so the deliberate silent drop of data on a Local session deviates from a documented contract (and from XNA, whose SendData/SendDataNow have no session-type check)."
+  },
+  "CNA-BUG-163": {
+   "action": "override",
+   "note": "Evidence basis kept at 'strong': the reviewer's SIGPIPE demonstration was a model of POSIX behaviour, not CNA code, so it is not a reproduction of this entry.",
+   "set": {
+    "confidence": "strong"
+   }
+  },
+  "CNA-BUG-084": {
+   "action": "accept",
+   "note": "Retired as NOT A BUG after the orchestrator re-read the decompiled XNA Game.Tick and GameClock: the entry's premise (XNA yields no catch-up updates after ResetElapsedTime in fixed-step mode) is false.",
+   "evidence": "XNA 4.0's fixed-step Tick applies forceElapsedTimeToZero to the measured elapsed time, but the flagged tick then finds num == 0 whole steps in the accumulator and returns before clock.AdvanceFrameTime(); GameClock.lastRealTime is therefore not advanced and the load's elapsed time reappears on the next tick, where the 500 ms clamp applies. XNA defers the catch-up burst by one tick (about 30 updates) instead of removing it; CNA runs it immediately (up to 29). The only residue is that XNA's ResetElapsedTime also clears the running-slowly counters, too small to stand as a defect. Deep Dive game-time-and-timestep.html#reset-elapsed-time corrected accordingly."
+  },
+  "CNA-BUG-089": {
+   "action": "accept",
+   "note": "Retired as NOT A BUG after the orchestrator read the decompiled XNA GraphicsDeviceManager.Dispose(bool).",
+   "evidence": "XNA 4.0's GraphicsDeviceManager.Dispose(bool) has no re-entrancy guard at all: it removes the service, disposes the device and raises Disposed last, so a Disposed handler that disposes the manager again recurses in XNA exactly as described. CNA's guard (set after the event) is at least as safe for sequential repeated Dispose calls, which CNA's regression test covers; the header states no re-entrancy contract. A robustness nit, not a contract violation."
+  },
+  "CNA-BUG-079": {
+   "action": "accept",
+   "note": "Reclassified low bug -> functional gap after the orchestrator read the decompiled XNA Game.Tick: XNA has the identical 500 ms MaximumElapsedTime clamp and, for a fixed-step target above it, its accumulator is never assigned (the num == 0 early return precedes the assignment), so XNA never calls Update either. An inherited limitation of an accepted-but-unsupported configuration, not a divergence."
   }
  },
  "dismissals": {
@@ -560,6 +587,52 @@
     ]
    },
    "origin": "new finding at the independent adversarial audit (reported by the R01 graphics reviewer, verified against plans/plan_dx9.md by the orchestrator)"
+  },
+  {
+   "cand_ids": [],
+   "id": "NEW-AUDIT-09",
+   "class": "bug",
+   "subsystem": "Graphics & renderers",
+   "status": "open",
+   "severity": "low",
+   "confidence": "verified-by-reading",
+   "tests_present": true,
+   "title": "PORTABLEGL depth clears force glDepthMask(GL_TRUE) and never restore it, although their own comment says both masks are restored as EasyGL does",
+   "summary": "ClearColorAndDepth, ClearDepth, ClearDepthAndStencil and ClearColorDepthAndStencil call glDepthMask(GL_TRUE) and never put the depth write mask back; only the colour mask is restored.",
+   "public_contract": "GraphicsDevice::Clear with a depth option on the PORTABLEGL renderer (PortableGLRenderer::ClearColorAndDepth, ClearDepth, ClearDepthAndStencil, ClearColorDepthAndStencil)",
+   "expected": "<p>The comment in <code>ClearColorAndDepth</code> states the rule: XNA's <code>Clear</code> ignores <code>DepthBufferWriteEnable</code> and <code>ColorWriteChannels</code>, so both masks are &ldquo;neutralized here and restored afterwards, exactly as EasyGL does&rdquo;. EasyGL implements the restore with <code>RestoreWriteMasksAfterClear</code> (REMED-GFX-237: &ldquo;restores the write masks a clear had to force open&rdquo;), so a clear never changes what a later draw's depth/stencil state says.</p>",
+   "actual": "<p>In {{src:modules/renderers/portablegl/src/PortableGLRenderer.cpp|PortableGLRenderer.cpp}} the four clears that touch depth call <code>glDepthMask(GL_TRUE)</code> before <code>glClear</code>. Only the colour mask is put back afterwards (from <code>colorWriteChannels</code>); the depth write mask is left <code>GL_TRUE</code> until <code>ApplyDepthStencilState</code> next runs <code>glDepthMask(depthWriteEnable ? GL_TRUE : GL_FALSE)</code>. A later draw through a state with <code>DepthBufferWriteEnable</code> false can therefore write depth after such a clear, if the state has not been re-applied in between.</p>",
+   "sources": [
+    {
+     "path": "modules/renderers/portablegl/src/PortableGLRenderer.cpp",
+     "note": "the four depth-touching clears force glDepthMask(GL_TRUE); ApplyDepthStencilState sets it from the state"
+    },
+    {
+     "path": "modules/renderers/easygl/include/CNA/Internal/Renderers/EasyGL/EasyGLRenderer.hpp",
+     "note": "RestoreWriteMasksAfterClear (REMED-GFX-237), the rule the PortableGL comment cites"
+    }
+   ],
+   "evidence": "<p>Read at 009d40f5; nothing was built or executed. Whether a later draw is actually affected depends on when the depth/stencil state is next applied, which was not traced through <code>GraphicsDevice</code>. Reported as an unpublished observation by the independent dismissal review (D1) and re-verified by the orchestrator against the source.</p>",
+   "reproduction": null,
+   "tests_current": "<p>The PORTABLEGL examples exercise clears and depth state separately (<code>portablegl_blend_test.cpp</code> covers the colour mask through Clear, <code>portablegl_raster_state_test.cpp</code> depth state), but none clears depth and then draws through a state with <code>DepthBufferWriteEnable</code> false.</p>",
+   "regression_test": "<p>Clear depth, then draw a quad through a <code>DepthStencilState</code> with <code>DepthBufferWriteEnable</code> false and expect the depth buffer unchanged. The fix is to restore the depth mask after each of the four clears, as EasyGL does.</p>",
+   "blast_radius": "<p>PORTABLEGL only (a CPU rasteriser renderer); games that clear depth and rely on read-only depth for a following pass.</p>",
+   "workaround": "<p>Re-apply the depth/stencil state after a clear that touches depth.</p>",
+   "related": {
+    "internals": [
+     [
+      "development/internals/graphics/backends.html",
+      "Renderer backends internals"
+     ]
+    ],
+    "guide": [
+     [
+      "docs/graphics-state.html#depthstencilstate",
+      "Graphics state: DepthStencilState"
+     ]
+    ]
+   },
+   "origin": "new finding at the independent adversarial audit (observed by the D1 dismissal reviewer, re-verified by the orchestrator)"
   }
  ]
 }

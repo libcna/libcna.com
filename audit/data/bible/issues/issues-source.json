@@ -1015,7 +1015,7 @@
      "note": "the C ABI tangent routes call ComputeTangent and ComputeTangents"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; nothing was built or executed for this entry. Both thresholds and formulas are in the function body. The XNA algorithm was read from its IL; an earlier reading that treated the out-tangent test as the correct one compared against FNA only, and against XNA both branches deviate. Whether ordinary inputs differ in the last bit was not measured.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; nothing was built or executed for this entry. Both thresholds and formulas are in the function body. The XNA algorithm was read from its IL; an earlier reading that treated the out-tangent test as the correct one compared against FNA only, and against XNA both branches deviate. The C ABI curve smoke test does run a Smooth out tangent (compute_tangents_in_out with Flat in and Smooth out over keys at 0, 1, 2 with values 0, 2, 4 expects 2.0), but that input has evenly spaced keys on which CNA and XNA agree, so it cannot tell the rules apart; the earlier statement that it exercises Linear tangents only is wrong. Whether ordinary inputs differ in the last bit was not measured.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; nothing was built or executed for this entry. Both thresholds and formulas are in the function body. The XNA algorithm was read from its IL; an earlier reading that treated the out-tangent test as the correct one compared against FNA only, and against XNA both branches deviate. Whether ordinary inputs differ in the last bit was not measured.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; nothing was built or executed for this entry. Both thresholds and formulas are in the function body. The XNA algorithm was read from its IL; an earlier reading that treated the out-tangent test as the correct one compared against FNA only, and against XNA both branches deviate. The C ABI curve smoke test does run a Smooth out tangent (<code>compute_tangents_in_out</code> with Flat in and Smooth out over keys at 0, 1, 2 with values 0, 2, 4 expects 2.0), but that input has evenly spaced keys on which CNA and XNA agree, so it cannot tell the rules apart; the earlier statement that it exercises Linear tangents only is wrong. Whether ordinary inputs differ in the last bit was not measured.</p>",
    "reproduction": "<p>Illustrative; not compiled or run for this entry.</p><pre><code class=\"language-cpp\">Curve c;\nc.getKeysProperty().Add(CurveKey(0.0f, 0.0f));\nc.getKeysProperty().Add(CurveKey(1.0f, 0.0f));\nc.getKeysProperty().Add(CurveKey(2.0f, 1.0e-8f));   // neighbour values differ by less than FLT_EPSILON\nc.ComputeTangent(1, CurveTangent::Smooth);\n// XNA: TangentIn == TangentOut == 0     TARGET code: both about 5e-9</code></pre>",
    "tests_current": "<p><code>CurveTest.ComputeTangentSmoothMiddleKey</code> in {{src:modules/math/tests/Microsoft/Xna/Framework/CurveTests.cpp|CurveTests.cpp}} uses three keys with the value 0, so every formula gives 0 and the two thresholds cannot be told apart; the other tangent tests use Flat and Linear. The C ABI curve smoke test exercises Linear tangents only. No XNA oracle covers Curve.</p>",
    "regression_test": "<p>Smooth tangents for unequally spaced keys with unequal values (for example positions 0, 1, 3 and values 0, 1, 5, expecting 5/3 and 10/3), for neighbour values closer than FLT_EPSILON (expecting 0 for both), and for a neighbour span below 2^-24; ideally the expected values come from running the genuine XNA runtime through CNA's existing framework-oracle tooling.</p>",
@@ -1579,14 +1579,14 @@
    "id": "CNA-BUG-050",
    "class": "bug",
    "title": "Guide message-box and keyboard-input results cannot be waited on: GamerServicesDispatcher::Update pumps nothing and their AsyncWaitHandle is signalled before completion",
-   "summary": "The dispatcher still advances nothing and UpdateAsync always returns true, and the Guide results that stay pending expose an already-signalled wait handle, so a dispatcher pump loop spins forever and WaitOne returns before End can succeed.",
+   "summary": "The dispatcher's Update advances nothing and UpdateAsync only reports whether Initialize has run, and the Guide results that stay pending expose an already-signalled wait handle, so a pump loop on a pending Guide result spins forever and WaitOne returns before End can succeed.",
    "subsystem": "Networking & gamer services",
    "status": "narrowed",
    "severity": "low",
    "confidence": "verified-by-reading",
    "public_contract": "GamerServicesDispatcher::Update(), GamerServicesDispatcher::UpdateAsync(); getAsyncWaitHandleProperty() and getIsCompletedProperty() of the IAsyncResult returned by Guide::BeginShowMessageBox and Guide::BeginShowKeyboardInput",
    "expected": "<p>The <code>IAsyncResult</code> contract: <code>AsyncWaitHandle</code> is signalled when the operation completes, so waiting on it and then calling <code>End*</code> yields the result. XNA's <code>GamerServicesDispatcher.Update</code> advances pending gamer-services work, and the synchronous-wrapper pattern CNA inherited from FNA (<code>while (!result-&gt;IsCompleted) UpdateAsync();</code>) relies on something advancing it.</p>",
-   "actual": "<p>{{src:modules/gamer-services/src/Xna/GamerServicesDispatcher.cpp|GamerServicesDispatcher.cpp}}: <code>Update()</code> is empty and <code>UpdateAsync()</code> returns <code>isInitialized_</code>, true forever after <code>Initialize</code>. The hang the original report described (network sessions and achievements) is fixed, because those actions now complete at construction (see the evidence). What survives are the two Guide families, the only <code>Begin*</code> results in the namespace that are still pending when <code>Begin</code> returns:</p><ul><li>a message box completes only when the game's own <code>Draw</code> calls <code>RenderPendingMessageBoxEXT</code> and a mouse click lands on a button (or through <code>SimulateMessageBoxClickEXT</code>); a keyboard request completes when Enter arrives through <code>TextInputEXT</code> from the engine's event pump, or is cancelled through the render hook;</li><li>neither is advanced by <code>Update</code>, <code>UpdateAsync</code> or <code>GamerServicesComponent</code>, so <code>while (!r-&gt;getIsCompletedProperty()) GamerServicesDispatcher::UpdateAsync();</code> on the game thread spins forever: the frame that would draw the box or pump the events never comes;</li><li>{{src:modules/gamer-services/src/Xna/Guide.cpp|Guide.cpp}}'s <code>GuideAction</code> constructs its <code>EventWaitHandle</code> signalled (<code>asyncWaitHandle_(true, ManualReset)</code>) and nothing ever resets or sets it, so <code>WaitOne()</code> returns at once while <code>IsCompleted</code> is false, and <code>EndShowMessageBox</code>/<code>EndShowKeyboardInput</code> then throw <code>InvalidOperationException</code> (\"has not been answered yet\").</li></ul>",
+   "actual": "<ul><li>{{src:modules/gamer-services/src/Xna/GamerServicesDispatcher.cpp|GamerServicesDispatcher.cpp}}: <code>Update()</code> is empty and <code>UpdateAsync()</code> returns <code>isInitialized_</code>, false before Initialize and true forever after it. The hang the original report described (network sessions and achievements) is fixed, because those actions now complete at construction (see the evidence). What survives are the two Guide families, the only Begin* results in the namespace that are still pending when Begin returns:</li><li>a message box completes only when the game's own Draw calls <code>RenderPendingMessageBoxEXT</code> and a mouse click lands on a button (or through <code>SimulateMessageBoxClickEXT</code>); a keyboard request completes when Enter arrives through <code>TextInputEXT</code> from the engine's event pump, or is cancelled through the render hook;</li><li>neither is advanced by Update, <code>UpdateAsync</code> or <code>GamerServicesComponent</code>, so while (!r-&gt;<code>getIsCompletedProperty()</code>) <code>GamerServicesDispatcher::UpdateAsync()</code>; on the game thread spins forever: the frame that would draw the box or pump the events never comes;</li><li>{{src:modules/gamer-services/src/Xna/Guide.cpp|Guide.cpp}}'s <code>GuideAction</code> constructs its <code>EventWaitHandle</code> signalled (<code>asyncWaitHandle_(true, ManualReset)</code>) and nothing ever resets or sets it, so <code>WaitOne()</code> returns at once while <code>IsCompleted</code> is false, and <code>EndShowMessageBox</code> then throws <code>InvalidOperationException</code> (\"The message box has not been answered yet ...\") and <code>EndShowKeyboardInput</code> throws <code>InvalidOperationException</code> (\"The keyboard input has not been confirmed yet ...\").</li></ul>",
    "sources": [
     {
      "path": "modules/gamer-services/src/Xna/GamerServicesDispatcher.cpp",
@@ -1652,7 +1652,8 @@
     ]
    },
    "origin": "Bible ledger CNA-BUG-050 (the network and achievement hang is fixed; the no-op dispatcher survives and still cannot complete the pending Guide results); the pre-signalled Guide wait handle is a new finding at TARGET review, folded in because it is the other way a Guide result is awaited",
-   "pkg": "B8"
+   "pkg": "B8",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -2324,7 +2325,7 @@
      "note": "length and distance tests use a tolerance"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; nothing was built or executed for this entry. The float accumulation is read from the function bodies; the XNA behaviour is CNA's recorded measurement, not re-run here, and the public functions' own output was not compared with XNA. Hence the confidence is strong rather than reproduced.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; nothing was built or executed for this entry. The float accumulation is read from the function bodies; the XNA behaviour is CNA's recorded measurement (XNASWEEP-134, quoted in the comment on SquaredLength), not re-run here, and its 200 pairs are not committed as a corpus: the framework oracle corpus has multiply, invert, rotation, transform and angle families only. An audit-side arithmetic model of the two accumulation rules on uniform random point pairs found the float and wide results differ on roughly 15 to 45 percent of inputs, so a claim of 'most inputs' is not established. The confidence is recorded-by-cna, not reproduced.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; nothing was built or executed for this entry. The float accumulation is read from the function bodies; the XNA behaviour is CNA's recorded measurement, not re-run here, and the public functions' own output was not compared with XNA. Hence the confidence is strong rather than reproduced.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; nothing was built or executed for this entry. The float accumulation is read from the function bodies; the XNA behaviour is CNA's recorded measurement (XNASWEEP-134, quoted in the comment on <code>SquaredLength</code>), not re-run here, and its 200 pairs are not committed as a corpus: the framework oracle corpus has multiply, invert, rotation, transform and angle families only. An audit-side arithmetic model of the two accumulation rules on uniform random point pairs found the float and wide results differ on roughly 15 to 45 percent of inputs, so a claim of 'most inputs' is not established. The confidence is recorded-by-cna, not reproduced.</p>",
    "reproduction": null,
    "tests_current": "<p>{{src:modules/math/tests/Microsoft/Xna/Framework/Vector3Tests.cpp|Vector3Tests.cpp}} checks length and distance with a tolerance; {{src:modules/math/tests/Microsoft/Xna/Framework/BoundingSphereOracleTests.cpp|BoundingSphereOracleTests.cpp}} compares bits for CreateFromPoints only, and the matrix oracle does not include length or distance.</p>",
    "regression_test": "<p>Add Vector3.Length, Distance and DistanceSquared cases to the recorded framework oracle (the 200 measured pairs are the natural set) and compare bits, with a negative control showing that a float accumulation fails, as <code>MatrixOracleTests</code> does.</p>",
@@ -2668,7 +2669,7 @@
      "note": "Matrix::Divide(matrix, float, result)"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. XNA arithmetic from the genuine XNA 4.0 IL. The difference is at most a few ULPs per component; the x87 evaluation precision of the 32-bit XNA runtime was not modelled.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. XNA arithmetic from the genuine XNA 4.0 IL. The difference is at most a few ULPs per component; the x87 evaluation precision of the 32-bit XNA runtime was not modelled. Tests: the scalar-divide cases in the vector and matrix suites mostly divide by 2, whose reciprocal is exact; the few with an inexact reciprocal (Vector2 divided by 3.0f and /= 2.5f, Vector3 /= 3.0f) use dividends that round identically both ways or a 4-ULP tolerance. In particular Vector3CompoundAssignmentTests.cpp::ScalarDivideMatchesTheBinaryOperatorBitForBit divides by 3.0f, and its comment says the scalar divide multiplies by a reciprocal 'as Vector3::Divide does', which is false at TARGET; it passes only because its dividends (1.5, -2, 3.25) round the same both ways (checked with a float32 model), so it pins nothing. The audit model found reciprocal-multiply and division differing on about 14 to 55 percent of random dividends for divisors such as 3, 7 and 0.1. No oracle covers scalar division.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. XNA arithmetic from the genuine XNA 4.0 IL. The difference is at most a few ULPs per component; the x87 evaluation precision of the 32-bit XNA runtime was not modelled.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. XNA arithmetic from the genuine XNA 4.0 IL. The difference is at most a few ULPs per component; the x87 evaluation precision of the 32-bit XNA runtime was not modelled. Tests: the scalar-divide cases in the vector and matrix suites mostly divide by 2, whose reciprocal is exact; the few with an inexact reciprocal (Vector2 divided by 3.0f and /= 2.5f, Vector3 /= 3.0f) use dividends that round identically both ways or a 4-ULP tolerance. In particular <code>Vector3CompoundAssignmentTests</code>.cpp::<code>ScalarDivideMatchesTheBinaryOperatorBitForBit</code> divides by 3.0f, and its comment says the scalar divide multiplies by a reciprocal 'as <code>Vector3::Divide</code> does', which is false at TARGET; it passes only because its dividends (1.5, -2, 3.25) round the same both ways (checked with a float32 model), so it pins nothing. The audit model found reciprocal-multiply and division differing on about 14 to 55 percent of random dividends for divisors such as 3, 7 and 0.1. No oracle covers scalar division.</p>",
    "reproduction": null,
    "tests_current": "<p>The vector and matrix tests use values whose reciprocal is exact; no oracle covers scalar division.</p>",
    "regression_test": "<p>A table of divisors whose reciprocal is inexact (3, 7, 0.1f) comparing CNA's results with <code>value * (1.0f / s)</code> bit for bit, for every overload including <code>operator/=</code>.</p>",
@@ -3145,7 +3146,8 @@
    },
    "origin": "Phase-2 candidate P2-062 (development/internals/modules/core.html)",
    "pkg": "B1",
-   "temp_id": "CNA-BUG-077"
+   "temp_id": "CNA-BUG-077",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -3164,7 +3166,7 @@
    "confidence": "verified-by-reading",
    "public_contract": "<code>Microsoft::Xna::Framework::Game::Run()</code> / <code>Tick()</code> (through the private <code>PollEvents</code>); <code>CNA::Internal::Renderers::IGraphicsRenderer::DebugSimulateContextLoss()</code> and <code>DebugRestoreContext()</code>",
    "expected": "<p>XNA's <code>Game</code> reserves no keys: a key press only reaches the game's input state. CNA's own sources call the <code>DebugSimulateContextLoss()</code>/<code>DebugRestoreContext()</code> channel “one-directional and test-only” (the <code>RendererDeviceEvent</code> comment in <code>IGraphicsRenderer.hpp</code>) and “a deliberate, named test seam” (<code>GraphicsDevice.cpp</code>), and the DirectX 11 header documents the hook as entering “the deterministic lost-device state used by lifecycle tests”. A shipped game should therefore not reach it from a player's key press, or only through an explicit debug opt-in.</p>",
-   "actual": "<p>After passing each event to <code>PlatformInputBridge::ProcessEvent</code>, <code>Game::PollEvents</code> calls <code>GraphicsDevice_.GetRenderer().DebugSimulateContextLoss()</code> for a pressed, non-repeated <code>KeyCode::F9</code> and <code>DebugRestoreContext()</code> for F10, unconditionally. The game still sees the key, and the framework action happens as well. What the press does depends on the renderer (read at 009d40f5):</p><ul><li>EasyGL on the desktop: F9 and F10 both print a line to <code>std::cerr</code>, notify MetaGL of a context loss, recreate the native context through the platform, reload the GL entry points and recreate every registered resource. <code>EasyGLTextureRenderer::recreate_gl_resource</code> re-uploads level 0 from the CPU shadow, re-uploads <em>nothing</em> for DXT1/DXT3/DXT5 textures and uploads zeros where no shadow survives (context recovery disabled), so such textures come back blank.</li><li>DirectX 9, 11 and 12: F9 marks the device lost and reports <code>RendererDeviceEvent::Lost</code>; the DirectX 11 and 12 renderers then refuse <code>CanBeginDrawEXT()</code>, so the game stops drawing until F10 performs the reset.</li><li>Direct2D: F9 recreates the complete device-resource domain.</li><li>WebGPU: F9 throws <code>System::NotSupportedException</code> while a <code>TextureCube</code>, <code>RenderTargetCube</code>, <code>Texture3D</code>, occlusion query or custom <code>ShaderEffect</code> is alive; nothing in <code>PollEvents</code>, <code>Tick</code> or <code>Run</code> catches it, so natively it ends <code>Run()</code> and in the browser loop it is logged and the loop stops.</li><li>GDI overrides both hooks with empty bodies; the remaining renderers use the no-op defaults.</li></ul>",
+   "actual": "<ul><li>After passing each event to <code>PlatformInputBridge::ProcessEvent</code>, <code>Game::PollEvents</code> calls <code>GraphicsDevice_</code>.GetRenderer().DebugSimulateContextLoss() for a pressed, non-repeated <code>KeyCode::F9</code> and <code>DebugRestoreContext()</code> for F10, unconditionally (no build, option or opt-out guard). The game still sees the key, and the framework action happens as well. What the press does depends on the renderer (read at 009d40f5):</li><li><code>EasyGL</code> on the desktop: F9 and F10 both print a line to <code>std::cerr</code>, notify <code>MetaGL</code> of a context loss, recreate the native context through the platform, reload the GL entry points and recreate every registered resource. <code>EasyGLTextureRenderer::recreate_gl_resource</code> re-uploads level 0 from the CPU shadow; DXT1/DXT3/DXT5 textures are re-uploaded from their retained compressed blocks (<code>UploadLevel</code> falls back to <code>compressedLevels_</code> when it is given no pixels); a texture with no surviving shadow (context recovery disabled) is re-created as zeros.</li><li><code>DirectX</code> 9, 11 and 12: F9 marks the device lost and reports <code>RendererDeviceEvent::Lost</code>; the <code>DirectX</code> 11 and 12 renderers then refuse <code>CanBeginDrawEXT()</code>, so the game stops drawing until F10 performs the reset.</li><li><code>Direct2D</code>: F9 recreates the complete device-resource domain.</li><li><code>WebGPU</code>: F9 throws <code>System::NotSupportedException</code> while a <code>TextureCube</code>, <code>RenderTargetCube</code>, <code>Texture3D</code>, occlusion query or custom <code>ShaderEffect</code> is alive; nothing in <code>PollEvents</code>, Tick or Run catches it, so natively it ends <code>Run()</code> and in the browser loop it is logged and the loop stops.</li><li>GDI overrides both hooks with empty bodies; the remaining renderers use the no-op defaults.</li></ul>",
    "sources": [
     {
      "path": "modules/runtime/src/Game.cpp",
@@ -3195,7 +3197,7 @@
      "note": "debug-hotkey-f9 scenarios in the golden event transcript"
     }
    ],
-   "evidence": "<p>Checked by reading {{src:modules/runtime/src/Game.cpp|Game.cpp}} (<code>PollEvents</code>) and every override of the two hooks at 009d40f5 (EasyGL, DirectX 9/11/12, Direct2D, WebGPU, GDI). {{src:modules/runtime/tests/Microsoft/Xna/Framework/GameEventSemanticsGoldenTests.cpp|GameEventSemanticsGoldenTests.cpp}} records a <code>debug-hotkey-f9</code> scenario, so the key handling is known and pinned as observable behaviour; nothing documents it as a user-facing feature. Not executed.</p><p>Uncertain: the exact visible effect on each Direct3D family (whether a game notices beyond the paused drawing) and whether any CNA sample binds F9 or F10.</p><p><em>Independently observed as a separate finding (merged):</em> A non-repeated F9 or F10 press in any CNA game calls the renderer&#x27;s DebugSimulateContextLoss() or DebugRestoreContext(), which CNA describes as a test seam, with no build guard or opt-out.</p><p><em>Independently observed as a separate finding (merged):</em> Any F9 press calls DebugSimulateContextLoss and any F10 press DebugRestoreContext on the active renderer, in release builds too, and games cannot turn it off.</p>",
+   "evidence": "<p>Checked by reading {{src:modules/runtime/src/Game.cpp|Game.cpp}} (<code>PollEvents</code>) and every override of the two hooks at 009d40f5 (EasyGL, DirectX 9/11/12, Direct2D, WebGPU, GDI). {{src:modules/runtime/tests/Microsoft/Xna/Framework/GameEventSemanticsGoldenTests.cpp|GameEventSemanticsGoldenTests.cpp}} records a <code>debug-hotkey-f9</code> scenario, so the key handling is known and pinned as observable behaviour; nothing documents it as a user-facing feature. Not executed.</p><p>Uncertain: the exact visible effect on each Direct3D family (whether a game notices beyond the paused drawing) and whether any CNA sample binds F9 or F10.</p><p><em>Independently observed as a separate finding (merged):</em> A non-repeated F9 or F10 press in any CNA game calls the renderer&#x27;s DebugSimulateContextLoss() or DebugRestoreContext(), which CNA describes as a test seam, with no build guard or opt-out.</p><p><em>Independently observed as a separate finding (merged):</em> Any F9 press calls DebugSimulateContextLoss and any F10 press DebugRestoreContext on the active renderer, in release builds too, and games cannot turn it off.</p><p><em>Independent re-verification:</em> Checked by reading {{src:modules/runtime/src/Game.cpp|Game.cpp}} (<code>PollEvents</code>) and every override of the two hooks at 009d40f5 (<code>EasyGL</code>, <code>DirectX</code> 9/11/12, <code>Direct2D</code>, <code>WebGPU</code>, GDI). The earlier statement that DXT textures come back blank on <code>EasyGL</code> is withdrawn: <code>UploadLevel</code> takes the retained compressed blocks from <code>compressedLevels_</code> when <code>recreate_gl_resource</code> passes no pixels, so the reproduction's 'DXT texture is re-created without data' does not occur; the visible <code>EasyGL</code> effect is the two stderr lines and a full context recreation. The golden transcript records a debug-hotkey-f9 scenario, so the handler is known and pinned as observable behaviour; nothing documents it as a user-facing feature. Not executed.</p>",
    "reproduction": "<p>Illustrative: any game on an EasyGL desktop profile. Run it with at least one DXT-compressed texture loaded and press F9; the standard error stream receives “[CNA] Simulating desktop GL context loss + immediate recreate” and the DXT texture is re-created without data. On WebGPU, create a <code>TextureCube</code> and press F9: <code>Run()</code> ends with <code>System::NotSupportedException</code>.</p>",
    "tests_current": "<p>The golden transcript ({{src:modules/runtime/tests/golden/platform-event-semantics.txt|platform-event-semantics.txt}}) runs the F9 press and the F9 repeat through a real <code>Game::RunOneFrame()</code> and captures public state only; renderer-side recovery tests (for example <code>webgpu_context_recovery_test</code>, <code>easygl_gltf_context_loss_test</code>) call the hooks directly. No test asserts that an ordinary key press leaves the renderer alone.</p>",
    "regression_test": "<p>A runtime test with a renderer double that counts <code>DebugSimulateContextLoss()</code> calls: feed a non-repeated F9 <code>KeyEvent</code> through <code>GameTestPeer::PollEvents</code> and expect zero calls unless the chosen opt-in (a build option or a CNAEXT property) is enabled. Update the golden transcript accordingly.</p>",
@@ -3235,72 +3237,8 @@
    },
    "origin": "Phase-2 candidates P2-004 (development/architecture/runtime.html) and P2-187 (development/internals/runtime/frame.html); cross-package duplicate of B4/P2-054; merged with CNA-BUG-078; merged with CNA-BUG-078",
    "pkg": "B2",
-   "temp_id": "CNA-BUG-078"
-  },
-  {
-   "cand_ids": [
-    "P2-185"
-   ],
-   "id": "CNA-BUG-079",
-   "class": "bug",
-   "title": "Game::Tick never calls Update when a fixed-step TargetElapsedTime exceeds 500 ms",
-   "summary": "With IsFixedTimeStep true, Game::Tick clamps the accumulator to MaxElapsedTime (500 ms) before the update loop, so a TargetElapsedTime above 500 ms can never be reached: Update never runs while Draw keeps running.",
-   "subsystem": "Core & runtime",
-   "status": "open",
-   "severity": "low",
-   "confidence": "verified-by-reading",
-   "public_contract": "<code>Microsoft::Xna::Framework::Game::setTargetElapsedTimeProperty(const System::TimeSpan&amp;)</code> with <code>IsFixedTimeStep</code> true; <code>Game::Tick()</code>",
-   "expected": "<p>XNA 4.0 accepts any positive <code>TargetElapsedTime</code> (its setter rejects only zero and negative values, as CNA's does) and then updates once per target interval. Its <code>Game.Tick</code> clamps the <em>per-tick</em> elapsed time to 500 ms and keeps accumulating across ticks, so a one-second target still yields one update per second. CNA's desktop clock otherwise follows XNA deliberately (the first-update and total-time rules in <code>Game::Tick</code> were measured against XNA and adopted over FNA's behaviour).</p>",
-   "actual": "<p><code>Game::Tick</code> waits until <code>accumulatedElapsedTime_</code> reaches <code>TargetElapsedTime_</code>, polls events, then clamps the <em>accumulator</em>: <code>if (accumulated &gt; MaxElapsedTime) accumulated = MaxElapsedTime</code> with <code>MaxElapsedTime</code> = 500 ms. The update loop <code>while (accumulated &gt;= TargetElapsedTime_)</code> therefore never runs for a target above 500 ms, <code>stepCount</code> stays zero, and the tick still draws. The accumulator restarts from 500 ms on every tick, so the game draws about twice a second and never updates. FNA has the same clamp; this is where CNA follows FNA rather than XNA.</p>",
-   "sources": [
-    {
-     "path": "modules/runtime/src/Game.cpp",
-     "note": "Game::Tick (wait loops, MaxElapsedTime clamp, fixed-step while loop); Game::setTargetElapsedTimeProperty; Game::MaxElapsedTime"
-    },
-    {
-     "path": "modules/runtime/include/Microsoft/Xna/Framework/Game.hpp",
-     "note": "setTargetElapsedTimeProperty documents only 'positive and non-zero'"
-    }
-   ],
-   "evidence": "<p>Checked by reading <code>Game::Tick</code> in {{src:modules/runtime/src/Game.cpp|Game.cpp}} at 009d40f5, and compared with the IL of XNA 4.0's <code>Game.Tick</code> and <code>set_TargetElapsedTime</code> (a disassembly of Microsoft.Xna.Framework.Game) and with FNA's <code>Game.Tick</code>. The failure follows mechanically from the order “clamp, then compare”. Not executed.</p>",
-   "reproduction": "<p>Illustrative, not compiled:</p><pre><code class=\"language-cpp\">class SlowGame : public Game {\npublic:\n    int updates = 0;\n    SlowGame() { setTargetElapsedTimeProperty(System::TimeSpan::FromSeconds(1.0)); }\nprotected:\n    void Update(GameTime&amp; t) override { ++updates; Game::Update(t); }\n};\n\nSlowGame game;\nGraphicsDeviceManager graphics(&amp;game);\nfor (int i = 0; i &lt; 4; ++i) game.RunOneFrame();   // about 2.5 s of wall time\n// XNA 4.0 would have updated twice; at 009d40f5 game.updates == 0\n</code></pre>",
-   "tests_current": "<p>{{src:modules/runtime/tests/Microsoft/Xna/Framework/GamePlatformTimingTests.cpp|GamePlatformTimingTests.cpp}} drives single frames with a 1 ms target; {{src:modules/runtime/tests/Microsoft/Xna/Framework/GameClockFirstUpdateTests.cpp|GameClockFirstUpdateTests.cpp}} pins the first-update and total-time rules at ordinary targets. No test uses a target above <code>MaxElapsedTime</code>.</p>",
-   "regression_test": "<p>A clock test with a scripted performance counter (the platform decorator used by the timing tests) that sets a 1 s target, advances the counter by 1.2 s per tick and expects one update per target interval, plus the boundary case of exactly 500 ms.</p>",
-   "blast_radius": "<p>Only fixed-step games whose <code>TargetElapsedTime</code> is longer than 500 ms (slow simulations, clocks, turn timers, tests that step slowly). Variable-step games and all ordinary frame rates are unaffected. The browser loop has its own clock and a 250 ms cap and is not covered by this entry.</p>",
-   "workaround": "<p>Keep <code>TargetElapsedTime</code> at or below 500 ms and count ticks in <code>Update</code>, or use <code>IsFixedTimeStep = false</code> and accumulate <code>ElapsedGameTime</code> yourself.</p>",
-   "related": {
-    "internals": [
-     [
-      "development/internals/runtime/frame.html#clock",
-      "One frame source trace: the clock"
-     ]
-    ],
-    "architecture": [
-     [
-      "development/architecture/runtime.html#tick",
-      "Runtime lifecycle: what one Tick does"
-     ]
-    ],
-    "guide": [
-     [
-      "docs/game-loop.html#fixed-vs-variable-timestep",
-      "Game loop: fixed vs variable timestep"
-     ],
-     [
-      "docs/tutorials/48-timestep.html",
-      "Tutorial 48: fixed vs variable timestep"
-     ]
-    ],
-    "deep": [
-     [
-      "deep-dives/framework/game-time-and-timestep.html#fixed-step",
-      "GameTime and the timestep: the fixed-step accumulator"
-     ]
-    ]
-   },
-   "origin": "Phase-2 candidate P2-185 (development/internals/runtime/frame.html)",
-   "pkg": "B2",
-   "temp_id": "CNA-BUG-079"
+   "temp_id": "CNA-BUG-078",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -3367,7 +3305,8 @@
    },
    "origin": "Phase-2 candidate P2-186 (development/internals/runtime/frame.html); merged with CNA-BUG-080; merged with CNA-BUG-080",
    "pkg": "B2",
-   "temp_id": "CNA-BUG-080"
+   "temp_id": "CNA-BUG-080",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -3437,7 +3376,8 @@
    },
    "origin": "Phase-2 candidate P2-189 (development/internals/runtime/module.html); merged with CNA-BUG-081",
    "pkg": "B2",
-   "temp_id": "CNA-BUG-081"
+   "temp_id": "CNA-BUG-081",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -3512,7 +3452,8 @@
    },
    "origin": "Phase-2 candidates P2-192 (development/internals/runtime/module.html) and P2-196 (development/internals/runtime/shutdown.html); merged with CNA-BUG-082",
    "pkg": "B2",
-   "temp_id": "CNA-BUG-082"
+   "temp_id": "CNA-BUG-082",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -3575,56 +3516,8 @@
    },
    "origin": "Phase-2 candidate P2-133 (development/internals/modules/phone.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-083"
-  },
-  {
-   "cand_ids": [
-    "WP03-i004"
-   ],
-   "id": "CNA-BUG-084",
-   "class": "bug",
-   "title": "Game::ResetElapsedTime() does nothing under the default fixed time step",
-   "summary": "ResetElapsedTime sets its flag only when IsFixedTimeStep is false, while XNA 4.0 honours it in both modes, so a blocking load followed by ResetElapsedTime causes a catch-up burst of updates in CNA only.",
-   "subsystem": "Core & runtime",
-   "status": "open",
-   "severity": "medium",
-   "confidence": "verified-by-reading",
-   "public_contract": "Microsoft::Xna::Framework::Game::ResetElapsedTime()",
-   "expected": "<p>XNA 4.0's <code>Game.ResetElapsedTime</code> (IL of Microsoft.Xna.Framework.Game) sets <code>forceElapsedTimeToZero</code> and resets the running-slowly counters unconditionally; <code>Game.Tick</code> tests that flag right after reading the clock, before the fixed/variable branch, and discards the frame's elapsed time. The standard XNA idiom - load a level synchronously inside <code>Update</code>, then call <code>ResetElapsedTime()</code> - therefore yields no catch-up updates.</p>",
-   "actual": "<p>In {{src:modules/runtime/src/Game.cpp|Game.cpp}}, <code>ResetElapsedTime</code> is <code>if (!IsFixedTimeStep_) forceElapsedTimeToZero_ = true;</code>, and <code>Tick</code> reads the flag only in its variable-step branch. Under the default fixed step the call is a no-op: after a 2-second load the accumulator is clamped to <code>MaxElapsedTime</code> (500 ms) and the next tick runs up to 29 back-to-back updates at the default 60 Hz before drawing (500 ms / 16.6667 ms, the last partial step carried over).</p>",
-   "sources": [
-    {
-     "path": "modules/runtime/src/Game.cpp",
-     "note": "Game::ResetElapsedTime and Game::Tick (the forceElapsedTimeToZero_ read in the variable branch only)"
-    },
-    {
-     "path": "modules/runtime/include/Microsoft/Xna/Framework/Game.hpp",
-     "note": "ResetElapsedTime documentation: 'for the next variable-timestep update'"
-    }
-   ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. XNA behaviour read from the IL of the genuine XNA 4.0 Game assembly (~/deps/xna-il-cache). The CNA header documents the narrower behaviour, and so does the site's timing deep dive; the contract that CNA claims to follow is XNA's.</p>",
-   "reproduction": "<pre><code class=\"language-cpp\">// Illustrative; not compiled or run for this entry.\nprotected: void Update(const GameTime&amp; t) override {\n    if (!loaded_) {\n        LoadEverythingSynchronously();   // takes ~2 s\n        loaded_ = true;\n        ResetElapsedTime();              // XNA: next tick runs one update\n    }\n    ++updates_;                          // CNA fixed step: next tick runs ~29 updates\n    Game::Update(t);\n}</code></pre>",
-   "tests_current": "<p>No test in <code>modules/runtime/tests</code> calls <code>ResetElapsedTime</code>.</p>",
-   "regression_test": "<p>A Game test with a fake platform clock: advance the clock by 2 s inside Update, call ResetElapsedTime, and assert that the following tick runs exactly one Update with <code>ElapsedGameTime</code> equal to <code>TargetElapsedTime</code> (fixed step).</p>",
-   "blast_radius": "<p>Every fixed-step game (the default) that relies on ResetElapsedTime after a blocking load or a pause; variable-step games are unaffected. The browser loop (EmscriptenMainLoopCallback) ignores the flag in both modes (CNA-BUG-080).</p>",
-   "workaround": "<p>After a long blocking operation, skip catch-up updates in game code, or temporarily set <code>IsFixedTimeStep = false</code> for the reset tick.</p>",
-   "related": {
-    "deep": [
-     [
-      "deep-dives/framework/game-time-and-timestep.html#reset-elapsed-time",
-      "GameTime: ResetElapsedTime under the fixed step"
-     ]
-    ],
-    "internals": [
-     [
-      "development/internals/runtime/frame.html#clock",
-      "Runtime frame: the clock"
-     ]
-    ]
-   },
-   "origin": "Chapter-package candidate WP03-i004 (Bible ch.4)",
-   "pkg": "B10",
-   "temp_id": "CNA-BUG-084"
+   "temp_id": "CNA-BUG-083",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -3673,7 +3566,8 @@
    },
    "origin": "Chapter-package candidate WP03-i005 (recorded as a verification gap; published as a bug because the divergence follows mechanically from the two rules)",
    "pkg": "B10",
-   "temp_id": "CNA-BUG-085"
+   "temp_id": "CNA-BUG-085",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -3722,7 +3616,8 @@
    },
    "origin": "Chapter-package candidate WP03-i008",
    "pkg": "B10",
-   "temp_id": "CNA-BUG-086"
+   "temp_id": "CNA-BUG-086",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -3767,7 +3662,8 @@
    },
    "origin": "Chapter-package candidate WP03-i011",
    "pkg": "B10",
-   "temp_id": "CNA-BUG-087"
+   "temp_id": "CNA-BUG-087",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -3780,7 +3676,7 @@
    "subsystem": "Core & runtime",
    "status": "open",
    "severity": "low",
-   "confidence": "strong",
+   "confidence": "verified-by-reading",
    "public_contract": "Microsoft::Xna::Framework::Game::Tick (variable time step) / GameTime.ElapsedGameTime",
    "expected": "<p>The comment on <code>VariableStepTotalAlsoLagsItsOwnUpdate</code> in {{src:modules/runtime/tests/Microsoft/Xna/Framework/GameClockFirstUpdateTests.cpp|GameClockFirstUpdateTests.cpp}} records the real XNA runtime reporting update 3 with <code>elapsed 0.0211</code> and <code>total</code> still 0. Since total is the sum of the earlier elapsed values, XNA's first two variable-step updates had zero elapsed time.</p>",
    "actual": "<p>In {{src:modules/runtime/src/Game.cpp|Game.cpp}} the fixed-step branch uses <code>hasUpdatedOnce_ ? TargetElapsedTime_ : Zero</code>, but the variable branch passes the whole accumulator (or zero only after <code>ResetElapsedTime</code>). The first variable-step Update therefore sees the time since <code>Run()</code> seeded <code>previousPerformanceCounter_</code>, and the second sees a real frame interval.</p>",
@@ -3810,56 +3706,8 @@
    },
    "origin": "Chapter-package candidate WP03-i014 (target reading 'unclear'; resolved by the values CNA recorded from the real XNA runtime)",
    "pkg": "B10",
-   "temp_id": "CNA-BUG-088"
-  },
-  {
-   "cand_ids": [
-    "WP05-i002"
-   ],
-   "id": "CNA-BUG-089",
-   "class": "bug",
-   "title": "GraphicsDeviceManager::Dispose(bool) raises Disposed before setting disposed_, so a Disposed handler that disposes the manager again re-enters Dispose",
-   "summary": "The re-entrant guard is set after the event, so a handler that calls Dispose() on the manager (directly or through an owner's cleanup) re-runs the method and raises Disposed again, recursing until the handler stops.",
-   "subsystem": "Core & runtime",
-   "status": "open",
-   "severity": "low",
-   "confidence": "verified-by-reading",
-   "public_contract": "Microsoft::Xna::Framework::GraphicsDeviceManager::Dispose(bool) and its Disposed event",
-   "expected": "<p>Dispose must be idempotent, including when called from its own Disposed event; <code>GraphicsDevice::Dispose(bool)</code> in the same codebase sets its flag first for exactly this reason (\"This makes reentrant Dispose idempotent\").</p>",
-   "actual": "<p>In {{src:modules/runtime/src/GraphicsDeviceManager.cpp|GraphicsDeviceManager.cpp}} the method checks <code>disposed_</code>, does its work, then executes <code>Disposed.Raise(this, EventArgs::Empty); disposed_ = true;</code>. A handler that calls <code>Dispose()</code> finds <code>disposed_</code> still false, runs <code>unregisterServices</code> again and raises <code>Disposed</code> again.</p>",
-   "sources": [
-    {
-     "path": "modules/runtime/src/GraphicsDeviceManager.cpp",
-     "note": "GraphicsDeviceManager::Dispose(bool)"
-    },
-    {
-     "path": "modules/graphics/src/Xna/GraphicsDevice.cpp",
-     "note": "GraphicsDevice::Dispose(bool) sets isDisposed_ before raising Disposing"
-    }
-   ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p>",
-   "reproduction": null,
-   "tests_current": "<p>No test subscribes to the manager's Disposed event.</p>",
-   "regression_test": "<p>A test whose Disposed handler calls Dispose() again and counts invocations (expect one).</p>",
-   "blast_radius": "<p>Code that ties manager disposal to other objects' Disposed events; ordinary shutdown is unaffected.</p>",
-   "workaround": "<p>Guard the handler with its own flag.</p>",
-   "related": {
-    "deep": [
-     [
-      "deep-dives/framework/window-and-device-manager.html#device-manager",
-      "Window and device manager: GraphicsDeviceManager"
-     ]
-    ],
-    "internals": [
-     [
-      "development/internals/runtime/module.html#objects",
-      "Runtime module: objects"
-     ]
-    ]
-   },
-   "origin": "Chapter-package candidate WP05-i002",
-   "pkg": "B10",
-   "temp_id": "CNA-BUG-089"
+   "temp_id": "CNA-BUG-088",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -3868,14 +3716,14 @@
    "id": "CNA-BUG-090",
    "class": "bug",
    "title": "GraphicsDeviceInformation accepts a null Adapter, and GraphicsDeviceManager then binds a reference through that null pointer",
-   "summary": "XNA 4.0's GraphicsDeviceInformation.Adapter setter throws ArgumentNullException; CNA's stores null, and applyToExistingRenderer passes *gdi.getAdapterProperty() to GraphicsDevice::Reset (undefined behaviour; in practice the device keeps its previous adapter).",
+   "summary": "XNA's documentation says the GraphicsDeviceInformation.Adapter setter throws ArgumentNullException for a null value (the shipped IL only tests the stored adapter, so the first null slips through in real XNA). CNA's setter stores any pointer, and applyToExistingRenderer then passes *gdi.getAdapterProperty() to GraphicsDevice::Reset, which is undefined behaviour for a null adapter; in practice the device keeps its previous adapter.",
    "subsystem": "Core & runtime",
    "status": "open",
    "severity": "low",
    "confidence": "verified-by-reading",
    "public_contract": "Microsoft::Xna::Framework::GraphicsDeviceInformation::setAdapterProperty; PreparingDeviceSettings handlers",
-   "expected": "<p>XNA 4.0 (IL of <code>GraphicsDeviceInformation.set_Adapter</code>) rejects null with <code>ArgumentNullException(\"value\", NoNullUseDefaultAdapter)</code>, so a <code>PreparingDeviceSettings</code> handler cannot produce a device information without an adapter.</p>",
-   "actual": "<p>{{src:modules/runtime/src/GraphicsDeviceInformation.cpp|GraphicsDeviceInformation.cpp}} stores any pointer. {{src:modules/runtime/src/GraphicsDeviceManager.cpp|GraphicsDeviceManager.cpp}}'s <code>applyToExistingRenderer</code> then calls <code>graphicsDevice_-&gt;Reset(pp, *gdi.getAdapterProperty())</code>, forming a reference from a null pointer - undefined behaviour. With current compilers the address simply reaches the pointer overload of <code>GraphicsDevice::Reset</code>, which treats null as \"keep the current adapter\", so the handler's mistake is silently ignored rather than reported.</p>",
+   "expected": "<p>The XNA 4.0 documentation for <code>GraphicsDeviceInformation.Adapter</code> lists <code>ArgumentNullException</code> (\"Adapter is null. Try using <code>DefaultAdapter</code> instead.\"), so a <code>PreparingDeviceSettings</code> handler is told not to produce a device information without an adapter. (The IL of <code>set_Adapter</code> tests the stored field rather than the incoming value, so real XNA 4.0 lets the first null through and fails later; the documented contract is the exception.) Independently of XNA, CNA's own code must not form a reference through a null pointer.</p>",
+   "actual": "<p>{{src:modules/runtime/src/GraphicsDeviceInformation.cpp|GraphicsDeviceInformation.cpp}} stores any pointer in <code>setAdapterProperty</code>. <code>ApplyChanges</code> and <code>CreateDevice</code> in {{src:modules/runtime/src/GraphicsDeviceManager.cpp|GraphicsDeviceManager.cpp}} already guard the adapter with a null check when they name the device, but <code>applyToExistingRenderer</code> then calls <code>graphicsDevice_</code>-&gt;Reset(pp, *gdi.getAdapterProperty()), forming a reference from a null pointer, which is undefined behaviour. With current compilers the address simply reaches the pointer overload of <code>GraphicsDevice::Reset</code>, which treats null as \"keep the current adapter\", so the handler's mistake is silently ignored rather than reported.</p>",
    "sources": [
     {
      "path": "modules/runtime/src/GraphicsDeviceInformation.cpp",
@@ -3890,7 +3738,7 @@
      "note": "GraphicsDevice::Reset(const PresentationParameters&, GraphicsAdapter*) null-adapter branch"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The practical outcome depends on the compiler not exploiting the undefined behaviour.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The practical outcome depends on the compiler not exploiting the undefined behaviour.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5 and disassembling XNA 4.0's <code>GraphicsDeviceInformation</code>.set_Adapter, which loads the adapter field instead of the argument; the earlier statement that the IL rejects a null value is withdrawn, while the XNA documentation still lists the exception. Not executed; the practical outcome depends on the compiler not exploiting the undefined behaviour.</p>",
    "reproduction": null,
    "tests_current": "<p><code>GraphicsDeviceInformationTests.cpp</code> does not set a null adapter.</p>",
    "regression_test": "<p>A test that sets <code>Adapter = nullptr</code> and expects <code>ArgumentNullException</code> from the setter.</p>",
@@ -3912,7 +3760,8 @@
    },
    "origin": "Chapter-package candidate WP05-i003 (re-derived: the setter, not the reset, is where XNA refuses)",
    "pkg": "B10",
-   "temp_id": "CNA-BUG-090"
+   "temp_id": "CNA-BUG-090",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -3965,7 +3814,8 @@
    },
    "origin": "Chapter-package candidate WP08-i001",
    "pkg": "B10",
-   "temp_id": "CNA-BUG-091"
+   "temp_id": "CNA-BUG-091",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -4026,7 +3876,8 @@
    },
    "origin": "Chapter package WP01 candidate WP01-i001 (appendix-e-cnaext-catalog)",
    "pkg": "B12",
-   "temp_id": "CNA-BUG-092"
+   "temp_id": "CNA-BUG-092",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -4461,7 +4312,7 @@
      "note": "SDL_GPU declared Supported"
     }
    ],
-   "evidence": "<p>CNA's own record executed the set, on one machine: <code>tools/platform/run_gpu_tests_private.sh</code> (private Weston and rootful Xwayland), an AMD Radeon 780M under RADV Mesa 25.0.7, SDL_gpu on its Vulkan driver, a Release build with <code>CNA_SDL_GPU_SHADERCROSS=OFF</code> and libshaderc present (PSG-0010). The record calls them \"Real renderer results, none of them a dead test\", and STREETS-0008 re-ran all 27 on a stashed baseline to show they predate its change. No per-test output or cause is kept in the tree, except PSG-0009's remark that <code>SdlGpu_Parity_dual_texture_terms</code> may be the XNA opaque-black null-texture rule that WebGPU's twin failed until WMG-0025. <code>SdlGpu_SwapchainRecovery</code> passed 5/5 when SDLGPU-11 added it, so at least that one regressed later. Nothing was re-run for this entry: whether each failure is a renderer defect or a stale expectation is not established, which is why this entry is one cluster rather than 24 diagnoses. No CI workflow runs any SDL_GPU test.</p><p><em>Independent re-verification:</em> CNA's own record executed the set, on one machine: tools/platform/run_gpu_tests_private.sh (private Weston and rootful Xwayland), an AMD Radeon 780M under RADV Mesa 25.0.7, SDL_gpu on its Vulkan driver, a Release build with CNA_SDL_GPU_SHADERCROSS=OFF and libshaderc present (PSG-0010). The record calls them \"Real renderer results, none of them a dead test\", and STREETS-0008 re-ran all 27 on a stashed baseline to show they predate its change. Nothing was re-run for this entry: the evidence is recorded by CNA, not reproduced here, and whether each failure is a renderer defect, a stale expectation or specific to that machine is not established. Earlier records were greener: remediation/REMEDIATION_INDEX.md (REMED-GFX-180, 2026-07-31) reports a fully green 102-test SDL_GPU shard, and SdlGpu_SwapchainRecovery passed 5/5 when SDLGPU-11 added it, so some of these are later regressions or environment-specific. No CI workflow runs any SDL_GPU test.</p>",
+   "evidence": "<p>CNA's own record executed the set, on one machine: <code>tools/platform/run_gpu_tests_private.sh</code> (private Weston and rootful Xwayland), an AMD Radeon 780M under RADV Mesa 25.0.7, SDL_gpu on its Vulkan driver, a Release build with <code>CNA_SDL_GPU_SHADERCROSS=OFF</code> and libshaderc present (PSG-0010). The record calls them \"Real renderer results, none of them a dead test\", and STREETS-0008 re-ran all 27 on a stashed baseline to show they predate its change. No per-test output or cause is kept in the tree, except PSG-0009's remark that <code>SdlGpu_Parity_dual_texture_terms</code> may be the XNA opaque-black null-texture rule that WebGPU's twin failed until WMG-0025. <code>SdlGpu_SwapchainRecovery</code> passed 5/5 when SDLGPU-11 added it, so at least that one regressed later. Nothing was re-run for this entry: whether each failure is a renderer defect or a stale expectation is not established, which is why this entry is one cluster rather than 24 diagnoses. No CI workflow runs any SDL_GPU test.</p><p><em>Independent re-verification:</em> CNA's own record executed the set, on one machine: {{src:tools/platform/run_gpu_tests_private.sh|run_gpu_tests_private.sh}} (private Weston and rootful Xwayland), an AMD Radeon 780M under RADV Mesa 25.0.7, <code>SDL_gpu</code> on its Vulkan driver, a Release build with <code>CNA_SDL_GPU_SHADERCROSS</code>=OFF and libshaderc present (PSG-0010). The record calls them \"Real renderer results, none of them a dead test\", and STREETS-0008 re-ran all 27 on a stashed baseline to show they predate its change. Nothing was re-run for this entry: the evidence is recorded by CNA, not reproduced here, and whether each failure is a renderer defect, a stale expectation or specific to that machine is not established. Earlier records were greener: remediation/<code>REMEDIATION_INDEX</code>.md (REMED-GFX-180, 2026-07-31) reports a fully green 102-test <code>SDL_GPU</code> shard, and <code>SdlGpu_SwapchainRecovery</code> passed 5/5 when SDLGPU-11 added it, so some of these are later regressions or environment-specific. No CI workflow runs any <code>SDL_GPU</code> test.</p>",
    "reproduction": "<pre><code class=\"language-bash\"># The command CNA's own record uses; not executed for this entry.\ntools/platform/run_gpu_tests_private.sh cmake-build-sdlgpu -R '^SdlGpu' -j4</code></pre>",
    "tests_current": "<p>The failing CTests themselves, registered in <code>modules/renderers/sdl-gpu/examples/CMakeLists.txt</code> and <code>SdlGpuIndexedDrawRangeTests.cpp</code>. They run only where someone runs the classic set on a GPU host; no workflow names SDL_GPU.</p>",
    "regression_test": "<p>The tests exist; what is missing is triage. Record each failure's cause in the SDL_GPU plan, fix the renderer or the stale expectation so the CTest turns green, and put the classic <code>^SdlGpu</code> set behind a recorded gate (a GPU-capable CI lane or a release checklist) so the count cannot silently stay at 26.</p>",
@@ -4519,7 +4370,7 @@
      "note": "GraphicsDevice::Reset(const PresentationParameters&, GraphicsAdapter*) rollback try-block and the renderer calls after it"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5 and XNA 4.0's decompiled GraphicsDevice.Reset; nothing was built or executed. The regression test should assert that PresentationParameters, adapter and virtual size are unchanged after a later-stage failure; it should not require DeviceReset to be raised, because XNA does not raise it.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5 and XNA 4.0's decompiled <code>GraphicsDevice.Reset</code>; nothing was built or executed. The regression test should assert that <code>PresentationParameters</code>, adapter and virtual size are unchanged after a later-stage failure; it should not require <code>DeviceReset</code> to be raised, because XNA does not raise it.</p>",
    "reproduction": null,
    "tests_current": "<p>Reset tests cover the resize-stage rollback; no test injects a failure into the later stages.</p>",
    "regression_test": "<p>A HEADLESS or STUB test renderer whose ApplyMultiSampleCount throws, asserting that PresentationParameters is unchanged afterwards (or that DeviceReset/Resetting stay paired, whichever contract is chosen).</p>",
@@ -4781,7 +4632,7 @@
      "note": "CloneOfADisposedEffectIsRefused"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading every Effect subclass's Clone and copy constructor at 009d40f5; nothing was built or executed. The disposed-clone test covers BasicEffect only.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading every Effect subclass's Clone and copy constructor at 009d40f5; nothing was built or executed. The disposed-clone test covers <code>BasicEffect</code> only.</p>",
    "reproduction": null,
    "tests_current": "<p>The disposed-clone test covers BasicEffect only.</p>",
    "regression_test": "<p>The same test for ShaderEffect.</p>",
@@ -4834,7 +4685,7 @@
      "note": "GraphicsDevice::BuildRendererCapabilityProfileEXT dialect features"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; nothing was built or executed. Read: <code>DirectX9Renderer::CreateEffectRenderer</code>, the SpriteBatch custom-effect flush in <code>D3D9SpriteBatch.cpp</code>, <code>DirectX9Renderer::DrawPrimitivesExImpl</code> and <code>DrawBasicEffectEXT</code>, <code>ShaderEffect::FillGpuDrawParams</code> in {{src:modules/graphics/src/Xna/ShaderEffect.cpp|ShaderEffect.cpp}}, the <code>GpuDrawParams</code> defaults and the <code>ExecutesShaderEffectSourceEXT</code> contract in {{src:modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp|IGraphicsRenderer.hpp}}, and <code>GraphicsDevice::BuildRendererCapabilityProfileEXT</code> in {{src:modules/graphics/src/Xna/GraphicsDevice.cpp|GraphicsDevice.cpp}}. The DIRECTX9 ShaderEffect work item (<code>plans/plan_dx9.md</code>, D9-112) scoped the feature to <code>SpriteBatch::Begin(effect)</code>. Because the false answer and the profile text warn callers that source does not drive pixels, the 3D fallback itself is inside CNA's documented capability contract; what remains is the inconsistent, misleadingly named failure on the 3D route and the SpriteBatch under-claim. XNA games use compiled effects, which DIRECTX9 supports separately; ShaderEffect is a CNA extension.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; nothing was built or executed. The DIRECTX9 ShaderEffect work item (plans/plan_dx9.md, D9-112) scoped the feature to SpriteBatch::Begin(effect), so the missing 3D execution is a known scope limit; what remains is the silent stock-effect fallback and the misleadingly named failure. XNA games use compiled effects, which DIRECTX9 supports separately; ShaderEffect is a CNA extension.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; nothing was built or executed. Read: <code>DirectX9Renderer::CreateEffectRenderer</code>, the SpriteBatch custom-effect flush in <code>D3D9SpriteBatch.cpp</code>, <code>DirectX9Renderer::DrawPrimitivesExImpl</code> and <code>DrawBasicEffectEXT</code>, <code>ShaderEffect::FillGpuDrawParams</code> in {{src:modules/graphics/src/Xna/ShaderEffect.cpp|ShaderEffect.cpp}}, the <code>GpuDrawParams</code> defaults and the <code>ExecutesShaderEffectSourceEXT</code> contract in {{src:modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp|IGraphicsRenderer.hpp}}, and <code>GraphicsDevice::BuildRendererCapabilityProfileEXT</code> in {{src:modules/graphics/src/Xna/GraphicsDevice.cpp|GraphicsDevice.cpp}}. The DIRECTX9 ShaderEffect work item (<code>plans/plan_dx9.md</code>, D9-112) scoped the feature to <code>SpriteBatch::Begin(effect)</code>. Because the false answer and the profile text warn callers that source does not drive pixels, the 3D fallback itself is inside CNA's documented capability contract; what remains is the inconsistent, misleadingly named failure on the 3D route and the SpriteBatch under-claim. XNA games use compiled effects, which DIRECTX9 supports separately; ShaderEffect is a CNA extension.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; nothing was built or executed. The DIRECTX9 <code>ShaderEffect</code> work item ({{src:plans/plan_dx9.md|plan_dx9.md}}, D9-112) scoped the feature to <code>SpriteBatch::Begin(effect)</code>, so the missing 3D execution is a known scope limit; what remains is the silent stock-effect fallback and the misleadingly named failure. XNA games use compiled effects, which DIRECTX9 supports separately; <code>ShaderEffect</code> is a CNA extension.</p>",
    "reproduction": null,
    "tests_current": "<p>DIRECTX9 ShaderEffect tests cover SpriteBatch; none draws 3D geometry with a ShaderEffect.</p>",
    "regression_test": "<p>A DIRECTX9 fixture that draws one <code>VertexPositionColor</code> and one <code>VertexPositionTexture</code> triangle with a ShaderEffect and asserts either the shader's constant colour for both (if 3D execution is implemented) or the same named <code>NotSupportedException</code> for both; plus a capability test that pins what <code>ExecutesShaderEffectSourceEXT()</code> answers against the routes it describes.</p>",
@@ -4882,7 +4733,7 @@
      "note": "GraphicsCapability enumeration including IndirectDraw"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed. RequireCapabilityTests.cpp does enumerate capabilities through nameOfCapability (EveryCapabilityHasItsOwnName asserts none maps to the fallback), but it iterates a hand-written list of 18 capabilities that also lacks IndirectDraw, so it cannot notice the missing name; the regression is to add IndirectDraw to both the switch and that list, or to derive the list from the enum.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed. <code>RequireCapabilityTests</code>.cpp does enumerate capabilities through <code>nameOfCapability</code> (<code>EveryCapabilityHasItsOwnName</code> asserts none maps to the fallback), but it iterates a hand-written list of 18 capabilities that also lacks <code>IndirectDraw</code>, so it cannot notice the missing name; the regression is to add <code>IndirectDraw</code> to both the switch and that list, or to derive the list from the enum.</p>",
    "reproduction": null,
    "tests_current": "<p>No test enumerates GraphicsCapability through nameOfCapability.</p>",
    "regression_test": "<p>Add the case and a test that every enumerator maps to a name other than the fallback (or compile the file with -Werror=switch).</p>",
@@ -5980,7 +5831,7 @@
      "note": "SkinnedModelTypeReader parts loop: the Task 11.9 size and index checks for comparison"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; not executed. Correction: the original wording listed the stride skip as something the SkinnedModel reader refuses; it does not, both use `continue`.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; not executed. Correction: the original wording listed the stride skip as something the <code>SkinnedModel</code> reader refuses; it does not, both use `continue`.</p>",
    "reproduction": null,
    "tests_current": "<p>The .cnj Model tests (and the EasyGL <code>easygl_model_json_reader_*</code> programs) use well-formed sidecars; no test feeds a bad stride or a truncated sidecar.</p>",
    "regression_test": "<p>Model .cnj fixtures with <code>vertexStride: 0</code>, a vertex sidecar one byte short and an out-of-range index, each expecting <code>ContentLoadException</code>; the fix is to reuse the SkinnedModel reader's checks.</p>",
@@ -7574,7 +7425,8 @@
    },
    "origin": "Phase-2 candidate P2-134 (development/internals/modules/phone.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-156"
+   "temp_id": "CNA-BUG-156",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -7629,7 +7481,8 @@
    },
    "origin": "Phase-2 candidate P2-135 (development/internals/modules/phone.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-157"
+   "temp_id": "CNA-BUG-157",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -7678,7 +7531,8 @@
    },
    "origin": "Phase-2 candidate P2-136 (development/internals/modules/phone.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-158"
+   "temp_id": "CNA-BUG-158",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -7723,7 +7577,8 @@
    },
    "origin": "Phase-2 candidate P2-137 (development/internals/modules/phone.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-159"
+   "temp_id": "CNA-BUG-159",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -7772,7 +7627,8 @@
    },
    "origin": "Phase-2 candidate P2-138 (development/internals/modules/phone.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-160"
+   "temp_id": "CNA-BUG-160",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -7823,7 +7679,8 @@
    },
    "origin": "Phase-2 candidate P2-139 (development/internals/modules/phone.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-161"
+   "temp_id": "CNA-BUG-161",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -7836,7 +7693,7 @@
    "subsystem": "Networking & gamer services",
    "status": "open",
    "severity": "medium",
-   "confidence": "verified-by-reading",
+   "confidence": "strong",
    "public_contract": "HttpNotificationChannel::Open() and RawPushNotificationMessage / ToastPushNotificationMessage::SendAsync on Windows",
    "expected": "<p>CNA builds the notification path for Windows on purpose: <code>cmake/UnitTests.cmake</code> (WINNATIVE-0014) says “The channel ITSELF is built on Windows ... this excludes the test's POSIX listener, not the feature”, and CNA's native-Windows plan records two compile fixes in these files. Winsock requires <code>WSAStartup</code> before <code>socket</code> or <code>getaddrinfo</code>; CNA's own Inspector socket layer calls it for exactly that reason.</p>",
    "actual": "<p>No file under <code>modules/phone</code> calls <code>WSAStartup</code>; among CNA's own sources only the Inspector's {{src:modules/inspector/src/InternalSocket.cpp|InternalSocket.cpp}} does (besides the vendored ENet's initialisation). In a process where neither ran, <code>socket()</code> fails with <code>WSANOTINITIALISED</code>. Because <code>socket_t</code> is the unsigned <code>SOCKET</code>, <code>listener &lt; 0</code> is never true: <code>Open</code> goes on to <code>setsockopt</code> and <code>bind</code> on <code>INVALID_SOCKET</code>, logs “could not listen for notifications” and returns with no URI, and <code>SendAsync</code> fails at <code>getaddrinfo</code> and returns false. Even with Winsock initialised, <code>connection &lt; 0</code> in <code>Listen</code> never detects a failed <code>accept</code>, so the worker passes <code>INVALID_SOCKET</code> to <code>recv</code>, <code>send</code> and <code>closesocket</code> before re-checking <code>listening_</code>; <code>Post</code> has the same comparison. {{src:modules/phone/CMakeLists.txt|modules/phone/CMakeLists.txt}} names no <code>ws2_32</code>; CNA's CMake links it only for <code>cna_inspector</code> and ENet.</p>",
@@ -7884,7 +7741,8 @@
    },
    "origin": "Phase-2 candidate P2-140 (development/internals/modules/phone.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-162"
+   "temp_id": "CNA-BUG-162",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -7892,15 +7750,15 @@
    ],
    "id": "CNA-BUG-163",
    "class": "bug",
-   "title": "HttpNotificationChannel and the push sender write with ::send flags 0, so a peer that resets its connection can end the process with SIGPIPE",
-   "summary": "The channel's reply and the sender's request are written with no MSG_NOSIGNAL or SO_NOSIGPIPE, unlike CNA's other socket code; on Linux a write after the peer's reset raises SIGPIPE, whose default action terminates the game.",
+   "title": "HttpNotificationChannel writes its reply with ::send flags 0, so a peer that aborts its connection mid-request can end the process with SIGPIPE",
+   "summary": "The listener's 200 or 400 reply is written with no MSG_NOSIGNAL or SO_NOSIGPIPE, unlike CNA's other socket code. After a peer's abortive close has been reported to the worker as a receive error, Linux delivers SIGPIPE on that write, and the default action terminates the game. The push sender omits the flag too, but its single first write did not raise SIGPIPE in the modelled cases.",
    "subsystem": "Networking & gamer services",
    "status": "open",
    "severity": "medium",
    "confidence": "strong",
    "public_contract": "HttpNotificationChannel's listener thread (Listen) and the internal Post behind both SendAsync methods",
    "expected": "<p>CNA's other socket and pipe code treats SIGPIPE as something a library must not expose: {{src:modules/inspector/src/InternalSocket.cpp|InternalSocket.cpp}} sends with <code>MSG_NOSIGNAL</code> and sets <code>SO_NOSIGPIPE</code> where it exists; {{src:modules/platform/src/X11/X11ModeGuardian.cpp|X11ModeGuardian.cpp}} uses <code>send(MSG_NOSIGNAL)</code> so that a peer that went away becomes <code>EPIPE</code>; {{src:modules/platform/src/Wayland/WaylandDataDevice.cpp|WaylandDataDevice.cpp}} blocks SIGPIPE per write because “a library must not change the process's disposition”. A failed push should fail that push, not end the game.</p>",
-   "actual": "<p><code>Listen</code> replies with <code>::send(connection, response, size, 0)</code> after <code>ReadRequestBody</code>, and <code>Post</code> writes the request with <code>::send(connection, request, length, 0)</code>. Neither sets <code>MSG_NOSIGNAL</code> or <code>SO_NOSIGPIPE</code>, and CNA changes the SIGPIPE disposition nowhere. When a peer's connection has been reset by the time the worker writes its 200 or 400 reply (for example a client that aborts in the middle of a request), the <code>send</code> fails with <code>EPIPE</code> and Linux delivers SIGPIPE to the process, whose default action terminates it. The same applies to the sender if the receiving end resets before the request is written.</p>",
+   "actual": "<p>Listen replies with ::<code>send(connection, response, size, 0)</code> after <code>ReadRequestBody</code>, and Post writes its request with ::<code>send(connection, request, length, 0)</code>; neither sets <code>MSG_NOSIGNAL</code> or <code>SO_NOSIGPIPE</code>, and CNA changes the SIGPIPE disposition nowhere. When a client aborts its connection (RST) part-way through a request, the worker's recv reports the reset, <code>ReadRequestBody</code> returns false or a truncated body, and the reply send then fails with EPIPE, so Linux delivers SIGPIPE, whose default action terminates the process. A client that closes normally, or that resets only after sending a complete request, does not trigger it: the write then succeeds or returns ECONNRESET without a signal. The sender's request is its first and only write on a fresh connection, and a reset seen before that write is reported as ECONNRESET without a signal, so the sender half is a latent inconsistency with the Inspector's convention rather than a demonstrated crash path.</p>",
    "sources": [
     {
      "path": "modules/phone/src/HttpNotificationChannel.cpp",
@@ -7915,7 +7773,7 @@
      "note": "MSG_NOSIGNAL and SO_NOSIGPIPE, for comparison"
     }
    ],
-   "evidence": "<p>Checked by reading both phone sources at 009d40f5 and searching CNA for any SIGPIPE disposition change (none; only per-call avoidance in the Inspector, X11 and Wayland code). Executed: a standalone probe, not CNA code, compiled with g++ 14.2 in the site repository's shared probe directory and removed afterwards, performed the listener's call sequence (<code>accept</code>, <code>recv</code> until error or end of stream, one <code>send</code> with flags 0) in a child process with the default SIGPIPE disposition, against a local client that ended its connection abortively part-way through a request. The child was terminated by SIGPIPE in 3 of 3 runs on Linux 6.12. The phone module itself was not compiled or run; macOS (where <code>SO_NOSIGPIPE</code> exists) and Windows (no SIGPIPE) were not examined.</p>",
+   "evidence": "<p>Checked by reading both phone sources at 009d40f5 and searching CNA for any SIGPIPE disposition change (none; only per-call avoidance in the Inspector, X11 and Wayland code). Executed: a standalone probe, not CNA code, compiled with g++ 14.2 in the site repository's shared probe directory and removed afterwards, performed the listener's call sequence (<code>accept</code>, <code>recv</code> until error or end of stream, one <code>send</code> with flags 0) in a child process with the default SIGPIPE disposition, against a local client that ended its connection abortively part-way through a request. The child was terminated by SIGPIPE in 3 of 3 runs on Linux 6.12. The phone module itself was not compiled or run; macOS (where <code>SO_NOSIGPIPE</code> exists) and Windows (no SIGPIPE) were not examined.</p><p><em>Independent re-verification:</em> Checked by reading both phone sources at 009d40f5 and searching CNA for any SIGPIPE disposition change (none; only per-call avoidance in the Inspector, X11 and Wayland code). Executed outside CNA: the entry records a g++ probe of the listener's call sequence that was killed by SIGPIPE in 3 of 3 runs, and this review re-ran the sequence as a Python loopback model on Linux 6.12 (SIGPIPE 3 of 3 after an abortive mid-request close, 0 of 3 after a normal close, ECONNRESET without a signal after a complete request followed by a reset, and ECONNRESET without a signal for the sender's first write after the listener reset the connection). The phone module itself was not compiled or run; <code>macOS</code> (<code>SO_NOSIGPIPE</code>) and Windows (no SIGPIPE) were not examined.</p>",
    "reproduction": null,
    "tests_current": "<p>The notification tests' clients always read the reply before closing normally; no test ends a connection abortively, and none checks that the process survives a failed reply.</p>",
    "regression_test": "<p>A test that runs an open channel in a child process with the default SIGPIPE disposition, has a client end its connection abortively mid-request, and requires the child to survive and keep accepting. The fix is <code>MSG_NOSIGNAL</code> on Linux and <code>SO_NOSIGPIPE</code> on Apple platforms for both the reply and the sender, as <code>InternalSocket.cpp</code> does.</p>",
@@ -7943,7 +7801,8 @@
    },
    "origin": "Phase-2 candidate P2-141 (development/internals/modules/phone.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-163"
+   "temp_id": "CNA-BUG-163",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -7998,7 +7857,8 @@
    },
    "origin": "Phase-2 candidate P2-142 (development/internals/modules/phone.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-164"
+   "temp_id": "CNA-BUG-164",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8070,7 +7930,8 @@
    },
    "origin": "Phase-2 candidate P2-090 (development/internals/modules/gamer-services.html); merged with CNA-BUG-165",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-165"
+   "temp_id": "CNA-BUG-165",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8141,7 +8002,8 @@
    },
    "origin": "Phase-2 candidate P2-091 (development/internals/modules/gamer-services.html)",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-166"
+   "temp_id": "CNA-BUG-166",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8209,7 +8071,8 @@
    },
    "origin": "Phase-2 candidate P2-092 (development/internals/modules/gamer-services.html); merged with CNA-BUG-167",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-167"
+   "temp_id": "CNA-BUG-167",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8258,7 +8121,8 @@
    },
    "origin": "Phase-2 candidate P2-094 (development/internals/modules/gamer-services.html)",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-168"
+   "temp_id": "CNA-BUG-168",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8266,15 +8130,15 @@
    ],
    "id": "CNA-BUG-169",
    "class": "bug",
-   "title": "NetworkSession::GamerJoined reports a gamer twice to a handler subscribed between AddLocalGamer or AddRemoteGamer and the next Update",
-   "summary": "Adding a gamer both inserts it into AllGamers and queues a GamerJoin event, and subscribing replays GamerJoined for every gamer in AllGamers, so a handler added in that window is called for the new gamer by the replay and again when Update drains the queue.",
+   "title": "NetworkSession::GamerJoined reports a gamer added with AddLocalGamer twice to a handler subscribed between that call and the next Update",
+   "summary": "AddLocalGamer inserts the new gamer into AllGamers at once and queues its GamerJoin event for the next Update, while subscribing replays GamerJoined for every gamer already in AllGamers, so a handler subscribed in that window is called twice for the new gamer.",
    "subsystem": "Networking & gamer services",
    "status": "open",
    "severity": "low",
    "confidence": "verified-by-reading",
    "public_contract": "Microsoft::Xna::Framework::Net::NetworkSession::GamerJoined (subscription replay) with NetworkSession::AddLocalGamer and the transport's AddRemoteGamer",
-   "expected": "<p>Each subscriber sees one <code>GamerJoined</code> per gamer: subscribing replays the gamers already present (the XNA quirk CNA models with <code>SetReplayHook</code>), and later joins are raised once. The constructor comment in {{src:modules/net/src/Xna/NetworkSession.cpp|NetworkSession.cpp}} states this intent, avoiding \"a separate queued event (which would otherwise double-fire this same join once the queue drained)\".</p>",
-   "actual": "<p><code>AddLocalGamer</code> and <code>AddRemoteGamer</code> add the gamer to <code>allGamers_</code> immediately and push a <code>GamerJoin</code> event that <code>Update</code> raises later. The replay hook installed by the constructor calls each new handler once for every gamer in <code>allGamers_</code> at subscription time. A handler subscribed after the add and before the next <code>Update</code> therefore receives <code>GamerJoined</code> for that gamer twice: once from the replay and once from the queue. For <code>AddLocalGamer</code> the window is ordinary game code (add a split-screen player, then subscribe); for <code>AddRemoteGamer</code> it is a handler subscribed from inside another <code>GamerJoined</code> handler while <code>Update</code> drains several queued joins.</p>",
+   "expected": "<p>Each subscriber sees one <code>GamerJoined</code> per gamer: subscribing replays the gamers already present, later joins are raised once. XNA's <code>AddLocalGamer</code> is asynchronous, so the gamer enters the collections and its event is raised inside one Update call and user code cannot subscribe between the two. CNA's constructor comment states the same intent, avoiding a queued event that would double-fire a replayed join.</p>",
+   "actual": "<p><code>AddLocalGamer</code> adds the gamer to <code>LocalGamers</code> and <code>AllGamers</code> immediately and pushes a <code>GamerJoin</code> event that Update raises later. The replay hook installed by the constructor calls each new handler once for every gamer in <code>allGamers_</code> at subscription time, so a handler subscribed after <code>AddLocalGamer</code> and before the next Update receives the new gamer's join twice. The <code>AddRemoteGamer</code> path (used by the transport inside Update) inserts and queues the same way, but a handler can subscribe in that window only from inside another <code>GamerJoined</code> handler, which XNA's own add accessor and <code>ProcessGamerJoined</code> reproduce, so it is not part of this entry.</p>",
    "sources": [
     {
      "path": "modules/net/src/Xna/NetworkSession.cpp",
@@ -8285,7 +8149,7 @@
      "note": "AddLocalGamerRaisesGamerJoinedForAnAlreadySubscribedHandler, AddRemoteGamerJoinsRostersAndRaisesGamerJoined, GamerJoinedReplaysForALateSubscriber"
     }
    ],
-   "evidence": "<p>Checked by reading {{src:modules/net/src/Xna/NetworkSession.cpp|NetworkSession.cpp}} and {{src:modules/net/tests/Microsoft/Xna/Framework/Net/NetworkSessionTests.cpp|NetworkSessionTests.cpp}} at 009d40f5; not executed. The replay semantics (the hook is invoked with the new handler on every <code>Add</code>, before the handler is stored) were read in <code>System/EventHandler.hpp</code> of a sibling Sharp Runtime checkout (next at 41b918c9, not pinned by TARGET). The existing tests subscribe before the add, or replay only construction-time gamers, so none opens the window.</p>",
+   "evidence": "<p>Checked by reading {{src:modules/net/src/Xna/NetworkSession.cpp|NetworkSession.cpp}} and {{src:modules/net/tests/Microsoft/Xna/Framework/Net/NetworkSessionTests.cpp|NetworkSessionTests.cpp}} at 009d40f5; not executed. The replay semantics (the hook is invoked with the new handler on every <code>Add</code>, before the handler is stored) were read in <code>System/EventHandler.hpp</code> of a sibling Sharp Runtime checkout (next at 41b918c9, not pinned by TARGET). The existing tests subscribe before the add, or replay only construction-time gamers, so none opens the window.</p><p><em>Independent re-verification:</em> Checked by reading {{src:modules/net/src/Xna/NetworkSession.cpp|NetworkSession.cpp}} (constructor replay hook, <code>AddLocalGamer</code>, <code>AddRemoteGamer</code>, Update) and the decompiled XNA <code>NetworkSession</code> (<code>GamerJoined</code> add accessor, <code>ProcessGamerJoined</code>, Update, <code>RaiseUpdateEvents</code>, <code>AddLocalGamer</code>); not executed. The replay semantics were read in an unpinned sibling Sharp Runtime checkout.</p>",
    "reproduction": "<pre><code class=\"language-cpp\">// Illustrative; not compiled or run for this entry. One signed-in gamer, room for two.\nNetworkSession* session = NetworkSession::Create(NetworkSessionType::Local, 2, 8);\nsession-&gt;AddLocalGamer(secondSignedInGamer);\nint joins = 0;\nsession-&gt;GamerJoined += [&amp;](System::Object*, const GamerJoinedEventArgs&amp;) { ++joins; };\n// joins == 2: the replay reported both gamers\nsession-&gt;Update();\n// joins == 3: the queued GamerJoin reported the second gamer again</code></pre>",
    "tests_current": "<p>The three tests named above; none subscribes between an add and <code>Update</code>.</p>",
    "regression_test": "<p>The reproduction as a test expecting two calls, one per gamer; fixed by not replaying a gamer whose join is still queued, or by replaying from the queue's point of view.</p>",
@@ -8307,7 +8171,8 @@
    },
    "origin": "Phase-2 candidate P2-129 (development/internals/modules/net.html)",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-169"
+   "temp_id": "CNA-BUG-169",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8378,7 +8243,8 @@
    },
    "origin": "Phase-2 candidate P2-130 (development/internals/modules/net.html)",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-170"
+   "temp_id": "CNA-BUG-170",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8435,7 +8301,8 @@
    },
    "origin": "new finding at TARGET review: re-reading the LocalNetworkGamer receive path while verifying P2-128 settled a concern a chapter review had left unclear; merged with CNA-BUG-171",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-171"
+   "temp_id": "CNA-BUG-171",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8498,7 +8365,8 @@
    },
    "origin": "new finding at TARGET review: reading EndJoin while verifying P2-130 (a chapter review had flagged the FIXME placeholders); merged with CNA-BUG-172",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-172"
+   "temp_id": "CNA-BUG-172",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8547,7 +8415,8 @@
    },
    "origin": "Chapter package WP15 candidate WP15-i002 (ch49-gamerservices)",
    "pkg": "B11",
-   "temp_id": "CNA-BUG-173"
+   "temp_id": "CNA-BUG-173",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8563,7 +8432,7 @@
    "confidence": "verified-by-reading",
    "public_contract": "LocalNetworkGamer::ReceiveData(PacketReader&, NetworkGamer*&)",
    "expected": "<p>XNA 4.0's <code>ReceiveData(PacketReader, out NetworkGamer)</code> (decompiled) resizes the reader to the next packet and returns <code>ReceiveData(data.ByteArray, 0, out sender)</code>, the received byte count; the byte-array overloads in CNA also return the count.</p>",
-   "actual": "<p>{{src:modules/net/src/Xna/LocalNetworkGamer.cpp|LocalNetworkGamer.cpp}} declares <code>uint32_t len = 0</code>, never updates it and returns it. {{src:modules/net/include/Microsoft/Xna/Framework/Net/LocalNetworkGamer.hpp|LocalNetworkGamer.hpp}} documents &#8220;Always 0 when a packet was available; 0 when none was, too&#8221; as a preserved FNA quirk, and LocalNetworkGamerTests.cpp pins it (<code>ReceiveDataIntoPacketReaderReturnsZero</code>). Code that loops <code>while (gamer.ReceiveData(reader, sender) &gt; 0)</code> never reads a packet. The reader-resize half of the same overload is CNA-BUG-171.</p>",
+   "actual": "<p>{{src:modules/net/src/Xna/LocalNetworkGamer.cpp|LocalNetworkGamer.cpp}} declares uint32_t len = 0, never updates it and returns it. {{src:modules/net/include/Microsoft/Xna/Framework/Net/LocalNetworkGamer.hpp|LocalNetworkGamer.hpp}} documents 'Always 0 when a packet was available; 0 when none was, too' as a preserved FNA quirk. <code>LocalNetworkGamerTests</code>.cpp's <code>ReceiveDataIntoPacketReaderReturnsZero</code> exercises only an empty queue (where 0 is also XNA's result), so no test pins the always-zero return for a received packet. Code that loops while (gamer.ReceiveData(reader, sender) &gt; 0) never reads a packet. The reader-resize half of the same overload is CNA-BUG-171.</p>",
    "sources": [
     {
      "path": "modules/net/src/Xna/LocalNetworkGamer.cpp",
@@ -8578,7 +8447,7 @@
      "note": "ReceiveDataIntoPacketReaderReturnsZero pins it"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5 against the decompiled XNA 4.0 <code>LocalNetworkGamer.ReceiveData</code>; not executed. CNA keeps the value deliberately for FNA parity; this entry applies CNA's rule that XNA wins where the two disagree.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5 against the decompiled XNA 4.0 <code>LocalNetworkGamer.ReceiveData</code>; not executed. CNA keeps the value deliberately for FNA parity; this entry applies CNA's rule that XNA wins where the two disagree.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5 against the decompiled XNA 4.0 <code>LocalNetworkGamer.ReceiveData</code> and CNA's own CLAUDE.md rule that XNA wins where FNA and XNA disagree; not executed. The named test calls the overload with nothing queued, so it never reaches the packet path.</p>",
    "reproduction": null,
    "tests_current": "<p>{{src:modules/net/tests/Microsoft/Xna/Framework/Net/LocalNetworkGamerTests.cpp|LocalNetworkGamerTests.cpp}} asserts the zero return.</p>",
    "regression_test": "<p>Change the test to expect the packet size, and return it (together with the reader resize of CNA-BUG-171).</p>",
@@ -8600,7 +8469,8 @@
    },
    "origin": "Chapter package WP15 candidate WP15-i017 (ch51-networking)",
    "pkg": "B11",
-   "temp_id": "CNA-BUG-174"
+   "temp_id": "CNA-BUG-174",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8613,7 +8483,7 @@
    "subsystem": "Networking & gamer services",
    "status": "open",
    "severity": "low",
-   "confidence": "reproduced",
+   "confidence": "recorded-by-cna",
    "public_contract": "The bundled avatar content produced by tools/avatar_builder and drawn by AvatarRenderer's real-rendering extension",
    "expected": "<p>Clothing should cover the body without the body's garment caps showing through.</p>",
    "actual": "<p>Item 16 of {{src:NEXTnet.md|NEXTnet.md}} (&#8220;The one remaining avatar defect class &#8212; still open&#8221;) measures, with <code>diagnose_avatar_mesh.py</code>, Shirt 64/228, Pants 21/285 and Shoes 51/270 vertices crossing the body in both Stand0 and Wave; the visible offenders are the collar and the sleeve cuffs, where each garment capsule's hemispherical end cap burrows into the adjacent body segment. Trimming caps, raising tessellation and two other approaches were tried and reverted.</p>",
@@ -8647,7 +8517,8 @@
    },
    "origin": "Chapter package WP15 candidate WP15-i026 (ch52-avatar)",
    "pkg": "B11",
-   "temp_id": "CNA-BUG-175"
+   "temp_id": "CNA-BUG-175",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -13242,13 +13113,86 @@
    "temp_id": "CNA-BUG-249"
   },
   {
+   "cand_ids": [
+    "P2-128",
+    "WP15-i016"
+   ],
+   "id": "CNA-BUG-250",
+   "class": "bug",
+   "title": "LocalNetworkGamer::SendData in a Local or LocalWithLeaderboards session silently drops every packet, so neither the sender nor another local gamer ever receives it",
+   "summary": "NetworkSession::Update raises PacketSend events only when real networking is enabled (SystemLink), so SendData in a Local or LocalWithLeaderboards session reports success and delivers nothing, although SendData is documented to reach every gamer in the session, the sender included.",
+   "subsystem": "Networking & gamer services",
+   "status": "open",
+   "severity": "low",
+   "confidence": "verified-by-reading",
+   "public_contract": "Microsoft::Xna::Framework::Net::LocalNetworkGamer::SendData, ReceiveData and getIsDataAvailableProperty in a NetworkSession of type Local or LocalWithLeaderboards",
+   "expected": "<p>XNA documents <code>LocalNetworkGamer.SendData</code> as sending to all gamers in a session ('This includes the gamer sending the packet') without any session-type qualifier, and describes Local sessions as making it easier to share code between local and online modes; the decompiled <code>SendDataWorker</code> queues every packet regardless of session type. CNA's own <code>LocalNetworkGamer</code>.hpp repeats 'every gamer in the session', {{src:misc/known_gaps.md|known_gaps.md}} says nothing is missing about Local sessions, and CNA's CLAUDE.md says XNA wins over FNA where they disagree.</p>",
+   "actual": "<p><code>LocalNetworkGamer::SendData</code> enqueues a <code>PacketSend</code> event; <code>NetworkSession::Update</code> in {{src:modules/net/src/Xna/NetworkSession.cpp|NetworkSession.cpp}} delivers it only inside if (<code>ENetBackend::RealNetworkingEnabled(sessionType_)</code>), which is true for <code>SystemLink</code> alone ({{src:modules/net/src/Internal/ENetBackend.cpp|ENetBackend.cpp}}), so in Local and <code>LocalWithLeaderboards</code> sessions the event is silently dropped, including a packet a local gamer sends to itself or to another local gamer. <code>SendData</code> reports nothing and <code>IsDataAvailable</code> stays false. The drop is deliberate FNA parity, pinned by <code>LocalNetworkGamerTest.SendDataThenReceiveDataRoundtrip</code> and <code>NetworkSessionTypePolicyTest.SendDataStaysFullySyntheticForEverySyntheticType</code>, but no CNA header documents it and {{src:misc/known_gaps.md|known_gaps.md}} says the opposite.</p>",
+   "sources": [
+    {
+     "path": "modules/net/src/Xna/NetworkSession.cpp",
+     "note": "NetworkSession::Update delivers PacketSend only when RealNetworkingEnabled"
+    },
+    {
+     "path": "modules/net/src/Internal/ENetBackend.cpp",
+     "note": "ENetBackend::RealNetworkingEnabled is true for SystemLink only"
+    },
+    {
+     "path": "modules/net/src/Xna/LocalNetworkGamer.cpp",
+     "note": "LocalNetworkGamer::SendData enqueues; ReceiveData dequeues packetQueue_"
+    },
+    {
+     "path": "modules/net/tests/Microsoft/Xna/Framework/Net/LocalNetworkGamerTests.cpp",
+     "note": "SendDataThenReceiveDataRoundtrip asserts that nothing arrives"
+    },
+    {
+     "path": "modules/net/tests/CNA/Internal/Net/NetworkSessionTypePolicyTests.cpp",
+     "note": "SendDataStaysFullySyntheticForEverySyntheticType"
+    },
+    {
+     "path": "misc/known_gaps.md",
+     "note": "section 4 says nothing is missing about Local sessions"
+    }
+   ],
+   "evidence": "<p>Checked by reading at 009d40f5; not executed. XNA's contract is from xna4-spec's <code>NetworkSessionType</code> documentation and the decompiled <code>LocalNetworkGamer</code> (<code>SendDataWorker</code>/<code>SendDataNow</code> have no session-type check). Classified as a functional gap because CNA chose and pins the behaviour; the <code>SystemLink</code> branch already contains the local-target delivery (<code>localTarget-&gt;EnqueuePacket</code>) a <code>Local</code> session would need. The network-sessions deep dive states the non-delivery.</p><p><em>Independently observed as a separate finding (merged):</em> NetworkSession::Update delivers queued PacketSend only when real networking is enabled (SystemLink), so SendData between local gamers of a Local session never arrives; PlayerMatch, Ranked and JoinInvited are refused.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; not executed. The XNA contract is from xna4-spec (<code>LocalNetworkGamer.SendData</code>, <code>NetworkSessionType.Local</code>) and the decompiled <code>LocalNetworkGamer</code>, which has no session-type check; the native XNA kernel that routes packets to local recipients cannot be read, so delivery in XNA's Local sessions is inferred from the documented API. Reclassified from functional-gap because the behaviour is silent, undocumented in CNA's headers and contradicts the <code>SendData</code> contract; the <code>SystemLink</code> branch already contains the local-target delivery a fix would reuse.</p>",
+   "reproduction": "<pre><code class=\"language-cpp\">// Illustrative; mirrors LocalNetworkGamerTest.SendDataThenReceiveDataRoundtrip. One signed-in gamer.\nNetworkSession* session = NetworkSession::Create(NetworkSessionType::Local, 1, 8);\nLocalNetworkGamer* me = session-&gt;getLocalGamersProperty()[0];\nstd::vector&lt;SharpRuntime::bytecs&gt; payload{1, 2, 3, 4};\nme-&gt;SendData(payload, SendDataOptions::Reliable, me);    // to itself\nsession-&gt;Update();\nbool arrived = me-&gt;getIsDataAvailableProperty();         // false in CNA</code></pre>",
+   "tests_current": "<p>{{src:modules/net/tests/Microsoft/Xna/Framework/Net/LocalNetworkGamerTests.cpp|LocalNetworkGamerTests.cpp}} and {{src:modules/net/tests/CNA/Internal/Net/NetworkSessionTypePolicyTests.cpp|NetworkSessionTypePolicyTests.cpp}} assert non-delivery for every synthetic type; <code>SystemLink</code> delivery is covered by <code>ENetBackendTests.cpp</code> and the two-process loopback test.</p>",
+   "regression_test": "<p>Flip the two tests to expect delivery (a packet sent to a local recipient, or broadcast, arrives after the next <code>Update</code>) once <code>Local</code> sessions route <code>PacketSend</code> through the same local-target branch <code>SystemLink</code> uses.</p>",
+   "blast_radius": "<p>Split-screen games that use a <code>Local</code> session and <code>SendData</code>/<code>ReceiveData</code> to exchange state between local players, and games that share one networking code path between <code>Local</code> and <code>SystemLink</code>. <code>SystemLink</code> sessions and <code>Local</code> games that send no packets are unaffected.</p>",
+   "workaround": "<p>Exchange local players' state directly in game code, or use a <code>SystemLink</code> session for every mode.</p>",
+   "related": {
+    "deep": [
+     [
+      "deep-dives/services/network-sessions.html#session-types",
+      "Network sessions: what each session type does"
+     ]
+    ],
+    "internals": [
+     [
+      "development/internals/modules/net.html#pump",
+      "Network session internals: the pump"
+     ]
+    ],
+    "guide": [
+     [
+      "docs/tutorials/97-networking.html",
+      "Tutorial 97: networking"
+     ]
+    ]
+   },
+   "origin": "Phase-2 candidate P2-128 (development/internals/modules/net.html); merged with CNA-GAP-050; reclassified from CNA-GAP-050 by the adversarial audit",
+   "pkg": "B8",
+   "temp_id": "CNA-GAP-050",
+   "tests_present": true
+  },
+  {
    "cand_ids": [],
    "class": "bug",
    "status": "open",
    "confidence": "verified-by-reading",
    "tests_present": true,
    "subsystem": "Math & geometry",
-   "id": "CNA-BUG-250",
+   "id": "CNA-BUG-251",
    "title": "BoundingSphere(Vector3 center, float radius) accepts a negative radius, where XNA 4.0 throws ArgumentException",
    "summary": "CNA's BoundingSphere(Vector3, float) constructor stores any radius, while XNA 4.0's throws ArgumentException for radius < 0, so a negative radius is silently accepted.",
    "severity": "low",
@@ -13305,7 +13249,7 @@
    "confidence": "verified-by-reading",
    "tests_present": true,
    "subsystem": "Math & geometry",
-   "id": "CNA-BUG-251",
+   "id": "CNA-BUG-252",
    "title": "Vector3, Vector4, Quaternion and Matrix GetHashCode add raw int bit patterns with signed arithmetic, which overflows (undefined behaviour) for ordinary values",
    "summary": "The four GetHashCode functions sum FloatHash results as int with plain +; three 1.0f components already exceed INT_MAX, so the sum is signed-overflow undefined behaviour, while Vector2::GetHashCode already sums as unsigned to avoid it.",
    "severity": "low",
@@ -13365,7 +13309,7 @@
   },
   {
    "cand_ids": [],
-   "id": "CNA-BUG-252",
+   "id": "CNA-BUG-253",
    "class": "bug",
    "subsystem": "Graphics & renderers",
    "status": "open",
@@ -13422,7 +13366,7 @@
   },
   {
    "cand_ids": [],
-   "id": "CNA-BUG-253",
+   "id": "CNA-BUG-254",
    "class": "bug",
    "subsystem": "Documentation & release tooling",
    "status": "open",
@@ -13477,7 +13421,7 @@
    "cand_ids": [
     "WP05-i011"
    ],
-   "id": "CNA-BUG-254",
+   "id": "CNA-BUG-255",
    "class": "bug",
    "subsystem": "Graphics & renderers",
    "status": "narrowed",
@@ -13544,7 +13488,7 @@
    "cand_ids": [
     "BIBLE-DOC-2"
    ],
-   "id": "CNA-BUG-255",
+   "id": "CNA-BUG-256",
    "class": "bug",
    "subsystem": "Documentation & release tooling",
    "status": "narrowed",
@@ -13608,6 +13552,53 @@
    },
    "origin": "restored (narrowed) by the independent adversarial audit from dismissed candidate BIBLE-DOC-2: the five documents that candidate named are corrected; a sixth still asserts it (verified by the orchestrator at TARGET)",
    "temp_id": "NEW-AUDIT-08"
+  },
+  {
+   "cand_ids": [],
+   "id": "CNA-BUG-257",
+   "class": "bug",
+   "subsystem": "Graphics & renderers",
+   "status": "open",
+   "severity": "low",
+   "confidence": "verified-by-reading",
+   "tests_present": true,
+   "title": "PORTABLEGL depth clears force glDepthMask(GL_TRUE) and never restore it, although their own comment says both masks are restored as EasyGL does",
+   "summary": "ClearColorAndDepth, ClearDepth, ClearDepthAndStencil and ClearColorDepthAndStencil call glDepthMask(GL_TRUE) and never put the depth write mask back; only the colour mask is restored.",
+   "public_contract": "GraphicsDevice::Clear with a depth option on the PORTABLEGL renderer (PortableGLRenderer::ClearColorAndDepth, ClearDepth, ClearDepthAndStencil, ClearColorDepthAndStencil)",
+   "expected": "<p>The comment in <code>ClearColorAndDepth</code> states the rule: XNA's <code>Clear</code> ignores <code>DepthBufferWriteEnable</code> and <code>ColorWriteChannels</code>, so both masks are &ldquo;neutralized here and restored afterwards, exactly as EasyGL does&rdquo;. EasyGL implements the restore with <code>RestoreWriteMasksAfterClear</code> (REMED-GFX-237: &ldquo;restores the write masks a clear had to force open&rdquo;), so a clear never changes what a later draw's depth/stencil state says.</p>",
+   "actual": "<p>In {{src:modules/renderers/portablegl/src/PortableGLRenderer.cpp|PortableGLRenderer.cpp}} the four clears that touch depth call <code>glDepthMask(GL_TRUE)</code> before <code>glClear</code>. Only the colour mask is put back afterwards (from <code>colorWriteChannels</code>); the depth write mask is left <code>GL_TRUE</code> until <code>ApplyDepthStencilState</code> next runs <code>glDepthMask(depthWriteEnable ? GL_TRUE : GL_FALSE)</code>. A later draw through a state with <code>DepthBufferWriteEnable</code> false can therefore write depth after such a clear, if the state has not been re-applied in between.</p>",
+   "sources": [
+    {
+     "path": "modules/renderers/portablegl/src/PortableGLRenderer.cpp",
+     "note": "the four depth-touching clears force glDepthMask(GL_TRUE); ApplyDepthStencilState sets it from the state"
+    },
+    {
+     "path": "modules/renderers/easygl/include/CNA/Internal/Renderers/EasyGL/EasyGLRenderer.hpp",
+     "note": "RestoreWriteMasksAfterClear (REMED-GFX-237), the rule the PortableGL comment cites"
+    }
+   ],
+   "evidence": "<p>Read at 009d40f5; nothing was built or executed. Whether a later draw is actually affected depends on when the depth/stencil state is next applied, which was not traced through <code>GraphicsDevice</code>. Reported as an unpublished observation by the independent dismissal review (D1) and re-verified by the orchestrator against the source.</p>",
+   "reproduction": null,
+   "tests_current": "<p>The PORTABLEGL examples exercise clears and depth state separately (<code>portablegl_blend_test.cpp</code> covers the colour mask through Clear, <code>portablegl_raster_state_test.cpp</code> depth state), but none clears depth and then draws through a state with <code>DepthBufferWriteEnable</code> false.</p>",
+   "regression_test": "<p>Clear depth, then draw a quad through a <code>DepthStencilState</code> with <code>DepthBufferWriteEnable</code> false and expect the depth buffer unchanged. The fix is to restore the depth mask after each of the four clears, as EasyGL does.</p>",
+   "blast_radius": "<p>PORTABLEGL only (a CPU rasteriser renderer); games that clear depth and rely on read-only depth for a following pass.</p>",
+   "workaround": "<p>Re-apply the depth/stencil state after a clear that touches depth.</p>",
+   "related": {
+    "internals": [
+     [
+      "development/internals/graphics/backends.html",
+      "Renderer backends internals"
+     ]
+    ],
+    "guide": [
+     [
+      "docs/graphics-state.html#depthstencilstate",
+      "Graphics state: DepthStencilState"
+     ]
+    ]
+   },
+   "origin": "new finding at the independent adversarial audit (observed by the D1 dismissal reviewer, re-verified by the orchestrator)",
+   "temp_id": "NEW-AUDIT-09"
   },
   {
    "cand_ids": [
@@ -13682,7 +13673,8 @@
    },
    "origin": "Bible ledger CNA-BUG-024 (partially fixed: graphics exceptions now derive from System::Exception; the surviving ContentLoadException divergence is deliberate and documented, reclassified as a functional gap)",
    "pkg": "B1",
-   "temp_id": "CNA-GAP-001"
+   "temp_id": "CNA-GAP-001",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -13741,7 +13733,8 @@
    },
    "origin": "Phase-2 candidate P2-063 (development/internals/modules/core.html)",
    "pkg": "B1",
-   "temp_id": "CNA-GAP-002"
+   "temp_id": "CNA-GAP-002",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -13757,7 +13750,7 @@
    "confidence": "verified-by-reading",
    "public_contract": "<code>CNA::Runtime::Initialize(const RuntimeOptions&amp;)</code>, <code>Shutdown()</code>, <code>IsGraphicsEnabled()</code>, <code>IsAudioEnabled()</code>, <code>IsInputEnabled()</code>; <code>CNA::RuntimeOptions</code>",
    "expected": "<p>A class in a header on the module's public include path, documented as managing “the lifetime of the CNA runtime and its subsystems”, either works or says that it does not exist yet.</p>",
-   "actual": "<p><code>CNA/Misc.hpp</code> declares <code>RuntimeOptions</code> (four flags) and <code>Runtime</code> with five methods and Doxygen describing working behaviour. No source defines them and no translation unit includes the header, so a program that calls any method fails at link time. The C API records the rows as not applicable because the facade “is declared and defined nowhere”, and <code>CheckUnimplementedRuntimeFacade.cmake</code> fails the build the day <code>CNA::Runtime::</code> symbols appear, so the gap is known and guarded, but the header itself does not say so. <code>Game</code> is the working startup boundary.</p>",
+   "actual": "<p>CNA/Misc.hpp declares <code>RuntimeOptions</code> (four flags) and Runtime with five methods and Doxygen describing working behaviour. No source defines them and no translation unit includes the header, so a program that calls any method fails at link time. The C API records the rows as not applicable because the facade \"is declared and defined nowhere\". The <code>CApi_UnimplementedRuntimeFacade</code> CTest test (<code>CheckUnimplementedRuntimeFacade</code>.cmake, which runs nm over the runtime archive) fails the day <code>CNA::Runtime</code>:: symbols appear, so the gap is known and guarded; that test is defined only in builds configured with <code>CNA_BUILD_C_API</code>, which is off by default, and it fails a test run rather than the build. The header itself does not say the facade is unimplemented. Game is the working startup boundary.</p>",
    "sources": [
     {
      "path": "modules/runtime/include/CNA/Misc.hpp",
@@ -13772,7 +13765,7 @@
      "note": "rule 'cna-runtime-facade': rows not applicable because the facade is unimplemented"
     }
    ],
-   "evidence": "<p>Checked by reading {{src:modules/runtime/include/CNA/Misc.hpp|Misc.hpp}}, {{src:modules/c-api/cmake/CheckUnimplementedRuntimeFacade.cmake|CheckUnimplementedRuntimeFacade.cmake}} and the coverage mapping at 009d40f5, and by searching the tree for includes of the header and for definitions of the methods (none). CNA's own check inspects the compiled runtime archive with <code>nm</code>; it was not run here.</p>",
+   "evidence": "<p>Checked by reading {{src:modules/runtime/include/CNA/Misc.hpp|Misc.hpp}}, {{src:modules/c-api/cmake/CheckUnimplementedRuntimeFacade.cmake|CheckUnimplementedRuntimeFacade.cmake}} and the coverage mapping at 009d40f5, and by searching the tree for includes of the header and for definitions of the methods (none). CNA's own check inspects the compiled runtime archive with <code>nm</code>; it was not run here.</p><p><em>Independent re-verification:</em> Checked by reading {{src:modules/runtime/include/CNA/Misc.hpp|Misc.hpp}}, {{src:modules/c-api/cmake/CheckUnimplementedRuntimeFacade.cmake|CheckUnimplementedRuntimeFacade.cmake}}, its <code>add_test</code> registration in {{src:modules/c-api/CMakeLists.txt|CMakeLists.txt}} and the coverage mapping at 009d40f5, and by searching the tree for includes of the header and for definitions of the methods (none). CNA's own check inspects the compiled runtime archive with nm; it was not run here.</p>",
    "reproduction": "<p>Illustrative: <code>CNA::Runtime r; r.Initialize({});</code> compiles against the header and fails to link with an undefined reference to <code>CNA::Runtime::Initialize</code>.</p>",
    "tests_current": "<p>The CMake check above is the only guard; no unit test covers the facade because there is nothing to call.</p>",
    "regression_test": "<p>If the facade is implemented: unit tests for each flag and the C API rows the coverage mapping marks not applicable. If it is removed: the header disappears and the CMake check and mapping rule go with it.</p>",
@@ -13800,7 +13793,8 @@
    },
    "origin": "Phase-2 candidate P2-190 (development/internals/runtime/module.html)",
    "pkg": "B2",
-   "temp_id": "CNA-GAP-003"
+   "temp_id": "CNA-GAP-003",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -13816,7 +13810,7 @@
    "confidence": "verified-by-reading",
    "public_contract": "virtual bool Microsoft::Xna::Framework::Game::ShowMissingRequirementMessage(const std::exception&)",
    "expected": "<p>In XNA 4.0 (IL of <code>Game.RunGame</code>) the two requirement exceptions are caught and passed to <code>ShowMissingRequirementMessage</code>; the default shows a host message, and the exception is rethrown only if it returns false.</p>",
-   "actual": "<p>CNA's implementation returns false and is referenced nowhere else: <code>Game::Run</code> in {{src:modules/runtime/src/Game.cpp|Game.cpp}} logs any escaping exception and rethrows it without consulting the hook. A game that overrides it to show its own \"no suitable graphics card\" dialog never sees the call.</p>",
+   "actual": "<p>CNA's implementation returns false and is referenced nowhere else: <code>Game::Run</code> in {{src:modules/runtime/src/Game.cpp|Game.cpp}} logs any escaping exception and rethrows it without consulting the hook, so an override is never called. Only exceptions raised inside Run can reach that handler (for example <code>NoAudioHardwareException</code> from <code>SoundEffect</code> or <code>DynamicSoundEffectInstance</code> during <code>LoadContent</code>). The <code>NoSuitableGraphicsDeviceException</code> throw sites read at 009d40f5 (the <code>UseNullDevice</code>/<code>UseReferenceDevice</code> renderer requirement and the <code>DirectX</code> 9 <code>HiDef</code> shader-model check) run while a <code>GraphicsDevice</code> is constructed, which for Game's own device happens in Game's constructor, before Run exists; a hook wired into Run alone would not see those.</p>",
    "sources": [
     {
      "path": "modules/runtime/src/Game.cpp",
@@ -13827,7 +13821,7 @@
      "note": "virtual ShowMissingRequirementMessage declaration"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. XNA call site read from the genuine XNA 4.0 Game IL.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. XNA call site read from the genuine XNA 4.0 Game IL.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5 and searching the tree for other references to the hook (none). XNA call site read from the decompiled XNA 4.0 <code>Game.RunGame</code>. Not executed; where each CNA exception is thrown was established by reading, so a regression test has to raise the exception during Run (for example from <code>LoadContent</code>) to reach a wired hook.</p>",
    "reproduction": null,
    "tests_current": "<p>No test references the hook.</p>",
    "regression_test": "<p>A Game test whose device creation throws a NoSuitableGraphicsDevice-style exception and whose override records the call and returns true; Run should then return without rethrowing.</p>",
@@ -13843,7 +13837,8 @@
    },
    "origin": "Chapter-package candidate WP03-i006",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-004"
+   "temp_id": "CNA-GAP-004",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -13886,7 +13881,8 @@
    },
    "origin": "Chapter-package candidate WP03-i009",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-005"
+   "temp_id": "CNA-GAP-005",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -13925,7 +13921,8 @@
    },
    "origin": "Chapter-package candidate WP03-i010",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-006"
+   "temp_id": "CNA-GAP-006",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -13976,7 +13973,8 @@
    },
    "origin": "Chapter package WP16 candidate WP16-i003 (ch56-sharp-runtime-namespaces)",
    "pkg": "B12",
-   "temp_id": "CNA-GAP-007"
+   "temp_id": "CNA-GAP-007",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -15259,7 +15257,7 @@
      "note": "reader tests"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; not executed. XNA behaviour from the decompiled DateTimeReader. sharp-runtime's DateTime kind storage (packed in the top two bits, ticket 1941) landed on 2026-08-19, before the TARGET commit, and was read there through git only.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; not executed. XNA behaviour from the decompiled <code>DateTimeReader</code>. sharp-runtime's <code>DateTime</code> kind storage (packed in the top two bits, ticket 1941) landed on 2026-08-19, before the TARGET commit, and was read there through git only.</p>",
    "reproduction": null,
    "tests_current": "<p>DecimalDateTimeContentTypeReaderTests.cpp covers the reader.</p>",
    "regression_test": "<p>If Sharp Runtime gains a kind: a round trip of Utc and Local values.</p>",
@@ -15371,7 +15369,7 @@
      "note": "--unit-scale option"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; not executed. Correction: the original text said both tools accept --unit-scale; only gltf_to_cnb does. Workaround wording: convert with gltf_to_cnb --unit-scale or gltf_to_cnj's positional unitScale, or apply a scale to the world matrix when drawing. Offline scaling is exercised by modules/content/tests/Microsoft/Xna/Framework/Content/GltfToCnjToolTests.cpp.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; not executed. Correction: the original text said both tools accept --unit-scale; only <code>gltf_to_cnb</code> does. Workaround wording: convert with <code>gltf_to_cnb</code> --unit-scale or <code>gltf_to_cnj</code>'s positional <code>unitScale</code>, or apply a scale to the world matrix when drawing. Offline scaling is exercised by {{src:modules/content/tests/Microsoft/Xna/Framework/Content/GltfToCnjToolTests.cpp|GltfToCnjToolTests.cpp}}.</p>",
    "reproduction": null,
    "tests_current": "<p>Scaling is tested through the offline tools; the runtime route has no scale to test.</p>",
    "regression_test": "<p>If a runtime option is added (for example on a glTF load-options object), a test that a scaled load matches the tool's scaled output.</p>",
@@ -16075,78 +16073,6 @@
   },
   {
    "cand_ids": [
-    "P2-128",
-    "WP15-i016"
-   ],
-   "id": "CNA-GAP-050",
-   "class": "functional-gap",
-   "title": "Local and LocalWithLeaderboards network sessions deliver no packets, not even between local gamers",
-   "summary": "NetworkSession::Update handles PacketSend events only when real networking is enabled (SystemLink), so SendData in a Local session succeeds and nothing arrives, although XNA positions Local sessions as split-screen play that shares code with networked modes.",
-   "subsystem": "Networking & gamer services",
-   "status": "open",
-   "severity": "n/a",
-   "confidence": "verified-by-reading",
-   "public_contract": "Microsoft::Xna::Framework::Net::LocalNetworkGamer::SendData, ReceiveData and getIsDataAvailableProperty in a NetworkSession of type Local or LocalWithLeaderboards",
-   "expected": "<p>XNA's documentation of <code>NetworkSessionType.Local</code>: \"Does not involve any networking traffic, but can be used for split-screen gaming on a single Xbox 360 console. Creating a local network session may also make it easier to share code between local and online game modes.\" XNA's <code>LocalNetworkGamer.SendDataWorker</code> queues every packet regardless of the session type (decompiled), so packets between a console's local gamers arrive.</p>",
-   "actual": "<p><code>LocalNetworkGamer::SendData</code> enqueues a <code>PacketSend</code> event; <code>NetworkSession::Update</code> in {{src:modules/net/src/Xna/NetworkSession.cpp|NetworkSession.cpp}} delivers it only inside <code>if (ENetBackend::RealNetworkingEnabled(sessionType_))</code>, which is true for <code>SystemLink</code> alone ({{src:modules/net/src/Internal/ENetBackend.cpp|ENetBackend.cpp}}), so in <code>Local</code> and <code>LocalWithLeaderboards</code> sessions the event is dropped, including a packet a local gamer sends to another local gamer or to itself. <code>SendData</code> reports nothing and <code>IsDataAvailable</code> stays false. CNA chose this deliberately, citing FNA's always-empty <code>PacketSend</code> branch, and pins it: <code>LocalNetworkGamerTest.SendDataThenReceiveDataRoundtrip</code> and <code>NetworkSessionTypePolicyTest.SendDataStaysFullySyntheticForEverySyntheticType</code> assert non-delivery. {{src:misc/known_gaps.md|misc/known_gaps.md}} says of these types that \"a single machine genuinely is the whole session and nothing is missing about them\", which is not true of packet delivery.</p>",
-   "sources": [
-    {
-     "path": "modules/net/src/Xna/NetworkSession.cpp",
-     "note": "NetworkSession::Update delivers PacketSend only when RealNetworkingEnabled"
-    },
-    {
-     "path": "modules/net/src/Internal/ENetBackend.cpp",
-     "note": "ENetBackend::RealNetworkingEnabled is true for SystemLink only"
-    },
-    {
-     "path": "modules/net/src/Xna/LocalNetworkGamer.cpp",
-     "note": "LocalNetworkGamer::SendData enqueues; ReceiveData dequeues packetQueue_"
-    },
-    {
-     "path": "modules/net/tests/Microsoft/Xna/Framework/Net/LocalNetworkGamerTests.cpp",
-     "note": "SendDataThenReceiveDataRoundtrip asserts that nothing arrives"
-    },
-    {
-     "path": "modules/net/tests/CNA/Internal/Net/NetworkSessionTypePolicyTests.cpp",
-     "note": "SendDataStaysFullySyntheticForEverySyntheticType"
-    },
-    {
-     "path": "misc/known_gaps.md",
-     "note": "section 4 says nothing is missing about Local sessions"
-    }
-   ],
-   "evidence": "<p>Checked by reading at 009d40f5; not executed. XNA's contract is from xna4-spec's <code>NetworkSessionType</code> documentation and the decompiled <code>LocalNetworkGamer</code> (<code>SendDataWorker</code>/<code>SendDataNow</code> have no session-type check). Classified as a functional gap because CNA chose and pins the behaviour; the <code>SystemLink</code> branch already contains the local-target delivery (<code>localTarget-&gt;EnqueuePacket</code>) a <code>Local</code> session would need. The network-sessions deep dive states the non-delivery.</p><p><em>Independently observed as a separate finding (merged):</em> NetworkSession::Update delivers queued PacketSend only when real networking is enabled (SystemLink), so SendData between local gamers of a Local session never arrives; PlayerMatch, Ranked and JoinInvited are refused.</p>",
-   "reproduction": "<pre><code class=\"language-cpp\">// Illustrative; mirrors LocalNetworkGamerTest.SendDataThenReceiveDataRoundtrip. One signed-in gamer.\nNetworkSession* session = NetworkSession::Create(NetworkSessionType::Local, 1, 8);\nLocalNetworkGamer* me = session-&gt;getLocalGamersProperty()[0];\nstd::vector&lt;SharpRuntime::bytecs&gt; payload{1, 2, 3, 4};\nme-&gt;SendData(payload, SendDataOptions::Reliable, me);    // to itself\nsession-&gt;Update();\nbool arrived = me-&gt;getIsDataAvailableProperty();         // false in CNA</code></pre>",
-   "tests_current": "<p>{{src:modules/net/tests/Microsoft/Xna/Framework/Net/LocalNetworkGamerTests.cpp|LocalNetworkGamerTests.cpp}} and {{src:modules/net/tests/CNA/Internal/Net/NetworkSessionTypePolicyTests.cpp|NetworkSessionTypePolicyTests.cpp}} assert non-delivery for every synthetic type; <code>SystemLink</code> delivery is covered by <code>ENetBackendTests.cpp</code> and the two-process loopback test.</p>",
-   "regression_test": "<p>Flip the two tests to expect delivery (a packet sent to a local recipient, or broadcast, arrives after the next <code>Update</code>) once <code>Local</code> sessions route <code>PacketSend</code> through the same local-target branch <code>SystemLink</code> uses.</p>",
-   "blast_radius": "<p>Split-screen games that use a <code>Local</code> session and <code>SendData</code>/<code>ReceiveData</code> to exchange state between local players, and games that share one networking code path between <code>Local</code> and <code>SystemLink</code>. <code>SystemLink</code> sessions and <code>Local</code> games that send no packets are unaffected.</p>",
-   "workaround": "<p>Exchange local players' state directly in game code, or use a <code>SystemLink</code> session for every mode.</p>",
-   "related": {
-    "deep": [
-     [
-      "deep-dives/services/network-sessions.html#session-types",
-      "Network sessions: what each session type does"
-     ]
-    ],
-    "internals": [
-     [
-      "development/internals/modules/net.html#pump",
-      "Network session internals: the pump"
-     ]
-    ],
-    "guide": [
-     [
-      "docs/tutorials/97-networking.html",
-      "Tutorial 97: networking"
-     ]
-    ]
-   },
-   "origin": "Phase-2 candidate P2-128 (development/internals/modules/net.html); merged with CNA-GAP-050",
-   "pkg": "B8",
-   "temp_id": "CNA-GAP-050"
-  },
-  {
-   "cand_ids": [
     "WP15-i005"
    ],
    "id": "CNA-GAP-051",
@@ -16182,7 +16108,8 @@
    },
    "origin": "Chapter package WP15 candidate WP15-i005 (ch49-gamerservices)",
    "pkg": "B11",
-   "temp_id": "CNA-GAP-051"
+   "temp_id": "CNA-GAP-051",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -16244,7 +16171,8 @@
    },
    "origin": "Chapter package WP15 candidates WP15-i006 and WP15-i007 (ch49-gamerservices)",
    "pkg": "B11",
-   "temp_id": "CNA-GAP-052"
+   "temp_id": "CNA-GAP-052",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -16279,7 +16207,7 @@
      "note": "bandwidth fields never set"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; not executed. The stubs are pinned by tests: <code>LocalNetworkGamerTest.EnableSendVoiceAndSendPartyInvitesAreNoOps</code>, <code>NetworkMachineTest.RemoveFromSessionThrows</code>, the zero bytes-per-second assertions in <code>AvailableNetworkSessionTests</code>.cpp and <code>NetworkSessionTest.WriteLeaderboardAndTrueSkillEventsAreNeverRaised</code>, so an implementation has to change those tests. No test exercises a working version of any of the five features.</p>",
    "reproduction": null,
    "tests_current": "<p>None for the missing features.</p>",
    "regression_test": "<p>Per feature, when implemented.</p>",
@@ -16295,7 +16223,8 @@
    },
    "origin": "Chapter package WP15 candidate WP15-i021 (ch51-networking)",
    "pkg": "B11",
-   "temp_id": "CNA-GAP-053"
+   "temp_id": "CNA-GAP-053",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -16827,8 +16756,74 @@
    "temp_id": "CNA-GAP-062"
   },
   {
-   "cand_ids": [],
+   "cand_ids": [
+    "P2-185"
+   ],
    "id": "CNA-GAP-063",
+   "class": "functional-gap",
+   "title": "A fixed-step TargetElapsedTime above 500 ms never produces an Update from Game::Tick, essentially the same ceiling XNA 4.0 has",
+   "summary": "With IsFixedTimeStep true, Game::Tick clamps the accumulator to MaxElapsedTime (500 ms) before its update loop, so a TargetElapsedTime above 500 ms is never reached: Update does not run while Draw keeps running about twice a second. XNA 4.0's Tick has essentially the same ceiling (about 508 ms, because of its 1/64 snap), so the limit is inherited; the setter accepts such a value silently.",
+   "subsystem": "Core & runtime",
+   "status": "open",
+   "severity": "n/a",
+   "confidence": "verified-by-reading",
+   "public_contract": "<code>Microsoft::Xna::Framework::Game::setTargetElapsedTimeProperty(const System::TimeSpan&amp;)</code> with <code>IsFixedTimeStep</code> true; <code>Game::Tick()</code>",
+   "expected": "<p>Microsoft's documentation says a fixed-step Game tries to call Update on the interval in <code>TargetElapsedTime</code>, and the setter rejects only zero and negative values (as CNA's does), so a one-second target might be expected to update once a second. Neither XNA 4.0 nor CNA delivers that: the effective contract is a target of at most about 500 ms. CNA's Game.hpp documents only 'positive and non-zero'.</p>",
+   "actual": "<p><code>Game::Tick</code> waits until <code>accumulatedElapsedTime_</code> reaches <code>TargetElapsedTime_</code>, polls events, then clamps the accumulator to <code>MaxElapsedTime</code> (500 ms); the update loop 'while accumulated &gt;= <code>TargetElapsedTime_</code>' therefore never runs for a target above 500 ms, <code>stepCount</code> stays zero, and the tick still draws, about twice a second. XNA 4.0 (IL of <code>Game.Tick</code> and <code>GameClock</code>) clamps the per-tick elapsed time to 500 ms, snaps an elapsed value within 1/64 of the target to the target, divides the sum with its leftover accumulator by the target and, when the quotient is zero, returns before <code>GameClock.AdvanceFrameTime</code> and before storing the sum, so its accumulator never reaches a target above about 508 ms and it neither updates nor draws. The difference is that CNA keeps drawing and that a target between 500 and 508 ms works in XNA only.</p>",
+   "sources": [
+    {
+     "path": "modules/runtime/src/Game.cpp",
+     "note": "Game::Tick (wait loops, MaxElapsedTime clamp, fixed-step while loop); Game::setTargetElapsedTimeProperty; Game::MaxElapsedTime"
+    },
+    {
+     "path": "modules/runtime/include/Microsoft/Xna/Framework/Game.hpp",
+     "note": "setTargetElapsedTimeProperty documents only 'positive and non-zero'"
+    }
+   ],
+   "evidence": "<p>Checked by reading <code>Game::Tick</code> in {{src:modules/runtime/src/Game.cpp|Game.cpp}} at 009d40f5, and compared with the IL of XNA 4.0's <code>Game.Tick</code> and <code>set_TargetElapsedTime</code> (a disassembly of Microsoft.Xna.Framework.Game) and with FNA's <code>Game.Tick</code>. The failure follows mechanically from the order “clamp, then compare”. Not executed.</p><p><em>Independent re-verification:</em> Checked by reading <code>Game::Tick</code> at 009d40f5 and the disassembled IL of XNA 4.0's <code>Game.Tick</code> and <code>GameClock</code> (xna4-decomp dlls); the earlier claim that XNA accumulates across ticks and updates once per second is not supported by that IL. Not executed.</p>",
+   "reproduction": "<p>Illustrative, not compiled:</p><pre><code class=\"language-cpp\">class SlowGame : public Game {\npublic:\n    int updates = 0;\n    SlowGame() { setTargetElapsedTimeProperty(System::TimeSpan::FromSeconds(1.0)); }\nprotected:\n    void Update(GameTime&amp; t) override { ++updates; Game::Update(t); }\n};\n\nSlowGame game;\nGraphicsDeviceManager graphics(&amp;game);\nfor (int i = 0; i &lt; 4; ++i) game.RunOneFrame();   // about 2.5 s of wall time\n// XNA 4.0 would have updated twice; at 009d40f5 game.updates == 0\n</code></pre>",
+   "tests_current": "<p>{{src:modules/runtime/tests/Microsoft/Xna/Framework/GamePlatformTimingTests.cpp|GamePlatformTimingTests.cpp}} drives single frames with a 1 ms target; {{src:modules/runtime/tests/Microsoft/Xna/Framework/GameClockFirstUpdateTests.cpp|GameClockFirstUpdateTests.cpp}} pins the first-update and total-time rules at ordinary targets. No test uses a target above <code>MaxElapsedTime</code>.</p>",
+   "regression_test": "<p>A clock test with a scripted performance counter (the platform decorator used by the timing tests) that sets a 1 s target, advances the counter by 1.2 s per tick and expects one update per target interval, plus the boundary case of exactly 500 ms.</p>",
+   "blast_radius": "<p>Only fixed-step games whose <code>TargetElapsedTime</code> is longer than 500 ms (slow simulations, clocks, turn timers, tests that step slowly). Variable-step games and all ordinary frame rates are unaffected. The browser loop has its own clock and a 250 ms cap and is not covered by this entry.</p>",
+   "workaround": "<p>Keep <code>TargetElapsedTime</code> at or below 500 ms and count ticks in <code>Update</code>, or use <code>IsFixedTimeStep = false</code> and accumulate <code>ElapsedGameTime</code> yourself.</p>",
+   "related": {
+    "internals": [
+     [
+      "development/internals/runtime/frame.html#clock",
+      "One frame source trace: the clock"
+     ]
+    ],
+    "architecture": [
+     [
+      "development/architecture/runtime.html#tick",
+      "Runtime lifecycle: what one Tick does"
+     ]
+    ],
+    "guide": [
+     [
+      "docs/game-loop.html#fixed-vs-variable-timestep",
+      "Game loop: fixed vs variable timestep"
+     ],
+     [
+      "docs/tutorials/48-timestep.html",
+      "Tutorial 48: fixed vs variable timestep"
+     ]
+    ],
+    "deep": [
+     [
+      "deep-dives/framework/game-time-and-timestep.html#fixed-step",
+      "GameTime and the timestep: the fixed-step accumulator"
+     ]
+    ]
+   },
+   "origin": "Phase-2 candidate P2-185 (development/internals/runtime/frame.html); reclassified from CNA-BUG-079 by the adversarial audit",
+   "pkg": "B2",
+   "temp_id": "CNA-BUG-079",
+   "tests_present": true
+  },
+  {
+   "cand_ids": [],
+   "id": "CNA-GAP-064",
    "class": "functional-gap",
    "title": "WEBGPU does not propagate a real device loss: OnDeviceLost only logs, so DeviceLost, the device status and the draw gate react only to the debug hooks",
    "summary": "WebGPURenderer sets its lost flag, closes CanBeginDrawEXT() and raises DeviceLost only inside DebugSimulateContextLoss; the callback registered for a real loss only writes to stderr. CNA's own plan (WEBGPU-182) records the driver-reported path as not done and unverified, so this is an incomplete feature rather than a broken contract.",
@@ -16896,7 +16891,7 @@
    "cand_ids": [
     "WP07-i005"
    ],
-   "id": "CNA-GAP-064",
+   "id": "CNA-GAP-065",
    "class": "functional-gap",
    "title": "The renderer capability profile has no feature for pre-compiled SPIR-V payloads, so SDL_GPU and VULKAN report every source-dialect feature Unsupported",
    "summary": "BuildRendererCapabilityProfileEXT maps a renderer's declared dialect onto six source-dialect features (desktop GLSL, GLSL ES, Vulkan GLSL, HLSL, MSL, WGSL). SDL_GPU and VULKAN declare SpirV, which CNA documents as already-compiled bytecode rather than source text, so all six read Unsupported by design and the profile has no entry that says a SPIR-V payload is accepted.",
@@ -16925,7 +16920,7 @@
      "note": "snapshot pins all six dialect features unsupported"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed. No SDL_GPU profile snapshot exists.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed. No <code>SDL_GPU</code> profile snapshot exists.</p>",
    "reproduction": null,
    "tests_current": "<p><code>vulkan_capability_snapshot_test.cpp</code> pins the six Unsupported answers for VULKAN; no SDL_GPU profile snapshot exists.</p>",
    "regression_test": "<p>Either add a SPIR-V dialect feature (and report GlslVulkan where libshaderc is built in), with SDL_GPU and VULKAN profile snapshots asserting it.</p>",
@@ -16952,7 +16947,7 @@
    "cand_ids": [
     "WP20-i003"
    ],
-   "id": "CNA-GAP-065",
+   "id": "CNA-GAP-066",
    "class": "functional-gap",
    "title": "A runtime .cnj Texture2D colorKey leaves keyed texels as straight-alpha (key RGB, alpha 0), so they are invisible only under a non-premultiplied blend state",
    "summary": "The loose-tier .cnj Texture2D reader writes Color(keyR, keyG, keyB, 0) into a straight-alpha texture, deliberately, and CnjSourceFileTests pins it. Under SpriteBatch's default premultiplied AlphaBlend such a texel adds the key colour instead of vanishing; the compiled route premultiplies after keying and clears it.",
@@ -16977,7 +16972,7 @@
      "note": "ReadCnjColorKey"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; not executed; the draw result follows from the blend equation. The pipeline comment records a deliberate difference (a build-requested key clears the colour, a .cnj-authored key keeps it, XNAP-96); on the compiled route premultiplication then clears it, so the runtime route is the only place where the kept colour reaches a draw. {{src:modules/content/tests/Microsoft/Xna/Framework/Content/CnjCacheIsolationTests.cpp|CnjCacheIsolationTests.cpp}} asserts cache isolation and alpha only.</p><p><em>Independent re-verification:</em> Read at 009d40f5; not executed. The original entry omitted modules/content/tests/Microsoft/Xna/Framework/Content/CnjSourceFileTests.cpp (ColorKeyMakesMatchingPixelsTransparentOthersUnchanged), which asserts Color(255, 0, 255, 0) for keyed pixels, so writing Color(0,0,0,0) in ApplyColorKey would need that test changed. No CNA document promises invisibility under the default blend state for runtime-loaded straight-alpha textures.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; not executed; the draw result follows from the blend equation. The pipeline comment records a deliberate difference (a build-requested key clears the colour, a .cnj-authored key keeps it, XNAP-96); on the compiled route premultiplication then clears it, so the runtime route is the only place where the kept colour reaches a draw. {{src:modules/content/tests/Microsoft/Xna/Framework/Content/CnjCacheIsolationTests.cpp|CnjCacheIsolationTests.cpp}} asserts cache isolation and alpha only.</p><p><em>Independent re-verification:</em> Read at 009d40f5; not executed. The original entry omitted {{src:modules/content/tests/Microsoft/Xna/Framework/Content/CnjSourceFileTests.cpp|CnjSourceFileTests.cpp}} (<code>ColorKeyMakesMatchingPixelsTransparentOthersUnchanged</code>), which asserts <code>Color(255, 0, 255, 0)</code> for keyed pixels, so writing <code>Color(0,0,0,0)</code> in <code>ApplyColorKey</code> would need that test changed. No CNA document promises invisibility under the default blend state for runtime-loaded straight-alpha textures.</p>",
    "reproduction": "<pre><code class=\"language-cpp\">// Illustrative; not compiled or run. sprite.cnj: {\"sourceFile\": \"sprite.png\", \"colorKey\": [255, 0, 255]}\nauto texture = content.Load&lt;Texture2D&gt;(\"sprite\");\nspriteBatch.Begin();                 // BlendState::AlphaBlend\nspriteBatch.Draw(&amp;texture, Vector2(0, 0), Color::White);\nspriteBatch.End();\n// Expected: keyed texels invisible. Actual by reading: background + (255, 0, 255).</code></pre>",
    "tests_current": "<p>CnjCacheIsolationTests.cpp (keyed alpha and cache isolation); no draw test of a keyed .cnj texture.</p>",
    "regression_test": "<p>Load a keyed .cnj texture, draw it with the default <code>SpriteBatch::Begin()</code> over a known background, and read back: the keyed area must equal the background. The fix is writing <code>Color(0, 0, 0, 0)</code> in ApplyColorKey (or premultiplying on this route).</p>",
@@ -17564,7 +17559,7 @@
    "id": "CNA-PLAT-012",
    "class": "platform-limitation",
    "title": "Under Emscripten, SystemLink discovery is empty, hosting binds the fixed port 61191 and Join returns before the handshake",
-   "summary": "The web build stubs out discovery (Find returns nothing), hosts on a fixed port only a Node.js relay can use, rebuilds a joining session as an outbound-only client and returns from Join before the server welcome, with no browser test.",
+   "summary": "The web build stubs out discovery (Find returns nothing), hosts on a fixed port only a Node.js relay can use, rebuilds a joining session as an outbound-only client and returns from Join before the server welcome; Node.js-run unit tests cover discovery and loopback handshakes, but no browser or two-process test exists.",
    "subsystem": "Networking & gamer services",
    "status": "open",
    "severity": "n/a",
@@ -17594,7 +17589,7 @@
      "note": "networking demos built only when not EMSCRIPTEN"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; nothing was built for Emscripten or run in a browser or Node.js. The constraints come from the web platform (no raw UDP, no listening sockets in a tab) and Emscripten's socket emulation, which is why this is a platform limitation rather than a bug; the joined-before-welcome return is the one piece a web-specific wait (for example a promise-driven loop) could change. The network-sessions deep dive already records these as source-level statements.</p><p><em>Independently observed as a separate finding (merged):</em> The browser build has no LAN discovery, hosts only through a Node.js relay on a fixed port, and compiles out EndJoin&#x27;s wait for ServerWelcome.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; nothing was built for Emscripten or run in a browser or Node.js. The constraints come from the web platform (no raw UDP, no listening sockets in a tab) and Emscripten's socket emulation, which is why this is a platform limitation rather than a bug; the joined-before-welcome return is the one piece a web-specific wait (for example a promise-driven loop) could change. The network-sessions deep dive already records these as source-level statements.</p><p><em>Independently observed as a separate finding (merged):</em> The browser build has no LAN discovery, hosts only through a Node.js relay on a fixed port, and compiles out EndJoin&#x27;s wait for ServerWelcome.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; nothing was built for Emscripten or run in a browser or Node.js during this review. The constraints come from the web platform (no raw UDP, no listening sockets in a tab) and Emscripten's socket emulation, which is why this is a platform limitation rather than a bug; the joined-before-welcome return is the one piece a web-specific wait could change. Emscripten-specific test coverage does exist in source: ENetDiscoveryServiceTests expect Find to be empty on Emscripten, ENetBackendTests and ENetHostHandleTests use fixed ports and <code>emscripten_sleep</code> for the <code>SystemLink</code> loopback and <code>ConnectToHost</code> cases, and {{src:cmake/UnitTests.cmake|UnitTests.cmake}} links <code>CnaTests</code> with -<code>sJSPI</code>=1 for Node.js. Only the process-spawning tests (<code>TwoProcessLoopbackTest</code>, the dispatcher hang test) and the networking demos are excluded, so no test joins from a second process and none runs in a browser.</p>",
    "reproduction": null,
    "tests_current": "<p>None for any <code>__EMSCRIPTEN__</code> path; the process-spawning transport and dispatcher tests are compiled out there.</p>",
    "regression_test": "<p>A Node.js-hosted test of the Emscripten build that hosts on 61191, joins from a second Node.js process and checks that the first packet sent after the welcome reaches the host, plus a unit test that <code>Find</code> returns an empty collection at once.</p>",
@@ -17626,7 +17621,8 @@
    },
    "origin": "Phase-2 candidate P2-132 (development/internals/modules/net.html); merged with CNA-PLAT-012",
    "pkg": "B8",
-   "temp_id": "CNA-PLAT-012"
+   "temp_id": "CNA-PLAT-012",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -17907,7 +17903,7 @@
      "note": "oracle covers CreateFromPoints only"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. XNA formulas as recorded by the chapter package from the XNA 4.0 IL; the numerical difference was not measured.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. XNA formulas were compared with the decompiled XNA 4.0 MathHelper, Vector2, Vector3, Vector4 and BoundingSphere; the public contract should list the vector SmoothStep helpers rather than the vector Hermite helpers as the ones with different arithmetic. The numerical difference was not measured.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. XNA formulas as recorded by the chapter package from the XNA 4.0 IL; the numerical difference was not measured.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. XNA formulas were compared with the decompiled XNA 4.0 <code>MathHelper</code>, Vector2, Vector3, Vector4 and <code>BoundingSphere</code>; the public contract should list the vector <code>SmoothStep</code> helpers rather than the vector Hermite helpers as the ones with different arithmetic. The numerical difference was not measured.</p>",
    "reproduction": null,
    "tests_current": "<p>Behavioural tests exist (for example <code>CreateFromBoundingBoxEnclosesBox</code> and <code>CreateFromBoundingBoxCenterIsBoxCenter</code> in BoundingSphereTests.cpp); none compares bits with XNA.</p>",
    "regression_test": "<p>Oracle tables generated on the XNA runtime for CreateFromBoundingBox and for SmoothStep/Hermite/CatmullRom at a sweep of amounts, compared bit for bit.</p>",

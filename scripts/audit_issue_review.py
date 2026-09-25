@@ -108,7 +108,7 @@ def read_jsonl(paths) -> dict[str, dict]:
 def cmd_ingest(args: argparse.Namespace) -> int:
     dest = ADV / ("issue-reviews" if args.kind == "issues" else "dismissal-reviews")
     dest.mkdir(parents=True, exist_ok=True)
-    pub = {i["id"] for i in load(SOURCE)["issues"]}
+    pub = set(base_entries())                 # the entries as they stood before any audit operation (a reclassified id must still ingest)
     rc = 0
     for f in sorted(Path(args.src).glob("out-*.jsonl")):
         rows = [json.loads(l) for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]
@@ -192,7 +192,9 @@ def build(rv: dict[str, dict], dec: dict, files: set[str]) -> tuple[dict, list[s
                     if corr.get(f):
                         sets[f] = plain_to_html(corr[f], files)
                 if corr.get("evidence_note"):
-                    appends["evidence"] = "<p><em>Independent re-verification:</em> " + html.escape(corr["evidence_note"].strip(), quote=False) + "</p>"
+                    note = plain_to_html(corr["evidence_note"].replace("\n", " ").strip(), files)
+                    inner = note[3:-4] if note.startswith("<p>") and note.endswith("</p>") else note
+                    appends["evidence"] = "<p><em>Independent re-verification:</em> " + inner + "</p>"
         if act in ("accept", "override"):
             if d.get("severity"):
                 sets["severity"] = d["severity"]
