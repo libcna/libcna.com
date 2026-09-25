@@ -1,0 +1,154 @@
+{
+ "qa": "Q2",
+ "verdicts": [
+  {
+   "id": "CNA-BUG-008",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/content/include/Microsoft/Xna/Framework/Content/ContentManager.hpp (ContentManager::Load: .xnb, .cnb, then ResolveAssetPath; ResolveAssetPath: literal, then base+'.cnj', then reader GetExtensions()), modules/content/src/Xna/ContentManager.cpp (SongTypeReader::Read builds Media::Song(path, stem); VideoTypeReader::Read builds Media::Video(path, device); neither branches on .cnj, while Texture2DTypeReader, TextureCubeTypeReader and SoundEffectTypeReader do), modules/media/src/Xna/Song.cpp (Song::Song: existence check only) and modules/media/src/Xna/Video/Video.cpp (Video::Video: existence check, RequireVideoDecoderAvailable, probe failure leaves 0 metadata). No Song/Video .cnj envelope exists. Failure path reachable whenever a same-named .cnj sits beside the media file; the explicit-extension workaround resolves through the literal-path step first.",
+   "note": "Severity medium is at the upper end (rare trigger, silent misresolution); left as a triage judgement."
+  },
+  {
+   "id": "CNA-BUG-016",
+   "verdict": "CORRECTED",
+   "evidence": "Read modules/content/include/CNA/Internal/Json.hpp (Detail::JsonParser::ParseValue/ParseObject/ParseArray: mutual recursion, no depth counter, although the class comment promises 'correct nesting/depth tracking'); modules/gamer-services/src/Internal/LocalGamerServicesStore.cpp (TryReadJsonFile catches only JsonParseException). Independently re-executed: a header-only probe (Json.hpp only) compiled with ccache g++ -std=c++23 -O2 in build-probe/ (removed afterwards): 10,000 levels parse, 50,000 and 100,000 levels end in SIGSEGV (exit 139), matching the entry. One factual slip: CnjCanonicalRead.hpp never calls ParseJson (it includes Json.hpp and consumes an already-parsed JsonValue); the loose readers in ContentManager.cpp (Texture2D colour key, Texture3D, stock Effect, SpriteFont, Model) call ParseJson themselves, as do the pipeline stages (ContentBuildConfiguration, ContentBuildManifest, CnjContentPipeline, ModelContentPipeline).",
+   "corrections": {
+    "actual": "<p><code>Detail::JsonParser::ParseValue</code> dispatches <code>{</code> to <code>ParseObject</code> and <code>[</code> to <code>ParseArray</code>, each of which calls <code>ParseValue</code> for every member or element. Nothing in <code>Json.hpp</code> counts depth, so stack use grows linearly with nesting and a deep document exhausts the thread's stack. That is a process crash, not an exception: no <code>catch</code> in <code>ContentManager</code>, the build tools or <code>TryReadJsonFile</code> can intercept it.</p><p>The parser is reached from <code>ParseCnjEnvelope</code> ({{src:modules/content/include/CNA/Internal/CnjEnvelope.hpp|CnjEnvelope.hpp}}), which every loose <code>.cnj</code> reader calls, directly from the typed loose readers in {{src:modules/content/src/Xna/ContentManager.cpp|ContentManager.cpp}} (which then hand the parsed tree to the shared readers of {{src:modules/content/include/CNA/Internal/CnjCanonicalRead.hpp|CnjCanonicalRead.hpp}}), the <code>.cnj</code>&#8594;<code>.cnb</code> compilers ({{src:modules/content/src/Cnb/CnjToCnb.cpp|CnjToCnb.cpp}}, {{src:modules/content/src/Cnb/CnbModelFromCnj.cpp|CnbModelFromCnj.cpp}}), the content pipeline's project, manifest and model stages, {{src:tools/content/content.cpp|tools/content/content.cpp}}, and {{src:modules/gamer-services/src/Internal/LocalGamerServicesStore.cpp|LocalGamerServicesStore.cpp}}.</p>"
+   },
+   "note": "Only the caller list in `actual` changes; defect, severity and reproduction stand."
+  },
+  {
+   "id": "CNA-BUG-021",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/content/src/Xna/ContentManager.cpp (ContentManager::Unload is loadedAssets_.clear(); Dispose(bool) calls Unload then clears), modules/content/include/Microsoft/Xna/Framework/Content/ContentReader.hpp (RecordDisposable: forwards only to an explicit callback; comment defers the ContentManager fallback to 'Phase B2 (XNB-17B)'), ContentManager.hpp (Unload documented as 'frees the associated resources'; ReadAsset doc 'when empty, this manager records them itself, as Load<T>() does'), modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsResource.hpp (copy resets isDisposed_) and modules/graphics/src/Xna/Texture2D.cpp (~Texture2D -> Dispose(false) -> renderer_.reset() on a shared_ptr, so a held copy keeps the GPU resource). XNA contract confirmed from ~/deps/xna-il-cache/Microsoft.Xna.Framework.il (ContentManager::Unload iterates disposableAssets calling IDisposable::Dispose, then clears both tables).",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-041",
+   "verdict": "CORRECTED",
+   "evidence": "Read modules/content/src/Xna/ContentManager.cpp (BuildAssetPath joins rootDirectory_; ResolveExistingAssetPath and TryReadAssetBytes: cwd-relative std::filesystem, Android-only relative forwarding to the platform file system; desktop fallback Sdl3FileSystem::TryLoadFileIgnoringCase -> SDL_LoadFile(relative) and TryLoadStandardFileIgnoringCase, both cwd-relative), ContentManager.hpp (Load: .cnb tier and ResolveAssetPath gate on std::filesystem::exists), modules/runtime/src/TitleLocation.cpp (DetectBasePath = platform GetBasePath) and no chdir/current_path(p) anywhere in modules. The defect holds, but the text overgeneralises TitleLocation: only modules/platform/src/Sdl3/Sdl3SystemServices.cpp (Sdl3FileSystem::GetBasePath = SDL_GetBasePath) gives the executable directory; modules/platform/src/Common/StandardFileSystem.cpp (StandardFileSystem::GetBasePath = current_path()+'/') serves SDL2, X11, Wayland, Headless, Terminal, and Win32FileSystem::GetBasePath forwards to it. So the stated workaround (TitleLocation::Path() + \"Content\") is ineffective on every non-SDL3 platform.",
+   "corrections": {
+    "expected": "<p>XNA 4.0's <code>ContentManager.OpenStream</code> combines <code>RootDirectory</code> with the asset name and opens it through <code>TitleContainer.OpenStream</code>, which resolves a relative path against the title location (the executable's directory), independent of the working directory. CNA's own <code>TitleContainer::ResolveRealPath</code> ({{src:modules/runtime/src/TitleContainer.cpp|TitleContainer.cpp}}) resolves through <code>TitleLocation::getPathProperty()</code>, which is the platform's <code>GetBasePath()</code>: on the SDL3 platform that is <code>SDL_GetBasePath()</code> ({{src:modules/platform/src/Sdl3/Sdl3SystemServices.cpp|Sdl3SystemServices.cpp}}), the executable's directory, so there <code>TitleContainer</code> follows XNA's rule; CNA's {{src:docs/apple-platforms.md|docs/apple-platforms.md}} states that \"Content is loaded relative to SDL_GetBasePath()\". On Android every content tier should read the APK's packaged assets.</p>",
+    "evidence": "<p>Checked by reading at 009d40f5; not executed, and in particular not run on Android or an Apple device. Whether <code>SDL_LoadFile</code> (reached by <code>TryReadAssetBytes</code>' platform fallback) resolves a relative name inside an Apple app bundle depends on SDL's own I/O layer and was not checked, so the Apple leg of the <code>.xnb</code> tier may work; the <code>.cnb</code> and loose tiers never reach that fallback. The site's {{page:docs/content-manager.html|ContentManager guide}} documents the working-directory rule, and the content-runtime internals page hedges the Android <code>.cnb</code> question; this entry supplies the reading for both. The disagreement with <code>TitleContainer</code> exists only on the SDL3 platform: the SDL2, X11, Wayland, native Win32, headless and terminal platforms answer <code>GetBasePath()</code> through <code>StandardFileSystem::GetBasePath</code> ({{src:modules/platform/src/Common/StandardFileSystem.cpp|StandardFileSystem.cpp}}), which returns the working directory, so on those platforms <code>TitleLocation</code> and <code>ContentManager</code> agree with each other and both differ from XNA's executable-directory rule.</p><p><em>Independently observed as a separate finding (merged):</em> Unlike the .xnb tier, which reads through the platform file system, the .cnb tier asks std::filesystem::exists and CnbDocument::ParseFile, which cannot see Android packaged assets.</p>",
+    "blast_radius": "<p>Every <code>ContentManager</code> with a relative root (the <code>Game</code>'s own manager defaults to <code>\"Content\"</code>) on a desktop host launched from another directory; on Android, every <code>.cnb</code>, <code>.cnj</code> and loose asset shipped inside the APK. Absolute roots, and <code>.xnb</code> content on Android, are unaffected. On the platforms whose base path is the working directory (SDL2, X11, Wayland, native Win32, headless, terminal) <code>TitleLocation</code> follows the working directory too, so a root built from it does not help there.</p>",
+    "workaround": "<p>On the SDL3 platform, set an absolute root built from the title location, for example <code>content.setRootDirectoryProperty(TitleLocation::Path() + \"Content\")</code> (<code>SDL_GetBasePath()</code> normally ends in a separator; check it on your targets). On the SDL2, X11, Wayland and native Win32 platforms <code>TitleLocation::Path()</code> is the working directory, so build the root from the executable's own directory by host means or start the game from its directory. On Android ship run-time content as <code>.xnb</code>.</p>"
+   },
+   "note": "The reproduction's comment 'although TitleContainer::OpenStream(\"Content/x.xnb\") finds it' holds only on the SDL3 platform; reproduction is not a correctable field here, so the orchestrator may want to add 'on the SDL3 platform' to it. Non-SDL3 TitleLocation = working directory is itself an XNA divergence that may merit its own entry."
+  },
+  {
+   "id": "CNA-BUG-049",
+   "verdict": "CONFIRMED",
+   "evidence": "Read the four headers modules/devices/include/Microsoft/Devices/Sensors/{Accelerometer,Gyroscope,Compass,Motion}.hpp (void Dispose(bool) override; in a public: section) against SensorBase.hpp (protected virtual Dispose(bool): only sets disposed_ and notifies; ~SensorBase calls Dispose(false) only when not disposed). modules/devices/src/Sensors/{Accelerometer,Gyroscope,Compass,Motion}.cpp: the !disposing branch forwards straight to SensorBase::Dispose(false); each ~X calls Dispose(true) only if !getIsDisposedProperty(). Detail/PlatformSensorSubsystem.hpp: only UnregisterStartedInstanceLocked nulls registration->owner, so a started Accelerometer/Gyroscope disposed with false and destroyed stays registered (dangling owner). MaxSensorCount = 10. remediation/MASTER_REMEDIATION_PLAN.md rates REMED-DEVICES-002 MEDIUM/P2 and REMEDIATION_PROGRESS.md lists it NOT STARTED, which supports the medium severity despite the misuse-only trigger.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-119",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/content/src/Xna/ContentTypeReaderManager.cpp (TypeCreators and TargetTypeNames are function-local static unordered_maps; AssociateTargetType writes TargetTypeNames()[type] with no lock), ContentTypeReader.hpp (both ContentTypeReader constructors call detail::AssociateReaderTargetType) and modules/content/src/Xna/ContentReader.cpp (the constructor takes AcquireRendererThreadContextLease only when manager->graphicsDevice_ is set; only EasyGL and OpenGL4 renderers implement a lease). XNA locking confirmed in ~/deps/xna-il-cache/Microsoft.Xna.Framework.il (ContentTypeReaderManager uses Monitor::Enter/Exit). Even after warm-up, concurrent assignment to the same std::string value is a data race.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-120",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/content/src/Xna/ContentManager.cpp (LoadXnbAssetUntyped: only totalLength in [10, size]; Lzx branch builds MemoryStream(bytes.data()+10, 4); Lz4 branch throws 'does not yet support') against ContentManager.hpp (LoadXnbAsset<T>: extra 'totalLength < 14' guard for compressed files and a working DecompressXnbLz4Payload branch). sharp-runtime next @ 41b918c9 modules/io/src/System/IO/MemoryStream.cpp: MemoryStream(const bytecs*, intcs, bool) copies via validatedBufferCopy, so a 10-13 byte compressed file is over-read by up to 4 bytes (TryReadAssetBytes sizes the vector exactly). modules/content/src/Xnb/XnbDecompression.cpp (DecompressXnbPayload) rejects the negative compressedSize afterwards. Only caller: ContentReader::ReadExternalReference() (untyped) from EffectMaterialContentTypeReaders.cpp.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-121",
+   "verdict": "CONFIRMED",
+   "evidence": "Read ContentManager.hpp (Load<T>: .xnb via TryReadAssetBytes(ResolveExistingAssetPath(BuildAssetPath(name)+'.xnb')); OpenStream is called only from the protected ReadAsset<T>; OpenStream doc says 'every .xnb load goes through it'); the Load comment itself concedes that ReadAsset/OpenStream are 'the route for a manager whose assets are not in the content root'. modules/content/src/Xna/ResourceContentManager.cpp and its header: overrides only OpenStream, uses ContentManager(serviceProvider) whose rootDirectory_ is empty, does not override Load (a non-virtual template). ResourceContentManagerTests only reach ReadAsset<T>. XNA: Load<T> -> ReadAsset<T> -> virtual OpenStream.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-122",
+   "verdict": "CONFIRMED",
+   "evidence": "Read ContentReader.hpp (InnerReadObject<T>: std::any_cast<T> of the root reader result, no catch; ReadAsset<T> adds none), ContentManager.hpp (Load<T>: disposed_ -> std::runtime_error; .xnb tier returns LoadXnbAsset<T> unwrapped; only the loose tier wraps std::exception), ContentManager.cpp (template<> Load<Audio::SoundEffect>: runtime_error when disposed and 'return reader.Read(resolvedPath, *this);' without try/catch; LoadUntypedXnbReference: runtime_error), modules/audio/src/Xna/SoundEffect.cpp (SoundEffect(const std::string&) throws System::NotSupportedException under SOUND_ENABLED). sharp-runtime next: NotSupportedException -> SystemException -> Exception -> std::exception, not ContentLoadException. XNA IL: Load on a disposed manager throws ObjectDisposedException (loadedAssets null check, same pattern as Unload).",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-132",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/input/src/Internal/SdlInputBridge.cpp (use_scancode_mode consulted only in SdlInputBridge::GetKeyFromScancode, which returns the key unchanged, and in the KeyEvent branch that feeds InputManager::SetKeyState), modules/input/src/Xna/Keyboard.cpp (Keyboard::GetState copies IPlatformKeyboard::GetSnapshot().pressedKeys) and modules/platform/src/Sdl3/Sdl3InputServices.cpp (Sdl3Keyboard::Update maps held scancodes with SDL_GetKeyFromScancode(scancode, SDL_KMOD_NONE, false)). No platform source reads FNA_KEYBOARD_USE_SCANCODES. docs/platform-input-notes.md (INPUT-KBD-014) describes what Keyboard reports per mode, so the scancode-mode promise covers GetState, not just the helper.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-133",
+   "verdict": "CORRECTED",
+   "evidence": "grep -rln RegisterForWindow over modules/renderers at TARGET lists canvas, direct2d, easygl, fna3d, gdi, html-dom, opengl4, sdl-gpu, sdl-renderer, svg-dom, vulkan, webgpu. grep -rln TransformWindowToLogical adds directx11, directx12, freedirect AND metal: modules/renderers/metal/src/MetalRenderer.mm (MetalRenderer::TransformWindowToLogical/TransformLogicalToWindow -> impl transformWindowToLogical using computeLogicalViewport and surface.WindowToDrawable) has no RegisterForWindow either. The registry (IGraphicsRenderer.hpp RegisterForWindow/GetForWindow) is only ever filled by renderers; modules/input/src/Xna/Mouse.cpp and SdlInputBridge.cpp fall back to raw coordinates. DirectX11Renderer::SetVirtualResolution/SetPresentationMode confirm the transform is non-trivial. The defect holds but misses a fourth affected public identity (METAL, listed in cmake/RendererIdentities.cmake CNA_RENDERER_PUBLIC_IDENTITIES).",
+   "corrections": {
+    "title": "DIRECTX11, DIRECTX12, FREEDIRECT and METAL implement the window-to-logical transform but never register for their window, so mouse and touch input ignore it",
+    "summary": "Input looks renderers up by window id through IGraphicsRenderer::GetForWindow; these four renderers never call RegisterForWindow, so Mouse::GetState, Mouse::SetPosition and touch pass raw window coordinates through under a virtual resolution, letterbox or display scale.",
+    "actual": "<p>{{src:modules/renderers/directx11/src/DirectX11Renderer.cpp|DirectX11Renderer.cpp}}, {{src:modules/renderers/directx12/src/DirectX12Renderer.cpp|DirectX12Renderer.cpp}}, {{src:modules/renderers/freedirect/src/FreeDirectRenderer.cpp|FreeDirectRenderer.cpp}} and {{src:modules/renderers/metal/src/MetalRenderer.mm|MetalRenderer.mm}} implement <code>TransformWindowToLogical</code> and <code>TransformLogicalToWindow</code> (presentation geometry, letterbox, display scale) but contain no <code>RegisterForWindow</code> call. <code>window_to_logical</code> and <code>logical_to_window</code> in {{src:modules/input/src/Xna/Mouse.cpp|Mouse.cpp}} and <code>to_logical_position</code> in {{src:modules/input/src/Internal/SdlInputBridge.cpp|SdlInputBridge.cpp}} find no renderer and return the window coordinate unchanged, so a game whose back buffer differs from the window size receives window pixels as game coordinates.</p>",
+    "evidence": "<p>Checked by reading and by grepping every renderer source, including the Objective-C++ {{src:modules/renderers/metal/src/MetalRenderer.mm|MetalRenderer.mm}}, for <code>RegisterForWindow</code> at 009d40f5; not executed (the Direct3D and FreeDirect renderers are Windows-only, METAL is Apple-only).</p>",
+    "blast_radius": "<p>Games on DIRECTX11, DIRECTX12, FREEDIRECT or METAL whose window is not exactly the back-buffer size, including resizable and fullscreen-letterboxed windows: mouse, <code>SetPosition</code> and touch positions are wrong. Other renderers are unaffected.</p>"
+   },
+   "note": "public_contract and sources are not correctable fields: public_contract should also name METAL, and sources should gain modules/renderers/metal/src/MetalRenderer.mm (MetalRenderer::TransformWindowToLogical / TransformLogicalToWindow; no RegisterForWindow)."
+  },
+  {
+   "id": "CNA-BUG-137",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/media/src/Xna/MediaPlayer.cpp (Play(Song*): saves queue_[0], queue_.Clear(), LoadSong(song) reads song->getHandle()/getNameProperty(), then PlaySong(song) reads the handle and under SOUND_ENABLED writes setDurationProperty/setPlayCountProperty on the caller's pointer; Play(SongCollection, index) clears before iterating), modules/media/src/Xna/MediaQueue.cpp (Clear: songs_.clear() on std::vector<std::unique_ptr<Song>>) and MediaQueue.hpp (getActiveSongProperty/operator[] return raw pointers, no lifetime note; MediaPlayer::getQueueProperty returns the live queue by reference). Destruction precedes the first read unconditionally. XNA: MediaQueue indexer returns a new managed wrapper; high severity (heap use-after-free from an XNA-valid call) is justified.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-140",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/media/src/Xna/MediaPlayer.cpp (PlaySong under SOUND_ENABLED destroys the old track/audio and clears g_songEnded, then returns silently on LoadMixerAudioFile/CreateMixerTrack/SetMixerTrackAudio/PlayMixerTrack failure without touching timer or state; Update only advances on g_songEnded; LoadSong's new Song(handle,name) runs after queue_.Clear()), modules/audio/src/Backend/Sdl3Mixer/MixerEngine.cpp (LoadMixerAudioFile -> FinalizeAudioLoad -> GetCurrentNative -> ReloadNative(GetMixer())), Sdl3Mixer/AudioMixer.cpp (GetMixer throws std::runtime_error on MIX_Init/MIX_CreateMixer failure), CnaMixer/MixerEngine.cpp (LoadMixerAudioFile calls EnsureMixer, which throws runtime_error; decode errors kept via SetError), modules/audio/src/Xna/SoundEffect.cpp (EnsureMixerOrThrowXna converts to NoAudioHardwareException) and modules/media/src/Xna/Song.cpp (FileNotFoundException). XNA IL: MediaQueue::Play throws InvalidOperationException(SongPlaybackFailed) on native failure.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-143",
+   "verdict": "CORRECTED",
+   "evidence": "Read modules/media/src/Xna/Video/VideoPlayer.cpp: CloseDecoder writes 'if (video_) video_->parent_ = nullptr;' and is reached from Stop, Dispose and ~VideoPlayer (via Dispose), confirming the use-after-free for those three. But VideoPlayer::Play(Video*) executes 'video_ = video;' BEFORE OpenDecoder(video), whose first statement is CloseDecoder(), so the next Play writes into the NEW video, never the stale one; the text's 'and the next Play' is wrong. SetVideoTrackEXT -> ReconfigureVideoOutputForCurrentTrack reads video_->getGraphicsDeviceProperty() while decoder_ is live (an additional stale read). Video.hpp: parent_ member, friend VideoPlayer, no destructor or copy control; Video.cpp SetAudioTrackEXT/SetVideoTrackEXT call through parent_ (the reverse direction holds).",
+   "corrections": {
+    "summary": "VideoPlayer stores a borrowed Video* and Video a borrowed VideoPlayer* parent; CloseDecoder, run by Stop, Dispose and the destructor, writes through the stored Video*, and no header states the ordering rule.",
+    "actual": "<p><code>VideoPlayer::OpenDecoder</code> in {{src:modules/media/src/Xna/Video/VideoPlayer.cpp|VideoPlayer.cpp}} stores <code>video_ = video</code> and sets <code>video-&gt;parent_ = this</code>. <code>CloseDecoder</code> starts with <code>if (video_) video_-&gt;parent_ = nullptr;</code> and runs from <code>Stop</code>, <code>Dispose</code> and the destructor (through <code>Dispose</code>). <code>Video</code> declares no destructor, so a Video destroyed while a player still holds it leaves <code>video_</code> dangling, and the next of those calls writes into freed memory; <code>getVideoProperty()</code> returns the dangling pointer meanwhile, and a <code>SetVideoTrackEXT</code> call on the player during playback reads through it (<code>ReconfigureVideoOutputForCurrentTrack</code>). A later <code>Play(other)</code> is not affected: it assigns <code>video_ = video</code> before <code>OpenDecoder</code> runs <code>CloseDecoder</code>. Ordinary member order is enough to trigger it: a class that declares its <code>VideoPlayer</code> before a <code>Video</code> member destroys the Video first.</p><p>The other direction exists too. <code>Video</code> is implicitly copyable, copies keep <code>parent_</code>, and <code>Video::SetAudioTrackEXT</code>/<code>SetVideoTrackEXT</code> call through it. The player clears <code>parent_</code> only on the Video it played, so a copy made during playback calls into a destroyed player later.</p>"
+   },
+   "note": "Severity medium unchanged; the reproduction (member-order destruction) still triggers via ~VideoPlayer."
+  },
+  {
+   "id": "CNA-BUG-147",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/audio/src/Xna/SoundBank.cpp (kFireAndForgetSafetyNet = 5 minutes; SweepFireAndForget keeps a playing/paused entry only while now - created < 5 min, else erases it; PlayCueInternal sweeps first), SoundBank.hpp (FireAndForget holds std::unique_ptr<Cue>; erasing destroys the Cue, whose destructor Disposes it), modules/audio/src/Xna/AudioEngine.cpp (AudioEngine::Update calls SweepFireAndForget on every registered bank) and modules/audio/tests/Microsoft/Xna/Framework/Audio/SoundBankTests.cpp (FireAndForgetCueIsForceSweptPastSafetyNetEvenIfStillPlaying pins the cut). The code comment's 'never affects ordinary playback' is contradicted for looping cues started with PlayCue.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-151",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/storage/src/StorageDevice.cpp (EnsureStorageRoot sets storageRootInitialized_ = true before create_directories; on failure throws StorageDeviceNotConnectedException with storageRoot_ empty and later calls return ''; SetAppNameEXT resets the latch and throws before SetIsolatedStorageRootOverride; getIsConnectedProperty returns false for ''; free/total space return LLONG_MAX; EndOpenContainer passes EnsureStorageRoot() to StorageContainer; DeleteContainer uses ResolveContainedPath(EnsureStorageRoot(), titleName) then remove_all), modules/storage/src/StorageContainer.cpp (ResolveContainedPath(root, name+'/AllPlayers') then create_directories), modules/core/include/CNA/Internal/PathContainment.hpp (empty root/base -> '.'), modules/gamer-services/src/Internal/LocalGamerServicesStore.cpp (StoreRoot = GetStorageRootEXT()/'GamerServices').",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-157",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/phone/src/HttpNotificationChannel.cpp (Listen: one connection at a time, ReadRequestBody's blocking ::recv loops with no timeout/poll; Close: listening_=false, shutdown+close of listenSocket_ only, then listener_.join(); ~HttpNotificationChannel calls Close; listen backlog 4; bind to INADDR_LOOPBACK) and the header (Close documented 'Stops listening and releases the address'). The in-flight accepted socket is never shut down, so the join waits on a silent peer; also on a peer whose declared Content-Length exceeds what it sends while keeping the connection open.",
+   "note": "Evidence wording '(unchanged since the earlier audit pin)' is accurate (modules/phone has no diff d6e9ff05..009d40f5) but uses 'audit', which the editorial voice rules avoid; consider 'unchanged since an earlier review revision'."
+  },
+  {
+   "id": "CNA-BUG-162",
+   "verdict": "CORRECTED",
+   "evidence": "Read modules/phone/src/HttpNotificationChannel.cpp (socket_t = SOCKET on _WIN32; 'listener < 0' and 'connection < 0' can never be true for the unsigned SOCKET; no WSAStartup), modules/phone/src/PushNotificationSender.cpp (getaddrinfo, 'connection < 0'), modules/phone/CMakeLists.txt (links cna_runtime, cna_core_headers and sharp-runtime only), cmake/UnitTests.cmake (WINNATIVE-0014 excludes HttpNotificationChannelTests.cpp under WIN32). grep at TARGET: WSAStartup only in modules/inspector/src/InternalSocket.cpp; ws2_32 only in modules/inspector/CMakeLists.txt and cmake/ThirdPartyENet.cmake. Defect confirmed as written. One evidence slip: 'none of these files changed since the earlier audit pin' is false for cmake/UnitTests.cmake (git diff d6e9ff05 009d40f5 shows GL-identity, output-gate and SDL-prebuilt-fingerprint changes, none in the WINNATIVE-0014 block); the phone files are unchanged.",
+   "corrections": {
+    "evidence": "<p>Checked by reading the two phone sources, the module's CMake file and <code>cmake/UnitTests.cmake</code> at 009d40f5, and by searching CNA's sources and CMake files for <code>WSAStartup</code> and <code>ws2_32</code>; the two phone sources and the module's CMake file are unchanged since an earlier review revision, and <code>cmake/UnitTests.cmake</code> changed since then only outside its WINNATIVE-0014 exclusion. Not executed: no Windows host was used. The start-up failure rests on Winsock's documented initialisation rule. Whether an executable that links <code>CNA::Phone</code> without the Inspector or ENet links at all on Windows was not established.</p>"
+   },
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-163",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/phone/src/HttpNotificationChannel.cpp (Listen replies with ::send(connection, ..., 0) after ReadRequestBody) and modules/phone/src/PushNotificationSender.cpp (Post: ::send(connection, request, length, 0)); grep at TARGET for SIGPIPE/MSG_NOSIGNAL/SO_NOSIGPIPE finds only per-call avoidance in modules/inspector/src/InternalSocket.cpp, modules/platform/src/X11/X11ModeGuardian.cpp and modules/platform/src/Wayland/WaylandDataDevice.cpp; the SIG_IGN in X11ModeGuardian's RunGuardian applies only to the forked guardian child, not the game process. The entry's own probe (not repeated here) is consistent with POSIX semantics: a write after a received RST raises SIGPIPE.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-166",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/gamer-services/src/Xna/GamerServicesDispatcher.cpp (Initialize deletes every element of *Gamer::getSignedInGamersProperty() before installing four stubs), GamerCollection.hpp (collections are non-owning; 'The creator of a Gamer-derived object is exclusively responsible for freeing it'; Initialize owns only the 4 stubs it creates), Gamer.hpp (setSignedInGamersProperty: C# internal setter exposed publicly), GamerServicesComponent.cpp (Initialize calls the dispatcher) and examples/demo_leaderboard_viewer/src/LeaderboardGame.cpp (publishes unique_ptr-owned gamers via setSignedInGamersProperty after Game::Initialize). A game that publishes its own gamers and then initialises gamer services (e.g. adds a GamerServicesComponent later) gets its objects deleted.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-170",
+   "verdict": "CONFIRMED",
+   "evidence": "Read modules/net/src/Xna/NetworkSession.cpp (constructor calls ENetBackend::StartHosting whenever RealNetworkingEnabled, regardless of isHost; EndJoin constructs with isHost false then ConnectToHost, which on non-Emscripten calls StartHosting again, a no-op), modules/net/src/Internal/ENetBackend.cpp (StartHosting -> ENetDiscoveryService::RegisterHost; UnregisterHost only in TeardownSession; ClientHello dispatched to HandleClientHello with no host check, only a duplicate-peer guard), modules/net/src/Internal/ENetDiscoveryService.cpp (ReplyToQuery checks only registeredHost_ and SessionTypeFilter, announces HostGamertag from getHostProperty(); PollOnce dedups by connect port alone).",
+   "note": ""
+  }
+ ]
+}

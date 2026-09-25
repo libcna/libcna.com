@@ -1,0 +1,158 @@
+{
+ "qa": "Q1",
+ "verdicts": [
+  {
+   "id": "CNA-BUG-001",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/math/src/Plane.cpp (Plane::Transform(const Plane&, const Matrix&, Plane&)) calls Matrix::Transpose(transformedMatrix, transformedMatrix); modules/math/src/Matrix.cpp (Matrix::Transpose(const Matrix&, Matrix&)) writes M12..M14 before reading them back as M21..M41, so the aliased call symmetrises from the lower triangle. Re-derived both worked examples by hand from Vector4::Transform (row-vector product, modules/math/src/Vector4.cpp): translation (1,0,0) on plane y=1 gives (1,1,0,-1); RotationZ(PiOver2) on y=2 gives normal (1,0,0). XNA 4.0 IL (Microsoft.Xna.Framework Plane::Transform) inverts and reads rows of the inverse directly (x' = x*inv.M11 + y*inv.M12 + z*inv.M13 + d*inv.M14): aliasing-free. Tests: PlaneTests.cpp uses identity only; GeometrySmoke.c validate_plane transforms ground (D=0) by translation (0,2,0) and passes with the defect (checked arithmetic). Only in-tree caller of the Matrix overload is modules/c-api/src/CnaCApiGeometry.cpp; BasicEffect/SkinnedEffect/EnvironmentMapEffect transpose into distinct locals.",
+   "note": "Severity high kept: a core XNA math API returns silently wrong planes for any translation."
+  },
+  {
+   "id": "CNA-BUG-002",
+   "verdict": "CORRECTED",
+   "evidence": "modules/math/src/BoundingSphere.cpp (BoundingSphere::Contains(const BoundingFrustum&)): 'double dmin = 0.0; if (dmin <= Radius * Radius) return Intersects;' makes Disjoint unreachable. XNA 4.0 IL (BoundingSphere::Contains(BoundingFrustum)) returns Disjoint when !frustum.Intersects(sphere), then Intersects if any corner is outside. BoundingSphereTests.cpp ContainsFrustumReturnsNonContains asserts only EXPECT_NE(Contains); GeometrySmoke.c checks only the Contains case. Defect holds. Text error: the blast radius names 'its output-parameter form', but BoundingSphere.hpp/.cpp declare no Contains(const BoundingFrustum&, ContainmentType&) overload (only box/sphere/point have one), and XNA 4.0 has none either.",
+   "corrections": {
+    "blast_radius": "<p>Affected: <code>BoundingSphere::Contains(const BoundingFrustum&amp;)</code> (it has no output-parameter overload) and <code>cna_bounding_sphere_contains_frustum</code>. Not affected: the frustum-side tests <code>BoundingFrustum::Contains(BoundingSphere)</code> and <code>BoundingFrustum::Intersects(BoundingSphere)</code> (used by <code>FrustumCullerEXT</code> and <code>ClusteredShadowPolicyEXT</code>), and <code>BoundingSphere::Intersects(const BoundingFrustum&amp;)</code>, which delegates to the frustum. No in-tree module other than the C ABI calls the affected function.</p>"
+   },
+   "note": "Only the non-existent out-parameter overload is corrected; everything else holds."
+  },
+  {
+   "id": "CNA-BUG-003",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/math/src/BoundingBox.cpp (BoundingBox::Contains(const BoundingFrustum&)): first loop breaks at the first Disjoint corner; i==8 -> Contains, i!=0 -> Intersects, i==0 -> second loop over corners 1..7 returns Intersects on the first non-Contains corner else Contains. So all-outside -> Intersects and only-corner-0-outside -> Contains, exactly as written; corner 0 = planes[0],[2],[4] (near, left, top) per BoundingFrustum::CreateCorners/CreatePlanes. XNA 4.0 IL (BoundingBox::Contains(BoundingFrustum)): !frustum.Intersects(box) -> Disjoint; any corner Disjoint -> Intersects; else Contains. BoundingBoxTests.cpp ContainsFrustumDisjoint asserts only EXPECT_NE(Contains); BoundingBox::Intersects(const BoundingFrustum&) delegates to the frustum.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-004",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/math/src/BoundingFrustum.cpp (BoundingFrustum::Intersects(const Ray&, std::optional<float>&)): classifies only ray.Position; Disjoint -> nullopt, Contains -> 0, Intersects -> throws System::NotImplementedException. BoundingFrustum::Contains(const Vector3&, ContainmentType&) returns Intersects only for an exact-zero plane distance (it breaks at the first zero plane), so the throw is rare. Ray::Intersects(const BoundingFrustum&) delegates (modules/math/src/Ray.cpp). XNA 4.0 IL (BoundingFrustum::Intersects(ref Ray, out float?)): returns 0 when Contains, otherwise clips against six planes with a 1E-05 parallel threshold, keeps max entry/min exit, returns entry (or exit if entry < 0) when non-negative; never throws. geometry.h documents only the not-supported boundary case (cna_bounding_frustum_intersects_ray). Tests match the description (BoundingFrustumTests.cpp IntersectsRay*; RayTests.cpp comment).",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-029",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/graphics/src/Xna/GraphicsResource.cpp: copy constructor copies device pointer/lifetime/name/tag and never calls AddResourceReference or OnResourceCreated; copy assignment re-points graphicsDevice_ with no Remove/Add (its comment assumes every caller follows with ShareResourceIdentityWith, which Texture2D/TextureCube do not: ShareResourceIdentityWith is called only by BlendState, DepthStencilState, RasterizerState, SamplerState, VertexDeclaration). Texture2D.hpp and TextureCube.hpp default both copy operations; renderer_ is a shared_ptr, so copies share the renderer. GraphicsDevice::Dispose(bool) disposes only resources_; GetTrackedResourceCount() returns resources_.size(). GraphicsResource::Dispose(bool) raises OnResourceDestroyed and RemoveResourceReference for any live device, so an unregistered copy produces an unmatched destroy event and a cross-device copy-assigned wrapper leaves a dangling pointer in the old device's registry. ContentManager.hpp Load stores 'loadedAssets_[cacheKey] = result' and returns std::any_cast<T>(cacheIt->second) copies on hits. Moves transfer registration (TransferResourceReference, Texture2D TransferMovedTexture).",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-064",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/math/src/Curve.cpp: Curve::GetCurvePosition Step branch compares absolute 'position >= 1.0f'; Curve::Evaluate post-loop Linear uses first.getTangentOutProperty(). Re-derived: keys (0,0,Step),(1,5,Step),(2,9) Evaluate(1.5) -> 9; Linear keys (0,0,TangentOut 2),(1,1) Evaluate(2) -> 3. XNA 4.0 IL: Curve::Hermite returns k1 value only when t >= 1 (normalised), else k0; Curve::Evaluate post-loop Linear returns last.internalValue - last.tangentOut*(last.position - position); pre-loop Linear uses first.tangentIn (matches CNA). CurveTests.cpp EvaluatePostLoopLinear pins 3 with a first.TangentOut comment; StepContinuityReturnsCurrentSegmentValue evaluates only at 0.5.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-070",
+   "verdict": "CORRECTED",
+   "evidence": "modules/math/src/BoundingSphere.cpp: Contains(Vector3) returns Intersects for sqDistance == sqRadius; Contains(BoundingSphere) tests sqDistance <= (Radius - sphere.Radius)^2 (sign lost). XNA 4.0 IL: Contains(Vector3) -> Contains iff DistanceSquared < Radius*Radius else Disjoint; Contains(BoundingSphere) -> Disjoint unless R+r >= d, Contains iff R-r >= d, else Intersects. Both divergences hold; BoundingSphereTests.cpp ContainsPointOnBoundaryIsIntersects pins the CNA answer. Text error: the 'actual' sentence presents BoundingSphere::Contains(BoundingBox) treating a corner on the surface as inside as part of the divergence, but XNA 4.0 IL (BoundingSphere::Contains(BoundingBox)) reports Intersects only when a corner's LengthSquared > Radius*Radius, so it also counts a surface corner as inside; the same holds for Contains(BoundingFrustum)'s corner test. That overload's answer does not differ from XNA because of the surface rule.",
+   "corrections": {
+    "actual": "<p>{{src:modules/math/src/BoundingSphere.cpp|BoundingSphere.cpp}} returns Intersects for <code>sqDistance == sqRadius</code> in the point overload, where XNA 4.0 answers Disjoint (it returns Contains only for <code>DistanceSquared &lt; Radius*Radius</code>). The sphere overload's Contains test is <code>sqDistance &lt;= (Radius - sphere.Radius) * (Radius - sphere.Radius)</code>: squaring discards the sign, so a radius-1 sphere asked about a concentric radius-5 sphere answers Contains. <code>BoundingSphere::Contains(BoundingBox)</code> and <code>Contains(const BoundingFrustum&amp;)</code> use the point overload only as a “corner is not Disjoint” test, which counts a corner lying exactly on the surface as inside; XNA's own corner test (outside only when the squared distance exceeds <code>Radius*Radius</code>) does the same, so the surface difference does not change those two overloads' answers.</p>"
+   },
+   "note": "Divergences for the point and sphere overloads are real; only the box-overload remark was mis-attributed as a divergence."
+  },
+  {
+   "id": "CNA-BUG-078",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/runtime/src/Game.cpp (Game::PollEvents, KeyEvent branch): for pressed && !repeat, F9 -> GraphicsDevice_.GetRenderer().DebugSimulateContextLoss(), F10 -> DebugRestoreContext(); no #if/option guard around it (only __EMSCRIPTEN__ blocks elsewhere in the file). IGraphicsRenderer.hpp: default no-op hooks; RendererDeviceEvent comment calls the channel one-directional and test-only; GraphicsDevice.cpp calls it 'a deliberate, named test seam'. Overrides read: EasyGLRenderer::DebugSimulateContextLoss (desktop: std::cerr line, NotifyContextLost, platformContext_->Recreate, reload, NotifyContextRestored; DebugRestoreContext calls it again) and EasyGLTextureRenderer::recreate_gl_resource (DXT -> UploadLevel(nullptr), else shadow or zeros); DirectX9/11/12 set deviceLost_ and raise Lost (DX11/12 CanBeginDrawEXT = !deviceLost_); WebGPURenderer::DebugSimulateContextLoss throws NotSupportedException when unrecoverableResourceCount_ > 0; GdiRenderer overrides with empty bodies. No CNA document presents F9/F10 as a user feature (grep of *.md).",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-080",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/runtime/src/Game.cpp (Game::EmscriptenMainLoopCallback): own accumulator, 250 ms cap, drains whole TargetElapsedTime steps regardless of IsFixedTimeStep_, ElapsedGameTime = step, TotalGameTime += step before Update, IsRunningSlowly forced false, draws only if an update ran, never reads suppressDraw_, forceElapsedTimeToZero_ or isSuspended_; catch blocks null s_emLoopState.game and log. Game::RunLoop (__EMSCRIPTEN__ branch) loops while s_emLoopState.game == this, so the loop ends; Game::Run then calls EndRun() and AfterLoop() and returns normally; OnExiting is raised only when RunApplication is false. Native Game::Tick implements the zero-first-update / total-before-step rule and honours ResetElapsedTime/SuppressDraw; GameClockFirstUpdateTests.cpp pins it natively only.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-083",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/phone/src/PhoneApplicationService.cpp: getCurrentProperty() returns a function-local static; AttachEXT stores game_ = &game and three tokens; ~PhoneApplicationService calls DetachEXT, which calls game_->Activated/Deactivated/Exiting.Remove through the raw pointer. PhoneApplicationService.hpp documents getCurrentProperty as 'the application's single lifecycle service' and DetachEXT as called by the destructor; AttachEXT documents no lifetime requirement. Nothing in modules/runtime references the phone module, so a stack Game destroyed before static destruction leaves a dangling game_. cmake/UnitTests.cmake: the CNA umbrella does not link cna_phone (only CnaTests does).",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-084",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/runtime/src/Game.cpp: Game::ResetElapsedTime sets forceElapsedTimeToZero_ only when !IsFixedTimeStep_; Game::Tick reads it only in the variable-step branch; MaxElapsedTime = 500 ms and TargetElapsedTime = 166667 ticks give 29 catch-up updates after a long block. XNA 4.0 IL (Microsoft.Xna.Framework.Game: Game::ResetElapsedTime sets forceElapsedTimeToZero unconditionally and resets drawRunningSlowly/updatesSinceRunningSlowly1/2; Game::Tick tests the flag right after reading ElapsedAdjustedTime, before the isFixedTimeStep branch). Game.hpp documents the narrower 'next variable-timestep update' behaviour; no test under modules/*/tests calls ResetElapsedTime (only CnaCApiGameProperties.cpp forwards to it).",
+   "note": "Nuance, not a correction: after a reset XNA's own fixed-step Tick accumulates zero and returns with no update on that tick; CNA's FNA-shaped Tick waits for one full step instead, so the regression test's 'exactly one Update' is the right expectation for CNA's loop."
+  },
+  {
+   "id": "CNA-BUG-086",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/runtime/src/GameComponent.cpp (GameComponent::Dispose(bool)): sets disposed_ and raises Disposed only; modules/runtime/src/DrawableGameComponent.cpp forwards after UnloadContent. Nothing in Game.cpp or GameComponentCollection.cpp subscribes to a component's Disposed. XNA 4.0 IL (Microsoft.Xna.Framework.Game GameComponent::Dispose(bool)): under Monitor lock, if Game != null then Game.Components.Remove(this), then Disposed. No dispose test in GameComponentTests.cpp or DrawableGameComponentTests.cpp.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-099",
+   "verdict": "CONFIRMED",
+   "evidence": "plans/plan_pre_sdlgpu_closeout.md PSG-0009 lists the 27 classic ^SdlGpu failures (202/27 of 229) and PSG-0010 the configuration (RADV 780M, Vulkan driver, Release, CNA_SDL_GPU_SHADERCROSS=OFF, libshaderc present); plans/plan_sdlgpu_modern_graphics.md SMG-0042: 204/27 of 231, 'same 27 by name'; plans/plan_street_sdlgpu.md STREETS-0008: 'now 26 failures -- the old 27 minus SdlGpu_Smoke (STREETS-0007), none new'. The 24 names in the entry are the 27 minus SdlGpu_Smoke, SdlGpu_OcclusionQuery_Limitation (CNA-BUG-012) and SdlGpu_2D_HeadlessDriver (CNA-BUG-203), checked name by name. git log b2a0a5671..009d40f5 shows no commit touching modules/renderers/sdl-gpu after STREETS-0008. SDLGPU-11 in plans/plan_sdlgpu.md records SdlGpu_SwapchainRecovery 5/5 when added. modules/core/include/CNA/GraphicsBackendMaturity.hpp maps SdlGpu to Supported. SDL_GPU example CTests register only when CNA_GRAPHICS_RENDERER is SDL_GPU and no workflow in .github/workflows configures SDL_GPU.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-100",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/renderers/webgpu/src/WebGPURenderer.cpp: free function OnDeviceLost writes to std::cerr only; WebGPURenderer::RequestDeviceOnlyEXT registers it as deviceLostCallbackInfo.callback with no userdata; deviceLost_ is assigned only in DebugSimulateContextLoss (true) and DebugRestoreContext (false), which are also the only places RendererDeviceEvent Lost/Resetting/Reset are raised; the surface-status check near the acquire handles Timeout/Outdated/Lost surface statuses, not device loss. WebGPURenderer.hpp: CanBeginDrawEXT() returns !deviceLost_. docs/webgpu-renderer.md states the gate-before-acquire rule and that on the web target the device-lost callback fires (derived from emdawnwebgpu JS, not browser-confirmed), as the entry says.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-103",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/renderers/vulkan/src/VulkanRenderer.cpp (VulkanRenderer::GetOrCreateMRTRenderPass): RTPassKey holds split role, colour count/formats, depth format and samples only; colour loadOp = CLEAR and initialLayout = UNDEFINED unless splitRole == 2 (continuation); depth/stencil likewise. VulkanMRTProxy construction calls GetOrCreateMRTRenderPass(colorFormats_, colorSampleCount_, depthFormat_) with no usage; the single-target GetOrCreateRTRenderPass/GetOrCreateRTRenderPassMsaa take discardContents and use LOAD for PreserveContents. No GraphicsDevice-level PreserveContents emulation exists. Fixtures checked: graphicsdevice_ordered_clear_test.cpp M1 (MRT Clear, one bind), mrt_stock_effect_contract_test.cpp and vulkan_cube_mrt_binding_test.cpp bind PreserveContents MRT sets but none re-binds a set and checks earlier pixels.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-105",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/renderers/sdl-renderer/src/SdlRenderer.cpp (SdlRenderer::SetScissorRect): SDL_SetRenderClipRect(renderer, &rect) for w>0 && h>0, clip cleared otherwise; SdlRenderer.hpp overrides SetScissorRect but not ApplyRasterizerState (IGraphicsRenderer default ignores the flag); no 'scissor' handling elsewhere in modules/renderers/sdl-renderer/src. GraphicsDevice::setScissorRectangleProperty forwards every in-bounds rectangle (width/height 0 allowed) and setRasterizerStateProperty/draw paths pass ScissorTestEnable only through ApplyRasterizerState.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-107",
+   "verdict": "CORRECTED",
+   "evidence": "Read: modules/renderers/directx9/src/DirectX9Renderer.cpp (DirectX9Renderer::CreateEffectRenderer; no SupportsCapability, GetShaderDialectEXT or ExecutesShaderEffectSourceEXT override); modules/renderers/directx9/src/D3D9SpriteBatch.cpp (custom-effect flush binds D3D9EffectRenderer); modules/renderers/directx9/src/D3D9EffectDraw.cpp (DirectX9Renderer::DrawPrimitivesExImpl, DrawBasicEffectEXT); modules/graphics/src/Xna/ShaderEffect.cpp (FillGpuDrawParams sets only customEffectRequested/customEffectRenderer); IGraphicsRenderer.hpp (GpuDrawParams defaults vertexColorEnabled=true, textureEnabled=false, lightingEnabled=false; ExecutesShaderEffectSourceEXT doc); GraphicsDevice.cpp (BuildRendererCapabilityProfileEXT). Two parts of the entry are overstated. (1) The expected contract is not CNA's: BuildRendererCapabilityProfileEXT defines CustomEffects as 'a ShaderEffect object is accepted; source execution is a separate feature', and IGraphicsRenderer::ExecutesShaderEffectSourceEXT documents accepting the object while rendering with a fixed path as legitimate when the renderer answers false (the SOFTWARE/HEADLESS case). DIRECTX9 answers false and the profile tells callers source does not determine pixels, so 'CustomEffects reports true' is not a lying flag and the 3D fixed path is inside the documented contract. (2) 'silently ... no error' holds only for 16-byte VertexPositionColor streams: with the defaults a ShaderEffect leaves in GpuDrawParams the cascade reaches DrawBasicEffectEXT, which draws stride 16 with the stock vertex-colour shader and throws std::runtime_error ('(BasicEffect): stride N ... has no matching CNA vertex layout') for strides 20/24/32 and custom layouts. What survives: an inconsistent, misleadingly-named refusal for 3D, and an ExecutesShaderEffectSourceEXT()=false answer that under-claims the SpriteBatch route (plans/plan_dx9.md D9-112 scoped DIRECTX9 ShaderEffect to SpriteBatch::Begin(effect)). Low severity.",
+   "corrections": {
+    "title": "DIRECTX9 ignores a ShaderEffect on 3D draws (stock BasicEffect draw or a misleading vertex-layout error) and reports ShaderEffect source execution as false although its SpriteBatch executes it",
+    "summary": "DIRECTX9 compiles ShaderEffect HLSL and runs it for SpriteBatch, but its 3D dispatch never reads the custom effect, so a 3D ShaderEffect draw is drawn with the stock vertex-colour BasicEffect shader (16-byte vertices) or fails with a BasicEffect vertex-layout runtime_error, while ExecutesShaderEffectSourceEXT() answers false for both routes.",
+    "severity": "low",
+    "expected": "<p>CNA separates two answers. <code>GraphicsCapability::CustomEffects</code> states only that a ShaderEffect object is accepted (<code>GraphicsDevice::BuildRendererCapabilityProfileEXT</code>: “source execution is a separate feature”), and <code>IGraphicsRenderer::ExecutesShaderEffectSourceEXT()</code> states whether the source text determines pixels; a renderer that accepts the object but draws with a fixed path is legitimate when it answers false, as SOFTWARE and HEADLESS do. Within that contract the answer should describe what the renderer's routes actually do, and a route that cannot run the custom program should either use a fixed path consistently or refuse by name. DIRECTX11 and DIRECTX12 run the source on every route and answer true.</p>",
+    "actual": "<p>{{src:modules/renderers/directx9/src/DirectX9Renderer.cpp|DirectX9Renderer.cpp}}'s <code>CreateEffectRenderer</code> compiles the caller's HLSL (SM2/SM3) into a <code>D3D9EffectRenderer</code>, and {{src:modules/renderers/directx9/src/D3D9SpriteBatch.cpp|D3D9SpriteBatch.cpp}} binds it for SpriteBatch, so there the source does determine the pixels. DirectX9Renderer does not override <code>ExecutesShaderEffectSourceEXT()</code>, so it answers false and the capability profile states that ShaderEffect source does not determine rendered pixels on this renderer, which under-claims the SpriteBatch route. For 3D, <code>ShaderEffect::FillGpuDrawParams</code> sets only <code>customEffectRequested</code> and <code>customEffectRenderer</code>, which {{src:modules/renderers/directx9/src/D3D9EffectDraw.cpp|D3D9EffectDraw.cpp}}'s <code>DrawPrimitivesExImpl</code> never reads. With the remaining <code>GpuDrawParams</code> defaults (vertex colour on, texture and lighting off) the cascade reaches <code>DrawBasicEffectEXT</code>, which draws a 16-byte (<code>VertexPositionColor</code>) stream with the stock vertex-colour shader and throws <code>std::runtime_error</code> (“(BasicEffect): stride N … has no matching CNA vertex layout”) for every other stride. Neither outcome names the unsupported custom effect.</p>",
+    "evidence": "<p>Checked by reading at 009d40f5; nothing was built or executed. Read: <code>DirectX9Renderer::CreateEffectRenderer</code>, the SpriteBatch custom-effect flush in <code>D3D9SpriteBatch.cpp</code>, <code>DirectX9Renderer::DrawPrimitivesExImpl</code> and <code>DrawBasicEffectEXT</code>, <code>ShaderEffect::FillGpuDrawParams</code> in {{src:modules/graphics/src/Xna/ShaderEffect.cpp|ShaderEffect.cpp}}, the <code>GpuDrawParams</code> defaults and the <code>ExecutesShaderEffectSourceEXT</code> contract in {{src:modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp|IGraphicsRenderer.hpp}}, and <code>GraphicsDevice::BuildRendererCapabilityProfileEXT</code> in {{src:modules/graphics/src/Xna/GraphicsDevice.cpp|GraphicsDevice.cpp}}. The DIRECTX9 ShaderEffect work item (<code>plans/plan_dx9.md</code>, D9-112) scoped the feature to <code>SpriteBatch::Begin(effect)</code>. Because the false answer and the profile text warn callers that source does not drive pixels, the 3D fallback itself is inside CNA's documented capability contract; what remains is the inconsistent, misleadingly named failure on the 3D route and the SpriteBatch under-claim. XNA games use compiled effects, which DIRECTX9 supports separately; ShaderEffect is a CNA extension.</p>",
+    "regression_test": "<p>A DIRECTX9 fixture that draws one <code>VertexPositionColor</code> and one <code>VertexPositionTexture</code> triangle with a ShaderEffect and asserts either the shader's constant colour for both (if 3D execution is implemented) or the same named <code>NotSupportedException</code> for both; plus a capability test that pins what <code>ExecutesShaderEffectSourceEXT()</code> answers against the routes it describes.</p>",
+    "blast_radius": "<p>Engine or game code that uses ShaderEffect for 3D on DIRECTX9 without checking <code>ExecutesShaderEffectSourceEXT()</code>: 16-byte vertex streams draw with wrong pixels and no error, and other layouts fail with an error that points at BasicEffect rather than the custom effect. Code that consults the capability profile is told source never drives pixels and may give up SpriteBatch custom effects that do work. SpriteBatch custom effects themselves and compiled XNA effects are unaffected.</p>",
+    "workaround": "<p>Use compiled effects for 3D on DIRECTX9, and use ShaderEffect there only through <code>SpriteBatch::Begin</code>.</p>"
+   },
+   "note": "Borderline REFUTED for the headline claim (CustomEffects is defined as acceptance only); kept as a narrower low-severity bug for the inconsistent 3D refusal and the SpriteBatch under-claim."
+  },
+  {
+   "id": "CNA-BUG-112",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/renderers/vulkan/src/VulkanRenderer.cpp: VulkanOcclusionQueryRenderer::Begin only sets owner_->activeOcclusionQuery_ and zeroes taggedDraws_; VulkanRenderer::PushPending3DDraw is the only site that copies activeOcclusionQuery_ into a draw (d.occlusionQuery) and increments taggedDraws_; the record pass brackets runs of tagged pending3D_ draws in vkCmdBeginQuery/EndQuery, and drawSpritesFor contains no query handling. VulkanOcclusionQueryRenderer::IsComplete reports pixelCount_ = 0 when taggedDraws_ == 0, so a sprite-only query reads 0. docs/vulkan-renderer.md lists occlusion queries as supported without restriction. No Vulkan or shared fixture draws SpriteBatch inside a query.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-113",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/renderers/vulkan/src/VulkanRenderer.cpp (computeScissor lambda): '!enabled || sw == 0 || sh == 0' -> full framebuffer. modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp (SdlGpuRenderer::ApplyScissorForRef): clipped branch only if scissorEnabled && scissorW > 0 && scissorH > 0, else full target (comment: 'Disabled (or a not-yet-set, zero-size) ... no clipping'). modules/renderers/webgpu/src/WebGPURenderer.cpp (WebGPURenderer::ApplyDrawScissor): enabled rectangle clamped with max(0, ...) so an empty one clips everything. METAL re-read here: modules/renderers/metal/include/CNA/Internal/Renderers/Metal/MetalRasterState.hpp (ShouldSkipDraw: effective width or height 0) and MetalRenderer.mm draw entries return when ShouldSkipDraw(). XNA 4.0 IL (GraphicsDevice::set_ScissorRectangle) accepts a zero-width rectangle (checks only non-negative and inside the target) and passes it to IDirect3DDevice9::SetScissorRect.",
+   "note": "The entry's evidence says METAL was not re-read; it holds (MetalRasterState::ShouldSkipDraw). The orchestrator may add that source if it wishes."
+  },
+  {
+   "id": "CNA-BUG-116",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/renderers/directx9/src/DirectX9Renderer.cpp (DirectX9Renderer::SetRenderTargets, count > 1): binds GetActiveColorSurfaceEXT() of each target, then currentCustomRT_ = nullptr with the 'MRT binds are NOT tracked' comment; SetRenderTarget2D/SetRenderTargetCubeFace/SetRenderTargets resolve only currentCustomRT_. D3D9RenderTargets.hpp GetActiveColorSurfaceEXT returns msaaSurface_ when appliedMultiSampleCount_ > 1; D3D9RenderTargets.cpp ResolveForTransitionEXT/UnbindAsRenderTarget are the only StretchRect resolves, and GetData reads colorSurface_ assuming the resolve already ran. GraphicsDevice never calls UnbindAsRenderTarget. No DIRECTX9 fixture combines MRT and MSAA.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-176",
+   "verdict": "CONFIRMED",
+   "evidence": "modules/runtime/src/Game.cpp (Game::setIsMouseVisibleProperty): calls platform_->GetMouse()->SetCursorVisible(value) when GraphicsDevice_.GetPlatformWindowInternal() != nullptr and GetMouse() != nullptr, no catch. modules/platform/src/Terminal/TerminalPlatform.cpp (EnsureCapabilitiesDetected creates TerminalMouse when detected.canQuery; GetMouse returns it); modules/platform/src/Terminal/TerminalMouse.cpp (SetCursorVisible always throws PlatformException). Reachability: cmake/RendererSelection.cmake allows SOFTWARE/PORTABLEGL/HEADLESS/STUB on TERMINAL, and GraphicsDevice::createOrAttachWindow creates a window when the platform reports surfacePresentation without a native handle (TERMINAL on a TTY); the GraphicsDevice constructor runs resolveRenderer during Game construction, so a derived constructor's setter call reaches the throw. IPlatformMouse.hpp documents no exception; GamePlatformTimingTests.cpp SettingMouseVisibilityIsSafeWithNoPointerService assumes terminal takes the null-mouse path.",
+   "note": ""
+  },
+  {
+   "id": "CNA-BUG-180",
+   "verdict": "CORRECTED",
+   "evidence": "modules/platform/src/Win32/Win32GraphicsServices.cpp: DescribeFormat fixes cColorBits=32/cAlphaBits=8, honours only depth/stencil (clamped) and doubleBuffer; CreateContext sets 'granted = description' and keeps it even when wglCreateContextAttribsARB is absent or fails (bootstrap legacy context returned); GetContextAttributes returns the stored record. Win32Window.cpp reads neither renderIntent nor openGlFramebuffer. IPlatformGlContext.hpp documents granted-not-requested values. Defect holds. Severity and blast radius overstated: no in-tree GL renderer requests multisampling or per-channel bits through GlContextDescription (EasyGLRenderer.cpp RequestedGlContext and OpenGL4Renderer.cpp RequestedContext set only version/profile, depthBits 24, stencilBits 8, doubleBuffer, all honoured by DescribeFormat), and nothing in modules/ reads GetContextAttributes outside tests (PlatformGlRendererState.hpp PlatformGlContextOwner::GetAttributes has no caller). The only in-tree consequence is the silent legacy-context fallback.",
+   "corrections": {
+    "severity": "low",
+    "blast_radius": "<p>The direct effect at 009d40f5 is narrow. No in-tree GL renderer requests multisampling or a channel layout through <code>GlContextDescription</code>: EasyGL's <code>RequestedGlContext</code> and OpenGL4's <code>RequestedContext</code> ask only for a version and profile, a 24-bit depth buffer, an 8-bit stencil buffer and double buffering, which <code>DescribeFormat</code> honours. Nothing in the tree reads <code>GetContextAttributes</code> outside tests (<code>PlatformGlContextOwner::GetAttributes</code> has no caller). The in-tree consequence is the legacy fallback: on a driver without, or refusing, <code>wglCreateContextAttribsARB</code>, an EasyGL or OpenGL4 renderer that asked for a 3.3 Core context silently receives the legacy bootstrap context and nothing at context creation reports the downgrade. Out-of-tree renderers or tools built on the platform service get the requested description back instead of the granted one.</p>"
+   },
+   "note": "Contract violation confirmed; severity lowered because no in-tree consumer requests the ignored fields or reads the misreported attributes."
+  }
+ ]
+}

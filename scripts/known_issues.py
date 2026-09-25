@@ -492,6 +492,27 @@ def hub_body(page: str, area_hub: str, group_key: str | None) -> tuple[dict, str
 # ---------------------------------------------------------------------------------------------
 # whole-system validation
 # ---------------------------------------------------------------------------------------------
+def cmd_qa(_: argparse.Namespace) -> int:
+    """Fold the adversarial QA verdicts (qa-Q*.json) into patches.json: CORRECTED -> field replacements, REFUTED -> unpublished."""
+    pp = ISS / "patches.json"
+    patches = load(pp) if pp.exists() else {"global_replace": [], "entries": {}, "refuted": {}}
+    patches.setdefault("entries", {})
+    patches.setdefault("refuted", {})
+    counts: Counter = Counter()
+    for f in sorted(ISS.glob("qa-Q*.json")):
+        if f.name.endswith("-list.json"):
+            continue
+        for v in load(f).get("verdicts", []):
+            counts[v["verdict"]] += 1
+            if v["verdict"] == "CORRECTED":
+                patches["entries"].setdefault(v["id"], {"set": {}})["set"].update(v.get("corrections") or {})
+            elif v["verdict"] == "REFUTED":
+                patches["refuted"][v["id"]] = v.get("evidence", "")
+    pp.write_text(json.dumps(patches, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    print("qa verdicts folded:", dict(counts), "| corrected entries:", len(patches["entries"]), "| refuted:", len(patches["refuted"]))
+    return 0
+
+
 def cmd_validate(_: argparse.Namespace) -> int:
     if not PUBLIC.exists():
         print("data/known-issues.json not built yet")
@@ -544,8 +565,9 @@ def main() -> int:
     sub.add_parser("merge")
     sub.add_parser("build")
     sub.add_parser("validate")
+    sub.add_parser("qa")
     args = ap.parse_args()
-    return {"check": cmd_check, "merge": cmd_merge, "build": cmd_build, "validate": cmd_validate}[args.cmd](args)
+    return {"check": cmd_check, "merge": cmd_merge, "build": cmd_build, "validate": cmd_validate, "qa": cmd_qa}[args.cmd](args)
 
 
 if __name__ == "__main__":

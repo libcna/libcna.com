@@ -75,7 +75,7 @@ def main() -> int:
     # stale numbers from the alpha.1 audit must not appear as current claims
     stale = [("50 renderer identities", "alpha.1 renderer count"), ("46 implementation families", "alpha.1 family count"),
              ("8,263 static", "alpha.1 test definitions"), ("21 workflow files", "alpha.1 workflow count")]
-    for page in [p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.html") if not ({"audit", "scripts", "build-probe", ".git"} & set(p.relative_to(ROOT).parts))]:
+    for page in [p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.html") if not ({"audit", "scripts", "build-probe", ".git", "known-issues"} & set(p.relative_to(ROOT).parts))]:  # known-issues pages quote stale numbers of CNA's own documents on purpose
         if page == "docs/releases.html":
             continue  # release history compares alpha.1 with the snapshot on purpose
         body = cache.get(page) or text(page)
@@ -93,7 +93,7 @@ def main() -> int:
         (r"\b(\d+)\s+(?:CNA_AUDIO_PLATFORM|audio)\s+implementations", F["audio_implementations"], "audio implementation count"),
         (r"\b(\d+)\s+production\s+modules", 23, "production module count"),
     ]
-    for page in [p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.html") if not ({"audit", "scripts", "build-probe", ".git"} & set(p.relative_to(ROOT).parts))]:
+    for page in [p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.html") if not ({"audit", "scripts", "build-probe", ".git", "known-issues"} & set(p.relative_to(ROOT).parts))]:  # known-issues pages quote stale numbers of CNA's own documents on purpose
         if page == "docs/releases.html":
             continue
         body = cache.get(page) or text(page)
