@@ -128,7 +128,7 @@ def parse_bible() -> list[dict]:
 def main() -> int:
     cmd = sys.argv[1] if len(sys.argv) > 1 else "build"
     OUT.mkdir(parents=True, exist_ok=True)
-    pk: dict[str, list[dict]] = {f"B{i}": [] for i in range(1, 10)}
+    pk: dict[str, list[dict]] = {f"B{i}": [] for i in range(1, 11)}  # B10 = candidates recorded by the chapter packages (never mixed into B1-B9)
     bible = parse_bible()
     for it in bible:
         n = int(it["cand"][-3:])
@@ -149,7 +149,7 @@ def main() -> int:
             it = dict(it)
             it["cand"] = it.pop("id", None) or f"{doc.get('wp', f.stem)}-i???"
             it["source"] = "wp"
-            pk[unit_pkg(it.get("bible_unit", ""))].append(it)
+            pk["B10"].append(it)
     if cmd == "summary":
         for k, v in pk.items():
             print(k, len(v), dict(Counter(x["source"] for x in v)))
