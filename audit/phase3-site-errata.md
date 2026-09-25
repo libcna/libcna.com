@@ -64,3 +64,6 @@ Status: `open` until the page is fixed and the fix is recorded here.
 | 57 | `deep-dives/foundations/ecosystem.html#sharp-runtime` (WP01), `docs/tutorials/89-*.html` | "41 components" | the catalogue lists 44 modules / 47 components at sharp-runtime `next` @ `41b918c9` (WP16) | WP16 | open |
 | 58 | `development/internals/modules/devices.html#tests`, `development/takeover/validation.html#devices` | the TimeSpan race as a current baseline | fixed in sharp-runtime on 2026-07-07 (also errata 7) | WP16 | open |
 | 59 | `docs/platforms.html#android` | cites a failing NDK build in sharp-runtime | the `clock_cast` failure is now guarded in sharp-runtime `next` @ `41b918c9` (from reading the code, not a build) — re-verify and reword | WP18 | open |
+| 60 | `development/internals/graphics/backends.html#untoured-2d` | (GDI frame copy) | GDI copies the full frame by default; copying only damaged rows needs `CNA_GDI_DIRTY_PRESENTATION` (WP11) | WP11 | open |
+| 61 | `deep-dives/renderers/render-targets-clears-and-viewports.html#clear-families` (our page, WP08) | GDI has no stencil plane | GDI does have a stencil plane and can clear it (WP11) | WP11 | open |
+| 62 | `deep-dives/renderers/presentation-and-backbuffer-readback.html#swap-interval` (our page, WP08) | DIRECT2D ignores the swap interval | DIRECT2D passes the interval to DXGI Present (WP11) | WP11 | open |

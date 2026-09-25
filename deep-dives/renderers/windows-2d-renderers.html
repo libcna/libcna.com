@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>DIRECT2D and GDI: two Windows 2D delivery stacks - CNA Deep Dives</title>
+  <meta name="description" content="How CNA&#x27;s two Windows-only 2D renderers draw, refuse, present and recover: Direct2D over a private Direct3D 11 device versus GDI over a private CPU 2D core, and what their tests prove.">
+  <meta name="keywords" content="direct2d, gdi, windows 2d, warp, setdibitstodevice, stretchdibits, porter-duff, cpu msaa, release gate, wine, render targets">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="CNA">
+  <meta property="og:url" content="https://libcna.com/deep-dives/renderers/windows-2d-renderers.html">
+  <meta property="og:title" content="DIRECT2D and GDI: two Windows 2D delivery stacks - CNA Deep Dives">
+  <meta property="og:description" content="How CNA&#x27;s two Windows-only 2D renderers draw, refuse, present and recover: Direct2D over a private Direct3D 11 device versus GDI over a private CPU 2D core, and what their tests prove.">
+  <link rel="stylesheet" href="../../css/style.css">
+  <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
+  <link rel="canonical" href="https://libcna.com/deep-dives/renderers/windows-2d-renderers.html">
+  <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
+  <script type="application/ld+json">
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"DIRECT2D and GDI: two Windows 2D delivery stacks","description":"How CNA's two Windows-only 2D renderers draw, refuse, present and recover: Direct2D over a private Direct3D 11 device versus GDI over a private CPU 2D core, and what their tests prove.","url":"https://libcna.com/deep-dives/renderers/windows-2d-renderers.html","datePublished":"2026-09-25","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Deep Dives","url":"https://libcna.com/deep-dives/index.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Expert"}
+  </script>
+  <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
+</head>
+<body>
+<a class="skip-link" href="#main-content">Skip to content</a>
+<nav class="nav"><div class="nav-container">
+  <a href="../../index.html" class="nav-brand">CNA</a>
+  <button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false"><span></span><span></span><span></span></button>
+  <div class="nav-menu">
+    <a href="../../index.html" class="nav-link">Home</a>
+    <a href="../../about.html" class="nav-link">About</a>
+    <a href="../../features.html" class="nav-link">Features</a>
+    <a href="../../architecture.html" class="nav-link">Architecture</a>
+    <a href="../../documentation.html" class="nav-link">Documentation</a>
+    <a href="../../development/index.html" class="nav-link">Development</a>
+    <a href="../../deep-dives/index.html" class="nav-link active">Deep Dives</a>
+    <a href="../../known-issues/index.html" class="nav-link">Known Issues</a>
+    <a href="../../tutorials.html" class="nav-link">Tutorials</a>
+    <a href="../../demos.html" class="nav-link">Demos</a>
+    <a href="../../showcase.html" class="nav-link">Showcase</a>
+    <a href="../../videos.html" class="nav-link">Videos</a>
+    <a href="../../roadmap.html" class="nav-link">Roadmap</a>
+    <a href="../../contact.html" class="nav-link">Contact</a>
+    <a href="../../network.html" class="nav-link">Network</a>
+    <a href="../../search.html" class="nav-link">Search</a>
+    <a href="https://github.com/libcna/cna" class="nav-link nav-link--github" target="_blank" rel="noopener">GitHub</a>
+    <a href="https://blog.libcna.com/" class="nav-link nav-link--blog" target="_blank" rel="noopener">Blog</a>
+    <a href="https://www.youtube.com/@libcna" class="nav-link nav-link--youtube" target="_blank" rel="noopener">YouTube</a>
+    <a href="https://discord.gg/vrnc4n6DaE" class="nav-link nav-link--discord" target="_blank" rel="noopener">Discord</a>
+  </div>
+  <button class="theme-toggle" type="button" aria-label="Switch to light theme" title="Switch to light theme">
+    <svg class="theme-icon-light" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12 17a5 5 0 1 1 0-10 5 5 0 0 1 0 10zm0-2a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.5 4.9l1.4-1.4 2.1 2.1-1.4 1.4L3.5 4.9zm13.5 13.5l1.4-1.4 2.1 2.1-1.4 1.4-2.1-2.1zM19.1 3.5l1.4 1.4-2.1 2.1-1.4-1.4 2.1-2.1zM5.6 17l1.4 1.4-2.1 2.1-1.4-1.4L5.6 17zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+    <svg class="theme-icon-dark" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M12.3 22a10 10 0 0 1-1.6-19.9c.6-.1 1 .5.8 1a7.9 7.9 0 0 0 9.7 10.6c.5-.2 1 .3.9.8A10 10 0 0 1 12.3 22z"/></svg>
+  </button>
+</div></nav>
+
+<main id="main-content">
+  <div class="docs-layout">
+
+    <aside class="docs-sidebar">
+<!--deep:sidebar-->
+<details class="dev-nav" open>
+  <summary class="docs-sidebar-title">Deep Dives</summary>
+  <ul class="dev-nav-list">
+    <li class="dev-nav-item"><a href="../index.html" class="docs-nav-link">Deep Dives home</a></li>
+    <li class="dev-nav-item"><a href="../foundations/index.html" class="docs-nav-link">Foundations &amp; compatibility <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../framework/index.html" class="docs-nav-link">Framework core <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../build/index.html" class="docs-nav-link">Architecture &amp; build <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../graphics/index.html" class="docs-nav-link">The graphics machine <span class="dev-nav-count">17</span></a>
+    </li>
+    <li class="dev-nav-item is-open"><a href="index.html" class="docs-nav-link is-group-active">Renderers <span class="dev-nav-count">19</span></a>
+      <ul class="dev-nav-sub">
+        <li><a href="native-gpu-evidence-tiers.html" class="docs-nav-link">Modern GPU evidence tiers</a></li>
+        <li><a href="vulkan-presentation-and-readback.html" class="docs-nav-link">Vulkan presentation &amp; readback</a></li>
+        <li><a href="vulkan-deferred-state-and-descriptors.html" class="docs-nav-link">Vulkan state, queries &amp; descriptors</a></li>
+        <li><a href="sdl-gpu-pipeline-state-and-draw-order.html" class="docs-nav-link">SDL_GPU pipelines &amp; draw order</a></li>
+        <li><a href="sdl-gpu-resources-and-frame-recovery.html" class="docs-nav-link">SDL_GPU resources &amp; recovery</a></li>
+        <li><a href="webgpu-renderer-semantics.html" class="docs-nav-link">WebGPU semantics</a></li>
+        <li><a href="renderer-contract.html" class="docs-nav-link">The renderer contract</a></li>
+        <li><a href="presentation-and-backbuffer-readback.html" class="docs-nav-link">Presentation &amp; readback contract</a></li>
+        <li><a href="render-targets-clears-and-viewports.html" class="docs-nav-link">Targets, clears &amp; viewports</a></li>
+        <li><a href="easygl-gl-profiles.html" class="docs-nav-link">EasyGL profiles &amp; GL identities</a></li>
+        <li><a href="easygl-state-and-resource-semantics.html" class="docs-nav-link">EasyGL state &amp; resource semantics</a></li>
+        <li><a href="direct3d-evidence-and-wine.html" class="docs-nav-link">Direct3D evidence &amp; Wine</a></li>
+        <li><a href="direct3d9-xna-fidelity.html" class="docs-nav-link">DIRECTX9 fidelity</a></li>
+        <li><a href="direct3d-presentation-and-state.html" class="docs-nav-link">Direct3D presentation &amp; state</a></li>
+        <li><a href="direct3d11-and-12-resources.html" class="docs-nav-link">DIRECTX11/12 resources</a></li>
+        <li><a href="direct3d-shadereffect-contract.html" class="docs-nav-link">Direct3D ShaderEffect</a></li>
+        <li><a href="windows-2d-renderers.html" class="docs-nav-link active" aria-current="page">Windows 2D: DIRECT2D and GDI</a></li>
+        <li><a href="sdl-renderer-2d-contract.html" class="docs-nav-link">SDL_RENDERER 2D contract</a></li>
+        <li><a href="browser-dom-renderers.html" class="docs-nav-link">Browser 2D renderers</a></li>
+      </ul>
+    </li>
+    <li class="dev-nav-item"><a href="../content/index.html" class="docs-nav-link">Content <span class="dev-nav-count">5</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../models/index.html" class="docs-nav-link">Models, glTF &amp; 3D <span class="dev-nav-count">6</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../services/index.html" class="docs-nav-link">Input, audio, media &amp; services <span class="dev-nav-count">12</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../sharp-runtime/index.html" class="docs-nav-link">sharp-runtime <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../siblings/index.html" class="docs-nav-link">Sibling libraries</a>
+    </li>
+    <li class="dev-nav-item"><a href="../platforms/index.html" class="docs-nav-link">Cross-platform engineering <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../verification/index.html" class="docs-nav-link">Diagnostics &amp; verification <span class="dev-nav-count">2</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../practice/index.html" class="docs-nav-link">Porting &amp; project practice <span class="dev-nav-count">4</span></a>
+    </li>
+    <li class="dev-nav-item"><a href="../reference/index.html" class="docs-nav-link">Reference matrices <span class="dev-nav-count">5</span></a>
+    </li>
+  </ul>
+</details>
+<!--/deep:sidebar-->
+    </aside>
+
+<!--deep:breadcrumb-->
+    <nav class="breadcrumb" aria-label="Breadcrumb">
+      <ol>
+        <li><a href="../../index.html">Home</a></li>
+        <li><a href="../index.html">Deep Dives</a></li>
+        <li><a href="index.html">Renderers</a></li>
+        <li aria-current="page">Windows 2D: DIRECT2D and GDI</li>
+      </ol>
+    </nav>
+<!--/deep:breadcrumb-->
+    <article class="docs-content dev-content">
+      <h1>DIRECT2D and GDI: two Windows 2D delivery stacks</h1>
+      <nav class="toc" aria-label="Table of contents">
+        <h2 class="toc-title">On this page</h2>
+        <ul class="toc-list">
+          <li><a href="#two-stacks">Two stacks, one 2D scope</a></li>
+          <li><a href="#direct2d">DIRECT2D: native Direct2D over a private Direct3D 11 device</a></li>
+          <li><a href="#gdi">GDI: a Win32 presenter over a private CPU 2D core</a></li>
+          <li><a href="#evidence">Evidence and the release boundary</a></li>
+          <li><a href="#choosing">Choosing and testing the Windows 2D paths</a></li>
+          <li><a href="#related-layers">Related pages</a></li>
+        </ul>
+      </nav>
+      <p class="doc-meta">CNA snapshot 009d40f5 &nbsp;&middot;&nbsp; Deep Dives &rsaquo; Renderers &nbsp;&middot;&nbsp; source links pinned to <code>009d40f5</code></p>
+<div class="callout callout--note dev-evidence"><span class="callout-icon">&#10003;</span><p><strong>Evidence basis:</strong> source-verified at the pinned commit; tests exist (not executed for this page). Claims on this page were checked by reading the CNA source at commit <code>009d40f5</code>; unless a sentence says otherwise, nothing here was built or executed. Read from the family sources, CMake registrations and the two Windows workflow files at 009d40f5; nothing was built or run, no Windows or Wine session was observed, and the depth-format caveat is a code reading only.</p></div>
+
+<p class="lede"><code>DIRECT2D</code> and <code>GDI</code> are CNA's two Windows-only 2D renderers. They share a platform gate and a 2D scope and nothing else: <code>DIRECT2D</code> records native <code>ID2D1</code> drawing commands on a private Direct3D 11 device, while <code>GDI</code> rasterises every sprite on the CPU with code borrowed from the <code>SOFTWARE</code> family and then copies the finished frame into a Win32 window. This page explains both delivery stacks at the level of their source: what each draws, what each refuses and how, how each presents, and how much the registered tests and the Windows workflows actually prove. It is for anyone choosing a Windows 2D path, reading a Direct2D or GDI test result, or changing either family.</p>
+
+<h2 id="two-stacks">Two stacks, one 2D scope</h2>
+<p>Both identities are hard-gated to <code>CMAKE_SYSTEM_NAME=Windows</code> (a native MSVC or MinGW build, or a MinGW cross-build from Linux) by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/RendererSelection.cmake"><code>RendererSelection.cmake</code></a>, both report <code>ThreeD</code> false, and both are declared <em>Supported</em> in CNA's own maturity table (a declaration, not a measurement). Their descriptors ask for a plain window (<code>RendererWindowKind::Plain</code>, a window and the video subsystem), and each constructor insists on a Win32 native window handle, so they run on the <code>SDL3</code> or <code>WIN32</code> platform on Windows. The common user-level table is in <a href="../../docs/rendering-backends.html#windows-directx">Graphics renderers: the Windows set</a>; the differences that matter are these.</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Question</th><th scope="col"><code>DIRECT2D</code></th><th scope="col"><code>GDI</code></th></tr></thead>
+<tbody>
+<tr><td>Who draws the pixels</td><td>Direct2D 1.1 (<code>ID2D1DeviceContext</code>) on a private Direct3D 11 device, hardware first, WARP as fallback</td><td>CNA's own CPU 2D rasteriser (the <code>SOFTWARE</code> family's 2D translation units), no GPU API at all</td></tr>
+<tr><td>How a frame reaches the window</td><td>A logical-size target bitmap drawn into a flip-model DXGI swap chain, then <code>IDXGISwapChain::Present</code></td><td>The CPU frame copied with <code>SetDIBitsToDevice</code> or <code>StretchDIBits</code></td></tr>
+<tr><td>Capabilities answering true</td><td><code>AnisotropicFiltering</code> only</td><td><code>StencilBuffer</code>, <code>WireFrame</code>, <code>MultiSampleAntiAliasing</code>, <code>AdditiveBlending</code></td></tr>
+<tr><td><code>RenderTarget2D</code> / MRT / occlusion query</td><td>yes (Color, no depth, no mips) / no / no</td><td>yes (colour, stencil, optional mips) / no / no</td></tr>
+<tr><td>How 3D is refused</td><td>Through the shared <code>HandleUnsupported3DCall</code>, so <code>WarnAndStub</code> is honoured</td><td><code>System::NotSupportedException</code> from its own methods, always</td></tr>
+<tr><td>Registered tests on a Linux cross-build</td><td>Yes, run under Wine or Proton with their built-in Direct2D</td><td>None: every <code>GDI_*</code> registration is skipped when cross-compiling</td></tr>
+</tbody>
+</table></div>
+
+<h2 id="direct2d">DIRECT2D: native Direct2D over a private Direct3D 11 device</h2>
+<p><code>DIRECT2D</code> is not a reduced mode of <code>DIRECTX11</code>. It has no shader stage and never compiles HLSL; every sprite becomes a Direct2D bitmap, image-brush or effect-graph operation. The whole family lives in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/direct2d/src/Direct2DRenderer.cpp"><code>Direct2DRenderer.cpp</code></a> and its header <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/direct2d/include/CNA/Internal/Renderers/Direct2D/Direct2DRenderer.hpp"><code>Direct2DRenderer.hpp</code></a>.</p>
+
+<h3 id="d2d-device">Device, swap chain and the WARP fallback</h3>
+<p><code>CreateDeviceResources</code> calls <code>D3D11CreateDevice</code> with <code>D3D11_CREATE_DEVICE_BGRA_SUPPORT</code> and feature levels 11_1 down to 10_0, first on the hardware driver and, if that fails, on WARP, Microsoft's software Direct3D device (the source comment names VMs and remote-desktop sessions without a hardware adapter as the reason). Three environment switches exist for diagnosis: <code>CNA_DIRECT2D_FORCE_WARP</code> skips the hardware attempt, <code>CNA_DIRECT2D_DEBUG_LAYER</code> adds <code>D3D11_CREATE_DEVICE_DEBUG</code>, and <code>CNA_DIRECT2D_DIAGNOSTICS</code> prints the driver type, feature level and adapter ids to standard error. No application code ever sees this Direct3D 11 device.</p>
+<p>Presentation uses a two-buffer <code>DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL</code> swap chain in <code>DXGI_FORMAT_B8G8R8A8_UNORM</code>, created with <code>CreateSwapChainForHwnd</code> and with DXGI's Alt+Enter handling disabled. Drawing never targets the swap chain directly: it goes to a logical target bitmap the size of the virtual resolution. <code>Present</code> clears the back buffer to black, draws the logical bitmap through the presentation matrix (letterbox, stretch and the other presentation modes) with linear interpolation, and then calls <code>Present</code> on the swap chain with the stored swap interval as DXGI's sync interval, so an interval of 2 waits for two vertical blanks. The constructor accepts intervals 0 to 2 only. <code>Present</code> throws <code>System::NotSupportedException</code> while a <code>RenderTarget2D</code> is still bound, instead of presenting the wrong surface.</p>
+
+<h3 id="d2d-formats">Formats and the construction-time refusals</h3>
+<p>The constructor refuses, by name, every presentation request the stack cannot honour: a back-buffer format other than <code>SurfaceFormat::Color</code>, any depth format other than <code>DepthFormat::None</code>, and a multisample count above 1 all throw <code>System::NotSupportedException</code>; a reset re-checks the formats through <code>UpdatePresentationFormatEXT</code>. After construction the applied-format hooks report <code>Color</code> and <code>None</code>, so <code>PresentationParameters</code> describes what exists (see <a href="presentation-and-backbuffer-readback.html#formats-and-fullscreen">formats and the reset rollback</a>).</p>
+<div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p>By reading the source at this snapshot: the depth format a <code>GraphicsDeviceManager</code> passes to the renderer is its <code>PreferredDepthStencilFormat</code>, whose default is <code>Depth24</code>, and no step was found that normalises that request before the Direct2D constructor sees it. A game that targets <code>DIRECT2D</code> should therefore set the preferred depth format to <code>DepthFormat::None</code> explicitly. This was not executed; it is recorded for Known Issues review.</p></div>
+<p>Render targets follow the same rule: <code>CreateRenderTarget2DEXT</code> accepts only <code>Color</code>, <code>DepthFormat::None</code> and a sample count of 0 or 1, and it refuses a mipmapped target outright because the former generated-mip path for non-power-of-two sizes was not spatially correct. Only one target can be bound: <code>SetRenderTargets</code> throws for a count above 1 ("MRT is unsupported") and for a cube face, and it refuses a target created by another renderer or by another <code>GraphicsDevice</code>. Rebinding validates the new target's device generation before any state changes, so a rejected bind leaves the logical and native targets consistent.</p>
+<p>At the data boundary, CNA's tightly packed RGBA bytes become BGRA for Direct2D (<code>CopyRgbaToTightBgra</code>) and come back as RGBA on readback (<code>CopyBgraToTightRgba</code>); both reject a null pointer, a pitch shorter than one row and dimensions whose byte count would overflow, before allocating. Texture and target sizes are bounded by the Direct3D 11 dimension ceiling and then by the device's own <code>GetMaximumBitmapSize()</code>, which is also what <code>GetMaxTextureDimension</code> reports.</p>
+
+<h3 id="d2d-blend">Blend states: an exact composite or a refusal</h3>
+<p>Direct2D has no general source/destination blend-factor interface, so <code>BlendStateToDirect2DBlendMode</code> maps an exact factor tuple to a native composition and refuses everything else:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Request</th><th scope="col">Result</th></tr></thead>
+<tbody>
+<tr><td><code>BlendState::Opaque</code></td><td>bounded source copy</td></tr>
+<tr><td><code>AlphaBlend</code>, <code>NonPremultiplied</code></td><td>source-over (the non-premultiplied source is converted, see below)</td></tr>
+<tr><td><code>BlendState::Additive</code> (SourceAlpha/One) and One/One</td><td><code>System::NotSupportedException</code>: Direct2D's additive composite cannot treat texture and <code>RenderTarget2D</code> sources consistently, which is why <code>AdditiveBlending</code> answers false</td></tr>
+<tr><td>Eight symmetric Porter-Duff factor pairs with <code>BlendFunction::Add</code> (destination-over, source-in, destination-in, source-out, destination-out, source-atop, destination-atop, xor)</td><td>the matching <code>D2D1_COMPOSITE_MODE</code> through <code>DrawImage</code></td></tr>
+<tr><td>Different colour and alpha factors, or any function other than <code>Add</code></td><td><code>std::runtime_error</code> naming the limitation</td></tr>
+</tbody>
+</table></div>
+<p>The Porter-Duff results are tested against <code>CompositePorterDuffReference</code>, which computes the expected pixel from the operator algebra alone and deliberately never consults the mapping it checks, so a test cannot pass by agreeing with itself.</p>
+
+<h3 id="d2d-sampling">Sampling, mips and the CPU fallback</h3>
+<p>Each <code>TextureFilter</code> becomes a Direct2D interpolation mode for the in-plane filter (the mixed min/mag filters pick the minification or magnification half depending on whether the draw minifies), and <code>TextureAddressMode</code> Wrap, Clamp and Mirror map to <code>D2D1_EXTEND_MODE</code>. Direct2D has no implicit mip chain for CNA's per-level bitmaps, so a filter whose mip component is linear is resolved by a CPU path that blends the two bracketing levels; the fractional level of detail comes from the complete batch and presentation transform, including rotation and shear.</p>
+<p>Tint and non-premultiplied sources use the <code>ColorMatrix</code> and <code>Premultiply</code> built-in effects when the device provides them; the renderer probes both. When an effect is missing, an ordinary <code>Texture2D</code> falls back to CPU-prepared sprite pixels, but a <code>RenderTarget2D</code> source has no CPU copy to fall back to and throws <code>System::NotSupportedException</code> with the workaround in the message (draw with <code>Color::White</code> from a premultiplied source, or copy the target to a texture first). Transient bitmaps, effects and brushes created during a batch are retained until that chunk's <code>EndDraw</code>, so a texture disposed after <code>SpriteBatch::End</code> and before <code>Present</code> is not read after release, and bounded caches keep a long batch from growing without limit.</p>
+
+<h3 id="d2d-recovery">Device loss and recovery</h3>
+<p><code>IsDeviceLossHResult</code> treats <code>D2DERR_RECREATE_TARGET</code> and the DXGI device-removed, reset, hung and driver-internal-error codes as a lost device. Every detection site funnels into one recovery routine that raises the public <code>DeviceLost</code>, <code>DeviceResetting</code> and <code>DeviceReset</code> events once each, in XNA's order, releases and recreates the device, and then rebuilds the textures and targets that were registered while context recovery was enabled. A resource created while recovery was disabled is not rebuilt; its next use throws a message saying it belongs to a lost device. A loss detected at <code>Present</code> throws after recovery with the instruction to redraw the frame.</p>
+
+<h3 id="d2d-3d">What a 3D call does</h3>
+<p>The family overrides <code>Ensure3DSupported</code> and every 3D factory, clear and draw hook with <code>HandleUnsupported3DCall</code>. Under the default <code>Unsupported3DGraphicsCallBehavior::Throw</code> the effect-aware draws therefore end in the family's explicit "does not support 3D" refusal instead of silently drawing a sprite-coloured triangle after a stock-effect packet was discarded; under <code>WarnAndStub</code> the call logs once and returns a no-op object (the occlusion-query factory returns a no-op query). The policy is explained in <a href="../graphics/capability-model-and-evidence.html#unsupported-3d">the unsupported-3D policy</a>.</p>
+
+<h2 id="gdi">GDI: a Win32 presenter over a private CPU 2D core</h2>
+
+<h3 id="gdi-composition">Composition, not inheritance</h3>
+<p><code>GdiRenderer</code> derives directly from <code>IGraphicsRenderer</code> and privately owns a <code>GdiSoftware2DCore</code>, a small adapter that does inherit the CPU <code>SoftwareRenderer</code> but exposes only the back buffer needed for presentation and a raster-bounds callback used for damage tracking (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/gdi/src/GdiRenderer.cpp"><code>GdiRenderer.cpp</code></a>). No pointer or reference to that complete Software renderer escapes, and <code>GdiRenderer</code> forwards only its reviewed sprite, texture, target and state operations, so a 3D method added to Software later cannot silently appear in GDI's public vtable.</p>
+<p>The build mirrors that boundary. Selecting <code>GDI</code> enters the software module, whose <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/software/CMakeLists.txt"><code>CMakeLists.txt</code></a> publishes a reviewed list of CPU-2D translation units as <code>CNA_GDI_SOFTWARE_SOURCES</code>; the GDI archive is those units plus the GDI-owned presentation and configuration files, linked with <code>gdi32</code> (<a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/gdi/CMakeLists.txt"><code>gdi/CMakeLists.txt</code></a>, which prints the archive's unit count at configure time). Because the shared units are compiled with <code>CNA_SOFTWARE_2D_ONLY</code>, <code>GDI</code> and <code>SOFTWARE</code> cannot be linked into one binary; the internals of that split are on <a href="../../development/internals/graphics/software.html#build">Software renderer internals</a>.</p>
+
+<h3 id="gdi-raster">What the CPU core provides</h3>
+<p>The capability switch answers true for exactly four members, each backed by real CPU work: <code>StencilBuffer</code> (a standalone 8-bit stencil plane that is always present, usable for 2D masks), <code>WireFrame</code> (sprite quads are genuinely rasterised as outlines), <code>MultiSampleAntiAliasing</code> and <code>AdditiveBlending</code>. <code>DepthStencilBuffer</code> stays false because GDI has no depth plane at all. Multisampling is opt-in and has one honest configuration: a request for exactly 4 allocates four samples per pixel on a 2×2 grid, any other request stays single-sampled, and the applied count is what is reported back.</p>
+<p><code>CreateRenderTarget2D</code> builds a CPU target with colour, the stencil plane and an optional mip chain generated on unbind, and deliberately no depth attachment and no MSAA storage, whatever depth format was requested. One target can be active; a multi-target set, a cube face or a non-zero array slice throws. A <code>SpriteBatch</code> custom effect is accepted only if it is the fixed CPU <code>ColorMatrixEffect</code> (see <a href="../../docs/tutorials/116-post-process-effects.html#colormatrix">ColorMatrixEffect</a>); any other effect is rejected rather than accepted and ignored. <code>ClearStencil</code> and <code>ClearColorAndStencil</code> work; every clear variant that names depth throws.</p>
+
+<h3 id="gdi-refusals">Refusals</h3>
+<p>Cube textures, volume textures, cube render targets, <code>ShaderEffect</code> programs, occlusion queries, vertex and index buffers, the depth toggles and every 3D draw call <code>ThrowUnsupportedFeature</code>, which raises <code>System::NotSupportedException</code> with the text "GDI (Win32 2D) does not support …". These methods do not route through <code>HandleUnsupported3DCall</code>, so <code>WarnAndStub</code> never turns them into warnings.</p>
+
+<h3 id="gdi-present">Presentation: DIBs, dirty bands and filters</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/gdi/src/GdiPresentation.cpp"><code>GdiPresentation.cpp</code></a> plans each present. By default the whole frame is copied with <code>SetDIBitsToDevice</code>. When the presentation mode scales the frame, <code>StretchDIBits</code> is used instead, with either nearest-neighbour (<code>COLORONCOLOR</code>) or <code>HALFTONE</code> stretching. Copying only the damaged band of rows is an opt-in optimisation, and a full copy is still forced after a window repair, a full invalidation or any scaling. Three environment settings are read once per renderer by <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/gdi/src/GdiConfiguration.cpp"><code>GdiConfiguration.cpp</code></a>; invalid values keep the safe default and are reported together in one diagnostic line:</p>
+<div class="table-wrap"><table>
+<thead><tr><th scope="col">Variable</th><th scope="col">Values</th><th scope="col">Effect</th></tr></thead>
+<tbody>
+<tr><td><code>CNA_GDI_PRESENT_FILTER</code></td><td><code>nearest</code> (default), <code>halftone</code></td><td>Stretch filter for a scaled presentation</td></tr>
+<tr><td><code>CNA_GDI_DIRTY_PRESENTATION</code></td><td>switch, off by default</td><td>Copy only the damaged rows when nothing forces a full copy</td></tr>
+<tr><td><code>CNA_GDI_DWM_FLUSH</code></td><td>switch, off by default</td><td>Call <code>DwmFlush</code> after presenting when the compositor provides it</td></tr>
+</tbody>
+</table></div>
+<p><code>SetSwapInterval</code> is an empty override: GDI has no display-interval control, and <code>DwmFlush</code> is the only pacing it offers.</p>
+
+<h3 id="gdi-not-equivalent">Why shared code does not make GDI and SOFTWARE equivalent</h3>
+<p><code>SOFTWARE</code> runs with no window and returns pixels from its own buffers; <code>GDI</code> must additionally create, update, invalidate and present a Win32 bitmap. A CPU raster test can prove the shared arithmetic while missing a stride, channel-order, invalidation or lifetime defect at the GDI boundary; a presentation smoke test can show a bitmap without distinguishing the stencil semantics beneath it. <code>GDI</code> also refuses what <code>SOFTWARE</code> implements (3D draws, cube and volume resources, depth), so a Software result is never a GDI result.</p>
+
+<h2 id="evidence">Evidence and the release boundary</h2>
+
+<h3 id="d2d-tests">DIRECT2D tests and workflow</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/direct2d/examples/CMakeLists.txt"><code>direct2d/examples/CMakeLists.txt</code></a> registers four renderer tests when <code>DIRECT2D</code> is the configured renderer: <code>Direct2D_Smoke</code> (an HWND-backed device, a readback of the clear colour and one point-sampled sprite), <code>Direct2D_2DParity</code> (the public <code>Texture2D</code>, <code>SpriteBatch</code> and <code>RenderTarget2D</code> round trip with pixel readback), <code>Direct2D_Lifetime</code> (transient resources across readback, target switches, resize and recovery) and <code>Direct2D_Soak</code> (2,000 resize, recovery and target-switch cycles by default, <code>CNA_DIRECT2D_SOAK_CYCLES</code> for more, with a working-set leak check). <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/cmake/UnitTests.cmake"><code>UnitTests.cmake</code></a> adds <code>Direct2D_Unit</code>, which runs the device-free GoogleTests in <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/direct2d/tests/CNA/Internal/Renderers/Direct2D/Direct2DRendererTests.cpp"><code>Direct2DRendererTests.cpp</code></a>: device-loss classification, the blend mapping, the capability contract (its test name still says "AllThirteen", from before the enum grew to 19), pixel conversion, mip policy and the Porter-Duff reference.</p>
+<p>On a MinGW cross-build each registration runs through a wrapper chosen by <code>CNA_DIRECT2D_TEST_RUNTIME</code> (<code>WINE</code> or <code>PROTON</code>). The Wine route sets <code>CNA_D3D11_SKIP_DXVK_GATE=1</code>: Direct2D must use the Wine environment's own built-in <code>d2d1</code>, <code>d3d11</code> and <code>dxgi</code>, and replacing them with DXVK would change the stack under test (the gate itself is explained in <a href="direct3d-evidence-and-wine.html">Direct3D evidence</a>). Because Wine's Direct2D registers no <code>ColorMatrix</code> effect and ignores the bounded-copy and Porter-Duff composite modes, the parity test also receives <code>CNA_DIRECT2D_SKIP_RENDER_TARGET_DECORATION=1</code> and <code>CNA_DIRECT2D_SKIP_ADVANCED_BLEND=1</code> there; those matrices are reserved for a real Windows runtime. A separate executable, <code>cna_corpus2d_direct2d</code>, dumps the renderer's half of a cross-renderer 2D corpus for comparison with EasyGL and is deliberately not a CTest.</p>
+<p>The native tier is the Direct2D leg of <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/.github/workflows/d3d-windows-ci.yml"><code>d3d-windows-ci.yml</code></a>, which runs on manual dispatch only. It checks the plan against its evidence, self-tests the debug-log parser, runs the whole <code>Direct2D</code> label with the Direct3D 11 debug layer and diagnostics, repeats <code>Direct2D_Lifetime</code> on forced WARP, and fails on any live object outside the parser's whitelist.</p>
+<p>The renderer's own release gate is stricter than any workflow. <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/docs/direct2d-release-gate.md"><code>docs/direct2d-release-gate.md</code></a> (CNA prose) defines it as the output of <code>python3 scripts/validate_direct2d_plan.py --release-gate</code>, and two of its criteria need artefacts that no hosted run can produce: a recorded native x64 Windows run naming the Windows build, the <code>d2d1.dll</code>/<code>d3d11.dll</code>/<code>dxgi.dll</code> versions and the adapter driver, with results for the branches Wine cannot exercise; and a physical presentation capture on a real monitor at non-96 DPI. Neither evidence file exists at this snapshot, so the gate is blocked by construction; a green workflow run, even with a hidden window on a hosted runner, does not satisfy it.</p>
+
+<h3 id="gdi-tests">GDI tests and workflow</h3>
+<p><a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/modules/renderers/gdi/examples/CMakeLists.txt"><code>gdi/examples/CMakeLists.txt</code></a> builds seventeen test programs and a benchmark, and registers nineteen <code>GDI_*</code> CTests (smoke, 2D regression, <code>ColorMatrixEffect</code>, public stencil, public API, applied state, unsupported features, dirty damage, repaint invalidation, <code>GDI_PresentationOracle</code>, window metrics, framebuffer and texture allocation, the MSAA contract, the presentation-mode and device-context release transactions, and the presentation-configuration program three times, as <code>GDI_Presentation_Default</code>, <code>GDI_Presentation_Dirty</code> and <code>GDI_Presentation_Halftone</code> with the matching environment) only inside <code>if(NOT CMAKE_CROSSCOMPILING)</code>. A Linux cross-build therefore produces the executables but registers none of them, and nothing about GDI runs under Wine automatically. The automated platform tier is <a class="src-link" href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/.github/workflows/gdi-windows-ci.yml"><code>gdi-windows-ci.yml</code></a>, a native MSVC job on a hosted runner that runs <code>ctest -L GDI</code>, again on manual dispatch only. Its own header states that it does not replace an inspection of the visible window lifecycle and DPI behaviour on an interactive desktop.</p>
+
+<h3 id="report">What a Windows 2D result has to say</h3>
+<p>A clean device construction proves neither pixel output nor the release gate. A useful report names the identity, whether it ran on native Windows or on Wine or Proton built-ins (and which), whether the observation was presentation, back-buffer readback or off-screen target readback, which skip variables were active, and for Direct2D whether the hardware driver or WARP was used (<code>CNA_DIRECT2D_DIAGNOSTICS</code> prints it). The evidence vocabulary is the one in <a href="../../docs/rendering-backends.html#verification">How renderers are verified</a>.</p>
+
+<h2 id="choosing">Choosing and testing the Windows 2D paths</h2>
+<p>Choose <code>DIRECT2D</code> when native Direct2D resources and composition are the goal, and accept its narrower blend vocabulary (no additive preset) and its hardware-or-WARP device. Choose <code>GDI</code> when a deterministic CPU-rendered image delivered through the classic Win32 surface is valuable, including stencil masks, wireframe sprites and opt-in 4× MSAA. Neither is a route to programmable 3D: for that on Windows use <code>DIRECTX11</code>, <code>DIRECTX12</code> or <code>DIRECTX9</code> (<a href="../../docs/tutorials/103-direct3d-windows.html">Tutorial 103</a>).</p>
+<p>A comparison scene that separates the two stacks includes alpha-blended sprites (and additive ones on GDI, where they are supported), a clipped draw, a render-target round trip and a format-sensitive readback; on GDI add stencil and MSAA probes for the shared CPU core. Run the same scene off-screen and through real presentation, so that the raster boundary and the delivery boundary are tested separately.</p>
+
+<section class="dev-layers" aria-labelledby="related-layers">
+<h2 id="related-layers">Related pages</h2>
+<p>The same subject is explained at several altitudes. These are the neighbouring pages at each one.</p>
+<dl><div class="dev-layers-row"><dt>User guide</dt><dd><a href="../../docs/rendering-backends.html#windows-directx">Graphics renderers: the Windows set</a> &middot; <a href="../../docs/tutorials/103-direct3d-windows.html">Tutorial 103: Direct3D on Windows</a> &middot; <a href="../../docs/tutorials/72-backend-selection.html#two-d-only">Tutorial 72: 2D-only renderers</a></dd></div><div class="dev-layers-row"><dt>Architecture</dt><dd><a href="../../development/architecture/graphics.html">Graphics architecture</a></dd></div><div class="dev-layers-row"><dt>Internals</dt><dd><a href="../../development/internals/graphics/backends.html#untoured-2d">Graphics backends: SDL_RENDERER, DIRECT2D, GDI and FREEDIRECT</a> &middot; <a href="../../development/internals/graphics/software.html#build">Software renderer internals: the GDI reuse</a></dd></div><div class="dev-layers-row"><dt>Maintainer workflow</dt><dd><a href="../../development/handbook/fix-a-renderer-bug.html">Fix a renderer bug</a></dd></div><div class="dev-layers-row"><dt>Tests and validation</dt><dd><a href="../../development/testing/architecture.html#gpu">Test architecture: GPU tests</a></dd></div><div class="dev-layers-row"><dt>Reference</dt><dd><a href="../../development/reference/test-targets.html">Test target index</a></dd></div><div class="dev-layers-row"><dt>Deep dives</dt><dd><a href="direct3d-evidence-and-wine.html">Direct3D evidence and Wine</a> &middot; <a href="presentation-and-backbuffer-readback.html">Presentation and back-buffer readback</a> &middot; <a href="../graphics/capability-model-and-evidence.html">Capability answers and evidence</a> &middot; <a href="sdl-renderer-2d-contract.html">SDL_RENDERER 2D contract</a></dd></div></dl>
+</section>
+<!--deep:pager-->
+<nav class="dev-pager" aria-label="Pages in this section"><a class="dev-pager-prev" href="direct3d-shadereffect-contract.html" rel="prev"><span>Previous</span>Custom HLSL ShaderEffect on the Direct3D renderers</a><a class="dev-pager-next" href="sdl-renderer-2d-contract.html" rel="next"><span>Next</span>SDL_RENDERER: the 2D contract, its refusals and its evidence</a></nav>
+<!--/deep:pager-->
+    </article>
+  </div>
+</main>
+
+<footer><div class="footer-inner">
+  <div class="footer-top">
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
+    <div class="footer-col"><h4>Docs</h4><ul><li><a href="../../docs/getting-started.html">Getting Started</a></li><li><a href="../../docs/building.html">Building</a></li><li><a href="../../docs/platforms.html">Platforms</a></li><li><a href="../../docs/rendering-backends.html">Renderers</a></li><li><a href="../../docs/faq.html">FAQ</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
+  </div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+</div></footer>
+<script src="../../js/main.js"></script>
+<script src="../../js/prism/prism.min.js" defer></script>
+<script src="../../js/prism/prism-cpp.min.js" defer></script>
+<script src="../../js/prism/prism-glsl.min.js" defer></script>
+<script src="../../js/prism/prism-json.min.js" defer></script>
+<script src="../../js/prism/prism-bash.min.js" defer></script>
+<script src="../../js/prism/prism-cmake.min.js" defer></script>
+</body>
+</html>
