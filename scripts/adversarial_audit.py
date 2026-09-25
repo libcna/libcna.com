@@ -499,6 +499,15 @@ def counts_block() -> str:
                 if line.strip():
                     dreviewed += 1
                     dverdicts[json.loads(line)["verdict"]] += 1
+    er_dir = ROOT / "audit" / "data" / "adversarial" / "errata-reviews"
+    ereviewed = 0
+    everdicts: Counter = Counter()
+    if er_dir.exists():
+        for f in sorted(er_dir.glob("*.jsonl")):
+            for line in f.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    ereviewed += 1
+                    everdicts[json.loads(line)["verdict"]] += 1
     ur_dir = ROOT / "audit" / "data" / "adversarial" / "unit-reviews"
     status: Counter = Counter()
     ftypes: Counter = Counter()
@@ -549,6 +558,7 @@ def counts_block() -> str:
              f"| Audit operations recorded in `dispositions.json` | folded {len(trail.get('folded', {}))} · retired {len(trail.get('retired', {}))} · reclassified {len(trail.get('reclassified', {}))} · added {len(trail.get('added', {}))} |",
              f"| Independent issue reviews ingested | {reviewed} of {c['total']} entries; " + (", ".join(f"{k} {v}" for k, v in sorted(verdicts.items())) or "none") + " |",
              f"| Independent dismissal reviews ingested | {dreviewed} of 121; " + (", ".join(f"{k} {v}" for k, v in sorted(dverdicts.items())) or "none") + " |",
+             f"| Independent site-errata verifications ingested | {ereviewed} of 76 Phase-3 errata; " + (", ".join(f"{k} {v}" for k, v in sorted(everdicts.items())) or "none") + " |",
              f"| Independent Bible-unit reviews ingested | {len(seen_units)} of 98 canonical text units; " + (", ".join(f"{k} {v}" for k, v in sorted(status.items())) or "none")
              + f"; findings {sum(ftypes.values())} (" + (", ".join(f"{k} {v}" for k, v in sorted(ftypes.items())) or "none") + ") |",
              f"| Unit-review evidence | residual paragraphs/identifiers reviewed {tot['residuals.reviewed']} (lost-useful {tot['residuals.lost']}); dropped dispositions reviewed {tot['dropped.reviewed']} "

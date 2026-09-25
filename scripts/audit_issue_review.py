@@ -14,7 +14,7 @@ Inputs (all under audit/data/adversarial/):
 Automatic (no decision needed): the `tests_present` flag, text corrections of CORRECTED / NARROWED entries and the evidence-basis label.
 Needs an explicit decision (listed by `plan`, applied only when decisions.json says so): a severity change, RECLASSIFIED, DUPLICATE, FIXED AT TARGET / NOT A BUG / INSUFFICIENT EVIDENCE (retirement),
 and every restored dismissal.  decisions.json:
-  {"issues": {"CNA-BUG-nnn": {"action": "accept" | "reject" | "override", "note": "...", "set": {...}, "severity": "...", "class": "...", "duplicate_of": "...", "retire": "NOT A BUG|...", "evidence": "...",
+  {"issues": {"CNA-BUG-nnn": {"action": "accept" | "reject" | "override", "note": "...", "set": {...}, "replace": {"field": [["old html", "new html"]]}, "severity": "...", "class": "...", "duplicate_of": "...", "retire": "NOT A BUG|...", "evidence": "...",
                              "fold_into": "CNA-BUG-mmm", "retire_as": "NOT A BUG|PROVEN FIXED|OBSOLETE|INSUFFICIENT EVIDENCE", "reclassify_to": "functional-gap"}},
    "dismissals": {"CNA-BUG-0nn": {"action": "accept" | "reject", "entry": {... complete entry with temp id NEW-AUDIT-nn ...}}},
    "new_findings": [{... complete entry, temp id NEW-AUDIT-nn, cand_ids [] and an origin starting "new finding" ...}]}
@@ -199,6 +199,13 @@ def build(rv: dict[str, dict], dec: dict, files: set[str]) -> tuple[dict, list[s
             if d.get("severity"):
                 sets["severity"] = d["severity"]
             sets.update(d.get("set", {}))
+            for field, pairs in (d.get("replace") or {}).items():          # exact-once substring edits of the (already corrected) field text
+                text = sets.get(field, cur.get(field) or "")
+                for old_s, new_s in pairs:
+                    if text.count(old_s) != 1:
+                        raise SystemExit(f"{iid}: the text to replace in {field} occurs {text.count(old_s)} times (need exactly 1)")
+                    text = text.replace(old_s, new_s)
+                sets[field] = text
             # manual outcomes, independent of any reviewer verdict
             if d.get("fold_into"):
                 patch["folded"][iid] = d["fold_into"]
