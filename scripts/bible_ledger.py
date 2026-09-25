@@ -280,11 +280,11 @@ def run_check(only: list[str] | None, final: bool, quiet: bool = False) -> int:
         for f in rec.get("figures") or []:
             fig_cover[f.get("unit")] += 1
     for u in doc["units"]:
-        if u["kind"] == "figure" and final and fig_cover[u["id"]] != 1:
+        if u["kind"] == "figure" and final and not only and fig_cover[u["id"]] != 1:
             errs.append(f"figure {u['id']} covered {fig_cover[u['id']]} times (need exactly 1)")
     for a in doc["assets"]:
         key = "asset:" + a["id"]
-        if final and fig_cover[key] != 1:
+        if final and not only and fig_cover[key] != 1:
             errs.append(f"asset {a['id']} covered {fig_cover[key]} times (need exactly 1)")
     # stable global concept ids
     seen: dict[str, str] = {}

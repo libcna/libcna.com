@@ -277,3 +277,17 @@ Where a limitation is an integral part of a concept you write, state it on your 
 (3) the most important Bible-vs-TARGET contradictions and stale claims you corrected; (4) Bible concepts you judged OBSOLETE / HISTORICAL ONLY / TARGET CONTRADICTED and why (one line each for the notable ones);
 (5) issue candidates recorded (count by kind); (6) Phase-1/Phase-2 site errors you noticed (page + fact + evidence) — do not edit those pages yourself; (7) unverifiable items you hedged;
 (8) tooling problems; (9) final `bible_ledger.py check --units …` and `check_deep_page.py` results. Do not paste page text or ledger JSON into the report.
+
+## 9. Clarifications from the pilot packages (binding)
+
+* **Corrected vs contradicted.** `TARGET CONTRADICTED` is for a Bible claim that is false at TARGET **and is not carried over** (it appears nowhere on the site). When the Bible states a fact that TARGET
+  changed and you *write the TARGET-correct statement* on a page, the concept's disposition is the ordinary one (`NEW PAGE`, `EXPANDED`, `PRESERVED`, `MOVED`) with `target.result: "corrected"` and the corrected fact named in
+  `note`. A page may carry a contradiction only as an explicit "what changed" note when that helps a reader; never as a live claim.
+* **`order` for your pages** in `audit/data/deep-pages/WPnn.json`: use `nn * 100 + 10 * k` (k = 0, 1, 2 … in reading order), so that packages sort in Bible order inside a shared group.
+* **Existing pages without heading ids** (e.g. parts of `docs/storage.html`): an expansion can then only use `append`; that is acceptable. Do not edit the page to add ids.
+* **Syntax checks** of examples: `g++ -std=c++23 -fsyntax-only` against TARGET headers plus a sibling sharp-runtime checkout is acceptable; say so and name that sharp-runtime is not pinned by TARGET. Some headers need
+  a renderer define (e.g. `-DCNA_RENDERER_EASYGL`) — state the flags. Probes go in `/rv/data/development/github.com/libcna/libcna.com/build-probe/` (shared; file-name prefix `WPnn-`; remove them when done), never elsewhere.
+* **`bible_ref` (issues file) vs `ref` (record `issues[]`)**: the issues file uses `bible_ref`; the record's `issues[]` uses `ref`. Both are free text; use the Bible's `CNA-BUG-###` id where there is one.
+* **Bible CNA-BUG items without a unit**: if a Bible defect is discussed by a unit of yours, record it as an issue candidate (§7) with its `CNA-BUG-###` id; the bug ledger file itself is recorded by the Known Issues pipeline, not by you.
+* **Fixed bugs**: a `FIXED BUG` concept needs *positive* evidence in its `note` (the fixing code path and, where one exists, the test). A page may keep a fixed defect only as a clearly-labelled historical worked case with what current code does.
+* **Existing site errors you notice** (Phase-1/Phase-2 pages that contradict TARGET): do not edit the page; put page#anchor, the sentence, the TARGET fact and evidence in your report (§8 item 6). The orchestrator fixes them in one pass.
