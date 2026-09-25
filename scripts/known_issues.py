@@ -254,17 +254,37 @@ def cmd_merge(_: argparse.Namespace) -> int:
         nums = [int(ID_RX.match(i).group(2)) for i in used if i.startswith(spec["prefix"])]
         counters[cls] = max(nums + [62 if cls == "bug" else 0])
     remap: dict[str, str] = {}
-    for it in issues:
-        if it["id"].startswith("NEW-"):
-            cls = it["class"]
-            counters[cls] += 1
-            new = f"{CLASSES[cls]['prefix']}-{counters[cls]:03d}"
-            remap[it["id"]] = new
-            it["temp_id"] = it["id"]
-            it["id"] = new
+
+    def order_key(it: dict) -> tuple:
+        mm2 = re.match(r"NEW-B(\d+)-(\d+)", it["id"])
+        return (SUBSYSTEMS.index(it["subsystem"]), int(mm2.group(1)) if mm2 else 0, int(mm2.group(2)) if mm2 else 0)
+
+    # final ids are allocated in subsystem order (then package, then sequence) so related entries get neighbouring numbers
+    for it in sorted((i for i in issues if i["id"].startswith("NEW-")), key=order_key):
+        cls = it["class"]
+        counters[cls] += 1
+        new = f"{CLASSES[cls]['prefix']}-{counters[cls]:03d}"
+        remap[it["id"]] = new
+        it["temp_id"] = it["id"]
+        it["id"] = new
+    # folded entries point at their survivor's final id
+    for src, dst in merged.items():
+        remap[src] = remap.get(dst, dst)
     for d in disp:
         if d.get("published_as") in remap:
             d["published_as"] = remap[d["published_as"]]
+
+    tmp_rx = re.compile(r"NEW-B\d+-\d+")
+
+    def fix(v):
+        if isinstance(v, str):
+            return tmp_rx.sub(lambda m_: remap.get(m_.group(0), m_.group(0)), v)
+        if isinstance(v, list):
+            return [fix(x) for x in v]
+        if isinstance(v, dict):
+            return {k: fix(x) for k, x in v.items()}
+        return v
+    issues = [fix(i) for i in issues]
     ids = Counter(i["id"] for i in issues)
     bad = [k for k, n in ids.items() if n > 1]
     if bad:
@@ -338,7 +358,9 @@ def page_fragment(it: dict) -> tuple[dict, str]:
     body += block("Regression test", "regression-test", para(it["regression_test"]))
     body += block("Blast radius", "blast-radius", para(it["blast_radius"]))
     body += block("Workaround", "workaround", para(it.get("workaround")) or "<p>No workaround is known.</p>")
-    layers = {k: v for k, v in it["related"].items() if v}
+    def label(s: str) -> str:
+        return s if re.search(r"&(#\d+|\w+);", s) else html.escape(s, quote=False)
+    layers = {k: [[u, label(lb)] for u, lb in v] for k, v in it["related"].items() if v}
     layers.setdefault("issues", [["known-issues/" + cls["group"] + "/index.html", cls["label"] + " index"]])
     meta = {"title": f"{it['id']}: {it['title']}", "description": it["summary"][:220],
             "keywords": [it["id"].lower(), it["class"], it["subsystem"].lower(), "known issue", "cna"],

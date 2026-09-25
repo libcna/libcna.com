@@ -124,9 +124,14 @@ def main() -> int:
             warns.append(f"mentions alpha.1 (must be historical context only): ...{ctx}...")
         for m in CD.FIRST_PERSON.finditer(text):
             errors.append(f"first-person voice: {m.group(0)}")
-        for m in list(DEV_VOCAB.finditer(text)) + list(CD.DEV_STATUS.finditer(text)):
+        is_issue = rel.startswith("known-issues/")  # issue pages quote CNA's own documents (COVERAGE.md, "NOT STARTED", "§3") legitimately
+        for m in list(DEV_VOCAB.finditer(text)) + ([] if is_issue else list(CD.DEV_STATUS.finditer(text))):
+            if is_issue and "COVERAGE" in m.group(0).upper():
+                continue
             errors.append(f"Developer-site vocabulary left in text: {m.group(0)}")
         for m in BOOK_VOCAB.finditer(text):
+            if is_issue and m.group(0).startswith(("§", "\\S")):
+                continue
             errors.append(f"book vocabulary: {m.group(0)!r} (pages are a knowledge graph, not a converted book)")
         # structure
         heads = [(int(m.group(1)), m.group(2)) for m in HEADING.finditer(art_raw) if "toc-title" not in m.group(2)]

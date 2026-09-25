@@ -82,7 +82,7 @@ def sidebar_html(page: str) -> str:
         count = f' <span class="dev-nav-count">{len(pages)}</span>' if pages else ""
         out.append(f'    <li class="dev-nav-item{" is-open" if is_cur else ""}">'
                    f'<a href="{rel_href(page, landing)}" class="{link_cls}"{cur_attr}>{esc(g["label"])}{count}</a>')
-        if is_cur and pages:
+        if is_cur and pages and a["name"] != "known-issues":  # hundreds of issue pages: the category hub lists them
             out.append('      <ul class="dev-nav-sub">')
             for p in pages:
                 c = "docs-nav-link active" if p["path"] == page else "docs-nav-link"
