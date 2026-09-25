@@ -170,7 +170,7 @@ int main() {
       <ol class="lifecycle-list">
         <li><strong>Constructor</strong> &mdash; create <code>GraphicsDeviceManager</code>, configure window title and back-buffer size <em>(once)</em></li>
         <li>&darr;</li>
-        <li><strong>Initialize()</strong> &mdash; non-content game setup; call <code>Game::Initialize()</code> at the top <em>(once)</em></li>
+        <li><strong>Initialize()</strong> &mdash; non-content game setup; register components and anything <code>LoadContent()</code> depends on <em>before</em> calling <code>Game::Initialize()</code>, which initialises the components and then runs <code>LoadContent()</code> <em>(once)</em></li>
         <li>&darr;</li>
         <li><strong>LoadContent()</strong> &mdash; load textures, sounds, fonts; create GPU resources <em>(once)</em></li>
         <li>&darr;</li>
@@ -208,7 +208,7 @@ public:
       <p>The default project <code>GraphicsProfile</code> is <code>Reach</code>, and the <code>Reach</code> limits (one render target, no occlusion queries, 16-bit indices, no float render targets) are enforced on every renderer. If your game needs HiDef features, ask for them here: <code>graphics_.setGraphicsProfileProperty(GraphicsProfile::HiDef);</code>. The default presentation mode is <code>Letterbox</code>: the <code>Viewport</code> is the back-buffer size whatever shape the window has.</p>
 
       <h2 id="initialize">Initialize()</h2>
-      <p><code>Initialize()</code> is called once after the graphics device has been created but before any content is loaded. Use it for non-content setup: registering <code>GameComponent</code> objects, configuring services, and initializing game state that does not depend on loaded assets. Always call <code>Game::Initialize()</code> — it initialises all registered components.</p>
+      <p><code>Initialize()</code> is called once after the graphics device has been created. Content loading starts when your override calls <code>Game::Initialize()</code>, which initialises the registered components and then calls <code>LoadContent()</code>; anything <code>LoadContent()</code> needs, and every component you add, must therefore be in place before that call (a component added after it is updated and drawn but never has its <code>Initialize()</code> called). Use it for non-content setup: registering <code>GameComponent</code> objects, configuring services, and initializing game state that does not depend on loaded assets. Always call <code>Game::Initialize()</code> — it initialises all registered components.</p>
       <pre><code class="language-cpp">void Initialize() override {
     // register components before calling base
     getComponentsProperty().Add(std::make_shared&lt;MyComponent&gt;(*this));
@@ -221,7 +221,7 @@ public:
       <p><code>Components.Add(std::shared_ptr&lt;IGameComponent&gt;)</code> is a CNA extension that keeps the component alive for you; the XNA form takes a raw <code>IGameComponent*</code> and you must keep the object alive yourself. Component lists are mutex-guarded, so a loading-screen thread may add components.</p>
 
       <h2 id="loadcontent">LoadContent()</h2>
-      <p><code>LoadContent()</code> is called once, immediately after <code>Initialize()</code>. The <code>ContentManager</code> is fully operational here and the graphics device is ready to accept resource uploads. Load all textures, sounds, sprite fonts, and effects in this override. Create GPU resources such as vertex buffers, render targets, and effect instances here as well.</p>
+      <p><code>LoadContent()</code> is called once, from inside <code>Game::Initialize()</code> (after it has initialised the components), so it runs at the point where your <code>Initialize()</code> override calls the base method. The <code>ContentManager</code> is fully operational here and the graphics device is ready to accept resource uploads. Load all textures, sounds, sprite fonts, and effects in this override. Create GPU resources such as vertex buffers, render targets, and effect instances here as well.</p>
       <pre><code class="language-cpp">void LoadContent() override {
     spriteBatch_ = std::make_unique&lt;SpriteBatch&gt;(getGraphicsDeviceProperty());
     // Load&lt;T&gt; returns by value (a failed load throws ContentLoadException);
@@ -266,7 +266,7 @@ public:
 }</code></pre>
 
       <h2 id="disposebool">Dispose(bool)</h2>
-      <p><code>Dispose(bool disposing)</code> provides a deterministic RAII-style cleanup hook. When <code>disposing</code> is <code>true</code> the call originates from an explicit teardown; when <code>false</code> it originates from a finaliser. In C++ the distinction is less significant than in C#, but the method is present for full XNA compatibility. Release any resources not covered by <code>UnloadContent()</code> here, then call the base.</p>
+      <p><code>Dispose(bool disposing)</code> provides a deterministic RAII-style cleanup hook. When <code>disposing</code> is <code>true</code> the call originates from an explicit teardown; when <code>false</code> it originates from a finaliser. In CNA the distinction still decides which cleanup runs (see below): only the <code>true</code> path disposes components, the content manager and the device service. Release any resources not covered by <code>UnloadContent()</code> here, then call the base.</p>
       <pre><code>void Dispose(bool disposing) override {
     if (disposing) {
         // deterministic cleanup
@@ -301,7 +301,7 @@ public:
             <tr>
               <td><code>getIsRunningSlowlyProperty()</code></td>
               <td><code>bool</code></td>
-              <td>Set to <code>true</code> by the framework when fixed-timestep logic is behind schedule and has had to run multiple <code>Update()</code> calls in a single frame to catch up. Useful for disabling expensive non-essential work during a slowdown.</td>
+              <td>Set to <code>true</code> by the framework once the fixed-timestep loop's accumulated catch-up lag reaches five extra <code>Update()</code> steps: a single 50 ms hitch (three updates) never sets it, while a stall of about 100 ms or more does at once (see <a href="#isrunningslowly-rule">How IsRunningSlowly is decided</a>). Useful for disabling expensive non-essential work during a slowdown.</td>
             </tr>
           </tbody>
         </table>
@@ -469,7 +469,7 @@ getWindowProperty().ClientSizeChanged += [this](System::Object*, const System::E
       </div>
 
       <h2 id="fixed-vs-variable-timestep">Fixed vs variable timestep</h2>
-      <p>CNA replicates the XNA timestep modes exactly. The default is fixed timestep.</p>
+      <p>CNA offers XNA's two timestep modes and, on the native loop, XNA's own clock rules (with the fixed step a zero-length first update; in both modes <code>TotalGameTime</code> advancing only after <code>Update</code> returns). It does not replicate XNA exactly: <code>IsRunningSlowly</code> follows a different rule, <code>ResetElapsedTime()</code> does nothing under the fixed step, <code>InactiveSleepTime</code> is stored but never applied, and the browser loop keeps its own clock (see the Emscripten caveat below and <a href="../deep-dives/framework/game-time-and-timestep.html">GameTime and the timestep</a>). The default is fixed timestep.</p>
 
       <div class="table-wrap">
         <table>
@@ -480,7 +480,7 @@ getWindowProperty().ClientSizeChanged += [this](System::Object*, const System::E
             <tr>
               <td><code>get/setIsFixedTimeStepProperty</code></td>
               <td><code>true</code></td>
-              <td>When <code>true</code>, <code>Update()</code> is called at the rate defined by <code>TargetElapsedTime</code>. The framework accumulates wall-clock time and calls <code>Update()</code> multiple times per render frame if the GPU fell behind, setting <code>getIsRunningSlowlyProperty()</code> to <code>true</code> in that case. The very first <code>Update()</code> still has an elapsed time of zero.</td>
+              <td>When <code>true</code>, <code>Update()</code> is called at the rate defined by <code>TargetElapsedTime</code>. The framework accumulates wall-clock time and calls <code>Update()</code> multiple times per render frame if the frame ran long. <code>getIsRunningSlowlyProperty()</code> turns <code>true</code> only once the accumulated catch-up lag reaches five extra steps (<a href="#isrunningslowly-rule">how it is decided</a>). The very first <code>Update()</code> still has an elapsed time of zero.</td>
             </tr>
             <tr>
               <td><code>get/setTargetElapsedTimeProperty</code></td>
