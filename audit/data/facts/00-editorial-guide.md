@@ -67,7 +67,7 @@ architecture, roadmap, network, contact — all at repo root)
 | Product version | `0.1.0-alpha.1` (unchanged) | |
 | New modules | `content`, `content-pipeline`, `design` (Framework.Design converters), `diagnostics`, `inspector`, `phone`, `video-ffmpeg`, `graphics-ext` (CNAEXT engine layer: 12 → 98 public headers), `devices-ext`, `runtime` | fact sheets 04/05/06 |
 | cna-samples (external, **pinned**) | `libcna/cna-samples @ 4da98a0` (2026-09-20): plan inventories **153** upstream sample directories; **87** marked complete; 40 published playable at samples.libcna.com; 49 await owner decisions; 14 documented non-ports; Racing Game tracked separately | the alpha.1-era "63 of 86 / 23 blocked by .fx" is **false** now; results are for CNA `next` at that date, not for TARGET |
-| Language bindings (external) | cna-cs, cna-java, cna-ts, cna-python, cna-rust, cna-swift are public pre-alpha projects; each targets ABI **0.21.x**; CNA TARGET exports **0.29.0** (alpha.1: 0.7.0). Five refuse 0.29.0 by exact-version rule. **Never** imply "latest binding + latest CNA works". cna-go / cna-ruby are not public — do not advertise. | fact sheet 08 |
+| Language bindings (external) | cna-cs, cna-java, cna-ts, cna-python, cna-rust, cna-swift are public pre-alpha projects; each targets ABI **0.21.x**; CNA TARGET exports **0.29.0** (alpha.1: 0.7.0). Five refuse 0.29.0 by exact-version rule. **Never** imply "latest binding + latest CNA works". cna-go / cna-ruby are listed at the owner's request (2026-09-25) as in development, in repositories that are not public yet — never link them (GitHub returns 404). | fact sheet 08 |
 
 ## 4. Retired renderers — hard rule
 
