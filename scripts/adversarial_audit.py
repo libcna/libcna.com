@@ -435,8 +435,10 @@ def cmd_issues() -> int:
         for sp in i["sources"]:
             if f"/{target}/{sp}" not in body:
                 errs.append(f"{i['id']}: source path {sp} is not linked to the TARGET commit on the page")
-        if ("tests exist" in body) != bool(i.get("tests_present")):
-            errs.append(f"{i['id']}: the evidence callout says {'tests exist' if 'tests exist' in body else 'no tests'} but tests_present is {i.get('tests_present')}")
+        callout = re.search(r'<div class="callout[^"]*dev-evidence">(.*?)</div>', body, re.S)
+        callout_text = callout.group(1) if callout else ""
+        if ("tests exist" in callout_text) != bool(i.get("tests_present")):
+            errs.append(f"{i['id']}: the evidence callout says {'tests exist' if 'tests exist' in callout_text else 'no tests'} but tests_present is {i.get('tests_present')}")
         if i["confidence"] == "verified-by-reading" and re.search(r"Reproduced: executed", body):
             errs.append(f"{i['id']}: source-verified entry shows an executed-evidence label")
     for cls, g in _GROUP.items():

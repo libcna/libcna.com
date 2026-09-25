@@ -1432,15 +1432,15 @@
    ],
    "id": "CNA-BUG-047",
    "class": "bug",
-   "title": "StorageContainer::GetFileNames/GetDirectoryNames(searchPattern): the untested GlobMatch treats ? as one byte and compares case-sensitively on every host",
-   "summary": "The hand-written matcher behind the pattern overloads has no test, its ? consumes one UTF-8 byte rather than one character, and its byte comparison is case-sensitive even on Windows, where XNA's Directory.GetFiles matching is not.",
+   "title": "StorageContainer::GetFileNames/GetDirectoryNames(searchPattern): GlobMatch treats ? as one byte and compares case-sensitively on every host",
+   "summary": "The hand-written matcher behind the pattern overloads matches ? against one UTF-8 byte rather than one character and compares bytes case-sensitively even on Windows, where XNA's Directory.GetFiles matching is not; only star patterns over ASCII names are exercised by any test, and only through the C ABI smoke test.",
    "subsystem": "Storage",
    "status": "open",
    "severity": "low",
    "confidence": "verified-by-reading",
    "public_contract": "Microsoft::Xna::Framework::Storage::StorageContainer::GetFileNames(const std::string& searchPattern) and GetDirectoryNames(const std::string& searchPattern); the C name-count and name-copy routes that take a search_pattern",
    "expected": "<p>XNA documents the pattern overloads with \"Both single-character (\"?\") and multicharacter (\"*\") wildcards are supported\" (xna4-spec <code>StorageContainer</code>) and implements them with <code>Directory.GetFiles</code>/<code>GetDirectories</code> (decompiled <code>StorageContainer</code>), which match UTF-16 characters and follow the file system's case rules, case-insensitive on Windows. CNA's header describes the argument only as a \"Glob pattern\". A game that lists save slots with <code>\"slot?.sav\"</code> expects the same result on every host.</p>",
-   "actual": "<p><code>GlobMatch</code> is a 22-line backtracking matcher in an anonymous namespace of {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}}. It compares bytes of the UTF-8 file name: <code>?</code> consumes exactly one byte, so a non-ASCII character (two to four bytes) needs as many <code>?</code>; every other byte, the dot included, matches only itself, case-sensitively on every host. <code>\"?.sav\"</code> therefore misses <code>é.sav</code>, and <code>\"slot?.sav\"</code> misses <code>SLOT1.SAV</code> on Windows, where the file system treats the two spellings as one name and XNA would return it. Nothing tests either overload: the storage tests cover containment only, and the C smoke test passes a zero-length pattern (all names).</p>",
+   "actual": "<p><code>GlobMatch</code> is a 22-line backtracking matcher in an anonymous namespace of {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}}; its own comment says '?' = any single char. It compares bytes of the UTF-8 file name: ? consumes exactly one byte, so a non-ASCII character (two to four bytes) needs as many ?; every other byte, the dot included, matches only itself, case-sensitively on every host. \"?.sav\" therefore misses é.sav, and \"slot?.sav\" misses <code>SLOT1.SAV</code> on Windows, where the file system treats the two spellings as one name and XNA would return it. No C++ storage test calls either pattern overload. The only test that does is the C ABI smoke test ({{src:modules/c-api/tests/pure_c/StorageSmoke.c|StorageSmoke.c}}, registered as <code>CApi_StorageSmoke</code> only when <code>CNA_BUILD_C_API</code> is ON; it is OFF by default and no workflow at TARGET enables it), which checks the star patterns lev*, z*, *.dat and *.png against ASCII names. The ? wildcard, non-ASCII names and case are not tested anywhere.</p>",
    "sources": [
     {
      "path": "modules/storage/src/StorageContainer.cpp",
@@ -1463,7 +1463,7 @@
      "note": "only the zero-length all-names view is used"
     }
    ],
-   "evidence": "<p>Checked by reading {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}}, the tests and the C adapter at 009d40f5; not executed. The byte and case behaviour follows mechanically from the matcher's single comparison (<code>pattern[pi] == '?' || pattern[pi] == str[si]</code>). The XNA side is from xna4-spec's <code>StorageContainer</code> documentation and the decompiled source. .NET Framework's pattern matching has further legacy rules (short-name and three-letter-extension matches) that CNA does not reproduce; they were not examined and are not part of this entry. The storage guide already documents the byte semantics for game authors; nothing tests them.</p><p><em>Independently observed as a separate finding (merged):</em> The only storage test source, StorageDeviceTests.cpp, has 14 tests covering refusals, containment and directory operations and never calls the pattern overloads, so the hand-written wildcard matcher is unexercised.</p>",
+   "evidence": "<p>Checked by reading {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}}, the tests and the C adapter at 009d40f5; not executed. The byte and case behaviour follows mechanically from the matcher's single comparison (<code>pattern[pi] == '?' || pattern[pi] == str[si]</code>). The XNA side is from xna4-spec's <code>StorageContainer</code> documentation and the decompiled source. .NET Framework's pattern matching has further legacy rules (short-name and three-letter-extension matches) that CNA does not reproduce; they were not examined and are not part of this entry. The storage guide already documents the byte semantics for game authors; nothing tests them.</p><p><em>Independently observed as a separate finding (merged):</em> The only storage test source, StorageDeviceTests.cpp, has 14 tests covering refusals, containment and directory operations and never calls the pattern overloads, so the hand-written wildcard matcher is unexercised.</p><p><em>Independent re-verification:</em> Checked by reading {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}}, the tests and the C adapter at 009d40f5; not executed. The byte and case behaviour follows mechanically from the matcher's single comparison (pattern[pi] == '?' || pattern[pi] == str[si]). The XNA side is from xna4-spec's <code>StorageContainer</code> documentation and the decompiled <code>StorageContainer</code> (<code>Directory.GetFiles</code>/<code>GetDirectories</code>). The earlier text said that nothing tests the overloads and that the C smoke test passes only a zero-length pattern; that is wrong: <code>StorageSmoke</code>.c's directory and file cases pass non-empty star patterns, and CNA's own {{src:tools/c-api/coverage_mappings.json|coverage_mappings.json}} records 'glob and empty-pattern listings'. <code>StorageDeviceTests</code>.cpp (14 tests) still never calls the pattern overloads. .NET Framework's pattern matching has further legacy rules (short-name and three-letter-extension matches, and *.* matching names without a dot) that CNA does not reproduce; they were not examined and are not part of this entry.</p>",
    "reproduction": "<pre><code class=\"language-cpp\">// Illustrative; not compiled or run for this entry.\n// The container holds \"\\xC3\\xA9.sav\" (e-acute .sav in UTF-8) and \"SLOT1.SAV\".\nauto a = container-&gt;GetFileNames(\"?.sav\");      // empty: '?' consumed only the byte C3\nauto b = container-&gt;GetFileNames(\"slot?.sav\");  // empty on every host, Windows included</code></pre>",
    "tests_current": "<p>None. {{src:modules/storage/tests/Microsoft/Xna/Framework/Storage/StorageDeviceTests.cpp|StorageDeviceTests.cpp}} exercises path containment and deletion only; <code>PathContainmentTests.cpp</code> covers paths, not patterns; <code>CApi_StorageSmoke</code> lists all names.</p>",
    "regression_test": "<p>A table-driven test through <code>GetFileNames</code> on a temporary container: empty and dot-less names, literal dots, leading, trailing and repeated stars, <code>?</code> against a multi-byte UTF-8 name, and upper/lower case, with the expected result per host decided and written down first (XNA-on-Windows case folding, or CNA-defined byte semantics) and then enforced.</p>",
@@ -1488,7 +1488,8 @@
     ]
    },
    "origin": "Bible ledger CNA-BUG-047 (claim re-derived: untested, and the matcher diverges from XNA's documented single-character wildcard); the ? byte semantics were also noted by Phase-2 candidate P2-146, which is resolved under CNA-BUG-153; merged with CNA-BUG-047",
-   "pkg": "B8"
+   "pkg": "B8",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -4812,15 +4813,15 @@
    ],
    "id": "CNA-BUG-111",
    "class": "bug",
-   "title": "ShaderEffect::SetTexture(int, TextureCube&) and SetTexture(int, Texture3D&) dereference a null renderer handle for a disposed texture or one whose renderer created no storage",
-   "summary": "Both overloads pass &texture.GetRenderer(), and GetRenderer() returns *renderer_; renderer_ is reset by Dispose and is null when the renderer's cube or volume factory returned null.",
+   "title": "ShaderEffect::SetTexture(int, Texture2D&), SetTexture(int, TextureCube&) and SetTexture(int, Texture3D&) evaluate *renderer_ of a disposed texture (an empty shared_ptr) and forward a null pointer instead of throwing ObjectDisposedException",
+   "summary": "All three SetTexture overloads pass &texture.GetRenderer(), and GetRenderer() returns *renderer_. Dispose resets renderer_, so a disposed texture yields a reference formed from an empty shared_ptr (formally undefined behaviour) and a null pointer reaches IEffectRenderer::BindTexture, BindTextureCube or BindTexture3D.",
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "low",
    "confidence": "verified-by-reading",
    "public_contract": "CNA ShaderEffect::SetTexture(int, TextureCube&), SetTexture(int, Texture3D&)",
-   "expected": "<p>Binding a disposed or storage-less texture should throw a managed exception (ObjectDisposedException, NotSupportedException), not dereference null.</p>",
-   "actual": "<p>{{src:modules/graphics/src/Xna/ShaderEffect.cpp|ShaderEffect.cpp}} binds <code>&amp;texture.GetRenderer()</code>; {{src:modules/graphics/include/Microsoft/Xna/Framework/Graphics/TextureCube.hpp|TextureCube.hpp}} and <code>Texture3D.hpp</code> implement <code>GetRenderer()</code> as <code>return *renderer_;</code>. <code>TextureCube::Dispose</code> and <code>Texture3D::Dispose</code> reset <code>renderer_</code>, and <code>TextureCube</code>'s constructor stores whatever <code>CreateTextureCube</code> returns (null on renderers without cube storage; <code>TextureCube::SetData</code> guards that case, <code>ShaderEffect::SetTexture</code> does not). Texture2D is created eagerly and is not affected in the same way.</p>",
+   "expected": "<p>CNA's convention for consuming a disposed resource is <code>System::ObjectDisposedException</code> (<code>SpriteBatch::Draw</code>, <code>GraphicsDevice</code> texture and buffer binding, and <code>ShaderEffect::SetTextureArrayEXT</code>, whose header documents the throw). <code>SetTexture</code> should refuse a disposed texture the same way instead of forming a reference from an empty <code>shared_ptr</code>.</p>",
+   "actual": "<p>{{src:modules/graphics/src/Xna/ShaderEffect.cpp|ShaderEffect.cpp}} binds &amp;texture.GetRenderer() for <code>Texture2D</code>, <code>TextureCube</code> and <code>Texture3D</code>, and each of their Dispose overrides resets renderer_. Every renderer that overrides these binds tolerates the resulting null pointer: <code>EasyGL</code> and <code>OpenGL4</code> return early, <code>WebGPU</code> and <code>SDL_GPU</code> resolve null to an empty binding, Vulkan, <code>Direct3D</code> 11 and <code>Direct3D</code> 12 <code>dynamic_cast</code> it to null and fall back to a default or empty view. The observable result is a silently unbound sampler slot (an abort only where the standard library is built with assertions), not a crash. The storage-less case is narrow: a <code>TextureCube</code> on <code>DirectX9</code> without cubemap caps, or an FNA3D creation failure, both of which leave <code>BindTextureCube</code> at the base no-op; <code>Texture3D</code>'s constructor already throws <code>NotSupportedException</code> when the capability is missing.</p>",
    "sources": [
     {
      "path": "modules/graphics/src/Xna/ShaderEffect.cpp",
@@ -4835,7 +4836,7 @@
      "note": "TextureCube constructor and Dispose (renderer_ null/reset)"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. Effect tests that bind live cube and volume textures (for example <code>vulkan_effect_bound_texture_test</code>.cpp and <code>easygl_texture3d_addressw_test</code>.cpp) exercise the overloads; none binds a disposed texture.</p>",
    "reproduction": "<pre><code class=\"language-cpp\">// Illustrative; not compiled or run for this entry.\nTextureCube cube(device, 64, false, SurfaceFormat::Color);\ncube.Dispose();\nshaderEffect.SetTexture(0, cube);   // *renderer_ on a null shared_ptr</code></pre>",
    "tests_current": "<p>No test binds a disposed cube or volume texture to a ShaderEffect.</p>",
    "regression_test": "<p>A test that disposes a TextureCube and a Texture3D and expects ObjectDisposedException from SetTexture.</p>",
@@ -4851,7 +4852,8 @@
    },
    "origin": "Chapter-package candidate WP08-i002",
    "pkg": "B10",
-   "temp_id": "CNA-BUG-111"
+   "temp_id": "CNA-BUG-111",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -5000,7 +5002,8 @@
    },
    "origin": "Chapter-package candidate WP09-i019",
    "pkg": "B10",
-   "temp_id": "CNA-BUG-114"
+   "temp_id": "CNA-BUG-114",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -5013,17 +5016,17 @@
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "low",
-   "confidence": "verified-by-reading",
+   "confidence": "probable",
    "public_contract": "PresentationParameters.PresentationInterval = PresentInterval::Two on DIRECTX9",
    "expected": "<p>An unsupported interval should be clamped (and the applied value reported) or refused once.</p>",
-   "actual": "<p>{{src:modules/renderers/directx9/src/DirectX9Renderer.cpp|DirectX9Renderer.cpp}}'s <code>BuildPresentParameters</code> switches on the interval with no caps check; <code>SetSwapInterval</code> marks the presentation dirty; <code>EnsureDeviceSize</code> (run from every <code>Present</code>) releases every D3DPOOL_DEFAULT resource, calls <code>device_-&gt;Reset</code>, and on failure keeps the previous size, sets <code>presentationDirty_ = true</code> and logs \"retrying next frame\". Direct3D 9 documents only DEFAULT, IMMEDIATE and ONE as valid for windowed swap chains, so a windowed game that asks for Two can enter this loop: a warning per frame and default-pool resources released and recreated every frame, with PresentationParameters still claiming Two.</p>",
+   "actual": "<p>{{src:modules/renderers/directx9/src/DirectX9Renderer.cpp|DirectX9Renderer.cpp}}'s <code>BuildPresentParameters</code> switches on the interval with no caps check, so Two becomes <code>D3DPRESENT_INTERVAL_TWO</code> whatever the device or window mode. At construction a rejected value fails once and loudly (<code>CreateDevice</code> throws <code>std::runtime_error</code>). After construction, <code>SetSwapInterval</code> (reached from <code>GraphicsDevice::Reset</code> and <code>SetPresentationParameters</code>) marks the presentation dirty; <code>EnsureDeviceSize</code> (run from every Present) releases every <code>D3DPOOL_DEFAULT</code> resource, calls device_-&gt;Reset, and on failure keeps the previous size, leaves the requested interval and <code>presentationDirty_</code> set and logs 'retrying next frame'. <code>Direct3D</code> 9 documents only DEFAULT, IMMEDIATE and ONE as valid for windowed swap chains, so a windowed device switched to Two after construction (for example by <code>GraphicsDevice::Reset</code> with new <code>PresentationParameters</code>; <code>GraphicsDeviceManager</code> only ever requests One or Immediate) can enter this loop: a warning per frame and default-pool resources released and recreated every frame, with <code>PresentationParameters</code> still claiming Two.</p>",
    "sources": [
     {
      "path": "modules/renderers/directx9/src/DirectX9Renderer.cpp",
      "note": "BuildPresentParameters, SetSwapInterval, EnsureDeviceSize failure branch"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The windowed-mode restriction is Direct3D 9's documented behaviour, not re-checked on a device; whether Wine/DXVK reject it the same way was not observed.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The windowed-mode restriction is Direct3D 9's documented behaviour, not re-checked on a device; whether Wine/DXVK reject it the same way was not observed.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The windowed-mode restriction is <code>Direct3D</code> 9's documented behaviour (XNA's <code>PresentInterval</code> documentation likewise guarantees only One and Immediate for windowed swap chains and tells callers to check capabilities for Two), not re-checked on a device; whether Wine/DXVK reject it the same way was not observed, so the retry loop is inferred rather than verified. No DIRECTX9 test requests <code>PresentInterval::Two</code>; the DIRECTX9 tests exercise device creation and Present only.</p>",
    "reproduction": null,
    "tests_current": "<p>No DIRECTX9 test requests PresentInterval::Two.</p>",
    "regression_test": "<p>A DIRECTX9 test that requests Two in a window and asserts that Reset succeeds once (clamped to One, applied value written back) or fails once with a clear exception.</p>",
@@ -5039,7 +5042,8 @@
    },
    "origin": "Chapter-package candidate WP10-i001 (recorded as a platform limitation; published as a bug because the renderer neither clamps nor reports)",
    "pkg": "B10",
-   "temp_id": "CNA-BUG-115"
+   "temp_id": "CNA-BUG-115",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -5126,7 +5130,8 @@
    },
    "origin": "Chapter-package candidate WP11-i008",
    "pkg": "B10",
-   "temp_id": "CNA-BUG-117"
+   "temp_id": "CNA-BUG-117",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -5135,14 +5140,14 @@
    "id": "CNA-BUG-118",
    "class": "bug",
    "title": "GraphicsDevice::GetMaxTextureDimension() is documented as the renderer's real maximum, but most renderers return an unqueried 16384 that the capability profile marks as known",
-   "summary": "Only VULKAN, DIRECT2D and GDI query a real limit; the other families inherit a constant 16384 (no GL_MAX_TEXTURE_SIZE query), which the renderer capability profile nevertheless reports as a known limit.",
+   "summary": "Only VULKAN, DIRECT2D and GDI report a real or bounded limit; the other families inherit a constant 16384 (no code in the repository queries GL_MAX_TEXTURE_SIZE), which the renderer capability profile nevertheless reports as a known limit.",
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "low",
    "confidence": "verified-by-reading",
    "public_contract": "GraphicsDevice::GetMaxTextureDimension() (CNAEXT); RendererLimit::MaxTextureDimension in the renderer capability profile",
    "expected": "<p>{{src:modules/graphics/include/Microsoft/Xna/Framework/Graphics/GraphicsDevice.hpp|GraphicsDevice.hpp}}: &#8220;Returns the active renderer's real maximum single-axis texture dimension&#8221;, to be queried before accepting a caller- or file-supplied size so that the native API does not fail or corrupt memory.</p>",
-   "actual": "<p><code>IGraphicsRenderer::GetMaxTextureDimension</code> in {{src:modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp|IGraphicsRenderer.hpp}} returns 16384, and its comment says no renderer overrides it. VULKAN (<code>maxImageDimension2D</code>), DIRECT2D (<code>GetMaximumBitmapSize</code>) and GDI (<code>SoftwareFramebufferMaxDimension</code>) do; FNA3D overrides to return the default. EasyGL, OPENGL4, SDL_GPU, WEBGPU and the rest inherit 16384 without asking the device; no GL renderer queries <code>GL_MAX_TEXTURE_SIZE</code>. {{src:modules/graphics/src/Xna/GraphicsDevice.cpp|GraphicsDevice.cpp}} sets <code>RendererLimit::MaxTextureDimension</code> known whenever the value is non-negative, so a GLES or WebGL device limited to 4096 or 8192 is reported as 16384, and Texture2D's size check lets such a texture reach the native API.</p>",
+   "actual": "<p><code>IGraphicsRenderer::GetMaxTextureDimension</code> in {{src:modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp|IGraphicsRenderer.hpp}} returns 16384. Its comment justifies the default as the guaranteed ceiling on every native API the project targets and says no renderer currently needs a tighter or looser override; that is stale (VULKAN, DIRECT2D and GDI override) and untrue for GLES, <code>WebGL</code> and Vulkan, whose guarantees are far lower. VULKAN (<code>maxImageDimension2D</code>), DIRECT2D (<code>GetMaximumBitmapSize</code>) and GDI (a fixed software-framebuffer ceiling) override; FNA3D overrides only to return the default because FNA3D has no query. <code>EasyGL</code>, OPENGL4, <code>SDL_GPU</code>, WEBGPU (which holds <code>deviceLimits_</code>.maxTextureDimension2D but does not return it) and the rest inherit 16384. {{src:modules/graphics/src/Xna/GraphicsDevice.cpp|GraphicsDevice.cpp}} sets <code>RendererLimit::MaxTextureDimension</code> known whenever the value is non-negative. The sized <code>Texture2D</code> constructors, <code>Texture2D::FromStream</code>, the XNB reader and every <code>RenderTarget2D</code> constructor check the <code>GraphicsProfile</code> ceiling (2048 Reach, 4096 <code>HiDef</code>) before the device maximum, so a device limited to 4096 or 8192 is not exposed through them; the CNAEXT file-path constructor <code>Texture2D(assetName, device)</code> and <code>Texture2D::CreateFromPixels</code> perform no size validation at all. The unqueried value reaches the native API through paths that trust the device limit and its known flag: <code>StorageTexture2D</code> and <code>Texture2DArray</code> preparation, engine-layer render-target sizes (<code>EngineLayerTextureSizeScope::MaxRenderTargetSize</code>), and any application that reads the reported value.</p>",
    "sources": [
     {
      "path": "modules/graphics/include/CNA/Internal/Renderers/Common/IGraphicsRenderer.hpp",
@@ -5169,7 +5174,7 @@
      "note": "size validation against GetMaxTextureDimension"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; not executed. Blast radius is narrower than first written: the sized, stream and content-reader <code>Texture2D</code> paths and <code>RenderTarget2D</code> are bounded by the profile ceiling; the exposure is EXT texture types, engine-layer allocations and callers that treat the reported maximum as the truth on devices whose real limit is below 16384. The unvalidated file-path constructor is a separate missing check that a correct maximum would not fix.</p>",
    "reproduction": null,
    "tests_current": "<p>No test compares the reported maximum with a device query on the GL, SDL_GPU or WebGPU families.</p>",
    "regression_test": "<p>Per family, a test that the reported value equals the native limit (<code>GL_MAX_TEXTURE_SIZE</code>, SDL_GPU and WebGPU device limits), or that the profile marks the limit unknown when not queried.</p>",
@@ -5195,7 +5200,8 @@
    },
    "origin": "Auxiliary package WPB2 candidate WPB2-i002 (aux-audit-graphics-core-effects)",
    "pkg": "B12",
-   "temp_id": "CNA-BUG-118"
+   "temp_id": "CNA-BUG-118",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -7104,7 +7110,8 @@
    },
    "origin": "Phase-2 candidate P2-202 (development/takeover/case-study-storage.html); same statement order as B8/P2-144",
    "pkg": "B2",
-   "temp_id": "CNA-BUG-150"
+   "temp_id": "CNA-BUG-150",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -7189,10 +7196,10 @@
    "subsystem": "Storage",
    "status": "open",
    "severity": "low",
-   "confidence": "verified-by-reading",
+   "confidence": "strong",
    "public_contract": "Microsoft::Xna::Framework::Storage::StorageDevice::getFreeSpaceProperty(), getTotalSpaceProperty() and getIsConnectedProperty()",
    "expected": "<p>CNA's path model ({{src:docs/filesystem-path-model.md}}, rule 2): a <code>std::string</code> holding a path is UTF-8 and \"is converted back into a <code>std::filesystem::path</code> before it touches the filesystem again\", through <code>PathFromUtf8</code> ({{src:modules/core/include/CNA/Internal/PathUtf8.hpp|PathUtf8.hpp}}). Every other storage operation follows that rule.</p>",
-   "actual": "<p>In {{src:modules/storage/src/StorageDevice.cpp|StorageDevice.cpp}}, <code>getFreeSpaceProperty</code> and <code>getTotalSpaceProperty</code> call <code>fs::exists(root)</code> and <code>fs::space(root)</code> with the <code>std::string</code> root, and <code>getIsConnectedProperty</code> builds <code>fs::path p(root)</code>. On POSIX the bytes pass through unchanged. On Windows the narrow constructor converts through the process ANSI code page, so a root containing a character outside it (in the user profile path, in <code>LOCALAPPDATA</code> or in the application name given to <code>SetAppNameEXT</code>) becomes a different path: <code>fs::exists</code> reports false, the space properties return <code>LLONG_MAX</code> (\"unlimited\") instead of the real figure, and <code>getIsConnectedProperty</code> walks up from the wrong path.</p>",
+   "actual": "<p>In {{src:modules/storage/src/StorageDevice.cpp|StorageDevice.cpp}}, <code>getFreeSpaceProperty</code> and <code>getTotalSpaceProperty</code> call <code>fs::exists(root)</code> and <code>fs::space(root)</code> with the <code>std::string</code> root, and <code>getIsConnectedProperty</code> builds <code>fs::path</code> <code>p(root)</code>. On POSIX the bytes pass through unchanged. On Windows the narrow constructor reads the string through the process ANSI code page, so every non-ASCII character in the root, including one the code page can spell (the two UTF-8 bytes of e-acute become two other characters), yields a different path. That affects a root containing such a character in the user profile path, in LOCALAPPDATA or in the application name given to <code>SetAppNameEXT</code>: <code>fs::exists</code> reports false, the space properties return <code>LLONG_MAX</code> (\"unlimited\") instead of the real figure, and <code>getIsConnectedProperty</code> walks up from the wrong path.</p>",
    "sources": [
     {
      "path": "modules/storage/src/StorageDevice.cpp",
@@ -7207,7 +7214,7 @@
      "note": "rule 2: a narrow path string is UTF-8 and is converted before it touches the filesystem"
     }
    ],
-   "evidence": "<p>Checked by reading {{src:modules/storage/src/StorageDevice.cpp|StorageDevice.cpp}} and the path model at 009d40f5; not exercised on Windows. Every other path in {{src:modules/storage/src/StorageDevice.cpp|StorageDevice.cpp}} and {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}} converts with <code>PathFromUtf8</code>, and <code>EnsureStorageRoot</code> reads the environment with <code>GetEnvironmentVariableW</code> precisely so that non-ASCII roots survive; these three properties are the remaining narrow sites in the module.</p>",
+   "evidence": "<p>Checked by reading {{src:modules/storage/src/StorageDevice.cpp|StorageDevice.cpp}} and the path model at 009d40f5; not exercised on Windows. Every other path in {{src:modules/storage/src/StorageDevice.cpp|StorageDevice.cpp}} and {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}} converts with <code>PathFromUtf8</code>, and <code>EnsureStorageRoot</code> reads the environment with <code>GetEnvironmentVariableW</code> precisely so that non-ASCII roots survive; these three properties are the remaining narrow sites in the module.</p><p><em>Independent re-verification:</em> Checked by reading {{src:modules/storage/src/StorageDevice.cpp|StorageDevice.cpp}} and the path model at 009d40f5; not exercised on Windows. Every other path in {{src:modules/storage/src/StorageDevice.cpp|StorageDevice.cpp}} and {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}} converts with <code>PathFromUtf8</code>, and <code>EnsureStorageRoot</code> reads the environment with <code>GetEnvironmentVariableW</code> precisely so that non-ASCII roots survive; these three properties are the remaining narrow sites in the module. The Windows consequence rests on the standard library's narrow-to-wide conversion through the ANSI code page: CNA's own spikes/windows-unicode-path-spike records the ANSI behaviour of <code>path::string()</code> and of fopen given UTF-8 bytes (which fails for representable names such as cafe with an accent too) but did not measure the <code>path(std::string)</code> constructor itself, and a search of the tree finds no manifest that sets a UTF-8 active code page. The basis is therefore inferred, not executed. Tests: <code>CApi_StorageSmoke</code> (C ABI builds only) calls the free-space, total-space and connection queries on an ASCII root; nothing runs them on a non-ASCII root.</p>",
    "reproduction": "<pre><code class=\"language-cpp\">// Illustrative, Windows with ANSI code page 1252; not run.\nStorageDevice::SetAppNameEXT(\"Hra\\xC4\\x8D\");   // \"Hrac\" with c-caron (U+010D) in UTF-8; not in code page 1252\nauto device = StorageDevice::EndShowSelector(\n    StorageDevice::BeginShowSelector(nullptr, nullptr).get());\nlong long freeBytes = device-&gt;getFreeSpaceProperty();   // LLONG_MAX: the narrowed root does not exist</code></pre>",
    "tests_current": "<p>{{src:modules/storage/tests/Microsoft/Xna/Framework/Storage/StorageDeviceTests.cpp|StorageDeviceTests.cpp}} tests none of the three properties; <code>UnicodePathResolutionTests.cpp</code> covers the core helpers, not storage.</p>",
    "regression_test": "<p>A Windows test with a non-ASCII application name expecting <code>getFreeSpaceProperty()</code> to equal <code>fs::space(PathFromUtf8(GetStorageRootEXT())).available</code> and <code>getIsConnectedProperty()</code> to be true; the fix is <code>PathFromUtf8</code> in all three properties.</p>",
@@ -7233,7 +7240,8 @@
    },
    "origin": "Phase-2 candidate P2-145 (development/internals/modules/storage.html)",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-152"
+   "temp_id": "CNA-BUG-152",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -7282,7 +7290,8 @@
    },
    "origin": "Phase-2 candidate P2-146 (development/internals/modules/storage.html)",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-153"
+   "temp_id": "CNA-BUG-153",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -7339,7 +7348,8 @@
    },
    "origin": "Phase-2 candidate P2-147 (development/internals/modules/storage.html)",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-154"
+   "temp_id": "CNA-BUG-154",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -7356,7 +7366,7 @@
    "confidence": "verified-by-reading",
    "public_contract": "Microsoft::Xna::Framework::Storage::StorageContainer after Dispose(): every path method, GetFileNames/GetDirectoryNames, getDisplayNameProperty() and getStorageDeviceProperty()",
    "expected": "<p>XNA 4.0 guards every member except <code>IsDisposed</code> and <code>Dispose</code> with <code>VerifyNotDisposed</code>, which throws <code>ObjectDisposedException</code> (decompiled <code>StorageContainer</code>: <code>ValidateArguments</code>, the two getters and both name listings). A disposed container is unusable.</p>",
-   "actual": "<p><code>StorageContainer::Dispose</code> in {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}} sets <code>isDisposed_</code> and raises <code>Disposing</code> once; nothing else reads the flag except <code>getIsDisposedProperty</code> and the destructor. <code>CreateFile</code>, <code>OpenFile</code>, <code>DeleteFile</code>, <code>CreateDirectory</code>, <code>DeleteDirectory</code>, <code>FileExists</code>, <code>DirectoryExists</code>, both name listings and both getters behave exactly as before disposal. FNA's container has no disposal check either, so CNA follows FNA rather than XNA here. Streams opened before <code>Dispose</code> stay valid, which matches XNA (they are independent streams) and is not part of this defect; the <code>FileShare</code> point the candidate also raised is published as CNA-GAP-048.</p>",
+   "actual": "<p><code>StorageContainer::Dispose</code> in {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}} sets <code>isDisposed_</code> and raises Disposing once; nothing else reads the flag except <code>getIsDisposedProperty</code> and the destructor. <code>CreateFile</code>, <code>OpenFile</code>, <code>DeleteFile</code>, <code>CreateDirectory</code>, <code>DeleteDirectory</code>, <code>FileExists</code>, <code>DirectoryExists</code>, both name listings and both getters behave exactly as before disposal. FNA's container has no disposal check either, so CNA follows FNA rather than XNA here. Streams opened before Dispose stay valid, which matches XNA (they are independent streams) and is not part of this defect; the <code>FileShare</code> point the candidate also raised is published as CNA-GAP-048. One CNA test pins part of the current behaviour: the C ABI smoke test (CABI-34, {{src:modules/c-api/tests/pure_c/StorageSmoke.c|StorageSmoke.c}}) requires a container to answer <code>file_exists</code> from inside its own Disposing callback, which runs after the flag is set, so any fix has to keep that callback window usable or change that test deliberately; XNA itself would throw there.</p>",
    "sources": [
     {
      "path": "modules/storage/src/StorageContainer.cpp",
@@ -7371,7 +7381,7 @@
      "note": "cna_storage_container_dispose disposes without releasing the handle; the other container routes call the same unchecked members"
     }
    ],
-   "evidence": "<p>Checked by reading {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}} and its header at 009d40f5; not executed. XNA's behaviour is from the decompiled <code>StorageContainer</code> (<code>VerifyNotDisposed</code>); FNA's from a local reference checkout of FNA's <code>src/Storage/StorageContainer.cs</code> (revision b355124). The C ABI inherits the behaviour: <code>cna_storage_container_dispose</code> disposes \"without releasing its handle\", and the other container routes forward to the same members without consulting <code>getIsDisposedProperty</code>.</p><p><em>Independently observed as a separate finding (merged):</em> Dispose only sets isDisposed_; no member consults it, so file and directory operations still run on a disposed container.</p>",
+   "evidence": "<p>Checked by reading {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}} and its header at 009d40f5; not executed. XNA's behaviour is from the decompiled <code>StorageContainer</code> (<code>VerifyNotDisposed</code>); FNA's from a local reference checkout of FNA's <code>src/Storage/StorageContainer.cs</code> (revision b355124). The C ABI inherits the behaviour: <code>cna_storage_container_dispose</code> disposes \"without releasing its handle\", and the other container routes forward to the same members without consulting <code>getIsDisposedProperty</code>.</p><p><em>Independently observed as a separate finding (merged):</em> Dispose only sets isDisposed_; no member consults it, so file and directory operations still run on a disposed container.</p><p><em>Independent re-verification:</em> Checked by reading {{src:modules/storage/src/StorageContainer.cpp|StorageContainer.cpp}} and its header at 009d40f5; not executed. XNA's behaviour is from the decompiled <code>StorageContainer</code> (<code>VerifyNotDisposed</code>); FNA's from a local reference checkout of FNA's src/Storage/<code>StorageContainer</code>.cs. The C ABI inherits the behaviour: <code>cna_storage_container_dispose</code> disposes \"without releasing its handle\", <code>GetContainer</code> does not consult the flag, and the other container routes forward to the same members. Tests: no test calls a member after <code>Dispose()</code> has returned, and <code>StorageDeviceTests</code>.cpp never disposes a container explicitly. <code>CApi_StorageSmoke</code> (C ABI builds only) does exercise Dispose, <code>IsDisposed</code> and the exactly-once Disposing event, and its CABI-34 ordering case asserts that <code>FileExists</code> succeeds from inside the Disposing callback. Independently observed as a separate finding (merged): Dispose only sets <code>isDisposed_</code>; no member consults it, so file and directory operations still run on a disposed container.</p>",
    "reproduction": "<pre><code class=\"language-cpp\">// Illustrative; not compiled or run for this entry.\ncontainer-&gt;Dispose();\nauto after = container-&gt;CreateFile(\"after.sav\");   // succeeds; XNA throws ObjectDisposedException\nauto name  = container-&gt;getDisplayNameProperty();   // succeeds; XNA throws</code></pre>",
    "tests_current": "<p>None. {{src:modules/storage/tests/Microsoft/Xna/Framework/Storage/StorageDeviceTests.cpp|StorageDeviceTests.cpp}} never disposes a container explicitly; the storage internals page lists disposal among what the suite does not establish.</p>",
    "regression_test": "<p>After <code>Dispose()</code>, each member except <code>getIsDisposedProperty</code> throws <code>System::ObjectDisposedException</code> (the type the sensor classes already use), and <code>Disposing</code> was raised exactly once.</p>",
@@ -7393,7 +7403,8 @@
    },
    "origin": "Phase-2 candidate P2-148 (development/internals/modules/storage.html); merged with CNA-BUG-155",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-155"
+   "temp_id": "CNA-BUG-155",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8635,7 +8646,7 @@
    "severity": "low",
    "confidence": "verified-by-reading",
    "public_contract": "CNA::Platform::IPlatform::CreateWindow(const WindowDescription&) and IPlatformWindow::GetFullscreenMode()/SetFullscreenMode() on the Headless and Terminal platforms",
-   "expected": "<p>The platform contract states that “a window with no <code>borderlessFullscreen</code> capability must refuse that mode”, and the real backends enforce it uniformly: {{src:modules/platform/src/Win32/Win32Window.cpp|Win32Window}}, {{src:modules/platform/src/X11/X11Window.cpp|X11Window}} and the SDL windows all funnel a non-<code>Windowed</code> <code>WindowDescription::fullscreenMode</code> through <code>SetFullscreenMode</code> at construction, so the refusal path runs. Headless and Terminal report <code>borderlessFullscreen = false</code> and their <code>SetFullscreenMode</code> throws <code>PlatformNotSupportedException(BorderlessFullscreen)</code>.</p>",
+   "expected": "<p>{{src:docs/platform-abstraction.md|platform-abstraction.md}} and <code>IPlatformWindow::SetFullscreenMode</code> state that “a window with no <code>borderlessFullscreen</code> capability must refuse that mode”, and the real backends enforce it uniformly: the <code>Win32Window</code> constructor and the <code>CreateWindow</code> functions of the X11, SDL2 and SDL3 platforms ({{src:modules/platform/src/X11/X11Platform.cpp|X11Platform.cpp}}, <code>Sdl2Platform</code>.cpp, <code>Sdl3Platform</code>.cpp) funnel a non-Windowed <code>WindowDescription::fullscreenMode</code> through <code>SetFullscreenMode</code> right after construction, so the refusal path runs. Headless and Terminal report <code>borderlessFullscreen</code> = false and their <code>SetFullscreenMode</code> throws <code>PlatformNotSupportedException(BorderlessFullscreen)</code>.</p>",
    "actual": "<p>{{src:modules/platform/src/Headless/HeadlessPlatform.cpp|HeadlessWindow}} and {{src:modules/platform/src/Terminal/TerminalPlatform.cpp|TerminalWindow}} initialise <code>mode_(description.fullscreenMode)</code> in their constructors and never call their own <code>SetFullscreenMode</code>. A window created with <code>fullscreenMode = BorderlessFullscreen</code> is therefore accepted, and <code>GetFullscreenMode()</code> returns <code>BorderlessFullscreen</code>, even though the platform's capability is false and a later <code>SetFullscreenMode(BorderlessFullscreen)</code> on the same window throws. The window is left in a mode the platform says it cannot provide.</p>",
    "sources": [
     {
@@ -8651,7 +8662,7 @@
      "note": "BorderlessFullscreenFollowsItsCapability tests only the setter, not creation"
     }
    ],
-   "evidence": "<p>Checked by reading the Headless and Terminal window classes, the SDL3/Win32/X11 constructors (which do route creation through <code>SetFullscreenMode</code>) and the conformance suite at 009d40f5. Not executed. The defect is that the two capability-minimal backends bypass their own refusal at construction; the real backends do not.</p>",
+   "evidence": "<p>Checked by reading the Headless and Terminal window classes, the SDL3/Win32/X11 constructors (which do route creation through <code>SetFullscreenMode</code>) and the conformance suite at 009d40f5. Not executed. The defect is that the two capability-minimal backends bypass their own refusal at construction; the real backends do not.</p><p><em>Independent re-verification:</em> Checked by reading the Headless and Terminal window classes and <code>CreateWindow</code> functions, the Win32 window constructor, the X11, SDL2 and SDL3 <code>CreateWindow</code> functions and the conformance suite at 009d40f5. Not executed. The defect is that the two capability-minimal backends bypass their own refusal at construction; the real backends do not. The XNA-facing runtime cannot reach it: <code>GraphicsDevice</code> creates its window with the default Windowed mode and later calls <code>SetFullscreenMode</code> with <code>ExclusiveFullscreen</code> or Windowed only, so the path is reached only by code that calls <code>IPlatform::CreateWindow</code> directly with <code>BorderlessFullscreen</code>.</p>",
    "reproduction": "<p>Illustrative (not compiled for this entry):</p><pre><code class=\"language-cpp\">WindowDescription d;\nd.fullscreenMode = WindowFullscreenMode::BorderlessFullscreen;\nauto platform = PlatformFactory::Create(\"Headless\");\nauto window = platform-&gt;CreateWindow(d);                 // accepted\nassert(!platform-&gt;GetCapabilities().borderlessFullscreen);\nassert(window-&gt;GetFullscreenMode() == WindowFullscreenMode::BorderlessFullscreen);  // holds\nwindow-&gt;SetFullscreenMode(WindowFullscreenMode::BorderlessFullscreen);              // now it throws\n</code></pre>",
    "tests_current": "<p>{{src:modules/platform/tests/CNA/Platform/PlatformConformanceTests.cpp|PlatformConformanceTests.cpp}}'s <code>PlatformWindowConformance.BorderlessFullscreenFollowsItsCapability</code> creates the window with the default (<code>Windowed</code>) mode and then calls <code>SetFullscreenMode</code>. No case creates a window with <code>fullscreenMode = BorderlessFullscreen</code> on a platform whose capability is false.</p>",
    "regression_test": "<p>Extend the window conformance suite: creating a window with a fullscreen mode the platform's capability forbids must either refuse (as the setter does) or clamp to <code>Windowed</code>, and <code>GetFullscreenMode()</code> must never report a mode the capability denies. The fix is to route the constructor's mode through the same <code>SetFullscreenMode</code> the other backends use.</p>",
@@ -8683,7 +8694,8 @@
    },
    "origin": "Phase-2 candidate P2-155 (development/internals/platforms/headless.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-177"
+   "temp_id": "CNA-BUG-177",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8746,7 +8758,8 @@
    },
    "origin": "Phase-2 candidate P2-163 (development/internals/platforms/sdl2.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-178"
+   "temp_id": "CNA-BUG-178",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8797,7 +8810,8 @@
    },
    "origin": "Phase-2 candidate P2-175 (development/internals/platforms/win32.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-179"
+   "temp_id": "CNA-BUG-179",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8856,7 +8870,8 @@
    },
    "origin": "Phase-2 candidate P2-176 (development/internals/platforms/win32.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-180"
+   "temp_id": "CNA-BUG-180",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -8869,10 +8884,10 @@
    "subsystem": "Platforms",
    "status": "open",
    "severity": "low",
-   "confidence": "verified-by-reading",
+   "confidence": "strong",
    "public_contract": "CNA::Platform::PlatformCapabilities::nativeFileDialog as reported by the SDL3 platform (Sdl3Platform::GetCapabilities); CNA::Devices::FileDialog::getIsSupportedProperty and ShowOpenFile, ShowSaveFile, ShowOpenFolder",
    "expected": "<p>{{src:modules/platform/include/CNA/Platform/PlatformCapabilities.hpp|PlatformCapabilities.hpp}}: <code>nativeFileDialog</code> means \"A native file or folder dialog can be shown\", and a capability that is not supported is refused, never silently ignored. {{src:modules/devices-ext/include/CNA/Devices/FileDialog.hpp|FileDialog.hpp}} records that SDL has no dialog backend for iOS or Web/Emscripten and promises that <code>getIsSupportedProperty()</code> \"reports this honestly per platform\"; a <code>Show*</code> call there should take the documented unavailable path.</p>",
-   "actual": "<p><code>Sdl3Platform::GetCapabilities</code> in {{src:modules/platform/src/Sdl3/Sdl3Platform.cpp|Sdl3Platform.cpp}} sets <code>capabilities.nativeFileDialog = true</code> with no target condition. <code>FileDialog::getIsSupportedProperty</code> compensates with its own build-target switch (Web and iOS return false), but the three <code>Show*</code> functions, and any other reader of the capability, gate on the capability alone, so on those targets the request reaches <code>Sdl3Dialogs</code> and SDL. On iOS SDL builds its dummy dialog, which reports failure through the callback at once; in a browser there is no desktop portal or helper process to show one. <code>ResultTrampoline</code> in {{src:modules/platform/src/Sdl3/Sdl3SystemServices.cpp|Sdl3SystemServices.cpp}} turns SDL's null file list into an empty list, so the caller sees the same answer as a cancel, typically before <code>Show*</code> returns. The two public answers contradict each other. The null parent window the candidate also lists is a documented note in {{src:modules/devices-ext/include/CNA/Devices/FileDialog.hpp|FileDialog.hpp}} and is not part of this defect.</p>",
+   "actual": "<p><code>Sdl3Platform::GetCapabilities</code> in {{src:modules/platform/src/Sdl3/Sdl3Platform.cpp|Sdl3Platform.cpp}} sets capabilities.nativeFileDialog = true with no target condition, although <code>primarySelection</code> in the same function is guarded for Emscripten and Android and the X11 and Wayland platforms derive the flag from their dialog service. <code>FileDialog::getIsSupportedProperty</code> compensates with its own build-target switch (Web and <code>iOS</code> return false), but the three Show* functions, and any other reader of the capability, gate on the capability alone, so on those targets the request reaches <code>Sdl3Dialogs</code> and SDL. On <code>iOS</code> SDL builds its dummy dialog, which reports failure through the callback at once; in a browser SDL's Unix dialog code finds neither a desktop portal nor a helper process and does the same. <code>ResultTrampoline</code> in {{src:modules/platform/src/Sdl3/Sdl3SystemServices.cpp|Sdl3SystemServices.cpp}} turns SDL's null file list into an empty list, so the caller sees the same answer as a cancel, before Show* returns. That is also what <code>FileDialog</code>'s own unavailable path delivers (<code>ReportUnavailable</code> calls back with an empty list immediately), so the result and timing a Show* caller observes are the same on both paths; what contradicts itself is the two public answers, the capability (true) and <code>getIsSupportedProperty</code> (false). The null parent window the candidate also lists is a documented note in {{src:modules/devices-ext/include/CNA/Devices/FileDialog.hpp|FileDialog.hpp}} and is not part of this defect.</p>",
    "sources": [
     {
      "path": "modules/platform/src/Sdl3/Sdl3Platform.cpp",
@@ -8895,7 +8910,7 @@
      "note": "ResultTrampoline reports a null SDL file list as an empty result"
     }
    ],
-   "evidence": "<p>Checked by reading the CNA sources at 009d40f5; not executed on iOS or in a browser. SDL's per-platform dialog selection was read in a sibling SDL checkout at exactly the revision TARGET pins (<code>third_party/SDL</code> at cbe3fbe9; re-read for the adversarial audit in <code>CMakeLists.txt</code> and <code>include/build_config/SDL_build_config_ios.h</code>): dialog sources are selected for Android, Unix, Haiku, Windows and macOS, and <code>SDL_build_config_ios.h</code> defines <code>SDL_DIALOG_DUMMY</code>, whose implementation calls the callback with a null list. The web statement relies on {{src:modules/devices-ext/include/CNA/Devices/FileDialog.hpp|FileDialog.hpp}}'s own record and on a browser having no portal or helper process; which SDL dialog sources an Emscripten build compiles was not settled.</p>",
+   "evidence": "<p>Checked by reading the CNA sources at 009d40f5; not executed on iOS or in a browser. SDL's per-platform dialog selection was read in a sibling SDL checkout at exactly the revision TARGET pins (<code>third_party/SDL</code> at cbe3fbe9; re-read for the adversarial audit in <code>CMakeLists.txt</code> and <code>include/build_config/SDL_build_config_ios.h</code>): dialog sources are selected for Android, Unix, Haiku, Windows and macOS, and <code>SDL_build_config_ios.h</code> defines <code>SDL_DIALOG_DUMMY</code>, whose implementation calls the callback with a null list. The web statement relies on {{src:modules/devices-ext/include/CNA/Devices/FileDialog.hpp|FileDialog.hpp}}'s own record and on a browser having no portal or helper process; which SDL dialog sources an Emscripten build compiles was not settled.</p><p><em>Independent re-verification:</em> Checked by reading the CNA sources at 009d40f5; not executed on <code>iOS</code> or in a browser. SDL's per-platform dialog selection was read in a sibling SDL checkout at exactly the revision TARGET pins ({{src:third_party/SDL|SDL}} at cbe3fbe9; re-read for the adversarial audit in CMakeLists.txt and <code>include/build_config/SDL_build_config_ios.h</code>): dialog sources are selected for Android, Unix, Haiku, Windows and <code>macOS</code>, and <code>SDL_build_config_ios</code>.h defines <code>SDL_DIALOG_DUMMY</code>, whose implementation calls the callback with a null list. For the web, a locally built Emscripten SDL 3 tree a few weeks newer than the pin shows that Emscripten's CMake platform file sets UNIX, so SDL compiles its Unix (portal and zenity) dialog sources there; at run time they find neither and call the callback with a null list at once, like the <code>iOS</code> dummy. <code>FileDialog</code>.hpp's statement that SDL has no dialog backend for Web is therefore imprecise as to the selection, but the conclusion that no dialog can be shown in a browser holds. The Emscripten reading was not made at the pinned revision.</p>",
    "reproduction": "<pre><code class=\"language-cpp\">// Illustrative; iOS or Emscripten build with the SDL3 platform and CNA_DEVICES=ON; not run.\nconst bool capability =\n    CNA::Platform::GetCurrentPlatform().GetCapabilities().nativeFileDialog;   // true\nconst bool supported = CNA::Devices::FileDialog::getIsSupportedProperty();    // false\nCNA::Devices::FileDialog::ShowOpenFile(\n    [](const std::vector&lt;std::string&gt;&amp; files) { /* called with an empty list */ });</code></pre>",
    "tests_current": "<p><code>PlatformConformanceTests.cpp</code> and <code>Sdl3PlatformTests.cpp</code> check, on the desktop host that runs them, that each service is non-null exactly when its capability is set; <code>FileDialogTests.cpp</code> runs against a canned platform. No test built for iOS or the web asserts the capability set there.</p>",
    "regression_test": "<p>Report <code>nativeFileDialog</code> only for builds whose SDL has a real dialog backend, derive <code>FileDialog::getIsSupportedProperty</code> from the capability alone, and compile a capability test into the iOS and Emscripten test builds that expects it to be false.</p>",
@@ -8927,7 +8942,8 @@
    },
    "origin": "Phase-2 candidate P2-073 (development/internals/modules/devices-ext.html), re-derived: the target-policy mismatch exists because the SDL3 capability is unconditional",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-181"
+   "temp_id": "CNA-BUG-181",
+   "tests_present": true
   },
   {
    "cand_ids": [],
@@ -8996,7 +9012,8 @@
    },
    "origin": "new finding at TARGET review: re-verifying P2-075's premise that a real platform's file-dialog callback fires after Show* returns",
    "pkg": "B8",
-   "temp_id": "CNA-BUG-182"
+   "temp_id": "CNA-BUG-182",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -9011,7 +9028,7 @@
    "severity": "low",
    "confidence": "verified-by-reading",
    "public_contract": "CNA::Devices::FileDialog result callbacks and CNA::Devices::SystemTray entry-click callbacks on the SDL3 platform",
-   "expected": "<p>A callback boundary with C code must not let C++ exceptions cross it; a library either catches and reports them or documents that handlers must not throw. FileDialog.hpp and SystemTray.hpp say neither.</p>",
+   "expected": "<p>CNA's own devices event contract ({{src:docs/devices-event-contract.md|devices-event-contract.md}}, section 6, Exception semantics) states the decided policy: an unhandled exception escaping a user-supplied handler must never propagate across a C callback boundary, and the normative rule is log-and-continue, catching at the C-callback or thread-entry boundary and making the event observable. The Accelerometer and Gyroscope dispatch path follows it. <code>FileDialog</code>.hpp and <code>SystemTray</code>.hpp neither state that handlers must not throw nor catch on the caller's behalf.</p>",
    "actual": "<p><code>ResultTrampoline</code> in {{src:modules/platform/src/Sdl3/Sdl3SystemServices.cpp|Sdl3SystemServices.cpp}} builds the path list and calls <code>context-&gt;callback(paths)</code>; <code>EntryClickTrampoline</code> in {{src:modules/platform/src/Sdl3/Sdl3Tray.cpp|Sdl3Tray.cpp}} calls <code>(*callback)()</code>. Both are passed to SDL as C function pointers and have no try/catch. FileDialog.hpp notes the result may arrive &#8220;on a different thread than the one the call&#8221; was made on.</p>",
    "sources": [
     {
@@ -9027,7 +9044,7 @@
      "note": "callback threading note; no exception rule"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; not executed. The contract is CNA's own devices event contract, section 6 of which is titled 'decided but not yet uniformly implemented' and lists sensor paths only, so the SDL3 dialog and tray boundaries are an unlisted instance of that policy. Neither devices-ext wrapper adds a catch (<code>FileDialog</code>.cpp passes the callback straight to the platform and <code>SystemTray</code>.cpp forwards it), so a handler's exception reaches the trampoline. What SDL's C frames then do with it (undefined behaviour, typically <code>std::terminate</code>) depends on the toolchain and was not run.</p>",
    "reproduction": null,
    "tests_current": "<p>The trampolines are not driven by any test (see CNA-VGAP-007).</p>",
    "regression_test": "<p>A test that invokes each trampoline with a throwing callback and asserts the exception is contained (logged or reported); the fix is a catch-all around the call.</p>",
@@ -9049,7 +9066,8 @@
    },
    "origin": "Chapter package WP14 candidate WP14-i037 (ch48-host-devices)",
    "pkg": "B11",
-   "temp_id": "CNA-BUG-183"
+   "temp_id": "CNA-BUG-183",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -9085,7 +9103,7 @@
      "note": "probe_core registration: forbidden pattern without libSDL3 and the stale SDL3 comment"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; nothing was built or executed for this entry. A search of the TARGET tree finds no embind header or <code>EMSCRIPTEN_BINDINGS</code> use and no SDL include under <code>modules/core</code>. No Emscripten bundle was linked, so whether removing the option is safe is not proven here: the failure it once papered over was a link-time error that compiling <code>cna_core</code> cannot show.</p><p><em>Independently observed as a separate finding (merged):</em> modules/core/CMakeLists.txt says core no longer includes or links SDL, yet the core probe&#x27;s forbidden-library pattern omits libSDL3 (unlike the math, design and storage probes), so an SDL link re-entering cna_core would pass the gate.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; nothing was built or executed for this entry. A search of the TARGET tree finds no embind header or <code>EMSCRIPTEN_BINDINGS</code> use and no SDL include under <code>modules/core</code>. No Emscripten bundle was linked, so whether removing the option is safe is not proven here: the failure it once papered over was a link-time error that compiling <code>cna_core</code> cannot show.</p><p><em>Independently observed as a separate finding (merged):</em> modules/core/CMakeLists.txt says core no longer includes or links SDL, yet the core probe&#x27;s forbidden-library pattern omits libSDL3 (unlike the math, design and storage probes), so an SDL link re-entering cna_core would pass the gate.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; nothing was built or executed for this entry. A search of the TARGET tree finds no embind header or <code>EMSCRIPTEN_BINDINGS</code> use and no SDL include under <code>modules/core</code>. No Emscripten bundle was linked, so whether removing the option is safe is not proven here; emscripten-multi-renderer-ci.yml does link a bundle against <code>cna_core</code> (with the option present) but asserts nothing about embind. In {{src:cmake/Tests/ModuleProbes.cmake|ModuleProbes.cmake}} only <code>probe_math</code> and <code>probe_design</code> forbid <code>libSDL3</code>; <code>probe_storage</code>, like <code>probe_core</code>, does not name it, so the missing <code>libSDL3</code> is not unique to <code>probe_core</code>. Git history: the <code>EM_JS</code> reader replaced <code>emscripten::val</code> in 188cb0062 (2026-08-17) and -lembind was added the next day in b0c43098d.</p>",
    "reproduction": null,
    "tests_current": "<p><code>probe_core</code> (registered in {{src:cmake/Tests/ModuleProbes.cmake|ModuleProbes.cmake}}) checks core's link closure but not for SDL3. No test asserts that an Emscripten link of core does not require embind; the Emscripten CI workflow builds bundles but was not read for this entry.</p>",
    "regression_test": "<p>Remove the option and prove a real Emscripten bundle link that uses <code>cna_read_module_preferred_renderer</code>; add <code>libSDL3</code> to probe_core's forbidden pattern and confirm the probe still passes; update the three stale comments.</p>",
@@ -9117,7 +9135,8 @@
    },
    "origin": "Phase-2 candidates P2-061 and the ModuleProbes half of P2-065 (development/internals/modules/core.html); merged with CNA-BUG-184",
    "pkg": "B1",
-   "temp_id": "CNA-BUG-184"
+   "temp_id": "CNA-BUG-184",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -9189,7 +9208,8 @@
    },
    "origin": "Phase-2 candidate P2-215 (development/takeover/validation.html); cross-package duplicate of B5/P2-048; folded with CNA-BUG-188 by the adversarial audit",
    "pkg": "B2",
-   "temp_id": "CNA-BUG-185"
+   "temp_id": "CNA-BUG-185",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -9250,7 +9270,8 @@
    },
    "origin": "Phase-2 candidate P2-153 (development/internals/modules/video-ffmpeg.html)",
    "pkg": "B4",
-   "temp_id": "CNA-BUG-186"
+   "temp_id": "CNA-BUG-186",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -9303,7 +9324,8 @@
    },
    "origin": "Phase-2 candidate P2-001 (development/repository/module-graph.html)",
    "pkg": "B6",
-   "temp_id": "CNA-BUG-189"
+   "temp_id": "CNA-BUG-189",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -9313,15 +9335,15 @@
    ],
    "id": "CNA-BUG-190",
    "class": "bug",
-   "title": "modules/renderers/CMakeLists.txt enters common/d3d, the GDI software sources and the Metal renderer target only for the default identity, so a multi-renderer set naming DIRECTX11/12, GDI or METAL as a non-default member passes the combination rules and then cannot build",
-   "summary": "Three helper directories are entered by testing the default identity instead of set membership, yet the combination rules accept sets such as HEADLESS;DIRECTX11, whose DIRECTX11 family then links an undefined cna_renderer_d3dcommon.",
+   "title": "modules/renderers/CMakeLists.txt enters common/d3d, the GDI software sources and the Metal renderer target only when the default identity matches, so a multi-renderer set that lists DIRECTX11, DIRECTX12, GDI or METAL without the matching default passes the combination rules and then cannot build",
+   "summary": "Three helper directories are entered by testing the default identity instead of set membership, yet the combination rules accept sets such as HEADLESS;DIRECTX11 (or DIRECTX9;DIRECTX11), whose DIRECTX11 family then links an undefined cna_renderer_d3dcommon. A DIRECTX11 or DIRECTX12 default does enter common/d3d for both, so the D3D condition bites only when the default is neither.",
    "subsystem": "Build & CI",
    "status": "open",
    "severity": "low",
    "confidence": "strong",
    "public_contract": "CNA_GRAPHICS_RENDERERS multi-renderer mode and cna_validate_renderer_combination (cmake/RendererCombinations.cmake): incompatible sets are rejected at configure time with a reason, never left to surface as a build error",
    "expected": "<p>{{src:docs/runtime-renderer-selection.md|docs/runtime-renderer-selection.md}} (Renderer combinations): \"Incompatible combinations are rejected at configure time with a reason, never left to surface as a link error.\" A set that <code>cna_validate_renderer_combination</code> accepts should configure and build.</p>",
-   "actual": "<p>{{src:modules/renderers/CMakeLists.txt|modules/renderers/CMakeLists.txt}} makes three decisions before the per-family loop, while <code>CNA_GRAPHICS_RENDERER</code> still names the default:</p><ul><li><code>common/d3d</code> is entered only when the default is DIRECTX11 or DIRECTX12. Both families link <code>cna_renderer_d3dcommon</code> PUBLIC and their public headers include <code>CNA/Internal/Renderers/D3DCommon/...</code>. With DIRECTX11 as a non-default member no such target exists, so CMake treats the name as a plain library: no include directory for the D3D11 sources and a <code>-lcna_renderer_d3dcommon</code> the linker cannot resolve.</li><li><code>software</code> is entered for GDI only when GDI is the default; it is what publishes <code>CNA_GDI_SOFTWARE_SOURCES</code> and <code>cna_renderer_software_headers</code>, so a non-default GDI gets an archive without its CPU-2D sources and an undefined header target.</li><li><code>metal</code> is entered once, before the loop (the loop skips it), and creates the renderer archive only inside <code>if(CNA_GRAPHICS_RENDERER STREQUAL \"METAL\")</code>; a non-default METAL has no archive although the generated registry and <code>CNA_RENDERER_TARGETS</code> name it.</li></ul><p>{{src:cmake/RendererCombinations.cmake|RendererCombinations.cmake}} refuses only PORTABLEGL with a real-GL renderer, GDI with SOFTWARE, and pairs from two different platform partitions; a platform-neutral identity (HEADLESS, SOFTWARE, STUB, SDL_RENDERER, VULKAN, ...) with a Windows-only or macOS-only one passes, and so do two Windows identities such as DIRECTX9;DIRECTX11.</p>",
+   "actual": "<ul><li>{{src:modules/renderers/CMakeLists.txt|CMakeLists.txt}} makes three decisions before the per-family loop, while <code>CNA_GRAPHICS_RENDERER</code> still names the default:</li><li>common/d3d is entered only when the default is DIRECTX11 or DIRECTX12. Both families link <code>cna_renderer_d3dcommon</code> PUBLIC and their public headers include CNA/Internal/Renderers/<code>D3DCommon</code>/.... With DIRECTX11 or DIRECTX12 listed and a default that is neither (HEADLESS, DIRECTX9, GDI, ...), no such target exists, so CMake treats the name as a plain library: no include directory for the <code>D3D</code> sources and a -<code>lcna_renderer_d3dcommon</code> the linker cannot resolve. A set whose default is DIRECTX11 or DIRECTX12 (for example DIRECTX11;DIRECTX12) does enter common/d3d and is not hit by this condition.</li><li>software is entered for GDI only when GDI is the default; it is what publishes <code>CNA_GDI_SOFTWARE_SOURCES</code> and <code>cna_renderer_software_headers</code>, so a non-default GDI gets an archive without its CPU-2D sources and an undefined header target.</li><li>metal is entered once, before the loop (the loop skips it), and creates the renderer archive only inside <code>if(CNA_GRAPHICS_RENDERER STREQUAL \"METAL\")</code>; a non-default METAL has no archive although the generated registry and <code>CNA_RENDERER_TARGETS</code> name it.</li><li>{{src:cmake/RendererCombinations.cmake|RendererCombinations.cmake}} refuses only PORTABLEGL with a real-GL renderer, GDI with SOFTWARE, and pairs from two different platform partitions; a platform-neutral identity (HEADLESS, SOFTWARE, STUB, <code>SDL_RENDERER</code>, VULKAN, ...) with a Windows-only or <code>macOS</code>-only one passes, and so do two Windows identities such as DIRECTX9;DIRECTX11. Because each helper is keyed to its own default, the only Windows sets that avoid all three conditions are those whose members need no helper other than the one the default enters (for example DIRECTX11;DIRECTX12, or DIRECTX9;DIRECT2D).</li></ul>",
    "sources": [
     {
      "path": "modules/renderers/CMakeLists.txt",
@@ -9384,7 +9406,8 @@
    },
    "origin": "Phase-2 candidates P2-002 (development/repository/module-graph.html) and P2-022 (development/build/architecture.html), merged; folded with CNA-BUG-187 by the adversarial audit",
    "pkg": "B6",
-   "temp_id": "CNA-BUG-190"
+   "temp_id": "CNA-BUG-190",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -9433,7 +9456,8 @@
    },
    "origin": "Phase-2 candidate P2-023 (development/build/index.html)",
    "pkg": "B6",
-   "temp_id": "CNA-BUG-191"
+   "temp_id": "CNA-BUG-191",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -9499,7 +9523,8 @@
    },
    "origin": "Phase-2 candidate P2-217 (development/testing/architecture.html); merged with CNA-BUG-192",
    "pkg": "B6",
-   "temp_id": "CNA-BUG-192"
+   "temp_id": "CNA-BUG-192",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -9542,7 +9567,7 @@
      "note": "Task 319 known-failure comment on the ReferenceStencil registration"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; not executed. No CI run was inspected, so that the test passes on the hosted runner (Mesa under Xvfb) was not observed; CNA's record of the fix is a local run (\"1 FAIL - 2 PASS\", mutation-checked). The site's testing tutorial and verification page report the one-entry allowlist accurately but not that its entry is fixed.</p><p><em>Independently observed as a separate finding (merged):</em> EasyGLRenderer::SetReferenceStencil now re-issues the stencil function, but the test&#x27;s CMake registration still calls it a documented known failure and general-tests-ci.yml&#x27;s KNOWN_FAILURES list absorbs it, so pass or fail is invisible.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; not executed. No CI run was inspected, so that the test passes on the hosted runner (Mesa under Xvfb) was not observed; CNA's record of the fix is a local run (\"1 FAIL - 2 PASS\", mutation-checked). The site's testing tutorial and verification page report the one-entry allowlist accurately but not that its entry is fixed.</p><p><em>Independently observed as a separate finding (merged):</em> EasyGLRenderer::SetReferenceStencil now re-issues the stencil function, but the test&#x27;s CMake registration still calls it a documented known failure and general-tests-ci.yml&#x27;s KNOWN_FAILURES list absorbs it, so pass or fail is invisible.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5; not executed. No CI run was inspected, so that the test passes on the hosted runner (Mesa under Xvfb) was not observed; CNA's record of the fix is a local run (1 FAIL - 2 PASS, mutation-checked). general-tests-ci.yml is the only workflow that runs ctest unfiltered. Workaround correction: the classification step prints only counts for known failures ('Total failed this run: N', 'Known pre-existing ... allowed'), never their names; a regression of this test is visible only in the preceding ctest step's log ('The following tests FAILED'), whose failure is masked by continue-on-error, so the job stays green.</p>",
    "reproduction": null,
    "tests_current": "<p><code>EasyGL_GraphicsDevice_ReferenceStencil</code> itself. Nothing checks the allowlist against actual results: an allowlisted test that passes is silently accepted.</p>",
    "regression_test": "<p>Remove the entry, and make the classification step fail (or at least warn) when an allowlisted test passes, so an entry cannot outlive its failure; or move to the WILL_FAIL annotations the header plans (REMED-BUILD-003).</p>",
@@ -9570,7 +9595,8 @@
    },
    "origin": "new finding at TARGET review: found while re-verifying BIBLE-DOC-3 (the ReferenceStencil status) against general-tests-ci.yml's KNOWN_FAILURES list and REMED-GFX-236; merged with CNA-BUG-193",
    "pkg": "B6",
-   "temp_id": "CNA-BUG-193"
+   "temp_id": "CNA-BUG-193",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -9629,7 +9655,8 @@
    },
    "origin": "Phase-2 candidate P2-161 (development/internals/platforms/sdl2.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-194"
+   "temp_id": "CNA-BUG-194",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -9688,7 +9715,8 @@
    },
    "origin": "Phase-2 candidate P2-162 (development/internals/platforms/sdl2.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-195"
+   "temp_id": "CNA-BUG-195",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -9747,7 +9775,8 @@
    },
    "origin": "Phase-2 candidate P2-181 (development/internals/platforms/x11.html)",
    "pkg": "B7",
-   "temp_id": "CNA-BUG-196"
+   "temp_id": "CNA-BUG-196",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -9800,7 +9829,8 @@
    },
    "origin": "Chapter-package candidate WP02-i005",
    "pkg": "B10",
-   "temp_id": "CNA-BUG-197"
+   "temp_id": "CNA-BUG-197",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -9843,7 +9873,8 @@
    },
    "origin": "Chapter-package candidate WP02-i008",
    "pkg": "B10",
-   "temp_id": "CNA-BUG-198"
+   "temp_id": "CNA-BUG-198",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -14109,6 +14140,108 @@
    "temp_id": "NEW-AUDIT-25"
   },
   {
+   "cand_ids": [],
+   "id": "CNA-BUG-269",
+   "class": "bug",
+   "subsystem": "Build & CI",
+   "status": "open",
+   "severity": "low",
+   "confidence": "verified-by-reading",
+   "tests_present": true,
+   "title": "cna_validate_renderer_identity_selection says it checks the per-identity CNA_RENDERER_<X> switches, but only retired names are checked: a misspelled or unknown switch is never read and the platform's default renderer is configured silently",
+   "summary": "The validator's comment promises to check the CNA_RENDERER_<X> switches, but it only loops over retired names; -DCNA_RENDERER_D3D9=ON or a typo is neither an error nor honoured, and the platform's default renderer is configured without a diagnostic.",
+   "public_contract": "cmake/RendererIdentities.cmake::cna_validate_renderer_identity_selection and the per-identity CNA_RENDERER_<X> configure switches",
+   "expected": "<p>The comment above the function says it &ldquo;checks every route that can name a renderer: <code>CNA_GRAPHICS_RENDERER</code>, each member of <code>CNA_GRAPHICS_RENDERERS</code>, and the per-identity <code>CNA_RENDERER_&lt;X&gt;</code> switches&rdquo;, and the other two routes report an unknown name at configure time (<code>cna_require_public_renderer_identity</code>: &ldquo;unknown graphics renderer &hellip; (requested through &hellip;)&rdquo;). A misspelled switch should get the same error instead of a silent fallback.</p>",
+   "actual": "<p>{{src:cmake/RendererIdentities.cmake|cna_validate_renderer_identity_selection}} tests <code>CNA_RENDERER_&lt;X&gt;</code> only inside a loop over the list of <em>retired</em> identities, and for those it requires a public one. For any other name, such as an old D3D9 or EASYGL spelling or a typo, the variable is never read: {{src:cmake/RendererSelection.cmake|RendererSelection.cmake}} consults a switch only for the names in the public identity list, so the configure succeeds and the platform's default renderer is selected without a diagnostic.</p>",
+   "sources": [
+    {
+     "path": "cmake/RendererIdentities.cmake",
+     "note": "cna_validate_renderer_identity_selection: the CNA_RENDERER_<X> route is checked only for retired names"
+    },
+    {
+     "path": "cmake/RendererSelection.cmake",
+     "note": "the switch loop over CNA_RENDERER_PUBLIC_IDENTITIES"
+    },
+    {
+     "path": "cmake/Tests/RendererRetiredIdentityCase.cmake",
+     "note": "the retired-name case is tested; an unknown name is not"
+    }
+   ],
+   "evidence": "<p>Read at 009d40f5; nothing was configured. Found by the C13 conservation reviewer (glossary appendix) and re-verified by the orchestrator against the validator, the selection loop and the tests under <code>cmake/Tests</code>.</p>",
+   "reproduction": null,
+   "tests_current": "<p><code>cmake/Tests/RendererRetiredIdentityCase.cmake</code> pins the error for a retired name; nothing exercises an unknown or misspelled <code>CNA_RENDERER_&lt;X&gt;</code> switch.</p>",
+   "regression_test": "<p>Configure with <code>-DCNA_RENDERER_NOSUCH=ON</code> and expect a configure-time error naming the switch and the supported identities, next to the existing retired-identity case.</p>",
+   "blast_radius": "<p>Builds that select a renderer with an <code>-DCNA_RENDERER_&lt;X&gt;=ON</code> switch and misspell or use a stale name (for example a pre-rename spelling): the build succeeds with the host's default renderer instead of the intended one.</p>",
+   "workaround": "<p>Select the renderer with <code>CNA_GRAPHICS_RENDERER</code> (or <code>CNA_GRAPHICS_RENDERERS</code>), which reject unknown names at configure time.</p>",
+   "related": {
+    "guide": [
+     [
+      "docs/building.html",
+      "Building CNA"
+     ]
+    ],
+    "deep": [
+     [
+      "deep-dives/reference/glossary.html#term-identity",
+      "Glossary: identity"
+     ]
+    ]
+   },
+   "origin": "new finding at the independent adversarial audit (reported by the C13 conservation reviewer, glossary appendix; re-verified by the orchestrator)",
+   "temp_id": "NEW-AUDIT-26"
+  },
+  {
+   "cand_ids": [],
+   "id": "CNA-BUG-270",
+   "class": "bug",
+   "subsystem": "C API & bindings",
+   "status": "open",
+   "severity": "low",
+   "confidence": "verified-by-reading",
+   "tests_present": false,
+   "title": "The @param lines of cna_post_process_chain_add_owned_pass and cna_skybox_set_owned_environment say the consumed handle is invalid on return even when the call fails, but both routes release it only after every check that can fail",
+   "summary": "engine_layer.h says the pass and environment handles are 'invalid on return whether or not the call succeeded', but both routes release them only after their checks pass, so a binding that follows the @param line leaks the handle after a refused call.",
+   "public_contract": "cna_post_process_chain_add_owned_pass and cna_skybox_set_owned_environment (CNA/C/engine_layer.h)",
+   "expected": "<p>The descriptions in the same header say the handle is consumed <em>on success</em> and, for <code>cna_post_process_effect_pass_create_owning</code>, that on failure the caller keeps the handle; <code>docs/c-api/OWNERSHIP.md</code> defines a transferred parameter as consumed on successful return with ownership unchanged on failure.</p>",
+   "actual": "<p>The <code>@param</code> line of {{src:modules/c-api/include/CNA/C/engine_layer.h|cna_post_process_chain_add_owned_pass}} says the pass is &ldquo;invalid on return whether or not the call succeeded&rdquo;, and that of <code>cna_skybox_set_owned_environment</code> says the same of the environment. {{src:modules/c-api/src/CnaCApiEngineLayer.cpp|The implementations}} return an error for an invalid pass, a pass that is still lending its effect, an invalid skybox or a handle that is not a cube map before they release anything, and the skybox route notes that the release is &ldquo;the LAST thing here that can fail, so a refusal never leaves the caller holding nothing&rdquo;. After such a refusal the caller still holds a valid handle. A binding that follows the <code>@param</code> line and never releases the handle after a failed call leaks it; one that follows the description releases it correctly.</p>",
+   "sources": [
+    {
+     "path": "modules/c-api/include/CNA/C/engine_layer.h",
+     "note": "the two @param lines that contradict their own descriptions"
+    },
+    {
+     "path": "modules/c-api/src/CnaCApiEngineLayer.cpp",
+     "note": "both routes release the handle only after their checks pass"
+    },
+    {
+     "path": "docs/c-api/OWNERSHIP.md",
+     "note": "defines the transferred category: failure leaves ownership unchanged"
+    }
+   ],
+   "evidence": "<p>Read at 009d40f5; nothing was built or run. Found by the C13 conservation reviewer (native C API appendix) and re-verified by the orchestrator against the header text and the two implementations.</p>",
+   "reproduction": null,
+   "tests_current": "<p>None found: no test checks the state of the handle after a refused call to either route.</p>",
+   "regression_test": "<p>Call each route with a valid handle and an invalid target (an invalid chain, a lending pass, a non-cube handle), expect an error and a still-valid handle, and correct the two <code>@param</code> lines to say so.</p>",
+   "blast_radius": "<p>Language bindings generated from the header text: a binding that trusts the @param line leaks one handle per refused call (for the pass and skybox routes only). Successful calls are unaffected.</p>",
+   "workaround": "<p>Follow the descriptions and OWNERSHIP.md: treat the handle as consumed only when the call returns success, and release it yourself otherwise.</p>",
+   "related": {
+    "deep": [
+     [
+      "deep-dives/reference/native-c-api.html",
+      "Native C API"
+     ]
+    ],
+    "guide": [
+     [
+      "docs/c-api.html",
+      "C API"
+     ]
+    ]
+   },
+   "origin": "new finding at the independent adversarial audit (reported by the C13 conservation reviewer, native C API appendix; re-verified by the orchestrator)",
+   "temp_id": "NEW-AUDIT-27"
+  },
+  {
    "cand_ids": [
     "CNA-BUG-024"
    ],
@@ -14539,7 +14672,8 @@
    },
    "origin": "Phase-2 candidate P2-039 (development/internals/graphics/sdl-gpu.html)",
    "pkg": "B5",
-   "temp_id": "CNA-GAP-008"
+   "temp_id": "CNA-GAP-008",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -14570,7 +14704,7 @@
      "note": "OpenGL4SpriteBatchRenderer::Draw float override"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The set of overriding renderers was established by grepping renderer headers and sources for the float overload.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The set of overriding renderers was established by grepping renderer headers and sources for the float overload.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The set of overriding renderers was established by enumerating every ISpriteBatchRenderer implementation and grepping for the float overload (<code>EasyGL</code>, OPENGL4, SOFTWARE); GDI's sprite batch wraps the Software 2D core but forwards only the three integer overloads, so it inherits the truncating default too. Test coverage: <code>SpriteBatchSubPixelDestinationTest</code> in <code>SpriteBatchTests</code>.cpp checks that <code>SpriteBatch</code> records fractional positions. {{src:modules/graphics/examples/spritebatch_subpixel_contract_test.cpp|spritebatch_subpixel_contract_test.cpp}} (SOFTWARE-137) is a renderer-neutral, byte-exact pixel fixture (a direct float draw must equal an integer draw under a transform matrix, which a truncating renderer fails) and is registered only for <code>EasyGL</code>, OPENGL4 (parity corpus) and SOFTWARE; no other renderer registers it, so the truncating renderers have no sub-pixel pixel check.</p>",
    "reproduction": null,
    "tests_current": "<p><code>SpriteBatchSubPixelDestinationTest</code> in SpriteBatchTests.cpp checks that SpriteBatch records fractional positions; it does not check what each renderer draws.</p>",
    "regression_test": "<p>A renderer-neutral pixel fixture drawing a sprite at x + 0.5 with LinearClamp and asserting a blended edge column, registered for each family.</p>",
@@ -14586,7 +14720,8 @@
    },
    "origin": "Chapter-package candidate WP05-i014",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-009"
+   "temp_id": "CNA-GAP-009",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -14625,7 +14760,7 @@
      "note": "Queue flushes when immediate_ is set"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. Behaviour and decision as recorded by CNA; the other renderers' Immediate handling was not re-read.</p><p><em>Narrowed by the independent adversarial audit:</em> the entry originally named EasyGL as a renderer that batches below the seam. Its own sort-mode notes predate commit <code>515958a7a</code> (2026-09-09, an ancestor of TARGET), which made EasyGL, OpenGL 4 and FNA3D honour immediate submission; the conservation review of the SpriteBatch chapter found the stale statement and the orchestrator re-read the flush code and confirmed the commit is an ancestor of TARGET. Direct3D, WebGPU, Vulkan and SDL_GPU behaviour was read in the same review (no <code>SetImmediateMode</code> override, or the mode read only under compiled effects); nothing was executed.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. Behaviour and decision as recorded by CNA; the other renderers' Immediate handling was not re-read.</p><p><em>Narrowed by the independent adversarial audit:</em> the entry originally named EasyGL as a renderer that batches below the seam. Its own sort-mode notes predate commit <code>515958a7a</code> (2026-09-09, an ancestor of TARGET), which made EasyGL, OpenGL 4 and FNA3D honour immediate submission; the conservation review of the SpriteBatch chapter found the stale statement and the orchestrator re-read the flush code and confirmed the commit is an ancestor of TARGET. Direct3D, WebGPU, Vulkan and SDL_GPU behaviour was read in the same review (no <code>SetImmediateMode</code> override, or the mode read only under compiled effects); nothing was executed.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5, including the git history of each immediate flush; nothing was built or executed for this entry. Narrowed by the independent adversarial audit: the entry originally named <code>EasyGL</code> as a renderer that batches below the seam. Commit 515958a7a (2026-09-09, an ancestor of TARGET) made <code>EasyGL</code> honour immediate submission; OPENGL4 gained the same flush in its 2026-09-24 rebuild and FNA3D had it from its introduction. <code>Direct3D</code>, <code>WebGPU</code>, Vulkan and <code>SDL_GPU</code> behaviour was read in the same review (no <code>SetImmediateMode</code> override, or the mode read only under compiled effects). Tests: <code>EasyGL_SpriteBatch_SortModeSemantics</code> and <code>Vulkan_SpriteBatch_SortModeSemantics</code> check order and placement and leg D prices the alternative; none asserts the mid-batch texture-mutation result XNA gives. <code>spritebatch_immediate_submission_contract_test</code>.cpp (SOFTWARE-252) asserts immediate submission across a render-target switch and is registered for <code>EasyGL</code>, OPENGL4 and SOFTWARE only.</p>",
    "reproduction": null,
    "tests_current": "<p><code>EasyGL_SpriteBatch_SortModeSemantics</code> and <code>Vulkan_SpriteBatch_SortModeSemantics</code> check order and placement, and leg D prices the alternative; none asserts the mid-batch mutation result XNA gives.</p>",
    "regression_test": "<p>If the decision is ever reversed, the existing sort-mode fixture's mutation leg should assert the first sprite's old contents.</p>",
@@ -14641,7 +14776,8 @@
    },
    "origin": "Chapter-package candidate WP05-i018 (recorded as a bug; published as a functional gap because CNA documents the refusal)",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-010"
+   "temp_id": "CNA-GAP-010",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -14684,7 +14820,8 @@
    },
    "origin": "Chapter-package candidate WP06-i001",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-011"
+   "temp_id": "CNA-GAP-011",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -14715,7 +14852,7 @@
      "note": "per-face SetData"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The refusal is deliberate and documented in the header; the content-loading consequence is inferred from the reader.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The refusal is deliberate and documented in the header; the content-loading consequence is inferred from the reader.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The refusal is deliberate and documented in the header. Tests: <code>Headless_CubeVolume_GetDataContract</code> and <code>Headless_CubeVolume_SetDataContract</code> pin the refusal at renderer and <code>TextureCube</code> level. <code>Texture3DTextureCubeContentTypeReaderTest.TextureCubeReaderLoadsRealMonoGameFixtureEndToEnd</code> (<code>modules/content/tests</code>) loads a real cube XNB through <code>ContentManager</code> and, on renderers without cube storage (its gate lists <code>SDL_RENDERER</code>, CANVAS, <code>HTML_DOM</code>, FREEDIRECT, HEADLESS, GDI and PORTABLEGL), asserts <code>System::NotSupportedException</code>, so the loading consequence is pinned by CNA's own test whenever HEADLESS is the active renderer; the HEADLESS content CI job's test filter does not select that fixture.</p>",
    "reproduction": null,
    "tests_current": "<p><code>Headless_CubeVolume_GetDataContract</code> and related HEADLESS tests pin the refusal; no test loads cube content on HEADLESS.</p>",
    "regression_test": "<p>Either store cube faces on HEADLESS like Texture2D or document the loading limit; a test that loads a TextureCube XNB on HEADLESS would pin whichever is chosen.</p>",
@@ -14737,7 +14874,8 @@
    },
    "origin": "Chapter-package candidate WP06-i009 (recorded as a verification gap; published as a functional gap because the refusal is by design)",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-012"
+   "temp_id": "CNA-GAP-012",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -14756,7 +14894,7 @@
    "confidence": "verified-by-reading",
    "public_contract": "GraphicsDevice and resource APIs on the METAL renderer",
    "expected": "<p>A renderer identity is expected to support the XNA HiDef surface or refuse clearly; METAL chooses explicit refusal pending evidence.</p>",
-   "actual": "<p>{{src:modules/renderers/metal/src/MetalRenderer.mm|MetalRenderer.mm}} throws <code>System::NotSupportedException</code> with \"disabled until the adapted renderer has passing macOS ... evidence\" style messages for: <code>SetRenderTargets</code> with more than one target; <code>CreateEffectRenderer</code> (ShaderEffect) and custom-effect 3D and SpriteBatch draws; <code>CreateOcclusionQuery</code>; instancing and multi-stream vertex input; <code>ReadBackbuffer</code> (\"the historical macOS test run returned clear-color-only data after real draws\"); sampler <code>MaxMipLevel</code>/<code>MipMapLevelOfDetailBias</code> other than 0; and blend states with partial colour-write masks or a non-default MultiSampleMask. <code>MetalAppliedMultiSampleCount</code> in {{src:modules/renderers/metal/include/CNA/Internal/Renderers/Metal/MetalPolicy.hpp|MetalPolicy.hpp}} returns 0 for every request, so MSAA is silently off. The family cannot be built on the Linux CI hosts.</p>",
+   "actual": "<p>{{src:modules/renderers/metal/src/MetalRenderer.mm|MetalRenderer.mm}} throws <code>System::NotSupportedException</code>, mostly with 'disabled until the adapted renderer has passing <code>macOS</code> ... evidence' wording, for: <code>SetRenderTargets</code> with more than one target; <code>CreateEffectRenderer</code> (<code>ShaderEffect</code>), <code>SpriteBatch</code> custom effects and custom-effect 3D draws; <code>CreateOcclusionQuery</code>; instancing and multi-stream vertex input; and <code>ReadBackbuffer</code> ('the historical <code>macOS</code> test run returned clear-color-only data after real draws'). It also throws, with plainer wording ('not implemented' and 'currently supports only'), for a sampler <code>MaxMipLevel</code> or <code>MipMapLevelOfDetailBias</code> other than 0 and for blend states with partial colour-write masks or a non-default <code>MultiSampleMask</code>. <code>MetalAppliedMultiSampleCount</code> in {{src:modules/renderers/metal/include/CNA/Internal/Renderers/Metal/MetalPolicy.hpp|MetalPolicy.hpp}} returns 0 for every request, so every MSAA request is clamped to none; this is reported rather than hidden (the <code>MultiSampleAntiAliasing</code> capability is false and the applied count is 0). <code>MetalSupportsCapability</code> reports false for MRT, occlusion queries, custom effects, multi-stream input and instancing, so the capability flags do not lie. The renderer builds only on <code>macOS</code>: the metal-macos-ci.yml workflow builds it on macos-14 and runs the ^Metal tests, while Linux hosts build only the portable policy tests.</p>",
    "sources": [
     {
      "path": "modules/renderers/metal/src/MetalRenderer.mm",
@@ -14767,7 +14905,7 @@
      "note": "MetalAppliedMultiSampleCount returns 0"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The refusals are explicit and documented in the messages; macOS was not available.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The refusals are explicit and documented in the messages; macOS was not available.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The refusals are explicit and documented in the messages; <code>macOS</code> was not available. Tests: <code>Metal_Capabilities</code> asserts the refused features are reported unsupported, <code>Metal_PortableHelpers</code> pins the pure policy decisions (draw-stream policy, blend write state, applied MSAA count), and <code>Metal_Smoke</code> covers the supported contract (see CNA-VGAP-024); no test runs the throwing <code>MetalRenderer</code> paths themselves.</p>",
    "reproduction": null,
    "tests_current": "<p><code>Metal_Smoke</code>, <code>Metal_Capabilities</code> and <code>Metal_PortableHelpers</code> exist (see CNA-VGAP-024); none exercises the refused features.</p>",
    "regression_test": "<p>Each feature's enabling change should come with a macOS pixel test, as the refusal messages require.</p>",
@@ -14789,7 +14927,8 @@
    },
    "origin": "Chapter-package candidates WP06-i014 (limitation), WP08-i010, WP09-i016 and WP07-i010 (recorded as a verification gap)",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-013"
+   "temp_id": "CNA-GAP-013",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -14846,7 +14985,8 @@
    },
    "origin": "Chapter-package candidates WP06-i017, WP08-i008 and WP11-i009",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-014"
+   "temp_id": "CNA-GAP-014",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -14897,7 +15037,8 @@
    },
    "origin": "Chapter-package candidate WP07-i002",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-015"
+   "temp_id": "CNA-GAP-015",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -14945,7 +15086,8 @@
    },
    "origin": "Chapter-package candidates WP08-i004 and WP08-i005",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-016"
+   "temp_id": "CNA-GAP-016",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -14997,7 +15139,8 @@
    },
    "origin": "Chapter-package candidates WP08-i007 and WP10-i002",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-017"
+   "temp_id": "CNA-GAP-017",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15040,7 +15183,8 @@
    },
    "origin": "Chapter-package candidate WP08-i017",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-018"
+   "temp_id": "CNA-GAP-018",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15079,7 +15223,8 @@
    },
    "origin": "Chapter-package candidate WP09-i001",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-019"
+   "temp_id": "CNA-GAP-019",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15092,10 +15237,10 @@
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "n/a",
-   "confidence": "verified-by-reading",
+   "confidence": "recorded-by-cna",
    "public_contract": "ShaderEffect construction from GLSL source and ContentManager::Load of GLSL .cnj effects on SDL_GPU",
    "expected": "<p>A .cnj effect names GLSL source files; which dialect each renderer accepts is part of its contract (GetShaderDialectEXT).</p>",
-   "actual": "<p>{{src:modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp|SdlGpuRenderer.cpp}}'s <code>SdlGpuEffectRenderer::CompileProgram</code> accepts SPIR-V words directly or, when built with <code>CNA_SDL_GPU_SHADER_EFFECTS</code>, compiles GLSL through libshaderc to SPIR-V with SDL_gpu's descriptor conventions. The fixture in {{src:modules/content/tests/Microsoft/Xna/Framework/Content/CnjEffectTests.cpp|CnjEffectTests.cpp}} uses <code>#version 300 es</code> sources, which that route does not accept; custom effects for SDL_GPU must be written as <code>#version 450</code> with explicit locations and sets.</p>",
+   "actual": "<p>{{src:modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp|SdlGpuRenderer.cpp}}'s <code>SdlGpuEffectRenderer::CompileProgram</code> accepts SPIR-V words directly or, when built with <code>CNA_SDL_GPU_SHADER_EFFECTS</code>, passes GLSL source unchanged to libshaderc for Vulkan-rule SPIR-V and declares one uniform buffer per stage and one fragment sampler to <code>SDL_gpu</code>. The renderer declares <code>ShaderDialectEXT::SpirV</code> and claims no GLSL language, deliberately, because the GLSL ES 3.00 profile is not a legal input on that route. The fixture in {{src:modules/content/tests/Microsoft/Xna/Framework/Content/CnjEffectTests.cpp|CnjEffectTests.cpp}} uses #version 300 es sources with a non-block uniform, which that route refuses; custom GLSL effects for <code>SDL_GPU</code> must follow Vulkan GLSL rules (for example #version 450) with explicit locations, uniform blocks and <code>SDL_gpu</code>'s sets.</p>",
    "sources": [
     {
      "path": "modules/renderers/sdl-gpu/src/SdlGpuRenderer.cpp",
@@ -15106,7 +15251,7 @@
      "note": "kVertSrc/kFragSrc GLSL ES 3.00 fixture"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The GLSL ES rejection is the chapter package's reading of the SDL_GPU route; glslang's refusal of ES 3.00 for SPIR-V generation was not re-run here.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The GLSL ES rejection is the chapter package's reading of the SDL_GPU route; glslang's refusal of ES 3.00 for SPIR-V generation was not re-run here.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. CNA's own plan ({{src:plans/plan_sdlgpu_modern_graphics.md|plan_sdlgpu_modern_graphics.md}}) records the measured libshaderc refusal of the GLSL ES 3.00 profile on <code>SDL_GPU</code> (ES shaders for SPIR-V require version 310 or higher; SPIR-V requires location for user input/output; non-opaque uniforms outside a block are not allowed for Vulkan GLSL), and the fixture's sources use the same constructs. Tests: <code>SDL_GPU</code>'s own <code>ShaderEffect</code> fixtures use #version 450; <code>CnjEffectTests</code> is not run against <code>SDL_GPU</code> in any workflow; its expectation predicate is published separately as CNA-BUG-204.</p>",
    "reproduction": null,
    "tests_current": "<p>SDL_GPU ShaderEffect fixtures use its own dialect; no test loads the shared GLSL ES fixture on SDL_GPU.</p>",
    "regression_test": "<p>A test that asserts the documented refusal (or a translation) for GLSL ES 3.00 on SDL_GPU.</p>",
@@ -15126,7 +15271,8 @@
    },
    "origin": "Chapter-package candidate WP09-i031",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-020"
+   "temp_id": "CNA-GAP-020",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15135,21 +15281,21 @@
    "id": "CNA-GAP-021",
    "class": "functional-gap",
    "title": "DIRECTX9 BasicEffect reaches only 12 of its 32 shader variants; other combinations throw 'no matching CNA vertex layout'",
-   "summary": "Only strides 16, 20, 24, 32 and 52 have vertex declarations, so BasicEffect variants needing position-only, position+normal or colour+normal inputs (including untextured per-pixel lighting) cannot draw.",
+   "summary": "DirectX9Renderer::DrawBasicEffectEXT accepts only four fixed stride and flag shapes (stride 16 vertex colour, 20 texture, 24 vertex colour plus texture, 32 lit plus texture), which reach 12 of BasicEffect's 32 ShaderIndex values; position-only, position+normal and colour+normal inputs, including untextured per-pixel lighting, throw.",
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "n/a",
    "confidence": "verified-by-reading",
    "public_contract": "BasicEffect draws on DIRECTX9",
    "expected": "<p>XNA's BasicEffect selects one of 32 shader variants from its lighting, texture, vertex-colour, fog and per-pixel flags and draws any matching vertex format.</p>",
-   "actual": "<p>The header comment of {{src:modules/renderers/directx9/src/D3D9EffectDraw.cpp|D3D9EffectDraw.cpp}} records that only strides 16, 20, 24, 32 (and 52 for skinning) exist, giving 12 drawable ShaderIndex values; other combinations throw a named \"no matching CNA vertex layout\" error, and the untextured pixel-lighting bucket is \"blocked by the same missing-vertex-layout gap\".</p>",
+   "actual": "<p>In {{src:modules/renderers/directx9/src/D3D9EffectDraw.cpp|D3D9EffectDraw.cpp}}, <code>DirectX9Renderer::DrawBasicEffectEXT</code> switches on the vertex stride and accepts only 16, 20, 24 and 32, each with one fixed lighting / vertex-colour / texture combination; any other stride or flag combination throws <code>std::runtime_error</code> naming 'no matching CNA vertex layout ({{src:plans/plan_dx9.md|plan_dx9.md}} D9-82b)'. The drawable <code>ShaderIndex</code> values are 2-7, 12/13, 20/21 and 28/29 (12 of 32); untextured vertex, one-light and per-pixel lighting and position-only drawing are refused. The file's header comment documents this as an honest gap, but its statement that the renderer has only five stride-keyed declarations (16/20/24/32/52) is stale: <code>VertexElementsForStrideD3D9</code> in <code>D3D9VertexDeclarations</code>.cpp also declares strides 28, 48, 56, 60, 68 and 80 (dual-texture, PBR and skinned-colour paths), none of which <code>BasicEffect</code> accepts.</p>",
    "sources": [
     {
      "path": "modules/renderers/directx9/src/D3D9EffectDraw.cpp",
      "note": "header comment and DirectX9Renderer::DrawBasicEffectEXT layout checks"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The refusal is pinned by Check F of {{src:modules/renderers/directx9/examples/directx9_drawex_test.cpp|directx9_drawex_test.cpp}} (registered as the <code>DirectX9_DrawEx</code> CTest under the DIRECTX9 label; the Windows <code>D3D</code> CI matrix builds DIRECTX11, DIRECTX12 and DIRECT2D only).</p>",
    "reproduction": null,
    "tests_current": "<p>DIRECTX9 stock-effect fixtures cover the drawable variants.</p>",
    "regression_test": "<p>One fixture per missing vertex shape once declarations are added.</p>",
@@ -15165,7 +15311,8 @@
    },
    "origin": "Chapter-package candidate WP10-i004",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-021"
+   "temp_id": "CNA-GAP-021",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15181,7 +15328,7 @@
    "confidence": "verified-by-reading",
    "public_contract": "RenderTarget2D(mipMap = true) and RenderTargetCube(multiSampleCount > 0) on DIRECTX9",
    "expected": "<p>XNA generates a render target's mip chain when it is unbound (mipMap = true) and multisamples cube targets on HiDef devices that support it.</p>",
-   "actual": "<p>{{src:modules/renderers/directx9/src/DirectX9Renderer.cpp|DirectX9Renderer.cpp}}'s <code>CreateRenderTarget2D</code> takes <code>bool /*mipMap*/</code> and creates a single-level target; <code>CreateRenderTargetCube</code> ignores <code>mipMap</code> and <code>multiSampleCount</code>. {{src:modules/renderers/directx9/src/D3D9RenderTargets.cpp|D3D9RenderTargets.cpp}}'s <code>GetData</code> throws <code>NotSupportedException</code> for <code>level &gt; 0</code>.</p>",
+   "actual": "<p>{{src:modules/renderers/directx9/src/DirectX9Renderer.cpp|DirectX9Renderer.cpp}}'s <code>CreateRenderTarget2D</code> takes bool /*<code>mipMap</code>*/ and creates a single-level target; <code>CreateRenderTargetCube</code> ignores <code>mipMap</code> and <code>multiSampleCount</code> (its header note in <code>D3D9RenderTargets</code>.hpp records both as deliberate named gaps). {{src:modules/renderers/directx9/src/D3D9RenderTargets.cpp|D3D9RenderTargets.cpp}}'s <code>D3D9RenderTargetRenderer::GetData</code> throws <code>NotSupportedException</code> for level &gt; 0. The public <code>RenderTarget2D</code> and <code>RenderTargetCube</code> constructors still pass the full requested chain (<code>CalculateMipLevels</code>) to their Texture base, so <code>LevelCount</code> reports the requested chain while one level exists; <code>GetData(level &gt; 0)</code> therefore passes the shared range check and is refused only by the renderer. The public <code>MultiSampleCount</code> of a cube target reports the renderer's real value (0), so that part is not misreported.</p>",
    "sources": [
     {
      "path": "modules/renderers/directx9/src/DirectX9Renderer.cpp",
@@ -15192,7 +15339,7 @@
      "note": "D3D9RenderTargetRenderer::GetData level check"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. Whether the public LevelCount of such a target reports the requested chain was not traced.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. Whether the public LevelCount of such a target reports the requested chain was not traced.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5 and the XNA IL (<code>RenderTargetHelper.CreateSurfaces</code> creates a multisampled surface for cube targets as well); nothing was built or executed for this entry. Checks S, T and U of {{src:modules/renderers/directx9/examples/directx9_smoke_test.cpp|directx9_smoke_test.cpp}} exercise the DX9 render-target classes but only with <code>mipMap</code> = false and no cube MSAA, so no test requests a mip chain or reads a lower level.</p>",
    "reproduction": null,
    "tests_current": "<p>No DIRECTX9 fixture samples a render target's lower mip levels.</p>",
    "regression_test": "<p>A DIRECTX9 fixture that renders into a mipMap target, unbinds and samples level 1.</p>",
@@ -15208,7 +15355,8 @@
    },
    "origin": "Chapter-package candidate WP10-i005",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-022"
+   "temp_id": "CNA-GAP-022",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15217,14 +15365,14 @@
    "id": "CNA-GAP-023",
    "class": "functional-gap",
    "title": "On DIRECTX9 a Texture2D can only be created with SurfaceFormat::Color",
-   "summary": "DIRECTX9 leaves ClassifySurfaceFormatEXT at its Defer default, so Texture2D creation falls back to a Color-only check although the renderer maps D3D formats internally; XNB textures still load because the reader converts them to RGBA.",
+   "summary": "DIRECTX9 leaves ClassifySurfaceFormatEXT at its Defer default, so Texture2D creation falls back to a Color-only check although the renderer maps D3D formats internally; DXT XNB textures still load because the reader converts them to RGBA, but XNB textures stored in any other non-Color format do not.",
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "n/a",
    "confidence": "verified-by-reading",
    "public_contract": "Texture2D constructors with a SurfaceFormat other than Color on DIRECTX9",
    "expected": "<p>XNA HiDef on Direct3D 9 creates textures in the DXT, Bgr565, Bgra5551, Bgra4444, Alpha8, floating-point and other formats the device supports.</p>",
-   "actual": "<p>The default <code>ClassifySurfaceFormatEXT</code> returns <code>Defer</code>; DIRECTX9 does not override it (the renderers that do are DIRECTX11/12, EasyGL, OPENGL4, SDL_GPU, SOFTWARE, VULKAN and WEBGPU). {{src:modules/graphics/src/Xna/Texture2D.cpp|Texture2D.cpp}} then calls {{src:modules/graphics/src/Xna/Texture.cpp|Texture::ValidateFormat}}, which throws <code>std::runtime_error</code> (\"SurfaceFormat N is not implemented by the selected graphics renderer\") for anything but Color. The XNB Texture2D reader converts compressed data to RGBA when the renderer does not keep it compressed, so content loading is unaffected; programmatic creation is.</p>",
+   "actual": "<p>The default <code>ClassifySurfaceFormatEXT</code> returns Defer; DIRECTX9 does not override it (the renderers that do are DIRECTX11/12, <code>EasyGL</code>, OPENGL4, <code>SDL_GPU</code>, SOFTWARE, VULKAN and WEBGPU). {{src:modules/graphics/src/Xna/Texture2D.cpp|Texture2D.cpp}} then calls {{src:modules/graphics/src/Xna/Texture.cpp|Texture.cpp}}, which throws <code>std::runtime_error</code> (\"Texture: <code>SurfaceFormat</code> N is not implemented by the selected graphics renderer\") for anything but Color, and <code>D3D9TextureRenderer</code> allocates <code>D3DFMT_A8B8G8R8</code> only. The XNB <code>Texture2D</code> reader (<code>CreateTexture2DFromXnbData</code>) converts DXT1/3/5 data to RGBA when the renderer does not keep it compressed, so DXT content loads. Every other non-Color format the XNB reader accepts (Bgr565, Bgra5551, Bgra4444, Alpha8, <code>NormalizedByte</code>, Rgba1010102, Rg32, Rgba64, Single, Vector2/4, Half*, <code>HdrBlendable</code>, <code>ColorBgraEXT</code>) is passed through unchanged as the <code>Texture2D</code> format, so such an asset also fails to load on DIRECTX9 with the same <code>std::runtime_error</code>, as does programmatic creation.</p>",
    "sources": [
     {
      "path": "modules/graphics/src/Xna/Texture2D.cpp",
@@ -15239,7 +15387,7 @@
      "note": "ClassifySurfaceFormatEXT default Defer"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The XNB consequence is inferred from the reader's format handling (only compressed formats are converted); no non-DXT, non-Color asset was loaded on DIRECTX9.</p>",
    "reproduction": null,
    "tests_current": "<p>DIRECTX9 texture fixtures use Color.</p>",
    "regression_test": "<p>A DIRECTX9 ClassifySurfaceFormatEXT backed by CheckDeviceFormat, with a creation test per supported format.</p>",
@@ -15255,7 +15403,8 @@
    },
    "origin": "Chapter-package candidate WP10-i006",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-023"
+   "temp_id": "CNA-GAP-023",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15263,15 +15412,15 @@
    ],
    "id": "CNA-GAP-024",
    "class": "functional-gap",
-   "title": "DIRECTX11 and DIRECTX12 never enter DXGI exclusive full screen",
-   "summary": "Neither renderer calls IDXGISwapChain::SetFullscreenState; exclusiveFullscreen_ is declared and read (it disables tearing) but never set, so full screen is always the platform's borderless window.",
+   "title": "DIRECTX11 and DIRECTX12 never use DXGI exclusive full screen: SetFullscreenState is not called and exclusiveFullscreen_ is dead state",
+   "summary": "Neither renderer calls IDXGISwapChain::SetFullscreenState, and exclusiveFullscreen_ is declared and read (it disables tearing) but never set. Full screen is applied by the platform window instead, so the swap chain always stays a windowed flip-model chain and never learns that the platform switched the display mode.",
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "n/a",
    "confidence": "verified-by-reading",
    "public_contract": "GraphicsDeviceManager.IsFullScreen / ToggleFullScreen on DIRECTX11 and DIRECTX12",
-   "expected": "<p>XNA on Windows used exclusive full screen; DXGI exposes it through <code>SetFullscreenState</code>.</p>",
-   "actual": "<p>A grep of {{src:modules/renderers/directx11/src/DirectX11Renderer.cpp|DirectX11Renderer.cpp}}, {{src:modules/renderers/directx12/src/DirectX12Renderer.cpp|DirectX12Renderer.cpp}} and the shared D3D code finds no <code>SetFullscreenState</code>; <code>exclusiveFullscreen_</code> stays false and is read only in the tearing condition.</p>",
+   "expected": "<p>XNA on Windows used exclusive full screen; DXGI exposes swap-chain-owned exclusive mode through <code>SetFullscreenState</code>.</p>",
+   "actual": "<p>A grep of the whole tree finds no <code>SetFullscreenState</code>. <code>exclusiveFullscreen_</code> stays false in <code>DirectX11Renderer</code> and <code>DirectX12Renderer</code> and is read only in the Present tearing condition, and both <code>UpdatePresentationFormatEXT</code> overrides discard <code>isFullScreen</code> because full screen 'has its own path'. That path is <code>GraphicsDevice::applyPresentationParametersToWindow</code> (and <code>GameWindow::EndScreenDeviceChange</code>), which ask the platform window for <code>WindowFullscreenMode::ExclusiveFullscreen</code>: the SDL3 window (the default backend) selects the closest real display mode to the back-buffer size, and <code>Win32Window</code> covers the monitor borderless and calls <code>ChangeDisplaySettingsEx</code> with the monitor's current size. So full screen is not always a plain borderless window; what is missing is DXGI-level exclusive ownership, and the <code>D3D</code> renderers never see the platform's exclusive state.</p>",
    "sources": [
     {
      "path": "modules/renderers/directx11/src/DirectX11Renderer.cpp",
@@ -15282,7 +15431,7 @@
      "note": "exclusiveFullscreen_ declaration"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. Borderless flip-model presentation is the modern default and usually preferable; the gap matters for display-mode changes.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. Borderless flip-model presentation is the modern default and usually preferable; the gap matters for display-mode changes.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. Platform-level exclusive-mode tests exist (<code>Sdl3WindowTests</code>, <code>X11ExclusiveFullscreenTests</code>) but none exercises a <code>D3D</code> swap chain in full screen. Borderless flip-model presentation is the modern default and usually preferable; the residual gap is the unset swap-chain policy state and the absence of DXGI exclusive ownership, not the absence of a display-mode switch.</p>",
    "reproduction": null,
    "tests_current": "<p>No test requests exclusive mode.</p>",
    "regression_test": "<p>If exclusive mode is added: a native Windows test that enters and leaves it and checks the display mode.</p>",
@@ -15298,7 +15447,8 @@
    },
    "origin": "Chapter-package candidate WP10-i010 (recorded as a platform limitation; published as a functional gap because it is CNA's implementation choice, not a host limit)",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-024"
+   "temp_id": "CNA-GAP-024",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -15337,7 +15487,8 @@
    },
    "origin": "Chapter-package candidate WP11-i002",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-025"
+   "temp_id": "CNA-GAP-025",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15350,7 +15501,7 @@
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "n/a",
-   "confidence": "verified-by-reading",
+   "confidence": "recorded-by-cna",
    "public_contract": "SamplerState.AddressU/AddressV = Wrap or Mirror with SpriteBatch source rectangles beyond the texture on SDL_RENDERER",
    "expected": "<p>XNA SpriteBatch with SamplerState.LinearWrap/PointWrap tiles a texture when the source rectangle exceeds its bounds (a common tiling trick).</p>",
    "actual": "<p>The header of {{src:modules/renderers/sdl-renderer/examples/sdlrenderer_texture_address_mode_clamp_test.cpp|sdlrenderer_texture_address_mode_clamp_test.cpp}} records that <code>SetSamplerAddressMode</code> is a no-op for this renderer, that SDL's texture address mode applies only to <code>SDL_RenderGeometry</code>, and that the fixed behaviour matches Clamp by accident. {{src:docs/sdl-renderer-2d-completeness.md|sdl-renderer-2d-completeness.md}} marks Wrap/Mirror as BLOCKED (Tasks 686/687). No error is raised.</p>",
@@ -15384,7 +15535,8 @@
    },
    "origin": "Chapter-package candidate WP11-i006",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-026"
+   "temp_id": "CNA-GAP-026",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15415,7 +15567,7 @@
      "note": "GetBackBufferDataCore refuses while a render target is active"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The refusals are pinned by native gtests, <code>BackbufferReadbackThrowsWithAnActionableMessage</code> in {{src:modules/renderers/html-dom/tests/CNA/Internal/Renderers/HtmlDom/HtmlDomRendererTests.cpp|HtmlDomRendererTests.cpp}} and in {{src:modules/renderers/svg-dom/tests/CNA/Internal/Renderers/SvgDom/SvgDomRendererTests.cpp|SvgDomRendererTests.cpp}} (compiled when that renderer is the selected one); the htmldom-ci browser suite (smoke, pixel, stress, dispose pages) never calls <code>GetBackBufferData</code>, and no workflow is seen running the <code>SVG_DOM</code> tests.</p>",
    "reproduction": null,
    "tests_current": "<p>HTML_DOM refusal is covered by its browser harness; SVG_DOM runs only manually.</p>",
    "regression_test": "<p>None beyond the refusal tests.</p>",
@@ -15435,7 +15587,8 @@
    },
    "origin": "Chapter-package candidate WP11-i015 (narrowed: the padding remark is not reachable through the public API)",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-027"
+   "temp_id": "CNA-GAP-027",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15478,7 +15631,8 @@
    },
    "origin": "Chapter package WP13 candidate WP13-i036 (ch43-gltf-conformance)",
    "pkg": "B11",
-   "temp_id": "CNA-GAP-028"
+   "temp_id": "CNA-GAP-028",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15487,14 +15641,14 @@
    "id": "CNA-GAP-029",
    "class": "functional-gap",
    "title": "EasyGL GPU timers read 32-bit nanosecond results and cannot detect GL disjoint events",
-   "summary": "EasyGLGpuTimerRenderer reads GL_TIME_ELAPSED as a 32-bit value because meta-gl offers no 64-bit read or disjoint query, so results saturate near 4.29 s and only an all-ones disjoint result is rejected.",
+   "summary": "EasyGLGpuTimerRenderer reads GL_TIME_ELAPSED as a 32-bit value because meta-gl exposes only glGetQueryObjectuiv, not a 64-bit query-object read, and it never queries GL_GPU_DISJOINT_EXT, so results saturate near 4.29 s and only an all-ones result is rejected as undefined.",
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "n/a",
    "confidence": "verified-by-reading",
    "public_contract": "CNA::Graphics::GpuTimer and RenderPipeline pass timings (CNAEXT) on the EasyGL GL profiles",
    "expected": "<p>GL_EXT_disjoint_timer_query results are read as 64-bit values and believed only after <code>GL_GPU_DISJOINT_EXT</code> reports no disjoint event.</p>",
-   "actual": "<p><code>EasyGLGpuTimerRenderer::IsResultAvailable</code> and <code>ElapsedNanoseconds</code> in {{src:modules/renderers/easygl/src/EasyGLRenderer.cpp|EasyGLRenderer.cpp}} read the result with <code>glGetQueryObjectuiv</code> into a 32-bit value and reject only the all-ones saturation value; the in-code comment states that meta-gl offers neither a 64-bit read nor the disjoint query. A reading taken across a disjoint event that is not exactly <code>0xFFFFFFFF</code> is reported as a duration, and a real pass longer than about 4.29 s saturates.</p>",
+   "actual": "<p><code>EasyGLGpuTimerRenderer::IsResultAvailable</code> and <code>ElapsedNanoseconds</code> in {{src:modules/renderers/easygl/src/EasyGLRenderer.cpp|EasyGLRenderer.cpp}} read the result with <code>glGetQueryObjectuiv</code> into a 32-bit value and reject only the all-ones saturation value. A reading taken across a disjoint event that is not exactly 0xFFFFFFFF is reported as a duration, and a real pass longer than about 4.29 s saturates. The in-code comments say meta-gl exposes only a 32-bit result read and no general <code>glGetIntegerv</code>, so the disjoint state cannot be asked. The first is true (meta-gl declares only <code>glGetQueryObjectuiv</code>). The second is not: meta-gl declares <code>glGetIntegerv(GetParameter, GLint*)</code> as a plain pass-through, and this same file already casts a raw value into <code>metagl::QueryTarget</code> for <code>GL_TIME_ELAPSED</code>, so <code>GL_GPU_DISJOINT_EXT</code> could be read the same way. That query exists only on the <code>OpenGL</code> ES path (<code>GL_EXT_disjoint_timer_query</code>); desktop GL 3.3 timers come from <code>ARB_timer_query</code> and <code>WebGL</code> reports no timer support.</p>",
    "sources": [
     {
      "path": "modules/renderers/easygl/src/EasyGLRenderer.cpp",
@@ -15505,7 +15659,7 @@
      "note": "the CNAEXT GpuTimer consumer"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5 and meta-gl develop @ 20c8b2dc in the local checkout (no <code>ui64v</code> read and no disjoint token in <code>include/</code>); not executed. The limitation is imposed by the sibling API; the pass durations the engine layer measures are far below the saturation point.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5 and meta-gl develop @ 20c8b2dc in the local checkout (no <code>ui64v</code> read and no disjoint token in <code>include/</code>); not executed. The limitation is imposed by the sibling API; the pass durations the engine layer measures are far below the saturation point.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5 and meta-gl develop @ 20c8b2dc in the local checkout (no <code>glGetQueryObjectui64v</code>, no disjoint token, but a typed <code>glGetIntegerv</code> that forwards any value); meta-gl is an unpinned sibling, so its state at the moment of any given build is not fixed by the CNA commit. Not executed. The pass durations the engine layer measures are far below the saturation point.</p>",
    "reproduction": null,
    "tests_current": "<p>{{src:modules/graphics-ext/tests/CNA/Graphics/GpuTimerTests.cpp|GpuTimerTests.cpp}} and PassTimingTests.cpp cover the timer contract; nothing injects a disjoint event.</p>",
    "regression_test": "<p>Once meta-gl exposes <code>glGetQueryObjectui64v</code> and <code>GL_GPU_DISJOINT_EXT</code>: a test that a disjoint flag invalidates the sample.</p>",
@@ -15527,7 +15681,8 @@
    },
    "origin": "Chapter package WP17 candidate WP17-i006 (ch59-easygl-metagl)",
    "pkg": "B12",
-   "temp_id": "CNA-GAP-029"
+   "temp_id": "CNA-GAP-029",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15535,15 +15690,15 @@
    ],
    "id": "CNA-GAP-030",
    "class": "functional-gap",
-   "title": "FREEDIRECT stores SetPresentationMode but always letterboxes, and keeps the old physical scale after a virtual-resolution change once presenting has begun",
-   "summary": "FreeDirectRenderer::SetPresentationMode only records the mode because free-direct always letterboxes, and SetVirtualResolution after the first Present keeps the previous physical scale.",
+   "title": "FREEDIRECT keeps presenting at the old physical scale after a virtual-resolution change once the first Present has happened",
+   "summary": "FreeDirectRenderer::SetVirtualResolution recreates the surfaces and the display mode, but free-direct applies its SDL logical-presentation rectangle only once, so output after a change made following the first Present keeps the old logical size and scale. That FREEDIRECT always letterboxes whatever presentation mode is requested is published as CNA-GAP-017.",
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "n/a",
    "confidence": "verified-by-reading",
    "public_contract": "GraphicsDevice presentation mode and virtual-resolution changes on FREEDIRECT",
-   "expected": "<p>The requested presentation mode (stretch, overscan, native back buffer) shapes physical output, and a resolution change applies to later frames.</p>",
-   "actual": "<p>In {{src:modules/renderers/freedirect/src/FreeDirectRenderer.cpp|FreeDirectRenderer.cpp}}, <code>SetPresentationMode</code> stores <code>presentationMode</code> for bookkeeping only; free-direct's primary-surface present always uses <code>SDL_LOGICAL_PRESENTATION_LETTERBOX</code>. <code>SetVirtualResolution</code> recreates the surfaces, but free-direct applies its letterbox rectangle once, so after the first <code>Present</code> output stays at the old physical scale. {{src:docs/freedirect-renderer.md|freedirect-renderer.md}} rates the row partial and names the free-direct change it needs.</p>",
+   "expected": "<p>A virtual-resolution change applies to later frames.</p>",
+   "actual": "<p>In {{src:modules/renderers/freedirect/src/FreeDirectRenderer.cpp|FreeDirectRenderer.cpp}}, <code>SetVirtualResolution</code> calls <code>Impl::CreateSurfaces</code>, which creates a new shadow backbuffer and primary surface and calls <code>IDirectDraw::SetDisplayMode</code>. free-direct's <code>PresentPrimary</code> calls <code>SDL_SetRenderLogicalPresentation</code> (letterbox) once, guarded by a <code>logicalPresentationSet_</code> flag that nothing resets, so a change after the first Present keeps the old physical scale. A code comment in <code>SetVirtualResolution</code> and {{src:docs/freedirect-renderer.md|freedirect-renderer.md}} record this as a known limitation that needs a change in free-direct itself. <code>TransformWindowToLogical</code> and <code>TransformLogicalToWindow</code> recompute the letterbox from the new logical size, so when the aspect ratio changes the pointer mapping is likely to disagree with the picture (inferred from the two code paths, not run).</p>",
    "sources": [
     {
      "path": "modules/renderers/freedirect/src/FreeDirectRenderer.cpp",
@@ -15554,7 +15709,7 @@
      "note": "SetPresentationMode / resize-after-first-Present row and known limitations"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5; not executed.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5 and the free-direct sibling checkout (unpinned, see CNA-VGAP-042); not executed. <code>FreeDirect_ResizeTransaction</code> covers the resize bookkeeping and surface transaction, not the physical output; the <code>SetPresentationMode</code> half of the original entry duplicates CNA-GAP-017 and was removed.</p>",
    "reproduction": null,
    "tests_current": "<p>FreeDirect_ResizeTransaction covers resize bookkeeping; no test compares physical output across presentation modes.</p>",
    "regression_test": "<p>After a free-direct change: a readback test per presentation mode and one for a resolution change after the first Present.</p>",
@@ -15570,7 +15725,8 @@
    },
    "origin": "Chapter package WP17 candidate WP17-i010 (ch60-freedirect-freeapi)",
    "pkg": "B12",
-   "temp_id": "CNA-GAP-030"
+   "temp_id": "CNA-GAP-030",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15579,14 +15735,14 @@
    "id": "CNA-GAP-031",
    "class": "functional-gap",
    "title": "ClusteredForwardEffect binds no material textures: many punctual lights cannot be combined with a texture set",
-   "summary": "The CNAEXT ClusteredForwardEffect shades with a base colour, metallic and roughness only, so a game that needs many lights gives up PbrEffect's texture set and shadowed punctual light, as the effect's own header states.",
+   "summary": "The CNAEXT ClusteredForwardEffect consumes scalar material inputs only (base colour, metallic, roughness, IOR and the scalar clearcoat, sheen, iridescence and subsurface lobes) and binds no material textures, so a game that needs many lights gives up PbrEffect's texture set and shadowed punctual light, as the effect's own header states.",
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "n/a",
    "confidence": "verified-by-reading",
    "public_contract": "CNA::Graphics::ClusteredForwardEffect (CNAEXT engine layer)",
    "expected": "<p>No XNA contract applies; the design boundary is documented in the effect's header.</p>",
-   "actual": "<p>The class comment in {{src:modules/graphics-ext/include/CNA/Graphics/ClusteredForwardEffect.hpp|ClusteredForwardEffect.hpp}} explains that the effect is separate from <code>PbrEffect</code> because PbrEffect's program is renderer-generated, and that a game using it &#8220;gives up PbrEffect's texture set and its shadowed punctual light&#8221;. The <code>setMaterialExtensions</code> note repeats that the effect binds no material textures. Its vertex format is position plus normal. A textured scene with many lights (as reported by the cna-city sample @ 267b79b9) must choose between the two effects.</p>",
+   "actual": "<p>The class comment in {{src:modules/graphics-ext/include/CNA/Graphics/ClusteredForwardEffect.hpp|ClusteredForwardEffect.hpp}} explains that the effect is separate from <code>PbrEffect</code> because <code>PbrEffect</code>'s program is renderer-generated, and that what a game gives up by using it instead is <code>PbrEffect</code>'s texture set and its shadowed punctual light. The <code>setMaterialExtensions</code> note says only the scalar lobes are consumed and that the effect binds no material textures at all. <code>ClusteredForwardEffect</code>.cpp declares sampled textures only for the area-light BRDF table, the opaque-frame copy used by transmission and the three light-list textures. Its vertex format is position plus normal. A textured scene with many lights (as reported by the cna-city sample @ 267b79b9, not checked here) must choose between the two effects.</p>",
    "sources": [
     {
      "path": "modules/graphics-ext/include/CNA/Graphics/ClusteredForwardEffect.hpp",
@@ -15615,7 +15771,8 @@
    },
    "origin": "Chapter package WP17 candidate WP17-i013 (appendix-f-ecosystem-quick-reference)",
    "pkg": "B12",
-   "temp_id": "CNA-GAP-031"
+   "temp_id": "CNA-GAP-031",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15654,7 +15811,7 @@
      "note": "depth-only caster fragment shader (no texture, no discard)"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5 (the front-facing search was a grep of all of <code>modules/</code>); not executed. The four limits were reported by the living-room-simulator sample @ 2bf3f56b against an earlier CNA revision and re-established individually here.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5 (the front-facing search was a grep of all of <code>modules/</code>); not executed. The four limits were reported by the living-room-simulator sample @ 2bf3f56b against an earlier CNA revision and re-established individually here.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5 (the front-facing search was a grep of all of modules/, docs and tools: front-facing inputs appear only in compiled-effect translation, the Software compiled-effect runtime and <code>PortableGL</code>'s rasteriser, not in the stock PBR or engine-layer shaders; <code>doubleSided</code> never reaches <code>GpuDrawParams</code>); not executed. The four limits were reported by the living-room-simulator sample @ 2bf3f56b against an earlier CNA revision and re-established individually here. Tests: engine-layer shadow, IBL and PBR tests exist; the <code>EasyGL_Gltf_AlphaBlend</code> example draws a double-sided back face under <code>CullNone</code> but with ambient-only lighting and no directional light, so no test lights a back face, casts an alpha-masked shadow, or carries HDR radiance through an environment cube.</p>",
    "reproduction": null,
    "tests_current": "<p>Engine-layer shadow, IBL and PBR tests exist; none draws a double-sided back face, an alpha-masked shadow caster or HDR environment radiance.</p>",
    "regression_test": "<p>Per limit, once lifted: a back-face lighting pixel test, an alpha-mask shadow test, an IBL test with radiance above 1.0, and a two-punctual-light draw.</p>",
@@ -15676,7 +15833,8 @@
    },
    "origin": "Chapter package WP17 candidate WP17-i014 (appendix-f-ecosystem-quick-reference)",
    "pkg": "B12",
-   "temp_id": "CNA-GAP-032"
+   "temp_id": "CNA-GAP-032",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -15750,7 +15908,8 @@
    },
    "origin": "Auxiliary package WPB3 candidates WPB3-i001, WPB3-i002 (aux-audit-renderer-draw-path-matrix)",
    "pkg": "B12",
-   "temp_id": "CNA-GAP-033"
+   "temp_id": "CNA-GAP-033",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -16543,7 +16702,8 @@
    },
    "origin": "Bible ledger CNA-BUG-046 (its containment claim is proven fixed; the FileShare remark in the same entry survives); FileShare is also named in Phase-2 candidate P2-148, which is resolved under CNA-BUG-155; merged with CNA-GAP-048",
    "pkg": "B8",
-   "temp_id": "CNA-GAP-048"
+   "temp_id": "CNA-GAP-048",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -16570,7 +16730,7 @@
      "note": "public static event"
     }
    ],
-   "evidence": "<p>Checked by reading at 009d40f5 and the XNA 4.0 Storage IL in the reference cache; not executed.</p>",
+   "evidence": "<p>Checked by reading at 009d40f5 and the XNA 4.0 Storage IL in the reference cache; not executed.</p><p><em>Independent re-verification:</em> Checked by reading at 009d40f5 and the decompiled XNA 4.0 Storage IL and <code>FrameworkDispatcher</code>; not executed. In XNA the static constructor wires <code>StorageDevice.OnDeviceChanged</code> to <code>FrameworkCallbackLinker.StorageDeviceChanged</code>, which <code>FrameworkDispatcher.Update</code> raises when a native <code>System_DeviceChanged</code> call was queued; the documented meaning is 'a device is removed or inserted'. No managed source of that call exists in the decompiled assemblies, so how often genuine XNA raises it on Windows is not established. Tests: <code>CApi_StorageSmoke</code> (C ABI builds only) subscribes, unsubscribes and checks stale-registration refusal for the event, but no test can make it fire because nothing in CNA raises it.</p>",
    "reproduction": null,
    "tests_current": "<p>None.</p>",
    "regression_test": "<p>If a change source is added (for example removable media), a test that it raises the event.</p>",
@@ -16592,7 +16752,8 @@
    },
    "origin": "Auxiliary package WPB5 candidate WPB5-i003 (aux-audit-input-audio-net-services)",
    "pkg": "B12",
-   "temp_id": "CNA-GAP-049"
+   "temp_id": "CNA-GAP-049",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -17091,7 +17252,8 @@
    },
    "origin": "Chapter-package candidate WP02-i007",
    "pkg": "B10",
-   "temp_id": "CNA-GAP-059"
+   "temp_id": "CNA-GAP-059",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -17702,15 +17864,15 @@
    ],
    "id": "CNA-PLAT-001",
    "class": "platform-limitation",
-   "title": "CANVAS and FREEDIRECT throw for any Texture2D mip level above 0, so mipmapped textures (including XNB textures with mip chains) cannot be uploaded",
-   "summary": "CanvasTextureRenderer::UpdatePixelsLevel and FreeDirect's texture renderers throw std::runtime_error for level > 0 because Canvas 2D and DirectDraw surfaces have no mip chain; the XNB Texture2D reader uploads every level it reads.",
+   "title": "CANVAS, FREEDIRECT, SDL_RENDERER, HTML_DOM and SVG_DOM throw for any Texture2D mip level above 0, so mipmapped textures (including XNB textures with mip chains) cannot be uploaded there",
+   "summary": "The texture renderers of CANVAS, FREEDIRECT, SDL_RENDERER, HTML_DOM and SVG_DOM throw std::runtime_error from UpdatePixelsLevel for level > 0 because Canvas 2D, DirectDraw, SDL_Renderer and DOM surfaces have no mip chain; the XNB Texture2D reader uploads every level it reads.",
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "n/a",
    "confidence": "verified-by-reading",
    "public_contract": "Texture2D::SetData(level > 0, ...) and ContentManager::Load<Texture2D> of mipmapped assets on CANVAS and FREEDIRECT",
    "expected": "<p>On renderers without mip sampling a mip chain can only be ignored; XNA content commonly ships textures with generated mip levels.</p>",
-   "actual": "<p>{{src:modules/renderers/canvas/src/CanvasTextureRenderer.cpp|CanvasTextureRenderer.cpp}} and {{src:modules/renderers/freedirect/src/FreeDirectRenderer.cpp|FreeDirectRenderer.cpp}} throw <code>std::runtime_error</code> (\"does not support mip-level texture uploads ... Use Texture2D::SetData(level=0, ...) only\") from their level uploads. The XNB reader ({{src:modules/content/src/Xnb/Texture2DContentTypeReader.cpp|Texture2DContentTypeReader.cpp}}) creates the texture with <code>mipMap = levelCount &gt; 1</code> and calls <code>SetData(level, ...)</code> for every level, so by reading a mipmapped XNB texture fails to load on these two renderers, with a <code>std::runtime_error</code> rather than a <code>NotSupportedException</code>.</p>",
+   "actual": "<p><code>CanvasTextureRenderer::UpdatePixelsLevel</code> ({{src:modules/renderers/canvas/src/CanvasTextureRenderer.cpp|CanvasTextureRenderer.cpp}}), the <code>FreeDirect</code> texture and render-target renderers (<code>ThrowMipLevelUnsupported</code> in {{src:modules/renderers/freedirect/src/FreeDirectRenderer.cpp|FreeDirectRenderer.cpp}}), <code>SdlTextureRenderer::UpdatePixelsLevel</code> ({{src:modules/renderers/sdl-renderer/src/SdlRenderer.cpp|SdlRenderer.cpp}}), <code>HtmlDomTextureRenderer::UpdatePixelsLevel</code> and <code>SvgDomTextureRenderer::UpdatePixelsLevel</code> throw <code>std::runtime_error</code> for level != 0 (\"does not support mip-level texture uploads ... Use <code>Texture2D::SetData(level=0, ...)</code> only\"), and each renderer's doc marks this throws-by-design. The XNB reader ({{src:modules/content/src/Xnb/Texture2DContentTypeReader.cpp|Texture2DContentTypeReader.cpp}}) creates the texture with <code>mipMap</code> = <code>levelCount</code> &gt; 1 and calls <code>SetData(level, ...)</code> for every level; <code>Texture2D::SetData</code> forwards level &gt; 0 to the renderer, so a mipmapped XNB texture fails to load on these renderers with a <code>std::runtime_error</code> rather than a <code>NotSupportedException</code>.</p>",
    "sources": [
     {
      "path": "modules/renderers/canvas/src/CanvasTextureRenderer.cpp",
@@ -17725,7 +17887,7 @@
      "note": "per-level SetData loop"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The XNB consequence is inferred from the reader's upload loop; no mipmapped asset was loaded on either renderer.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The XNB consequence is inferred from the reader's upload loop; no mipmapped asset was loaded on either renderer.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The XNB consequence is traced through <code>Texture2DReader</code>, <code>Texture2D::SetData</code> and the renderers' level uploads; no mipmapped asset was loaded on any renderer. Tests: Check C of {{src:modules/renderers/freedirect/examples/freedirect_texture_rendertarget_test.cpp|freedirect_texture_rendertarget_test.cpp}} pins the <code>FreeDirect</code> throw; no CANVAS test exists and no test loads a mipmapped XNB texture on these renderers.</p>",
    "reproduction": null,
    "tests_current": "<p>No CANVAS or FREEDIRECT test loads a mipmapped texture.</p>",
    "regression_test": "<p>A test that loads a mipmapped XNB texture on each renderer and expects either success (levels ignored) or a documented NotSupportedException.</p>",
@@ -17745,7 +17907,8 @@
    },
    "origin": "Chapter-package candidate WP06-i003",
    "pkg": "B10",
-   "temp_id": "CNA-PLAT-001"
+   "temp_id": "CNA-PLAT-001",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -17792,7 +17955,8 @@
    },
    "origin": "Chapter-package candidate WP06-i015",
    "pkg": "B10",
-   "temp_id": "CNA-PLAT-002"
+   "temp_id": "CNA-PLAT-002",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -17815,7 +17979,7 @@
      "note": "EasyGLRenderer::RequireSupportedFillModeEXT"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. The shared <code>WireFrame</code> tests (<code>GraphicsDeviceCapabilityTests</code>.cpp) assert that the reported capability matches the actual draw, so both the positive and the refusal arm exist. In CI they run only in the unfiltered general job, which builds the OPENGLES3 identity (an ES context); platform-ci's OPENGL33 leg runs smoke games rather than these fixtures, so no CI job runs them on desktop GL, and which arm the CI ES context takes depends on whether it exposes <code>GL_NV_polygon_mode</code>.</p>",
    "reproduction": null,
    "tests_current": "<p>EasyGL wireframe fixtures run on desktop GL in CI; the refusal branch is exercised only where a context lacks the extensions.</p>",
    "regression_test": "<p>A GLES/WebGL context test that asserts the capability is false and the draw throws.</p>",
@@ -17831,7 +17995,8 @@
    },
    "origin": "Chapter-package candidate WP06-i016",
    "pkg": "B10",
-   "temp_id": "CNA-PLAT-003"
+   "temp_id": "CNA-PLAT-003",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -17840,21 +18005,21 @@
    "id": "CNA-PLAT-004",
    "class": "platform-limitation",
    "title": "On OpenGL ES 3.0 and WebGL 2 contexts OcclusionQuery::PixelCount is boolean (0 or 1)",
-   "summary": "Those APIs only offer GL_ANY_SAMPLES_PASSED, so EasyGL reports whether any sample passed rather than how many; isPixelCountPreciseEXT() reports which kind of count is in effect.",
+   "summary": "ES 3.0 and WebGL 2 only offer GL_ANY_SAMPLES_PASSED, so EasyGL reports whether any sample passed rather than how many; the public OcclusionQuery::isPixelCountPreciseEXT() reports which kind of count is in effect, but only after the first query has begun.",
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "n/a",
    "confidence": "verified-by-reading",
    "public_contract": "Microsoft::Xna::Framework::Graphics::OcclusionQuery::PixelCount on EasyGL GLES/WebGL profiles",
    "expected": "<p>XNA's OcclusionQuery.PixelCount is the number of samples that passed.</p>",
-   "actual": "<p>{{src:modules/renderers/easygl/src/EasyGLRenderer.cpp|EasyGLRenderer.cpp}} resolves the precise target (<code>ResolvePreciseTarget</code>); where only <code>GL_ANY_SAMPLES_PASSED</code> exists, <code>PixelCount</code> is 0 or 1, and <code>EasyGLOcclusionQueryRenderer::isPixelCountPreciseEXT()</code> returns false.</p>",
+   "actual": "<p>{{src:modules/renderers/easygl/src/EasyGLRenderer.cpp|EasyGLRenderer.cpp}} resolves the precise target once per process (<code>ResolvePreciseTarget</code>, at the first <code>EasyGLOcclusionQueryRenderer::Begin</code>); where only <code>GL_ANY_SAMPLES_PASSED</code> exists, <code>PixelCount</code> is 0 or 1 and <code>EasyGLOcclusionQueryRenderer::PixelCountIsPreciseEXT()</code> (behind the public <code>OcclusionQuery::isPixelCountPreciseEXT()</code>) returns false. That accessor reads a process-wide flag that starts unresolved, so it returns false until some query has called <code>Begin()</code>, and it therefore also under-reports on desktop GL before first use.</p>",
    "sources": [
     {
      "path": "modules/renderers/easygl/src/EasyGLRenderer.cpp",
      "note": "ResolvePreciseTarget, EasyGLOcclusionQueryRenderer::PixelCount and isPixelCountPreciseEXT"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. Tests: {{src:modules/graphics/tests/Microsoft/Xna/Framework/Graphics/OcclusionQueryPixelCountPrecisionTests.cpp|OcclusionQueryPixelCountPrecisionTests.cpp}} (<code>PixelCountMatchesWhatTheQuerySaysItIs</code>) asserts <code>PixelCount</code> &lt;= 1 when <code>isPixelCountPreciseEXT()</code> is false and the viewport area otherwise, and the <code>EasyGL</code> visible-quad example has a boolean branch. The unfiltered general CI job builds the OPENGLES3 identity, which requests an ES context; platform-ci's OPENGL33 leg runs smoke games rather than these fixtures, so no CI job runs them on desktop GL.</p>",
    "reproduction": null,
    "tests_current": "<p>EasyGL occlusion fixtures run on desktop GL in CI.</p>",
    "regression_test": "<p>A GLES/WebGL-context test asserting isPixelCountPreciseEXT() is false and PixelCount is 0 or 1.</p>",
@@ -17870,7 +18035,8 @@
    },
    "origin": "Chapter-package candidate WP08-i019",
    "pkg": "B10",
-   "temp_id": "CNA-PLAT-004"
+   "temp_id": "CNA-PLAT-004",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -17909,7 +18075,8 @@
    },
    "origin": "Chapter-package candidate WP09-i033",
    "pkg": "B10",
-   "temp_id": "CNA-PLAT-005"
+   "temp_id": "CNA-PLAT-005",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -17922,7 +18089,7 @@
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "n/a",
-   "confidence": "verified-by-reading",
+   "confidence": "recorded-by-cna",
    "public_contract": "SpriteBatch drawing a RenderTarget2D with a tint or NonPremultiplied blend on DIRECT2D under Wine/Proton",
    "expected": "<p>On native Windows, Direct2D provides the ColorMatrix and Premultiply effects the renderer uses for these draws.</p>",
    "actual": "<p>{{src:modules/renderers/direct2d/examples/CMakeLists.txt|CMakeLists.txt}} sets <code>CNA_DIRECT2D_SKIP_RENDER_TARGET_DECORATION=1</code> and <code>CNA_DIRECT2D_SKIP_ADVANCED_BLEND=1</code> for the WINE and PROTON runtimes, with the comment that WineD3D and Proton's Direct2D do not register ColorMatrix and ignore those composite modes. {{src:modules/renderers/direct2d/src/Direct2DRenderer.cpp|Direct2DRenderer.cpp}} probes <code>SupportsColorMatrixEffect()</code> and, for a RenderTarget2D source that needs a tint or NonPremultiplied conversion, throws <code>NotSupportedException</code> (D2D-85) instead of using a CPU fallback.</p>",
@@ -17952,7 +18119,8 @@
    },
    "origin": "Chapter-package candidate WP11-i003",
    "pkg": "B10",
-   "temp_id": "CNA-PLAT-006"
+   "temp_id": "CNA-PLAT-006",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -17999,7 +18167,8 @@
    },
    "origin": "Chapter-package candidate WP11-i014",
    "pkg": "B10",
-   "temp_id": "CNA-PLAT-007"
+   "temp_id": "CNA-PLAT-007",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -18199,7 +18368,8 @@
    },
    "origin": "Chapter package WP15 candidate WP15-i014 (ch50-storage)",
    "pkg": "B11",
-   "temp_id": "CNA-PLAT-011"
+   "temp_id": "CNA-PLAT-011",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -18584,15 +18754,15 @@
    ],
    "id": "CNA-VGAP-003",
    "class": "verification-gap",
-   "title": "EffectParameter's lenient mode for CNA-constructed parameters is untested, including a SetValue(Texture*) that GetValueTexture2D() does not read back",
-   "summary": "Parameters without compiled storage accept SetValue(string) on any record, ignore type metadata and store SetValue(Texture*) where the typed getters do not look; only compiled-mode checks are tested.",
+   "title": "No test pins EffectParameter's divergences for CNA-constructed parameters, including a SetValue(Texture*) that GetValueTexture2D() does not read back",
+   "summary": "Parameters without compiled storage keep separate base and typed texture slots and refuse numeric access only for Object-class parameters; the C API smoke test exercises the lenient string, numeric and texture setters, but no test pins that a texture set through the base overload reads back as null, or that the numeric refusal is by class rather than by storage.",
    "subsystem": "Graphics & renderers",
    "status": "open",
    "severity": "n/a",
    "confidence": "verified-by-reading",
    "public_contract": "Microsoft::Xna::Framework::Graphics::EffectParameter SetValue/GetValue on stock-effect and standalone parameters",
    "expected": "<p>XNA rejects mismatched parameter access with <code>InvalidCastException</code>; CNA does so for compiled effects (FX-089/FX-105) and deliberately keeps a lenient mode for CNA-constructed parameters, which the C API's standalone-parameter tests rely on.</p>",
-   "actual": "<p>In {{src:modules/graphics/src/Xna/EffectParameter.cpp|EffectParameter.cpp}}, when <code>compiledStorage_</code> is null, <code>SetValue(const std::string&amp;)</code> stores the string whatever the record's type, <code>RequireNumericParameter</code> does not apply, and <code>SetValue(Texture*)</code> writes <code>textureData_</code> while <code>GetValueTexture2D()</code> returns <code>texture2DData_</code> - so a texture set through the base-class overload reads back as null.</p>",
+   "actual": "<p>In {{src:modules/graphics/src/Xna/EffectParameter.cpp|EffectParameter.cpp}}, <code>RequireNumericParameter</code> runs first in every numeric accessor and refuses only Object-class parameters, whether or not the parameter has compiled storage, so its comment's carve-out for CNA-constructed parameters is really a class rule: a CNA-constructed Object-class parameter still refuses numeric access. When <code>compiledStorage_</code> is null nothing else is checked: <code>SetValue(const std::string&amp;)</code> stores the string whatever the record's type, numeric setters write <code>floatData_</code> whatever the class, and <code>SetValue(Texture*)</code> writes <code>textureData_</code> while <code>GetValueTexture2D()</code> returns texture2DData_, so a texture set through the base-class overload reads back as null (the header records the separate texture slots as an out-of-scope API-shape decision, Task 863).</p>",
    "sources": [
     {
      "path": "modules/graphics/src/Xna/EffectParameter.cpp",
@@ -18603,7 +18773,7 @@
      "note": "compiled-mode type checks"
     }
    ],
-   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p>",
+   "evidence": "<p>Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry.</p><p><em>Independent re-verification:</em> Checked by reading the named sources at 009d40f5; nothing was built or executed for this entry. Tests: <code>EffectTests</code>.cpp and {{src:tests/support/CNA/TestSupport/CompiledEffectConformance.hpp|CompiledEffectConformance.hpp}} cover compiled-mode checks; <code>EffectParameterTests</code>.cpp covers typed round trips only; {{src:modules/c-api/tests/pure_c/EffectParameterSmoke.c|EffectParameterSmoke.c}} (<code>CApi_EffectParameterSmoke</code>) sets a string, matrices, quaternions and textures on a standalone Vector/Single parameter but always sets the typed texture slot before reading it back, and no test asserts the Object-class numeric refusal or the base-overload read-back result.</p>",
    "reproduction": null,
    "tests_current": "<p><code>EffectTests.cpp</code> and {{src:tests/support/CNA/TestSupport/CompiledEffectConformance.hpp|CompiledEffectConformance.hpp}} cover compiled-mode checks; <code>EffectParameterTests.cpp</code> does not cover the lenient paths above.</p>",
    "regression_test": "<p>Tests that pin the lenient contract explicitly: string on a numeric stock parameter, SetValue(Texture*) followed by each typed getter.</p>",
@@ -18619,7 +18789,8 @@
    },
    "origin": "Chapter-package candidate WP07-i012",
    "pkg": "B10",
-   "temp_id": "CNA-VGAP-003"
+   "temp_id": "CNA-VGAP-003",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -19105,7 +19276,8 @@
    },
    "origin": "new finding at TARGET review: searching .github/workflows and CMakePresets.json for every public identity while verifying P2-032",
    "pkg": "B5",
-   "temp_id": "CNA-VGAP-010"
+   "temp_id": "CNA-VGAP-010",
+   "tests_present": true
   },
   {
    "cand_ids": [
@@ -19170,7 +19342,8 @@
    },
    "origin": "Phase-2 candidate P2-158 (development/internals/platforms/index.html)",
    "pkg": "B7",
-   "temp_id": "CNA-VGAP-011"
+   "temp_id": "CNA-VGAP-011",
+   "tests_present": false
   },
   {
    "cand_ids": [
@@ -19201,7 +19374,7 @@
      "note": "the launcher the live Wayland suites need, invoked by no workflow"
     }
    ],
-   "evidence": "<p>Checked by reading every file under <code>.github/workflows</code> for <code>CNA_PLATFORM=WAYLAND</code> (none) and the Wayland ctest registrations in <code>cmake/UnitTests.cmake</code> at 009d40f5. Not executed. CNA's own Wayland notes say the backend is “implemented and locally tested, not CI-verified” and “no workflow selects it”.</p>",
+   "evidence": "<p>Checked by reading every file under <code>.github/workflows</code> for <code>CNA_PLATFORM=WAYLAND</code> (none) and the Wayland ctest registrations in <code>cmake/UnitTests.cmake</code> at 009d40f5. Not executed. CNA's own Wayland notes say the backend is “implemented and locally tested, not CI-verified” and “no workflow selects it”.</p><p><em>Independent re-verification:</em> Checked by reading every file under <code>.github/workflows</code> for <code>CNA_PLATFORM</code>=WAYLAND (none) and the Wayland ctest registrations in {{src:cmake/UnitTests.cmake|UnitTests.cmake}} at 009d40f5. Not executed. CNA's own documentation at TARGET ({{src:docs/platform-wayland.md|platform-wayland.md}}, {{src:plans/plan_wayland.md|plan_wayland.md}}) says nothing about the backend's CI status; the wording 'implemented and locally tested, not CI-verified' is this site's own guidance in its native-platforms page, not a quotation from CNA.</p>",
    "reproduction": null,
    "tests_current": "<p>The Wayland suites exist and are thorough (an in-process compositor, headless Weston and Mutter, a real IME), but they run only when a developer configures <code>CNA_PLATFORM=WAYLAND</code> and runs the launcher; CI runs only <code>CnaWaylandPlatformSelection</code> (a configure test that needs no compositor).</p>",
    "regression_test": "<p>A <code>platform-ci</code> job (or matrix cell) that configures <code>CNA_PLATFORM=WAYLAND</code>, installs a compositor, and runs the mapping and protocol suites (which need none) plus the Weston/Mutter suites where the compositor is present, matching the X11 cell.</p>",
@@ -19229,7 +19402,8 @@
    },
    "origin": "Phase-2 candidate P2-171 (development/internals/platforms/wayland.html)",
    "pkg": "B7",
-   "temp_id": "CNA-VGAP-012"
+   "temp_id": "CNA-VGAP-012",
+   "tests_present": true
   },
   {
    "cand_ids": [

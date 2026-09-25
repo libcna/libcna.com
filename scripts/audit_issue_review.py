@@ -176,7 +176,7 @@ def build(rv: dict[str, dict], dec: dict, files: set[str]) -> tuple[dict, list[s
         if act != "reject":
             if isinstance(r.get("tests_present"), bool):
                 sets["tests_present"] = r["tests_present"]
-            conf = BASIS_TO_CONFIDENCE.get(r.get("evidence_basis_after") or "")
+            conf = BASIS_TO_CONFIDENCE.get((r.get("evidence_basis_after") or "").lower())
             if conf:
                 downgrade = conf == "verified-by-reading" and cur["confidence"] in ("reproduced", "recorded-by-cna")
                 if downgrade and act not in ("accept", "override"):
