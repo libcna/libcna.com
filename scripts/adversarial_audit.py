@@ -498,6 +498,7 @@ def counts_block() -> str:
     audit_created = set((trail.get("added") or {}).values())          # entries that exist only because the audit added them (reclassified ones were reviewed under their earlier id)
     verdicts: Counter = Counter(v for k, v in latest.items() if k in base_ids)
     reviewed = len([k for k in latest if k in base_ids])
+    folded_unreviewed = sorted(k for k in (trail.get("folded") or {}) if k in base_ids and k not in latest)     # duplicates folded into a reviewed survivor before any reviewer saw them
     created_reviewed = len([k for k in latest if k in audit_created])
     dis_dir = ROOT / "audit" / "data" / "adversarial" / "dismissal-reviews"
     dreviewed = 0
@@ -569,7 +570,8 @@ def counts_block() -> str:
              f"| Entries with a test touching the area | {c['tests_present']} of {c['total']} |",
              f"| Subsystems | " + " · ".join(f"{k} {v}" for k, v in sorted(sub.items(), key=lambda kv: -kv[1])) + " |",
              f"| Audit operations recorded in `dispositions.json` | folded {len(trail.get('folded', {}))} · retired {len(trail.get('retired', {}))} · reclassified {len(trail.get('reclassified', {}))} · added {len(trail.get('added', {}))} |",
-             f"| Independent issue reviews ingested | {reviewed} of the {len(base_ids)} Phase-3 entries; " + (", ".join(f"{k} {v}" for k, v in sorted(verdicts.items())) or "none")
+             f"| Independent issue reviews ingested | {reviewed} of the {len(base_ids)} Phase-3 entries re-read individually (" + (", ".join(f"{k} {v}" for k, v in sorted(verdicts.items())) or "none")
+             + f"), plus {len(folded_unreviewed)} more folded as identical-source duplicates into a re-read survivor ({', '.join(x.replace('CNA-', '') for x in folded_unreviewed) or 'none'})"
              + f"; entries added by the audit that a separate reviewer then tried to refute: {created_reviewed} of {len(audit_created)} |",
              f"| Independent dismissal reviews ingested | {dreviewed} of 121; " + (", ".join(f"{k} {v}" for k, v in sorted(dverdicts.items())) or "none") + " |",
              f"| Independent site-errata verifications ingested | {ereviewed} of 76 Phase-3 errata; " + (", ".join(f"{k} {v}" for k, v in sorted(everdicts.items())) or "none") + " |",
@@ -683,8 +685,8 @@ def cmd_counts(write: bool) -> int:
     if os.environ.get("PHASE3_FINAL") == "1":
         m = re.search(r"Independent Bible-unit reviews ingested \| (\d+) of 98", new)
         a = re.search(r"Independent auxiliary-document reviews ingested \| (\d+) of 21", new)
-        r_ = re.search(r"Independent issue reviews ingested \| (\d+) of the (\d+) Phase-3 entries", new)
-        if not (m and int(m.group(1)) == 98 and a and int(a.group(1)) == 21 and r_ and r_.group(1) == r_.group(2)):
+        r_ = re.search(r"Independent issue reviews ingested \| (\d+) of the (\d+) Phase-3 entries re-read individually \(.*?\), plus (\d+) more folded", new)
+        if not (m and int(m.group(1)) == 98 and a and int(a.group(1)) == 21 and r_ and int(r_.group(1)) + int(r_.group(3)) == int(r_.group(2))):
             print("ERROR counts: not every canonical unit (98), auxiliary document (21) and Phase-3 Known Issues entry has an independent review")
             return 1
     print("counts: ledger block is current")
