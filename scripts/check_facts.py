@@ -34,6 +34,67 @@ def text(rel: str) -> str:
     return re.sub(r"\s+", " ", " ".join(parts))
 
 
+def content_text(rel: str, anchor: str | None = None) -> str:
+    """Visible page content without navigation chrome; with `anchor`, only that heading's section."""
+    soup = BeautifulSoup((ROOT / rel).read_text(encoding="utf-8"), "html.parser")
+    main = soup.find("main") or soup.body or soup
+    for t in main.find_all(["script", "style", "nav", "aside", "footer"]):
+        t.decompose()
+    if anchor:
+        head = main.find(id=anchor)
+        if head is None:
+            return ""
+        parts = [head.get_text(" ")]
+        for sib in head.find_next_siblings():
+            if sib.name in ("h1", "h2") or (sib.name == head.name):
+                break
+            parts.append(sib.get_text(" "))
+        return re.sub(r"\s+", " ", " ".join(parts))
+    return re.sub(r"\s+", " ", main.get_text(" "))
+
+
+# Language-binding policy (external_pinned.language_bindings). The canonical section states both sets, the homepage
+# leads with the maintained set, and no sentence anywhere presents an archived binding beside a maintained one as if
+# it were current (a sentence naming both must say "archived"). Counts of eight/nine bindings or ten languages must
+# stand in a historical or archived context.
+LB = facts["external_pinned"]["language_bindings"]
+MAINTAINED_EXTERNAL = re.compile(r"C#|\bJava\b|\bTypeScript\b")
+ARCHIVED_NAMES = re.compile(r"\b(?:" + "|".join(map(re.escape, LB["archived"])) + r")\b|cna-(?:"
+                            + "|".join(x.lower() for x in LB["archived"]) + r")\b")
+STALE_COUNT = re.compile(r"\b(?:eight|8|nine|9)\s+(?:public\s+|external\s+|language\s+)*bindings\b|\bEight binding projects\b"
+                         r"|\b(?:ten|10)\s+(?:programming\s+)?languages\b", re.I)
+
+
+def binding_policy(pages: list[str]) -> int:
+    bad = 0
+    page, _ = LB["canonical_page"].split("#")
+    maintained = content_text(page, "maintained-bindings")
+    archived = content_text(page, "archived-bindings")
+    for lang in LB["maintained"]:
+        if not re.search(rf"(?<![\w#]){re.escape(lang)}(?![\w#])", maintained):
+            print(f"FAIL binding policy: {page}#maintained-bindings does not name {lang}"); bad += 1
+    for lang in LB["archived"]:
+        if not re.search(rf"\b{re.escape(lang)}\b", archived):
+            print(f"FAIL binding policy: {page}#archived-bindings does not name {lang}"); bad += 1
+    for needle in ("Archived", "not maintained", "no forward compatibility guarantee", "CNA Lab"):
+        if needle not in archived:
+            print(f"FAIL binding policy: {page}#archived-bindings lacks '{needle}'"); bad += 1
+    lead = "actively maintains " + ", ".join(LB["maintained"][:-1]) + " and " + LB["maintained"][-1] + " bindings"
+    home = (ROOT / "index.html").read_text(encoding="utf-8")
+    if lead not in content_text("index.html") or 'href="docs/c-api.html#archived-bindings"' not in home:
+        print(f"FAIL binding policy: index.html must lead with '{lead}' and link the archived bindings"); bad += 1
+    for rel in pages:
+        body = content_text(rel)
+        for sentence in re.split(r"(?<=[.!?;])\s+", body):
+            if MAINTAINED_EXTERNAL.search(sentence) and ARCHIVED_NAMES.search(sentence) and not re.search(r"archiv", sentence, re.I):
+                print(f"BINDING? {rel}: archived binding named beside maintained ones without 'archived': {sentence[:160]}"); bad += 1
+        for m in STALE_COUNT.finditer(body):
+            ctx = body[max(0, m.start() - 160): m.end() + 160]
+            if not re.search(r"archiv|during its development|historic", ctx, re.I):
+                print(f"BINDING? {rel}: '{m.group(0)}' outside a historical or archived context: {ctx.strip()[:160]}"); bad += 1
+    return bad
+
+
 # (page, regex, description) -- <<name>> placeholders are filled from F
 CHECKS = [
     ("index.html", r"\b<<renderer_identities>>\b.{0,40}Renderer identities", "homepage stat: renderer identities"),
@@ -105,6 +166,8 @@ def main() -> int:
                 if re.search(r"alpha\.1|earlier|previous|BASE|was |had |historical|Developer|compiled|of the 25|spread over", ctx, re.I):
                     continue
                 print(f"DRIFT {page}: {what} {m.group(1)} != {want} ... {ctx.strip()[:150]}"); bad += 1
+    bad += binding_policy([p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.html")
+                           if not ({"audit", "scripts", "build-probe", ".git", "known-issues"} & set(p.relative_to(ROOT).parts))])
     print(f"fact checks: {bad} problem(s)")
     return 1 if bad else 0
 
