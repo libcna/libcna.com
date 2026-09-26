@@ -5,7 +5,7 @@
 #   ./scripts/regenerate_site.sh --check   # regenerate in a throwaway copy of HEAD's tree and report drift; your tree is untouched
 #
 # Needs only Python 3 and git. The reference inventories are read from the CNA git objects at the commit in cnahead
-# (CNA clone: ../cna, or set CNA_REPO). If that clone or commit is missing, that one step is skipped with a warning.
+# (CNA clone: ../cna, or set CNA_REPO): page source-link tokens are expanded and validated against that tree. The clone is only read.
 #
 # Order matters (see development/maintenance.html, "Regenerate"):
 #   1. known_issues.py build      data/known-issues.json + known-issues/** from audit/data/bible/issues/issues-source.json
@@ -62,6 +62,10 @@ for f in cnahead audit/data/bible/issues/issues-source.json audit/data/bible/iss
   [ -f "$f" ] || { echo "missing required file: $f (run from a complete checkout)" >&2; exit 1; }
 done
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
+export CNA_REPO="${CNA_REPO:-$ROOT/../cna}"
+TARGET="$(tr -d '[:space:]' < cnahead)"
+git -C "$CNA_REPO" cat-file -e "$TARGET^{commit}" 2>/dev/null || {
+  echo "CNA commit $TARGET (cnahead) not found in '$CNA_REPO'. Clone CNA next to this repository or set CNA_REPO." >&2; exit 1; }
 
 run() { echo "== $*"; "$@"; }
 
@@ -69,14 +73,7 @@ run python3 scripts/known_issues.py build
 run python3 scripts/site_deep.py hubs
 run python3 scripts/site_deep.py sync
 
-CNA_REPO="${CNA_REPO:-$ROOT/../cna}"
-if git -C "$CNA_REPO" cat-file -e "$(tr -d '[:space:]' < cnahead)^{commit}" 2>/dev/null; then
-  export CNA_REPO
-  run python3 scripts/generate_dev_reference.py
-else
-  echo "WARNING: CNA commit $(tr -d '[:space:]' < cnahead) not found in '$CNA_REPO' (set CNA_REPO);" >&2
-  echo "         skipping generate_dev_reference.py -- the committed reference pages are left as they are." >&2
-fi
+run python3 scripts/generate_dev_reference.py
 
 run python3 scripts/site_dev.py sync
 run python3 scripts/site_nav.py sync
