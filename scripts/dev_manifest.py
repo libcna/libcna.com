@@ -312,7 +312,7 @@ GROUPS: list[dict] = [
               "bindings/csharp.html"),
             P("development/internals/bindings/java.html", "Java binding internals", "Java binding",
               "bindings/java.html"),
-            P("development/internals/bindings/python.html", "Python binding internals", "Python binding",
+            P("development/internals/bindings/python.html", "Python binding internals (archived)", "Python binding (archived)",
               "bindings/python.html"),
         ],
     },
