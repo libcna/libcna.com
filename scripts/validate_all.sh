@@ -28,6 +28,8 @@ run python3 scripts/apply_expansions.py check
 run python3 scripts/backlinks.py check
 if [ -f data/known-issues.json ]; then
   run python3 scripts/known_issues.py validate
+  # hand-written references to entries whose id the audit allocated: marked, current, and no unmarked one
+  run python3 scripts/issue_refs.py check
 fi
 run python3 scripts/compare_presentation.py --phase3 --quiet
 if [ "${PHASE3_FINAL:-0}" = "1" ]; then
