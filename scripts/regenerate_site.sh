@@ -8,8 +8,11 @@
 # (CNA clone: ../cna, or set CNA_REPO): page source-link tokens are expanded and validated against that tree. The clone is only read.
 #
 # Order matters (see development/maintenance.html, "Regenerate"):
-#   1. known_issues.py build      data/known-issues.json + known-issues/** from audit/data/bible/issues/issues-source.json
-#                                 (stable semantic keys resolved here; visible CNA-BUG/GAP/PLAT/VGAP numbers are output)
+#   1. known_issues.py merge, build
+#                                 merge: audit/data/bible/issues/{verified-*,merge-map,patches,patches-adversarial}.json ->
+#                                 issues-source.json + dispositions.json. Visible CNA-BUG/GAP/PLAT/VGAP numbers are ALLOCATED here,
+#                                 in order, so a reclassification can shift them; dispositions.json records stable key -> current id.
+#                                 build: data/known-issues.json + known-issues/** pages and hubs from issues-source.json.
 #   2. site_deep.py hubs, sync    Deep Dives / Known Issues hubs, sidebars, breadcrumbs, pagers
 #   3. generate_dev_reference.py  five reference pages. It REWRITES those pages whole, which drops their backlink blocks,
 #                                 so it must run before step 6.
@@ -69,6 +72,7 @@ git -C "$CNA_REPO" cat-file -e "$TARGET^{commit}" 2>/dev/null || {
 
 run() { echo "== $*"; "$@"; }
 
+run python3 scripts/known_issues.py merge
 run python3 scripts/known_issues.py build
 run python3 scripts/site_deep.py hubs
 run python3 scripts/site_deep.py sync

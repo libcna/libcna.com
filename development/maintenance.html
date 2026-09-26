@@ -126,6 +126,7 @@
         <ul class="toc-list">
           <li><a href="#pin">Pin policy</a></li>
           <li><a href="#revision">Advance the documented revision</a></li>
+          <li><a href="#workflow">Routine maintenance without agent tooling</a></li>
           <li><a href="#manual">What remains manually reviewed</a></li>
           <li><a href="#generated">What is generated</a></li>
           <li><a href="#checks">Checks performed</a></li>
@@ -176,6 +177,52 @@ A built page carries the hash inside its expanded links. Rebuilding from the fra
 <li><strong>Inspect the generated diff, then run the checks.</strong> Read what the generator changed (counts, options that appeared or vanished, modules added), fix the prose that depended on it, and run the per-page validator on every touched Development page before the full run.</li>
 </ol>
 <div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Revision changes are atomic.</strong> Do not commit a new <code>cnahead</code> with old prose or old pinned links. The checkers reject mismatched markers: <code>check_source_links.py</code> treats a Development-page link pinned to any commit other than <code>cnahead</code>, or to a moving ref, as an error, and <code>validate_presentation.py</code> requires <code>cnahead</code> to equal the commit its own constant names. Commit the pin, the prose, the generated pages and the indexes together.</p></div>
+
+<h2 id="workflow">Routine maintenance without any agent tooling</h2>
+<p>Everything below runs with Python 3, Git and a text editor; no AI assistant, no <code>.claude</code> directory and no session state is needed or read. Two clones sit side by side: this repository and CNA (<code>../cna</code>, or set <code>CNA_REPO</code>; it is only read). The page source is the repository itself: authored pages are edited in place, and no page fragments are kept.</p>
+<pre><code class="language-bash"># 1. edit the canonical source (authored HTML, or the Known Issues data described below)
+./scripts/regenerate_site.sh          # 2. regenerate every generated part, in dependency order
+./scripts/validate_all.sh             # 3. run every validator (overall: PASS or FAIL)
+git diff --stat                       # 4. read what changed, then commit sources and generated files together
+./scripts/regenerate_site.sh --check  # optional: does the committed HEAD regenerate to itself? (uses a temporary worktree; your tree is untouched)</code></pre>
+<p>On a current checkout, regeneration changes nothing: running it and then <code>git status</code> shows a clean tree, and the <code>--check</code> mode reports drift if a generated file was edited by hand or a source was changed without regenerating. The retired-renderer scan needs read-only extractions of two CNA revisions; <code>./scripts/extract_cna_trees.sh</code> creates them under <code>~/.cache/libcna-com</code> (or export <code>CNA_BASE_TREE</code> and <code>CNA_TARGET_TREE</code>), and <code>validate_all.sh</code> skips only that scan while they are absent. It likewise skips the Phase-2 conservation check (<code>developer_ledger.py</code>) when the retired <code>developer.libcna.com</code> working tree is not next to this repository; every other validator runs from this repository and the CNA Git objects.</p>
+
+<h3 id="pipeline">Regeneration order</h3>
+<p>The order is a dependency chain, not a preference; <code>scripts/regenerate_site.sh</code> carries it with comments.</p>
+<ol>
+<li><strong><code>known_issues.py merge</code>, then <code>build</code>.</strong> <code>merge</code> reads the authored inputs in <code>audit/data/bible/issues/</code> and writes <code>issues-source.json</code> and <code>dispositions.json</code>; <code>build</code> writes <code>data/known-issues.json</code> and every page under <code>known-issues/</code>.</li>
+<li><strong><code>site_deep.py hubs</code> and <code>sync</code>.</strong> Deep Dives and Known Issues hubs, sidebars, breadcrumbs and pagers.</li>
+<li><strong><code>generate_dev_reference.py</code>.</strong> The five reference pages, rewritten whole from the pinned CNA Git objects. This drops their backlink blocks, so it must come before step 6.</li>
+<li><strong><code>site_dev.py sync</code> and <code>site_nav.py sync</code>.</strong> Development and docs sidebars, breadcrumbs and pagers.</li>
+<li><strong><code>backlinks.py apply</code>.</strong> The marked &ldquo;Deep dives on this topic&rdquo; and &ldquo;Known issues in this area&rdquo; blocks on <code>docs/</code> and <code>development/</code> pages, recomputed from the built pages.</li>
+<li><strong><code>issue_refs.py apply</code>.</strong> Rewrites each hand-written <code>&lt;!--issue:KEY--&gt;</code> reference to the entry&rsquo;s current visible id and link. It needs the entries from step 1 and runs after the backlink blocks exist.</li>
+<li><strong><code>build_site_indexes.py</code>, last.</strong> <code>search-index.json</code> and <code>sitemap.xml</code> from the finished pages&rsquo; metadata.</li>
+</ol>
+<p><code>apply_expansions.py apply</code> and <code>apply_page_fixes.py apply</code> are not part of the routine. An expansion block is rewritten from its source under <code>audit/data/bible/expansions/</code>, which would revert later page fixes; the validators run their <code>check</code> modes instead.</p>
+
+<h3 id="known-issues-edit">Editing Known Issues</h3>
+<p>Two identifiers exist on purpose. The <strong>stable key</strong> is the entry&rsquo;s identity that does not move: for the earlier audits the original id (<code>CNA-BUG-001</code> to <code>CNA-BUG-249</code>, <code>CNA-GAP-001</code> to <code>CNA-GAP-062</code> and the like), for entries the independent audit added a temporary id <code>NEW-AUDIT-nn</code>. The <strong>visible number</strong> (<code>CNA-BUG-nnn</code>, <code>CNA-GAP-nnn</code>, <code>CNA-PLAT-nnn</code>, <code>CNA-VGAP-nnn</code>) is generated: ids of the earlier audits never change, later ids are allocated in order and can shift when an entry is reclassified. <code>dispositions.json</code> (<code>adversarial_audit</code>) maps stable key to current id.</p>
+<ul>
+<li><strong>Change an entry, or add, reclassify, fold or retire one:</strong> edit the authored inputs (<code>verified-*.json</code>, <code>patches.json</code>, <code>merge-map.json</code> and, for changes after the independent audit, <code>patches-adversarial.json</code>, whose format is documented at the top of its section in <code>scripts/known_issues.py</code>), never <code>issues-source.json</code>, <code>data/known-issues.json</code> or the pages under <code>known-issues/</code>. Then regenerate and validate. Only issues that exist at the pinned commit are published; there is no &ldquo;fixed&rdquo; status, so a fixed issue is retired with evidence.</li>
+<li><strong>Refer to an issue from prose:</strong> write <code>&lt;!--issue:KEY--&gt;&lt;a href=&quot;...&quot;&gt;CNA-BUG-nnn&lt;/a&gt;&lt;!--/issue--&gt;</code> with the stable key; regeneration rewrites the text and link. <code>issue_refs.py check</code> (inside <code>validate_all.sh</code>) rejects an unmarked link to, or mention of, an entry whose number can shift. Inside an issue&rsquo;s own text use <code>&#123;&#123;issue:KEY&#125;&#125;</code>.</li>
+<li><strong>Backlinks</strong> on other pages come from each issue&rsquo;s related links through <code>backlinks.py</code>; nothing is edited by hand.</li>
+</ul>
+
+<h3 id="generated-files">Edit the source, not the output</h3>
+<p>Do not edit by hand: <code>known-issues/**</code> and <code>data/known-issues.json</code>; the five pages under <code>development/reference/</code>; the sidebar, breadcrumb and pager regions of Development, Deep Dives, Known Issues and docs pages; the marked <code>p3:deep-links</code> and <code>p3:issue-links</code> blocks; the text between <code>&lt;!--issue:KEY--&gt;</code> markers; <code>search-index.json</code> and <code>sitemap.xml</code>; <code>img/architecture-diagram.svg</code> (from <code>make_architecture_diagram.py</code>). Authored prose, everything outside those regions and the constants listed in <a href="#revision">Advance the documented revision</a> are edited directly. The next regeneration overwrites a hand edit of generated output, and <code>regenerate_site.sh --check</code> reports it.</p>
+
+<h3 id="evidence">What validation proves</h3>
+<p><code>validate_all.sh</code> passing is structural and source-level evidence: HTML and metadata are well formed, links and anchors resolve, source links exist at the pinned commit, canonical numbers match, generated regions are current, and no page lost content without a recorded reason. It does not show that CNA behaves as a page says at run time: a source-verified statement was read, not executed; a named test is registered, not passed; and no validator renders a page. The four levels stay separate: <em>source verification</em> (reading the pinned tree), <em>structural validation</em> (<code>validate_all.sh</code>), <em>runtime or test evidence</em> (only where a page says something was executed) and <em>browser QA</em> (below). The evidence labels are explained in <a href="../docs/verification.html">Verification</a> page and each page&rsquo;s evidence box.</p>
+
+<h3 id="browser-qa">Browser QA</h3>
+<p>Run it after a change to a page&rsquo;s markup, CSS or JavaScript, and before publishing a broad change; it is not needed for a text-only fix. Serve the repository and point <code>browser_qa.py</code> (headless Chrome through <code>websocket-client</code>) at it:</p>
+<pre><code class="language-bash">python3 -m http.server 8000 &amp;
+python3 scripts/browser_qa.py check http://localhost:8000/development/maintenance.html --width 1400 --scheme dark
+python3 scripts/browser_qa.py sweep urls.txt --out qa-shots     # every URL at 1400 and 390, light and dark</code></pre>
+<p>It reports horizontal overflow, header rows, console errors, failed images and the lowest text contrast. Low-contrast findings on inherited earlier-phase elements are known presentation debt, not a regression of the change being checked.</p>
+
+<h3 id="publish">Publishing</h3>
+<p>The site is static and is published from the repository root by GitHub Pages (<code>CNAME</code> names the domain). Before pushing: <code>regenerate_site.sh</code>, <code>validate_all.sh</code> reporting <code>overall: PASS</code>, a clean <code>git status</code>, and browser QA when markup or styling changed. A new <code>cnahead</code> is committed only together with its prose, pinned links, constants and generated files.</p>
 
 <h2 id="manual">What remains manually reviewed</h2>
 <p>Architecture, lifecycle, ownership, workflows, invariants, debugging advice, threading statements and every evidence label are authored prose. Generation intentionally does not synthesize architectural explanations: a human must trace the changed symbols, read the current source and decide whether each sentence, each test name and each ordering claim is still true. Two kinds of edit deserve extra care. A statement of <em>absence</em> (&ldquo;no test asserts&rdquo;, &ldquo;no workflow names&rdquo;) can be invalidated by any new file, so it needs a fresh search at the new commit. A statement of <em>count or default</em> should come from the generated pages or <code>data/current-facts.json</code>, not from memory; the fact checker fails a page whose whole-registry count disagrees with the canonical value.</p>

@@ -19,6 +19,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from pathlib import Path
@@ -26,7 +27,7 @@ from pathlib import Path
 import websocket  # websocket-client
 
 PORT = 9333
-PROFILE = Path(os.environ.get("QA_PROFILE", "/tmp/claude-1000/qa-chrome-profile"))
+PROFILE = Path(os.environ.get("QA_PROFILE") or Path(tempfile.gettempdir()) / "libcna-qa-chrome-profile")
 
 JS_METRICS = r"""
 (() => {

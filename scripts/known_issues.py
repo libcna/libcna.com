@@ -98,7 +98,7 @@ def load(path: Path) -> dict:
 
 def retired_rx():
     import check_retired_renderers as R
-    retired = R.derive(Path("/rv/tmp/libcna-v2/cna-base"), Path("/rv/tmp/libcna-v2/cna-target"))
+    retired = R.derive(R.BASE_TREE, R.TARGET_TREE)
     strong = sorted(i for i in retired if i not in R.WORDS)
     return re.compile(r"(?<![A-Za-z0-9_])(" + "|".join(map(re.escape, strong)) + r")(?![A-Za-z0-9_])", re.I)
 

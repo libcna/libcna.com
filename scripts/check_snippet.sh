@@ -5,7 +5,7 @@
 #   scripts/check_snippet.sh snippet.cpp [extra g++ args...]
 #
 # Environment overrides:
-#   CNA_TARGET_TREE   read-only TARGET worktree   (default /rv/tmp/libcna-v2/cna-target)
+#   CNA_TARGET_TREE   read-only TARGET worktree   (default ~/.cache/libcna-com/cna-target)
 #   SHARP_RUNTIME     sharp-runtime checkout (branch `next`)  (default ../sharp-runtime next to this repo)
 #   CNA_RENDERER      renderer macro suffix, one of the 25 identities (default HEADLESS)
 #
@@ -13,7 +13,7 @@
 # include them cannot be checked; that is reported by g++ and is not a snippet error.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-T="${CNA_TARGET_TREE:-/rv/tmp/libcna-v2/cna-target}"
+T="${CNA_TARGET_TREE:-${XDG_CACHE_HOME:-$HOME/.cache}/libcna-com/cna-target}"
 S="${SHARP_RUNTIME:-$here/../sharp-runtime}"
 R="${CNA_RENDERER:-HEADLESS}"
 [ -d "$T/modules" ] || { echo "TARGET tree not found: $T" >&2; exit 2; }

@@ -11,7 +11,8 @@ repository (the site does not publish a retired-renderer catalogue):
 Usage:
     check_retired_renderers.py [--base DIR] [--target DIR]
 
-Defaults: /rv/tmp/libcna-v2/cna-base and /rv/tmp/libcna-v2/cna-target.
+Defaults: $CNA_BASE_TREE and $CNA_TARGET_TREE, else ~/.cache/libcna-com/cna-base and cna-target
+(create them with scripts/extract_cna_trees.sh).
 
 Public content = every tracked/untracked file outside audit/, scripts/ and plan.md.
 Ordinary English words that double as identities (Magnum, Wicked, Glide, Sokol, Diligent) are only
@@ -21,11 +22,15 @@ flagged in identity-like spellings (all caps, CMake option form, or module-direc
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+_CACHE = Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "libcna-com"
+BASE_TREE = Path(os.environ.get("CNA_BASE_TREE") or _CACHE / "cna-base")      # CNA at the v0.1.0-alpha.1 baseline
+TARGET_TREE = Path(os.environ.get("CNA_TARGET_TREE") or _CACHE / "cna-target")  # CNA at the commit in cnahead
 WORDS = {"MAGNUM", "WICKED", "SOKOL", "DILIGENT", "GLIDE", "IGL"}
 SKIP_DIRS = {"audit", "scripts", ".git", ".idea"}
 SKIP_FILES = {"plan.md"}
@@ -51,8 +56,8 @@ def derive(base: Path, target: Path) -> set[str]:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--base", default="/rv/tmp/libcna-v2/cna-base")
-    ap.add_argument("--target", default="/rv/tmp/libcna-v2/cna-target")
+    ap.add_argument("--base", default=str(BASE_TREE))
+    ap.add_argument("--target", default=str(TARGET_TREE))
     args = ap.parse_args()
     retired = derive(Path(args.base), Path(args.target))
     strong = sorted(i for i in retired if i not in WORDS)

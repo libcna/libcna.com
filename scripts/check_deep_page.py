@@ -52,7 +52,7 @@ def main() -> int:
         return 2
     if args == ["--all"]:
         args = [p["path"] for p in DM.all_pages() if (ROOT / p["path"]).exists()]
-    retired = R.derive(Path("/rv/tmp/libcna-v2/cna-base"), Path("/rv/tmp/libcna-v2/cna-target"))
+    retired = R.derive(R.BASE_TREE, R.TARGET_TREE)
     strong = sorted(i for i in retired if i not in R.WORDS)
     strong_rx = re.compile(r"(?<![A-Za-z0-9_])(" + "|".join(map(re.escape, strong)) + r")(?![A-Za-z0-9_])", re.I)
     files, dirs = site_dev.target_tree()

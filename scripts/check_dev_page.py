@@ -85,7 +85,7 @@ def main() -> int:
     if not pages:
         print(__doc__)
         return 2
-    retired = R.derive(Path("/rv/tmp/libcna-v2/cna-base"), Path("/rv/tmp/libcna-v2/cna-target"))
+    retired = R.derive(R.BASE_TREE, R.TARGET_TREE)
     strong = sorted(i for i in retired if i not in R.WORDS)
     strong_rx = re.compile(r"(?<![A-Za-z0-9_])(" + "|".join(map(re.escape, strong)) + r")(?![A-Za-z0-9_])", re.I)
     files, dirs = site_dev.target_tree()

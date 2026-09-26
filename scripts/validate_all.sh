@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run every site validator. check_retired_renderers.py and the source-link/ledger checks need the pinned CNA
 # material (see audit/009d40f5-phase1-delta.md and audit/developer-absorption-phase2.md); the retired-renderer scan
-# is skipped when the extracted TARGET tree is absent.
+# is skipped when the extracted TARGET tree is absent. Create the trees with scripts/extract_cna_trees.sh.
 set -u
 cd "$(dirname "$0")/.."
 export PYTHONDONTWRITEBYTECODE=1
@@ -14,10 +14,15 @@ run python3 scripts/compare_presentation.py --phase2 --quiet
 run python3 scripts/check_facts.py
 run python3 scripts/check_source_links.py
 run python3 scripts/site_dev.py check
-if [ -f audit/data/developer-absorption-units.json ]; then
+# Phase-2 conservation check: compares against the retired developer.libcna.com working tree (../developer.libcna.com or
+# $DEVELOPER_REPO). That tree is external to this repository, so the check is skipped when it is not present.
+if [ -f audit/data/developer-absorption-units.json ] && [ -f "${DEVELOPER_REPO:-../developer.libcna.com}/cnahead" ]; then
   run python3 scripts/developer_ledger.py check
+else
+  echo "== developer_ledger.py skipped (developer.libcna.com working tree not present)"
 fi
-if [ -d "${CNA_TARGET_TREE:-/rv/tmp/libcna-v2/cna-target}/cmake" ]; then
+CNA_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/libcna-com"
+if [ -d "${CNA_TARGET_TREE:-$CNA_CACHE/cna-target}/cmake" ]; then
   run python3 scripts/check_retired_renderers.py
 else
   echo "== check_retired_renderers.py skipped (CNA worktrees not present)"
