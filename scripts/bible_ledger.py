@@ -444,7 +444,12 @@ def cmd_render(_: argparse.Namespace) -> int:
             L.append(f"| `{uid}` | {e.get('id')}: {e.get('text', '')[:80].replace('|', '/')} | {e.get('disposition')} | {e.get('verified', '')} | "
                      f"{', '.join(f'`{d}`' for d in e.get('destinations') or [])} | {e.get('note', '')[:120].replace('|', '/')} |")
         L.append("")
-    REPORT.write_text("\n".join(L) + "\n", encoding="utf-8")
+    marker = "<!-- post-phase3-correction:begin -->"          # a correction note appended by the adversarial audit survives a re-render (the original Phase-3 wording is never erased)
+    kept = ""
+    if REPORT.exists():
+        old_text = REPORT.read_text(encoding="utf-8")
+        kept = old_text[old_text.find(marker):] if marker in old_text else ""
+    REPORT.write_text("\n".join(L) + "\n" + kept, encoding="utf-8")
 
     C: list[str] = ["# Phase-3 absorption ledger — concept level", "",
                     "Every meaningful current technical concept of every Bible unit, with its disposition, destination and the TARGET check "

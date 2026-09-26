@@ -213,6 +213,8 @@ def build(rv: dict[str, dict], dec: dict, files: set[str]) -> tuple[dict, list[s
                         raise SystemExit(f"{iid}: the text to replace in {field} occurs {text.count(old_s)} times (need exactly 1)")
                     text = text.replace(old_s, new_s)
                 sets[field] = text
+            for field, add in (d.get("append") or {}).items():         # text added at the end of a field (HTML), after the reviewer's own note
+                appends[field] = appends.get(field, "") + add
             # manual outcomes, independent of any reviewer verdict
             if d.get("fold_into"):
                 patch["folded"][iid] = d["fold_into"]
