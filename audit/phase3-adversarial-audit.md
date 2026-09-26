@@ -347,7 +347,7 @@ The 121 dismissed candidates were re-read by reviewers told to prove each dismis
 
 ### 7.7 What this review does not establish
 
-Nothing was built as a whole and no CI result was read; entries are *source-verified* unless they say otherwise. Twelve probes compiled TARGET sources against a sibling Sharp Runtime checkout that TARGET does not pin (each says so). CNA-BUG-137 and CNA-BUG-001 are reproduced on the code paths described, not in a full engine run. The extra-deep sample found no refutation in 34 entries (95 % upper bound on the share of refutable entries: about 9 %), but 7 of the 34 still needed a correction of detail: the list is accurate about what is wrong and occasionally imprecise about the details.
+Nothing was built as a whole and no CI result was read; entries are *source-verified* unless they say otherwise. Twelve probes compiled TARGET sources against a sibling Sharp Runtime checkout that TARGET does not pin (each says so). CNA-BUG-137 and CNA-BUG-001 are reproduced on the code paths described, not in a full engine run. The extra-deep sample found no refutation in 34 entries (95 % upper bound on the share of refutable entries: about 9 %), but 7 of the 34 still needed a correction of detail: the list is accurate about what is wrong and occasionally imprecise about the details. One reviewer remark was disregarded: R17 reported that the reproduction snippet of CNA-BUG-008 lacks a template argument, but the plain-text viewer that fed the reviewers stripped angle brackets inside code blocks; the published snippet is correct (the viewer was fixed afterwards, and no other verdict mentions the artifact).
 
 ## 8. Evidence, terminology, count and rendering audits (complete)
 
