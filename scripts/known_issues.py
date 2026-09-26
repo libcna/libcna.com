@@ -317,6 +317,25 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
                     d["evidence"] = "Restored by the independent adversarial audit (earlier dismissal: " + d.get("evidence", "")[:200] + ")"
         by[new] = e
         trail["added"][tmp] = new
+    # text written before the final ids were known refers to entries as {{issue:NEW-AUDIT-nn}} (an added entry) or {{issue:CNA-XXX-nnn}} (an id that was folded or reclassified);
+    # the reference is resolved here, after allocation, so no later operation can leave a wrong id in the published text
+    resolve = {**trail["added"], **trail["reclassified"], **trail["folded"]}
+    rx = re.compile(r"\{\{issue:([A-Z0-9-]+)\}\}")
+
+    def sub(x):
+        if isinstance(x, str):
+            def one(m):
+                if m.group(1) not in resolve:
+                    raise SystemExit(f"patches-adversarial.json: {{{{issue:{m.group(1)}}}}} does not name an added, reclassified or folded entry")
+                return resolve[m.group(1)]
+            return rx.sub(one, x)
+        if isinstance(x, list):
+            return [sub(v) for v in x]
+        if isinstance(x, dict):
+            return {k: sub(v) for k, v in x.items()}
+        return x
+    for iid in list(by):
+        by[iid] = sub(by[iid])
     return list(by.values()), disp, {k: v for k, v in trail.items() if v}, 0
 
 

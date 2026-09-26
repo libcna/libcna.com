@@ -499,7 +499,7 @@ def counts_block() -> str:
     verdicts: Counter = Counter(v for k, v in latest.items() if k in base_ids)
     reviewed = len([k for k in latest if k in base_ids])
     folded_unreviewed = sorted(k for k in (trail.get("folded") or {}) if k in base_ids and k not in latest)     # duplicates folded into a reviewed survivor before any reviewer saw them
-    created_reviewed = len([k for k in latest if k in audit_created])
+    created_reviewed = len([k for k in latest if k in audit_created or k in (trail.get("added") or {})])      # the reviewers of added entries used their temporary ids
     dis_dir = ROOT / "audit" / "data" / "adversarial" / "dismissal-reviews"
     dreviewed = 0
     dverdicts: Counter = Counter()
@@ -686,8 +686,9 @@ def cmd_counts(write: bool) -> int:
         m = re.search(r"Independent Bible-unit reviews ingested \| (\d+) of 98", new)
         a = re.search(r"Independent auxiliary-document reviews ingested \| (\d+) of 21", new)
         r_ = re.search(r"Independent issue reviews ingested \| (\d+) of the (\d+) Phase-3 entries re-read individually \(.*?\), plus (\d+) more folded", new)
-        if not (m and int(m.group(1)) == 98 and a and int(a.group(1)) == 21 and r_ and int(r_.group(1)) + int(r_.group(3)) == int(r_.group(2))):
-            print("ERROR counts: not every canonical unit (98), auxiliary document (21) and Phase-3 Known Issues entry has an independent review")
+        c_ = re.search(r"that a separate reviewer then tried to refute: (\d+) of (\d+)", new)
+        if not (m and int(m.group(1)) == 98 and a and int(a.group(1)) == 21 and r_ and int(r_.group(1)) + int(r_.group(3)) == int(r_.group(2)) and c_ and c_.group(1) == c_.group(2)):
+            print("ERROR counts: not every canonical unit (98), auxiliary document (21), Phase-3 Known Issues entry and audit-added entry has an independent review")
             return 1
     print("counts: ledger block is current")
     return 0

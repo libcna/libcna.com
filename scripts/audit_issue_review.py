@@ -109,6 +109,8 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     dest = ADV / ("issue-reviews" if args.kind == "issues" else "dismissal-reviews")
     dest.mkdir(parents=True, exist_ok=True)
     pub = set(base_entries())                 # the entries as they stood before any audit operation (a reclassified id must still ingest)
+    dec = load(ADV / "decisions.json") if (ADV / "decisions.json").exists() else {}
+    pub |= {e["id"] for e in dec.get("new_findings", [])} | {v["entry"]["id"] for v in dec.get("dismissals", {}).values() if v.get("action") == "accept" and v.get("entry")}   # entries the audit added are reviewed under their temporary ids
     rc = 0
     for f in sorted(Path(args.src).glob("out-*.jsonl")):
         rows = [json.loads(l) for l in f.read_text(encoding="utf-8").splitlines() if l.strip()]
