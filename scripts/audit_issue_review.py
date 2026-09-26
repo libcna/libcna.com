@@ -205,6 +205,8 @@ def build(rv: dict[str, dict], dec: dict, files: set[str]) -> tuple[dict, list[s
         if act in ("accept", "override"):
             if d.get("severity"):
                 sets["severity"] = d["severity"]
+            elif cur["class"] == "bug" and r.get("severity_after") in ("high", "medium", "low") and r["severity_after"] != cur["severity"] and "severity" not in (d.get("set") or {}):
+                pending.append(f"{iid}: the reviewer proposes severity {cur['severity']} -> {r['severity_after']} and the decision carries no severity key, so nothing would change; add \"severity\" (or reject the proposal with the reason)")
             sets.update(d.get("set", {}))
             for field, pairs in (d.get("replace") or {}).items():          # exact-once substring edits of the (already corrected) field text
                 text = sets.get(field, cur.get(field) or "")

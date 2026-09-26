@@ -33,6 +33,16 @@ def sha(s: str) -> str:
     return hashlib.sha256(s.encode("utf-8")).hexdigest()[:16]
 
 
+def probe(html: str) -> str:
+    """A run of up to 70 characters from the added text (one line, at least 40 characters where there is one): `check` proves it is still on the page."""
+    h = html.strip()
+    for line in h.split("\n"):
+        line = line.strip()
+        if len(line) >= 40:
+            return line[:70]
+    return h[:70]
+
+
 def load_ledger() -> dict:
     return json.loads(LEDGER.read_text(encoding="utf-8")) if LEDGER.exists() else {"applied": []}
 
@@ -103,7 +113,7 @@ def cmd_apply(args: argparse.Namespace) -> int:
         print(f"{fx['id']}: {fx['page']}: {msg}")
         if not args.dry_run:
             p.write_text(new, encoding="utf-8")
-            ledger["applied"].append({"id": fx["id"], "page": fx["page"], "action": fx.get("action", "replace"), "html_sha": sha(fx["html"]), "why": fx.get("why", "")})
+            ledger["applied"].append({"id": fx["id"], "page": fx["page"], "action": fx.get("action", "replace"), "html_sha": sha(fx["html"]), "probe": probe(fx["html"]), "why": fx.get("why", "")})
     if not args.dry_run:
         LEDGER.parent.mkdir(parents=True, exist_ok=True)
         LEDGER.write_text(json.dumps(ledger, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -117,6 +127,9 @@ def cmd_check(_: argparse.Namespace) -> int:
         p = ROOT / a["page"]
         if not p.is_file():
             print(f"ERROR {a['id']}: page {a['page']} is gone")
+            bad += 1
+        elif a.get("probe") and a["probe"] not in p.read_text(encoding="utf-8"):
+            print(f"ERROR {a['id']}: the text this fix added is no longer on {a['page']} (a generated page rewritten, or a later edit removed it): {a['probe']!r}")
             bad += 1
     print(f"applied page fixes recorded: {len(ledger['applied'])}; problems {bad}")
     return 1 if bad else 0
