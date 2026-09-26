@@ -9,7 +9,7 @@ a **Known Issues** area (`known-issues/`: current bugs, functional gaps, platfor
 statements on existing pages that the absorption showed to be wrong. **Ledger:** `audit/bible-absorption-phase3.md` (+ `audit/bible-absorption-phase3-concepts.md`, `audit/bible-depth-audit-phase3.md`;
 data in `audit/data/bible/`) · **Guides:** `audit/data/phase3-editorial-guide.md`, `phase3-issues-guide.md`, `phase3-aux-guide.md` · **Errata pass:** `audit/phase3-site-errata.md` · **Resume/history:** `audit/phase3-handoff.md`.
 Tooling: `scripts/bible_inventory.py` (mechanical source graph), `bible_ledger.py` (record checks, tokens must exist in the destination page), `site_deep.py` + `deep_manifest.py` (area generator),
-`apply_expansions.py`, `backlinks.py`, `known_issues.py` (validate/merge/build), `issues_candidates.py`, `cnabugs_record.py`, `site_grep.py`, `check_deep_page.py`; all wired into `scripts/validate_all.sh`.
+`apply_expansions.py`, `backlinks.py`, `issue_refs.py` (page references to entries whose id the audit allocated), `known_issues.py` (validate/merge/build), `issues_candidates.py`, `cnabugs_record.py`, `site_grep.py`, `check_deep_page.py`; all wired into `scripts/validate_all.sh`.
 Only defects that exist at TARGET are published; fixed defects, obsolete renderer findings and XNA-faithful behaviour are recorded (with evidence) in the non-public dispositions, never on the site.
 
 ## Phase 2 (2026-09-25): the Development area, absorbed from developer.libcna.com
