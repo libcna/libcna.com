@@ -11,7 +11,7 @@ figure or a statement in them, the correction is appended there as *Post-Phase-3
 | `PHASE3_BASE` (clean HEAD when the audit began; branch `docs/unified-v2`) | `33fd57023a16168bc3d354c8907df2db83ca42f6` — “audit: correct the severity summary in the Phase 3 completion record (2 high, 46 medium, 170 low)” |
 | CNA TARGET | `009d40f5dd085c4e674d3479675fac84b12b3e0a` |
 | `cnahead` | exactly the TARGET SHA + one newline (41 bytes) |
-| CNA HEAD (not used) | `5229c992ebc795b63a2c1d6469a6190ada0e5fb9`, **11** commits after TARGET; only an untracked `startup-metrics.log` |
+| CNA HEAD (not used) | `5229c992ebc795b63a2c1d6469a6190ada0e5fb9`, **11** commits after TARGET at the start (12 at the end: another session committed); only an untracked `startup-metrics.log` |
 | Bible HEAD | `4df1475c00ec241f126bca20b065eb465917adaa` (`develop`), **86** modified/untracked paths (working tree is the read source, as in Phase 3) |
 | Developer HEAD | `9f07046d91ad01e835274b8027f8e30298193d01`, **7** modified/untracked paths (pre-existing) |
 | Pinned TARGET snapshot | `/rv/tmp/libcna-v2/cna-target` — re-verified against git: 11,064 extracted files, **0 hash mismatches** with the TARGET blobs |
@@ -26,7 +26,7 @@ Two directions, both required:
   tested against the *whole published site* (`scripts/adversarial_audit.py recall`); the residuals are reviewed by reading; (c) every ledger destination anchor is re-checked at *anchor-section* level,
   not just page level; (d) every disposition that *drops* knowledge (FIXED BUG, REMOVED FUNCTIONALITY, OBSOLETE, HISTORICAL ONLY, TARGET CONTRADICTED, SUPERSEDED, DUPLICATE) is challenged against TARGET.
 * **Destination → TARGET.** Every one of the 350 Known Issues is re-read against TARGET by a reviewer whose brief is to *refute* it (verdicts CONFIRMED / CORRECTED / NARROWED / RECLASSIFIED / DUPLICATE /
-  FIXED AT TARGET / NOT A BUG / INSUFFICIENT EVIDENCE); Deep-Dive identifiers are checked for existence at TARGET; TARGET corrections made in Phase 3 are re-derived on a risk-weighted sample.
+  FIXED AT TARGET / NOT A BUG / INSUFFICIENT EVIDENCE); Deep-Dive identifiers are checked for existence at TARGET; the TARGET corrections Phase 3 recorded are re-derived from source by consequence (1,118 of them, §6.2); every entry the audit itself created is re-read by a separate reviewer, and a stratified sample is re-derived a third time with executed probes.
 
 Subagent discipline: at most five (default three) concurrent leaf reviewers, no nesting, read-only, TARGET tree only.
 
@@ -38,11 +38,11 @@ Subagent discipline: at most five (default three) concurrent leaf reviewers, no 
 * Reachable TeX files: **120** = `main.tex` + `common/preamble.tex` + **118** book files. The 118 are *identical* to the 118 units of `audit/data/bible/units.json` (98 text units + 20 figure sources).
 * No unresolved inclusion; no commented-out inclusion; 5 `\includegraphics` = the 5 raster assets Phase 3 recorded.
 * `main.tex` (part structure) and `common/preamble.tex` (macros; *and* the Bible's own volatile counts `RendererIdentityCount=25`, `RendererFamilyCount=21`, `XnaOracleSceneCount=46`) carry no prose to conserve.
-  The counts are examined in §7.
+  The counts are examined in §8.
 * The other **136** `.tex` files on disk are `build/html-src/**` and `build/figures/**` — gitignored generated snapshots (dated 2026-08-12 / 2026-09-02) of an *older* chapter arrangement
   (e.g. an old `ch24` about retired renderers); they are not canonical and were correctly excluded.
 * Auxiliary set: Phase 3 audited 21 aux documents (8 top-level + 13 `audit/*.md`). **Not dispositioned by Phase 3:** `NEXT-ARCHIVE-2026-07-26.md`, `PLAN-ARCHIVE-2026-07-26.md` (dated snapshots, pre-alpha.1
-  restructuring) and `tools/*.sh` (`verify-book.sh`, `verify-edition-facts.sh`, …). See §5.4 for their disposition.
+  restructuring) and `tools/*.sh` (`verify-book.sh`, `verify-edition-facts.sh`, …). See AF-005 in §5 and `audit/data/adversarial/source-graph.json` for their disposition.
 
 ## 4. Baseline recomputation (nothing copied from Phase 3)
 
@@ -239,7 +239,7 @@ Per-unit review results (dropped dispositions: reviewed / false drops; ledger TA
 
 ### 6.1 Scope and method
 
-Every source unit of the frozen book received an independent review status. Nothing was taken from the Phase-3 ledger without being opened.
+Every source unit of the frozen book received an independent review status. The Phase-3 ledger was used as a map and never accepted as a conclusion: each source was read in full by a reviewer, every dropped disposition was re-derived at TARGET, and the ledger's TARGET corrections were re-derived by consequence (1,118 of them, §6.2).
 
 | Set | Units | Reviewed by | Result |
 |---|---:|---|---|
@@ -282,7 +282,7 @@ What the reviewers found is more instructive than the totals. The *absorption* i
 
 ### 6.5 The one owner decision
 
-`production-method-F1` (LOST, low): the book states how it was produced (a sentence on AI-agent assistance and maintainer responsibility). The site has no equivalent statement about *its own* production. Adding one would state a policy on the owner's behalf, so nothing was added; the statement is recorded as a HISTORICAL ONLY concept (`WPB…-adv01` of that unit) with the reason, and is listed in the final report.
+`production-method-F1` (LOST, low): the book states how it was produced (a sentence on AI-agent assistance and maintainer responsibility). The site has no equivalent statement about *its own* production. Adding one would state a policy on the owner's behalf, so nothing was added; the statement is recorded as a HISTORICAL ONLY concept (`WP01-production-method-adv01`) with the reason, and is listed in the final report.
 
 ### 6.6 Independent recomputations that agreed with Phase 3
 
