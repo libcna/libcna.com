@@ -457,8 +457,12 @@ def cmd_issues() -> int:
             errs.append(f"overview: {label} count {m.group(1) if m else '?'} != {cnt['by_class'].get(cls, 0)}")
     reviewed = set()
     if DUP_REVIEW.exists():
+        # a pair may name an entry by an identity that does not move (NEW-AUDIT-nn of an entry the audit added, or the earlier id of one it reclassified or folded):
+        # the ids the audit allocated can shift if a later reclassification changes the allocation order, so they are resolved here, exactly as scripts/issue_refs.py does
+        trail = json.loads((ROOT / "audit" / "data" / "bible" / "issues" / "dispositions.json").read_text(encoding="utf-8")).get("adversarial_audit", {})
+        current = {**trail.get("folded", {}), **trail.get("reclassified", {}), **trail.get("added", {})}
         for rec in json.loads(DUP_REVIEW.read_text(encoding="utf-8")).get("pairs", []):
-            reviewed.add(tuple(sorted(rec["ids"])))
+            reviewed.add(tuple(sorted(current.get(i, i) for i in rec["ids"])))
     unreviewed = [(c, a, b) for c, a, b in _similarity_pairs(issues) if (a, b) not in reviewed]
     for c, a, b in unreviewed:
         errs.append(f"duplicate candidate not reviewed (cosine {c}, shared source path): {a} ~ {b} - decide it in audit/data/adversarial/duplicate-review.json")

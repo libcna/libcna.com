@@ -62,9 +62,10 @@ def rel(from_page: str, to: str) -> str:
     return os.path.relpath(to, os.path.dirname(from_page) or ".").replace(os.sep, "/")
 
 
-def process(write: bool) -> tuple[int, int, list[str]]:
+def process(write: bool) -> tuple[int, list[str], list[str]]:
     trail, detail, shifting = load()
-    changed = refs = 0
+    refs = 0
+    changed: list[str] = []
     errors: list[str] = []
     for p in pages():
         r = p.relative_to(ROOT).as_posix()
@@ -92,7 +93,7 @@ def process(write: bool) -> tuple[int, int, list[str]]:
             if m.group(0) in shifting:
                 errors.append(f"{r}: the mention of {m.group(0)} is not wrapped in <!--issue:KEY-->...<!--/issue-->; that id was allocated by the audit and can be renumbered")
         if new != old:
-            changed += 1
+            changed.append(r)
             if write:
                 p.write_text(new, encoding="utf-8")
     return refs, changed, sorted(set(errors))
@@ -105,7 +106,10 @@ def main() -> int:
     refs, changed, errors = process(args.cmd == "apply")
     for e in errors:
         print("ERROR", e)
-    print(f"issue references: {refs} marked; pages {'that would change' if args.cmd == 'check' else 'rewritten'}: {changed}; errors {len(errors)}")
+    if args.cmd == "check":
+        for r in changed:
+            print(f"ERROR {r}: an issue reference is stale (an id the audit allocated moved); run scripts/issue_refs.py apply")
+    print(f"issue references: {refs} marked; pages {'that would change' if args.cmd == 'check' else 'rewritten'}: {len(changed)}; errors {len(errors)}")
     return 1 if errors or (args.cmd == "check" and changed) else 0
 
 
