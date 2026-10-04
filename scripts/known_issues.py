@@ -36,7 +36,7 @@ DISPO = ISS / "dispositions.json"
 PUBLIC = ROOT / "data" / "known-issues.json"
 TARGET = (ROOT / "cnahead").read_text(encoding="utf-8").strip()
 TARGET_SHORT = TARGET[:8]
-TODAY = "2026-09-25"
+TODAY = "2026-10-04"
 
 CLASSES = {
     "bug": {"group": "bugs", "prefix": "CNA-BUG", "label": "Bug"},
@@ -233,8 +233,16 @@ def cmd_check(args: argparse.Namespace) -> int:
 #    "folded":       {"CNA-BUG-226": "CNA-BUG-215"},                                  duplicate folded into its survivor (the survivor keeps its id)
 #    "retired":      {"CNA-BUG-nnn": {"classification": "NOT A BUG|PROVEN FIXED|OBSOLETE|INSUFFICIENT EVIDENCE|DUPLICATE", "evidence": "..."}},
 #    "reclassified": {"CNA-BUG-nnn": {"class": "functional-gap", "set": {...}}},       a new id in the target class is allocated after every existing one
-#    "added":        [{... a full entry with a temporary id NEW-AUDIT-nn and cand_ids of the restored candidates ...}]}
+#    "added":        [{... a full entry with a temporary id NEW-AUDIT-nn and cand_ids of the restored candidates ...}],
+#    "retired_added": {"NEW-AUDIT-nn": {"classification": "PROVEN FIXED|OBSOLETE|...", "evidence": "..."}},   retire an ADDED entry (see below)
+#    "repin":        {"from": "009d40f5", "to": "<TARGET_SHORT>", "replace": [["old", "new"], ...], "keep": ["... at 009d40f5", ...]}}   (see below)
 # Every operation runs AFTER the stable ids were allocated, so no surviving entry is ever renumbered and a retired id is never reused.
+# "retired" runs before "added", so it cannot name an added entry, and deleting an element of "added" would renumber every later one.  An added
+# entry whose subject later disappears is therefore retired through "retired_added", keyed by its temporary id: its final id is still allocated
+# (and consumed, never reused), its restored candidates take the retire classification, and it is recorded under "retired" in the audit trail.
+# "repin" moves the snapshot wording of the published text to a new pin after every entry was re-verified there: each "replace" pair is applied
+# first, then every remaining occurrence of "from" in the published text fields becomes "to", except inside a "keep" phrase (statements about
+# what was executed or observed at the old commit stay pinned to it).  "to" must equal the short TARGET, so a later pin move cannot skip this step.
 # ---------------------------------------------------------------------------------------------
 def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, int]) -> tuple[list[dict], list[dict], dict, int]:
     path = ISS / "patches-adversarial.json"
@@ -302,12 +310,31 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
                 d["published_as"] = new
         by[new] = e
         trail["reclassified"][iid] = new
+    retired_added = adv.get("retired_added") or {}
+    unknown = set(retired_added) - {e["id"] for e in adv.get("added") or []}
+    if unknown:
+        print(f"patches-adversarial.json: retired_added names no added entry: {sorted(unknown)}")
+        return issues, disp, trail, 1
     for k, e in enumerate(adv.get("added") or []):
         e = dict(e)
         cls = e["class"]
         counters[cls] += 1
         new = f"{CLASSES[cls]['prefix']}-{counters[cls]:03d}"
         tmp = e["id"]
+        spec = retired_added.get(tmp)
+        if spec:                                       # the id is consumed (later ids do not move) but the entry is not published
+            if spec["classification"] not in CLASSIFICATIONS - PUBLISHED:
+                print(f"patches-adversarial.json: retired_added {tmp}: classification {spec['classification']!r} is not a non-published one")
+                return issues, disp, trail, 1
+            for cid in e.get("cand_ids") or []:
+                for d in disp:
+                    if d["cand"] == cid:
+                        d["classification"] = spec["classification"]
+                        d["evidence"] = "Retired by the independent adversarial audit: " + spec["evidence"]
+                        d["adversarial_retired_entry"] = new
+                        d["published_as"] = None
+            trail["retired"][new] = {"key": tmp, "classification": spec["classification"], "evidence": spec["evidence"]}
+            continue
         e["temp_id"], e["id"] = tmp, new
         for cid in e.get("cand_ids") or []:
             for d in disp:
@@ -336,6 +363,25 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
         return x
     for iid in list(by):
         by[iid] = sub(by[iid])
+    rp = adv.get("repin")
+    if rp:
+        if rp["to"] != TARGET_SHORT:
+            print(f"patches-adversarial.json: repin.to {rp['to']!r} is not the TARGET {TARGET_SHORT!r} (re-verify the entries at the new pin first)")
+            return issues, disp, trail, 1
+        keep = rp.get("keep") or []
+        keep_rx = re.compile("(" + "|".join(map(re.escape, keep)) + ")") if keep else None
+
+        def repin(s: str) -> str:
+            for old_s, new_s in rp.get("replace") or []:
+                s = s.replace(old_s, new_s)
+            parts = keep_rx.split(s) if keep_rx else [s]       # odd parts are the protected phrases
+            return "".join(p if n % 2 else p.replace(rp["from"], rp["to"]) for n, p in enumerate(parts))
+        for e in by.values():                                   # the published text fields only (origin and the audit fields keep their history)
+            for f in ["title", "summary", "public_contract"] + HTML_FIELDS:
+                if isinstance(e.get(f), str):
+                    e[f] = repin(e[f])
+            e["sources"] = [dict(s, note=repin(s["note"])) if isinstance(s, dict) and s.get("note") else s for s in e.get("sources") or []]
+            e["related"] = {k: [[u, repin(lb)] for u, lb in v] for k, v in (e.get("related") or {}).items()}
     return list(by.values()), disp, {k: v for k, v in trail.items() if v}, 0
 
 

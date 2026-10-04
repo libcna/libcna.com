@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 81: Emscripten: Building for WebAssembly - CNA</title>
-  <meta name="description" content="Build and deploy CNA games for WebAssembly with Emscripten: the WEBGL2 renderer, the Asyncify-driven Game::Run() loop and asset preloading — and the web caveats: what changed about Game lifetime, that saves do not persist, and that video needs an FFmpeg backend the web never gets.">
+  <meta name="description" content="Build and deploy CNA games for WebAssembly with Emscripten: the WEBGL2 renderer, the Asyncify-driven Game::Run() loop and asset preloading — and the web caveats: what changed about Game lifetime, how saves persist through IndexedDB, and that video needs an FFmpeg backend the web never gets.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/81-emscripten.html">
   <meta property="og:title"       content="Tutorial 81: Emscripten: Building for WebAssembly - CNA">
-  <meta property="og:description" content="Build and deploy CNA games for WebAssembly with Emscripten: the WEBGL2 renderer, the Asyncify-driven Game::Run() loop and asset preloading — and the web caveats: what changed about Game lifetime, that saves do not persist, and that video needs an FFmpeg backend the web never gets.">
+  <meta property="og:description" content="Build and deploy CNA games for WebAssembly with Emscripten: the WEBGL2 renderer, the Asyncify-driven Game::Run() loop and asset preloading — and the web caveats: what changed about Game lifetime, how saves persist through IndexedDB, and that video needs an FFmpeg backend the web never gets.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/81-emscripten.html">
@@ -19,10 +19,10 @@
   "@context": "https://schema.org",
   "@type": "TechArticle",
   "headline": "Tutorial 81: Emscripten: Building for WebAssembly",
-  "description": "Building CNA for the browser with Emscripten (emsdk 6.0.3), the Asyncify-driven Game::Run() loop, and the web caveats: no save persistence and no video; a stack-allocated Game is fine in this snapshot.",
+  "description": "Building CNA for the browser with Emscripten (emsdk 6.0.3), the Asyncify-driven Game::Run() loop, and the web caveats: IndexedDB-backed saves (threaded builds need an extra option) and no video; a stack-allocated Game is fine in this snapshot.",
   "url": "https://libcna.com/docs/tutorials/81-emscripten.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-09-25",
+  "dateModified": "2026-10-04",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -96,7 +96,7 @@
           <ul>
             <li>Installing the Emscripten SDK and pointing CMake at its toolchain file.</li>
             <li>Running the <code>WEBGL2</code> renderer on WebGL 2, and the four other Emscripten-only renderers.</li>
-            <li><strong>The web caveats:</strong> what changed about <code>Game</code> lifetime, that saves do not persist, and that video needs an FFmpeg backend the web never gets.</li>
+            <li><strong>The web caveats:</strong> what changed about <code>Game</code> lifetime, how saves persist through IndexedDB, and that video needs an FFmpeg backend the web never gets.</li>
             <li>How <code>Game::Run()</code> yields to the browser through Asyncify instead of blocking the page.</li>
             <li>Customising the shell HTML and loading files asynchronously with Asyncify.</li>
           </ul>
@@ -105,9 +105,9 @@
 
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
-          <p><strong>Read this before you write a line of web-specific code.</strong> Three things about CNA on the web are not obvious, not optional, and not in the Emscripten manual &mdash; and one of them changed since alpha.1.</p>
+          <p><strong>Read this before you write a line of web-specific code.</strong> Three things about CNA on the web are not obvious, not optional, and not in the Emscripten manual &mdash; and two of them changed since alpha.1.</p>
           <p><strong>1. Your <code>Game</code> may now live on the stack &mdash; if you link Asyncify.</strong> At the alpha.1 tag, <code>Game::Run()</code> ended in <code>emscripten_set_main_loop(&hellip;, simulateInfiniteLoop = 1)</code>, which unwound the caller and silently destroyed a stack-allocated <code>Game</code> while the browser loop still held its address; the symptom was an indirect-call fault frames later, and the rule was &ldquo;allocate with <code>new</code>&rdquo;. In this snapshot <code>Game::Run()</code> keeps its caller alive: the loop runs on the same WebAssembly stack and suspends between browser frames through Asyncify, then returns when the game exits. <code>MyGame game; game.Run();</code> is correct on every target now. The price is that your <em>final executable</em> must link <code>CNA::EmscriptenAsyncify</code> (CNA does that automatically only for executables inside its own source tree) &mdash; see the CMake block below. If you build against the alpha.1 tag, keep heap-allocating.</p>
-          <p><strong>2. There is no save persistence at all.</strong> <code>StorageDevice</code> writes into Emscripten&rsquo;s virtual filesystem, which is in-memory by default. CNA mounts no IDBFS and never calls <code>FS.syncfs</code>, so every save is silently discarded on page reload. Nothing throws and nothing warns &mdash; the write appears to succeed. If your game needs persistence in the browser you must implement it yourself, for example through <code>localStorage</code> or IndexedDB via <code>EM_JS</code>.</p>
+          <p><strong>2. Saves persist through IndexedDB &mdash; except in a default threaded build.</strong> CNA&rsquo;s storage module links Emscripten&rsquo;s IDBFS, mounts it at <code>/cna-storage</code> (<code>StorageDevice</code>) and <code>/save</code> (IsolatedStorage), and restores both before <code>main()</code>; later writes are flushed to IndexedDB automatically, so a save survives a page reload. If the mount or the restore fails, <code>StorageDevice</code> throws <code>StorageDeviceNotConnectedException</code> instead of quietly saving to memory. A threaded build (<code>-DCNA_ENABLE_EMSCRIPTEN_THREADS=ON</code>) uses WasmFS by default, which cannot host IDBFS, so <code>StorageDevice</code> reports storage as unavailable there; configure <code>-DCNA_EMSCRIPTEN_USE_WASMFS=OFF</code> to get persistence, at the cost that the legacy file system can wait on the browser&rsquo;s main thread during background content loads. Files you write anywhere outside those two mounts live in memory and are gone on reload.</p>
           <p><strong>3. There is no video playback.</strong> FFmpeg is never built for Emscripten. The <code>Video</code> and <code>VideoPlayer</code> types are present in every build, so calling code compiles and links, but opening a <code>Video</code> or calling <code>VideoPlayer::Play</code> throws <code>System::NotSupportedException</code> at run time. Guard video features with <code>#ifdef CNA_VIDEO_AVAILABLE</code>. The same is true on Windows, Android and iOS.</p>
         </div>
 
@@ -165,17 +165,17 @@ cna_apply_emscripten_renderer_link_contract(MyGame)   # -sMIN/MAX_WEBGL_VERSION 
 
 <h2>The other Emscripten-only renderers</h2>
         <p>
-          Five of CNA's 25 renderer identities are gated to Emscripten and refuse to configure for a native target.
+          Three of CNA's 18 renderer identities are gated to Emscripten and refuse to configure for a native target.
           <code>WEBGL2</code> is the default and <code>WEBGL1</code> its lower profile &mdash; both are the shared EasyGL
           implementation, and <code>WEBGL1</code> genuinely loses MRT, occlusion queries, <code>Texture3D</code>,
           instancing and multi-stream vertex input rather than merely relabelling a context.
         </p>
         <p>
-          The other three do not use WebGL at all and are 2D-only: <code>CANVAS</code> (HTML Canvas 2D),
-          <code>HTML_DOM</code> (CSS-composited DOM elements) and <code>SVG_DOM</code> (SVG nodes). <code>HTML_DOM</code>
-          has a dedicated automated browser workflow, alongside the separate Emscripten multi-renderer workflow. <code>HTML_DOM</code> and
-          <code>SVG_DOM</code> do not support a custom <code>ShaderEffect</code> (their <code>CustomEffects</code> capability is false) &mdash; the honest answer, since they have
-          no programmable pipeline to run it on.
+          The third, <code>CANVAS</code> (HTML Canvas 2D), does not use WebGL at all and is 2D-only. It does not support a
+          custom <code>ShaderEffect</code> (its <code>CustomEffects</code> capability is false) &mdash; the honest answer, since it has
+          no programmable pipeline to run it on. CNA&rsquo;s Emscripten multi-renderer workflow builds <code>WEBGL2</code>,
+          <code>WEBGL1</code> and <code>CANVAS</code> into one bundle. <code>WEBGPU</code> is not gated to the browser, but it
+          also has an experimental browser route (<a href="132-webgpu.html">Tutorial 132</a>); <a href="105-browser-renderers.html">Tutorial 105</a> compares all four.
         </p>
 
         <h2>The browser main loop</h2>
@@ -245,8 +245,8 @@ target_link_options(MyGame PRIVATE
 <h2 id="deep-dives-here">Deep dives on this topic</h2>
 <p>Long-form pages that explain the exact semantics, invariants and evidence behind this subject.</p>
 <ul>
-<li><a href="../../deep-dives/renderers/browser-dom-renderers.html">CANVAS, HTML_DOM and SVG_DOM: browser object models, refusals and evidence</a> &mdash; How CNA&#x27;s three non-WebGL browser renderers represent sprites, targets and blending, where each refuses work, why two cannot read the back buffer, and which browser tests actually run.</li>
-<li><a href="../../deep-dives/platforms/web-build-and-main-loop.html">The web target: Emscripten build contract, browser loop, storage and renderer evidence</a> &mdash; CNA&#x27;s Emscripten build contract (exception ABI, Asyncify, threads), the Asyncify browser loop, content and save storage in the virtual file system, web networking, and the evidence per browser renderer.</li>
+<li><a href="../../deep-dives/renderers/canvas-renderer.html">CANVAS: the browser 2D canvas renderer, its refusals and evidence</a> &mdash; How CNA&#x27;s Canvas 2D browser renderer represents sprites, targets, blending and letterboxed presentation, where it refuses work, and which browser tests actually run.</li>
+<li><a href="../../deep-dives/platforms/web-build-and-main-loop.html">The web target: Emscripten build contract, browser loop, storage and renderer evidence</a> &mdash; CNA&#x27;s Emscripten build contract (exception ABI, Asyncify, threads), the Asyncify browser loop, content and IndexedDB-backed save storage in the virtual file system, web networking, and the evidence per browser renderer.</li>
 </ul>
 </section>
 <!--/p3:deep-links-->
@@ -274,7 +274,7 @@ target_link_options(MyGame PRIVATE
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit b0e97bb1 (4 October 2026), a post-alpha.1 development snapshot. CNA exposes 18 renderer identities across 14 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -310,7 +310,7 @@ target_link_options(MyGame PRIVATE
     <div class="footer-bottom">
       <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
       <div class="footer-links">
-        <a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="https://github.com/libcna/cna/blob/b0e97bb1bb876f9b3edd6f4ff1ef3067908ae8ac/LICENSE" target="_blank" rel="noopener">License</a>
         <a href="../../contact.html">Contact</a>
       </div>
     </div>

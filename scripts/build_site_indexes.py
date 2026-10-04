@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import html
 import json
 import re
 import xml.etree.ElementTree as ET
@@ -13,16 +14,19 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent.parent
 SITE = "https://libcna.com"
-UPDATED = "2026-09-25"  # Phase 3: Deep Dives and Known Issues added; every page gained the header entries
+UPDATED = "2026-10-04"  # Phase 4: snapshot b0e97bb1; every page re-audited (footer, facts, metadata) against the new pin
 EXCLUDED = {
     "404.html",
     "search.html",
 }
 
-# Phase 1 audited every public page against CNA snapshot 009d40f5 (facts, footer, metadata), so every
+# Phase 4 audited every public page against CNA snapshot b0e97bb1 (facts, footer, metadata), so every
 # page carries the snapshot date. A page that is regenerated later without a content audit should be
 # removed from this rule deliberately, not implicitly.
 MATERIALLY_UPDATED: set[str] = set()  # filled from the file system in main(); see all_public_pages()
+
+SUPERSEDED_TAG = re.compile(r"(?i)direct2d|free-?direct|free-api|portablegl|html_dom|svg_dom|opengl4|\bgdi\b|sdl2|0\.29|engine.layer|"
+                            r"cna_software_2d_only")
 
 NEW_TAGS = {
     "/docs/rendering-backends.html": ["rendering", "renderers", "sdl_renderer", "opengl", "easygl", "vulkan", "webgpu", "d3d11", "d3d12", "direct3d", "headless", "software"],
@@ -33,15 +37,18 @@ NEW_TAGS = {
     "/docs/inspector.html": ["inspector", "debugging", "browser", "agent", "diagnostics"],
     "/docs/tools.html": ["tools", "cli", "cna-content", "gltf", "cnb"],
     "/docs/native-platforms.html": ["platform", "x11", "wayland", "win32", "sdl-free"],
-    "/docs/cnaext-engine.html": ["cnaext", "engine", "pbr", "shadows", "ibl", "extensions"],
+    "/docs/cnaext-extensions.html": ["cnaext", "extensions", "retro effects", "crt", "ascii", "debugdraw", "pbr"],
+    "/docs/cna-net.html": ["c#", "csharp", ".net", "cna.net", "xna", "binding", "microsoft.xna.framework", "webassembly", "android"],
+    "/docs/migrating-to-cna-net.html": ["migration", "c#", "xna", "fna", "monogame", "cna.net", "csproj", "xnb"],
+    "/docs/gamer-services.html": ["gamer services", "avatars", "guide", "achievements", "leaderboards", "networksession", "server"],
     "/docs/design-converters.html": ["design", "converters", "typeconverter", "framework.design"],
     "/network.html": ["network", "sites", "links", "bible", "demos", "metagl", "meshcraft", "easygl"],
     "/docs/releases.html": ["release", "version", "semver", "alpha", "prerelease", "abi"],
     "/docs/runtime-renderer-selection.html": ["renderer", "runtime", "selection", "fallback", "multi-renderer"],
-    "/docs/c-api.html": ["c", "api", "abi", "native", "experimental", "c17", "language bindings", "c#", "java", "typescript",
-                         "archived bindings", "rust", "python", "ruby", "swift", "go"],
+    "/docs/c-api.html": ["c", "api", "abi", "native", "experimental", "c17", "language bindings", "c#", "cna.net",
+                         "archived bindings", "common lisp", "go", "java", "python", "ruby", "rust", "swift", "typescript"],
     "/docs/tutorials/126-multi-renderer-build.html": ["tutorial", "renderer", "runtime", "cmake", "fallback"],
-    "/docs/tutorials/127-platform-audio-selection.html": ["tutorial", "platform", "audio", "sdl2", "headless"],
+    "/docs/tutorials/127-platform-audio-selection.html": ["tutorial", "platform", "audio", "sdl3", "headless"],
     "/docs/tutorials/128-compiled-xna-effects.html": ["tutorial", "effects", "fxb", "xnb", "fna3d"],
     "/docs/tutorials/129-c-api-first-program.html": ["tutorial", "c", "api", "abi", "cmake"],
 }
@@ -159,6 +166,11 @@ def main() -> None:
         url = parsed.path or "/"
         search_url = "/index.html" if rel == "index.html" else "/" + rel
         tags = NEW_TAGS.get(search_url, old_search.get(search_url, {}).get("tags"))
+        if tags and search_url not in NEW_TAGS:
+            # a carried-over tag naming something CNA removed (or a superseded version) survives only while the page still
+            # mentions it, so the index never advertises a feature the page no longer documents
+            page_text = html.unescape(re.sub(r"<[^>]+>", " ", path.read_text(encoding="utf-8"))).lower()
+            tags = [t for t in tags if not (SUPERSEDED_TAG.search(t) and t.lower() not in page_text)]
         if not tags and parser.keywords:
             # Development pages carry their own search terms in <meta name="keywords">
             area_tag = ("development" if rel.startswith("development/") else "deep dive" if rel.startswith("deep-dives/")

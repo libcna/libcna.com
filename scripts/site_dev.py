@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parent.parent
 SITE = "https://libcna.com"
 TARGET = (ROOT / "cnahead").read_text(encoding="utf-8").strip()
 TARGET_SHORT = TARGET[:8]
-TODAY = "2026-09-25"
+TODAY = "2026-10-04"
 CNA_REPO = Path(os.environ.get("CNA_REPO", ROOT.parent / "cna"))
 
 EVIDENCE_LABELS = {

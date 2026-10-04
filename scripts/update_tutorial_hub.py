@@ -5,7 +5,8 @@
 * adds entries for tutorials missing from the hub, into the section named by SECTION_OF;
 * creates the new sections listed in NEW_SECTIONS (same markup as the existing ones);
 * recounts each section, the page totals and rebuilds the JSON-LD ItemList;
-* fixes js/tutorial-progress.js so its total is counted from the page instead of hard-coded.
+* fixes js/tutorial-progress.js so its total is counted from the page instead of hard-coded;
+* re-chains the Prev/Next pager of every tutorial page in number order (pages added or removed keep a continuous chain).
 
 Idempotent: running it twice changes nothing.
 """
@@ -31,6 +32,8 @@ for n in range(145, 149): SECTION_OF[n] = "content-pipeline"
 for n in range(150, 155): SECTION_OF[n] = "modern-graphics"
 for n in range(155, 158): SECTION_OF[n] = "tooling"
 for n in (160, 161): SECTION_OF[n] = "subsystems"
+for n in range(162, 169): SECTION_OF[n] = "gamer-services"
+for n in (170, 171): SECTION_OF[n] = "csharp"
 
 # id, colour, icon, badge, title, description, jump-nav label
 NEW_SECTIONS = [
@@ -41,8 +44,14 @@ NEW_SECTIONS = [
      "Author content with the build-time Content Pipeline, pack it as CNB, interoperate with XNB produced by XNA and MonoGame, and write your own content types.",
      "Content Pipeline and CNB"),
     ("modern-graphics", "orange", "&#10024;", "Advanced", "Modern Graphics",
-     "Graphics profiles, build-time shader compilation, image-based lighting and cascaded shadow maps on the renderers that support them.",
+     "Graphics profiles, build-time shader compilation and one shader across several renderers.",
      "Modern Graphics"),
+    ("csharp", "blue", "&#35;", "Intermediate", "C# with CNA.NET",
+     "Run original XNA 4.0 C# games on CNA's native runtime through CNA.NET without rewriting them, and start new C# games from the dotnet new template with desktop, browser and Android heads.",
+     "C# with CNA.NET"),
+    ("gamer-services", "orange", "&#127918;", "Advanced", "Gamer Services, Guide, Avatars and Networking",
+     "Local profiles and sign-in, the Guide, achievements and leaderboards, friends and presence, avatars, and network sessions &mdash; offline by default, or connected to the self-hosted CNA Gamer Services server.",
+     "Gamer Services"),
     ("tooling", "red", "&#128200;", "Expert", "Diagnostics, Inspector and Tools",
      "Turn on Diagnostics statistics and traces, connect the Inspector to a running game, and use the command-line content and asset tools.",
      "Diagnostics, Inspector and Tools"),
@@ -78,6 +87,32 @@ def section_bounds(text: str, sid: str) -> tuple[int, int]:
     i = m.start()
     j = text.index("</section>", i) + len("</section>")
     return i, j
+
+
+PAGER_SIDE = re.compile(r'(<div class="docs-pagination-(prev|next)">\s*<a href=")[^"]*(" class="pagination-link pagination-\2">\s*'
+                        r'<span class="pagination-direction">[^<]*</span>\s*<span class="pagination-title">)(.*?)(</span>)', re.S)
+
+
+def sync_pagers(tutorials: dict[int, tuple[str, str]]) -> int:
+    """Point each tutorial's Prev/Next at its neighbours on disk; pages without a pager are left alone."""
+    numbers = sorted(tutorials)
+    changed = 0
+    for i, number in enumerate(numbers):
+        path = TUT / tutorials[number][0]
+        text = path.read_text(encoding="utf-8")
+        nb = {"prev": numbers[i - 1] if i else None, "next": numbers[i + 1] if i + 1 < len(numbers) else None}
+
+        def repl(m: re.Match) -> str:
+            other = nb[m.group(2)]
+            if other is None:
+                return m.group(0)
+            file, title = tutorials[other]
+            return f"{m.group(1)}{file}{m.group(3)}Tutorial {other}: {html.escape(title, quote=False)}{m.group(5)}"
+        new = PAGER_SIDE.sub(repl, text)
+        if new != text:
+            path.write_text(new, encoding="utf-8")
+            changed += 1
+    return changed
 
 
 def main() -> int:
@@ -160,6 +195,8 @@ def main() -> int:
     def range_of(sid: str) -> str:
         i, j = section_bounds(text, sid)
         nums = sorted(int(x) for x in re.findall(r'<span class="tut-num">(\d+)</span>', text[i:j]))
+        if not nums:
+            return ""
         # compress into ranges
         parts, start, prev = [], nums[0], nums[0]
         for n in nums[1:] + [None]:
@@ -178,6 +215,8 @@ def main() -> int:
             text = re.sub(rf'(<a href="#{sid}" class="tut-jump-link tut-jump-link--\w+">&#x2713; {re.escape(label)} &mdash; )[^<]*(</a>)',
                           lambda m: m.group(1) + range_of(sid) + m.group(2), text)
             continue
+        if not range_of(sid):
+            continue  # a section whose tutorials do not exist yet gets its jump link once they do
         link = f'\n        <a href="#{sid}" class="tut-jump-link tut-jump-link--{color}">&#x2713; {label} &mdash; {range_of(sid)}</a>'
         nav_end = text.index("</nav>", text.index('class="tut-jump-nav"'))
         text = text[:nav_end].rstrip() + link + text[nav_end:]
@@ -204,6 +243,7 @@ def main() -> int:
     if new != src:
         js.write_text(new, encoding="utf-8")
     on_disk = len(tutorials)
+    print(f"tutorial pagers re-chained: {sync_pagers(tutorials)}")
     print(f"hub entries: {total}; tutorial pages on disk: {on_disk}")
     return 0 if total == on_disk else 1
 

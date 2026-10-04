@@ -21,7 +21,7 @@
   "headline": "Tutorial 77: Asset Streaming and Async Loading",
   "url": "https://libcna.com/docs/tutorials/77-async-loading.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-09-25",
+  "dateModified": "2026-10-04",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -94,7 +94,7 @@
         <ul>
           <li>Why a synchronous load stalls the loop, and moving it onto <code>std::async</code>.</li>
           <li>A thread-safe queue between the loader and the game.</li>
-          <li>Keeping the GPU upload on the main thread even when decode is off it.</li>
+          <li>Keeping the GPU upload on the main thread even when decode is off it, and where the GL renderers let a loading thread upload too.</li>
           <li>The loading-screen pattern, and what <code>ContentManager</code> does not guarantee about threads.</li>
         </ul>
         <p><strong>Before you start</strong> &mdash; <a href="45-content-manager.html">Tutorial 45: ContentManager and Asset Pipeline</a> (the loader being moved off the main thread) and <a href="05-game-loop.html">Tutorial 05: The Game Loop</a> (the loop it must not block).</p>
@@ -102,7 +102,7 @@
 
       <h2>The problem with loading stalls</h2>
       <p>Synchronous asset loading in <code>LoadContent</code> blocks the main thread. For a small game with a few textures this is fine — loading takes under a second. For a large game with gigabytes of textures, meshes, and audio, synchronous loading produces freezes that break immersion: the game hangs for several seconds between areas, or shows a frozen loading screen.</p>
-      <p>The solution is to load assets on a background thread and upload them to the GPU on the main thread when they are ready. The two-phase approach is necessary because CNA&rsquo;s graphics API is owner-thread only: the <code>GraphicsDevice</code> and everything created from it (textures, buffers, render targets) must be used and disposed on the thread that owns the device, which is the game thread &mdash; and several renderers additionally need their OpenGL or Vulkan context current on that thread.</p>
+      <p>The solution is to load assets on a background thread and upload them to the GPU on the main thread when they are ready. The two-phase approach is the portable one. Drawing always belongs on the thread that owns the <code>GraphicsDevice</code>, which is the game thread, and outside the GL renderers everything created from the device (textures, buffers, render targets) should be created, used and disposed there too. The GL renderers (EasyGL: <code>OPENGLES2</code>, <code>OPENGLES3</code>, <code>OPENGL33</code>, <code>WEBGL1</code>, <code>WEBGL2</code>) relax that: constructing a texture, buffer or render target, <code>SetData</code>, <code>GetData</code> and <code>Dispose</code> take the GL context on whatever thread they run on and wait for the gap between frames, so there a loading thread may do the upload as well (see the <code>ContentManager</code> note below).</p>
 
       <h2>std::async and std::future for background loading</h2>
       <p>C++23's standard <code>std::async</code> / <code>std::future</code> provide a simple way to run a function on another thread and retrieve its result later:</p>
@@ -269,12 +269,13 @@ void Draw(const GameTime&amp; gt) override {
 }</code></pre>
 
       <h2>ContentManager thread safety note</h2>
-      <p>CNA's <code>ContentManager::Load&lt;T&gt;()</code> is <strong>not thread-safe</strong>: one manager keeps its asset cache in plain containers with no lock, and loading a <code>Texture2D</code>, <code>Model</code> or <code>Effect</code> creates GPU resources. Do not call it from background threads. The <code>BackgroundLoader</code> pattern above bypasses <code>ContentManager</code> intentionally &mdash; it reads and decodes raw file data on background threads and only touches CNA GPU types on the main thread. (The process-wide reader registries that <code>ContentManager</code> consults are guarded separately, but that does not make a manager safe to share.)</p>
-      <p>If you want to use <code>ContentManager</code> for level streaming, create a separate <code>ContentManager</code> per level on the main thread, but trigger the loading from a background thread using a flag / condition variable to signal when to start. The actual <code>Load</code> calls must happen on the main thread. <code>ContentManager</code> has no decode/upload split of its own, so loading through it always stalls the frame that calls it; spread <code>Load</code> calls over several frames if a level has many assets.</p>
+      <p>CNA's <code>ContentManager::Load&lt;T&gt;()</code> is <strong>not safe for concurrent use</strong>: one manager keeps its asset cache in plain containers with no lock, so never load through one manager from two threads at once, and loading a <code>Texture2D</code>, <code>Model</code> or <code>Effect</code> creates GPU resources. The <code>BackgroundLoader</code> pattern above bypasses <code>ContentManager</code> intentionally &mdash; it reads and decodes raw file data on background threads and only touches CNA GPU types on the main thread, which works on every renderer. (The process-wide reader registries that <code>ContentManager</code> consults are guarded separately, but that does not make a manager safe to share.)</p>
+      <p><strong>On the GL renderers a loading thread may own a manager.</strong> With EasyGL, one loading thread can create its own <code>ContentManager</code> and call <code>Load</code> itself &mdash; XNA&rsquo;s loading-screen pattern: the content reader holds the GL context for a whole asset, between frames, while the game thread keeps drawing the loading screen. Use one manager per loading thread. The one thing that deadlocks is the game thread <em>waiting</em>, inside <code>LoadContent</code>, <code>Update</code> or <code>Draw</code>, for that thread to finish: the game thread holds the GL context for the whole frame, so the two wait for each other (FNA and MonoGame behave the same way). Start the work, keep running frames, and pick up the results once the thread signals that it is done. This applies to the EasyGL identities only; on the other renderers keep <code>Load</code> on the game thread.</p>
+      <p>If you want to use <code>ContentManager</code> for level streaming on the other renderers, create a separate <code>ContentManager</code> per level on the main thread, but trigger the loading from a background thread using a flag / condition variable to signal when to start. The actual <code>Load</code> calls must happen on the main thread there. <code>ContentManager</code> has no decode/upload split of its own, so loading through it always stalls the frame that calls it; spread <code>Load</code> calls over several frames if a level has many assets.</p>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Web builds have no threads by default.</strong> A default Emscripten build of CNA is single-threaded, so <code>std::async(std::launch::async, ...)</code> cannot start a worker there. Shared-memory pthread support is an application-wide WebAssembly ABI choice you opt into with <code>-DCNA_ENABLE_EMSCRIPTEN_THREADS=ON</code> (Emscripten only, default <code>OFF</code>), and a browser only offers shared memory to cross-origin-isolated pages. For a web target, either enable that option and host accordingly, or load in slices on the main thread.</p>
+        <p><strong>Web builds have no threads by default.</strong> A default Emscripten build of CNA is single-threaded, so <code>std::async(std::launch::async, ...)</code> cannot start a worker there. Shared-memory pthread support is an application-wide WebAssembly ABI choice you opt into with <code>-DCNA_ENABLE_EMSCRIPTEN_THREADS=ON</code> (Emscripten only, default <code>OFF</code>), and a browser only offers shared memory to cross-origin-isolated pages. For a web target, either enable that option and host accordingly, or load in slices on the main thread. A threaded build uses WasmFS by default, which cannot host CNA&rsquo;s IndexedDB save storage; <code>-DCNA_EMSCRIPTEN_USE_WASMFS=OFF</code> restores persistent saves, but CNA&rsquo;s documentation keeps WasmFS recommended for games that load content on worker threads, because the legacy file system can wait on the browser&rsquo;s main thread during background loads.</p>
       </div>
 
       <!--p3:issue-links-->
@@ -309,7 +310,7 @@ void Draw(const GameTime&amp; gt) override {
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit b0e97bb1 (4 October 2026), a post-alpha.1 development snapshot. CNA exposes 18 renderer identities across 14 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -345,7 +346,7 @@ void Draw(const GameTime&amp; gt) override {
     <div class="footer-bottom">
       <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
       <div class="footer-links">
-        <a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="https://github.com/libcna/cna/blob/b0e97bb1bb876f9b3edd6f4ff1ef3067908ae8ac/LICENSE" target="_blank" rel="noopener">License</a>
         <a href="../../contact.html">Contact</a>
       </div>
     </div>

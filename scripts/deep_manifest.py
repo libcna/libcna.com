@@ -53,7 +53,7 @@ DEEP_GROUPS: list[dict] = [
     {"key": "sharp-runtime", "label": "sharp-runtime",
      "intro": "The foundation library CNA is built on: its object model, namespaces, component consumption, parity philosophy and how it is verified."},
     {"key": "siblings", "label": "Sibling libraries",
-     "intro": "EasyGL, MetaGL, FreeDirect and FreeAPI: what each owns, how CNA consumes it and where the boundaries are."},
+     "intro": "easy-gl and meta-gl, the two-library GL stack beneath the EasyGL renderer family: what each owns, how CNA consumes it and where the boundaries are."},
     {"key": "platforms", "label": "Cross-platform engineering",
      "intro": "The cross-platform contract, Windows cross-compiling and Wine, the web build and its main loop, renderer evidence on the web, Android and Apple platforms."},
     {"key": "verification", "label": "Diagnostics & verification",

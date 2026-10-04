@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run every site validator. check_retired_renderers.py and the source-link/ledger checks need the pinned CNA
-# material (see audit/009d40f5-phase1-delta.md and audit/developer-absorption-phase2.md); the retired-renderer scan
-# is skipped when the extracted TARGET tree is absent. Create the trees with scripts/extract_cna_trees.sh.
+# material (see audit/b0e97bb1-phase4-delta.md and audit/developer-absorption-phase2.md): the CNA clone next to this
+# repository (../cna or $CNA_REPO), whose Git objects are read and never modified.
 set -u
 cd "$(dirname "$0")/.."
 export PYTHONDONTWRITEBYTECODE=1
@@ -21,12 +21,8 @@ if [ -f audit/data/developer-absorption-units.json ] && [ -f "${DEVELOPER_REPO:-
 else
   echo "== developer_ledger.py skipped (developer.libcna.com working tree not present)"
 fi
-CNA_CACHE="${XDG_CACHE_HOME:-$HOME/.cache}/libcna-com"
-if [ -d "${CNA_TARGET_TREE:-$CNA_CACHE/cna-target}/cmake" ]; then
-  run python3 scripts/check_retired_renderers.py
-else
-  echo "== check_retired_renderers.py skipped (CNA worktrees not present)"
-fi
+# reads the CNA Git objects (../cna or $CNA_REPO) or, when given, the extracted trees; it fails rather than skips
+run python3 scripts/check_retired_renderers.py
 run python3 scripts/site_deep.py check
 run python3 scripts/check_deep_page.py --all
 run python3 scripts/apply_expansions.py check
@@ -37,6 +33,7 @@ if [ -f data/known-issues.json ]; then
   run python3 scripts/issue_refs.py check
 fi
 run python3 scripts/compare_presentation.py --phase3 --quiet
+run python3 scripts/compare_presentation.py --phase4 --quiet
 if [ "${PHASE3_FINAL:-0}" = "1" ]; then
   run python3 scripts/bible_ledger.py check --final
 fi

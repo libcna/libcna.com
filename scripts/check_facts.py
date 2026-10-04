@@ -55,14 +55,19 @@ def content_text(rel: str, anchor: str | None = None) -> str:
 
 # Language-binding policy (external_pinned.language_bindings). The canonical section states both sets, the homepage
 # leads with the maintained set, and no sentence anywhere presents an archived binding beside a maintained one as if
-# it were current (a sentence naming both must say "archived"). Counts of eight/nine bindings or ten languages must
-# stand in a historical or archived context.
+# it were current (a sentence naming both must say "archived"). Counts of nine/ten bindings or ten languages must
+# stand in a historical or archived context; "eight" is allowed only where the sentence is about the archived set.
 LB = facts["external_pinned"]["language_bindings"]
-MAINTAINED_EXTERNAL = re.compile(r"C#|\bJava\b|\bTypeScript\b")
-ARCHIVED_NAMES = re.compile(r"\b(?:" + "|".join(map(re.escape, LB["archived"])) + r")\b|cna-(?:"
-                            + "|".join(x.lower() for x in LB["archived"]) + r")\b")
-STALE_COUNT = re.compile(r"\b(?:eight|8|nine|9)\s+(?:public\s+|external\s+|language\s+)*bindings\b|\bEight binding projects\b"
+MAINTAINED_EXTERNAL = re.compile(r"C#|CNA\.NET")
+ARCHIVED_NAMES = re.compile(r"\b(?:" + "|".join(re.escape(x).replace(r"\ ", r"\s+") for x in LB["archived"]) + r")\b|\b(?:"
+                            + "|".join(map(re.escape, LB["archived_repositories"])) + r")\b")
+STALE_COUNT = re.compile(r"\b(?:eight|8|nine|9|ten|10)\s+(?:public\s+|external\s+|language\s+|additional\s+)*bindings\b|\bEight binding projects\b"
                          r"|\b(?:ten|10)\s+(?:programming\s+)?languages\b", re.I)
+
+
+# Development source tours of archived bindings describe the binding at its final revision (C ABI 0.21-0.35), so the C
+# route totals they quote from that revision's census are history, not claims about cnahead.
+ARCHIVED_BINDING_TOURS = {"development/internals/bindings/java.html", "development/internals/bindings/python.html"}
 
 
 def binding_policy(pages: list[str]) -> int:
@@ -76,7 +81,7 @@ def binding_policy(pages: list[str]) -> int:
     for lang in LB["archived"]:
         if not re.search(rf"\b{re.escape(lang)}\b", archived):
             print(f"FAIL binding policy: {page}#archived-bindings does not name {lang}"); bad += 1
-    for needle in ("Archived", "not maintained", "no forward compatibility guarantee", "CNA Lab"):
+    for needle in ("Archived", "not maintained", "CNA Lab", "community interest"):
         if needle not in archived:
             print(f"FAIL binding policy: {page}#archived-bindings lacks '{needle}'"); bad += 1
     lead = "actively maintains " + ", ".join(LB["maintained"][:-1]) + " and " + LB["maintained"][-1] + " bindings"
@@ -104,17 +109,20 @@ CHECKS = [
     ("index.html", r"\b<<static_test_definitions_n>>\b.{0,20}Static test definitions", "homepage stat: test definitions"),
     ("index.html", r"\b<<ci_workflow_files>>\b.{0,20}CI workflow files", "homepage stat: workflows"),
     ("index.html", r"\b<<xna_runtime_members_n>> / <<xna_runtime_members_n>>\b", "homepage stat: XNA members"),
-    ("index.html", r"87 / 153", "homepage stat: pinned samples"),
-    ("index.html", r"009d40f5", "homepage names the snapshot"),
+    ("index.html", r"\b<<cpp_samples_complete>>\b.{0,40}C\+\+ sample ports complete", "homepage stat: pinned C++ sample ports"),
+    ("index.html", r"\b<<web_builds>>\b.{0,40}playable in the browser", "homepage stat: browser-playable sample builds"),
+    ("index.html", r"\b<<cs_samples>>\b.{0,60}CNA\.NET", "homepage stat: original C# samples on CNA.NET"),
+    ("index.html", r"<<sha_short>>", "homepage names the snapshot"),
     ("docs/rendering-backends.html", r"\b<<renderer_identities>> public (renderer )?identities", "renderer page: identity count"),
     ("docs/rendering-backends.html", r"\b<<implementation_families>>\b", "renderer page: family count"),
     ("docs/verification.html", r"\b<<static_test_definitions_n>>\b", "verification page: test definitions"),
     ("docs/verification.html", r"\b<<cpp_test_source_files>>\b", "verification page: test files"),
     ("docs/verification.html", r"\b<<ci_workflow_files>> workflow files", "verification page: workflows"),
     ("docs/platforms.html", r"\b<<platform_implementations>>\b", "platforms page: implementations"),
-    ("docs/c-api.html", r"0\.29\.0", "C API page: ABI version"),
+    ("docs/c-api.html", r"<<c_abi_version_rx>>", "C API page: ABI version"),
+    ("docs/cna-net.html", r"<<c_abi_version_rx>>", "CNA.NET page: ABI version"),
     ("docs/c-api.html", r"\b<<c_api_routes_n>>\b", "C API page: route count"),
-    ("docs/releases.html", r"009d40f5", "releases page names the snapshot"),
+    ("docs/releases.html", r"<<sha_short>>", "releases page names the snapshot"),
 ]
 
 
@@ -122,6 +130,11 @@ def main() -> int:
     F["static_test_definitions_n"] = n(F["static_test_definitions"])
     F["xna_runtime_members_n"] = n(F["xna_runtime_members"])
     F["c_api_routes_n"] = n(F["c_api_routes"])
+    F["c_abi_version_rx"] = F["c_abi_version"]
+    F["sha_short"] = facts["snapshot"]["cna_sha_short"]
+    F["cpp_samples_complete"] = facts["external_pinned"]["cna_samples"]["complete"]
+    F["web_builds"] = facts["external_pinned"]["samples_libcna_com"]["playable_web_builds"]
+    F["cs_samples"] = facts["external_pinned"]["cna_cs_samples"]["microsoft_sample_executables"]
     bad = 0
     cache: dict[str, str] = {}
     for page, pattern, what in CHECKS:
@@ -135,12 +148,22 @@ def main() -> int:
             print(f"FAIL {what}: /{rx}/ not found in {page}"); bad += 1
     # stale numbers from the alpha.1 audit must not appear as current claims
     stale = [("50 renderer identities", "alpha.1 renderer count"), ("46 implementation families", "alpha.1 family count"),
-             ("8,263 static", "alpha.1 test definitions"), ("21 workflow files", "alpha.1 workflow count")]
+             ("8,263 static", "alpha.1 test definitions"), ("21 workflow files", "alpha.1 workflow count"),
+             # superseded values of the previous snapshot (009d40f5)
+             ("25 renderer identities", "009d40f5 renderer count"), ("25 public renderer", "009d40f5 renderer count"),
+             ("21 implementation families", "009d40f5 family count"), ("12,610", "009d40f5 test definitions"),
+             ("2,877", "009d40f5 commit count"), ("87 / 153", "009d40f5-era sample count"), ("87 of 153", "009d40f5-era sample count"),
+             ("ABI 0.29.0", "009d40f5 C ABI"), ("ABI (0.29.0", "009d40f5 C ABI"), ("4,055", "009d40f5 C route count"),
+             ("20 workflow files", "009d40f5 workflow count"), ("20 CI workflow", "009d40f5 workflow count"),
+             ("seven host integrations", "009d40f5 platform count"), ("7 platform implementations", "009d40f5 platform count")]
     for page in [p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.html") if not ({"audit", "scripts", "build-probe", ".git", "known-issues"} & set(p.relative_to(ROOT).parts))]:  # known-issues pages quote stale numbers of CNA's own documents on purpose
         if page == "docs/releases.html":
             continue  # release history compares alpha.1 with the snapshot on purpose
         body = cache.get(page) or text(page)
+        archived_tour = page in ARCHIVED_BINDING_TOURS  # a source tour of an archived binding at its final revision
         for needle, what in stale:
+            if archived_tour and what == "009d40f5 C route count":
+                continue
             for m in re.finditer(re.escape(needle), body):
                 ctx = body[max(0, m.start() - 90): m.end() + 60]
                 if re.search(r"alpha\.1|earlier|previous|BASE|was |had |historical|\(BASE", ctx, re.I):
@@ -163,7 +186,7 @@ def main() -> int:
                 if int(m.group(1)) == want:
                     continue
                 ctx = body[max(0, m.start() - 90): m.end() + 60]
-                if re.search(r"alpha\.1|earlier|previous|BASE|was |had |historical|Developer|compiled|of the 25|spread over", ctx, re.I):
+                if re.search(r"alpha\.1|earlier|previous|BASE|was |had |historical|Developer|compiled|of the 18|spread over", ctx, re.I):
                     continue
                 print(f"DRIFT {page}: {what} {m.group(1)} != {want} ... {ctx.strip()[:150]}"); bad += 1
     bad += binding_policy([p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.html")

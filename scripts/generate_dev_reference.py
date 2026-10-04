@@ -111,7 +111,6 @@ FAMILY_GUIDES = {
     "software": "development/internals/graphics/software.html",
     "headless": "development/internals/graphics/headless.html",
     "stub": "development/internals/graphics/stub.html",
-    "opengl4": "development/internals/graphics/opengl4.html",
 }
 PAGE = "development/reference/{}.html"
 

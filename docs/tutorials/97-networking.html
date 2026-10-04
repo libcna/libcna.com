@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Tutorial 97: Networking and Multiplayer Basics - CNA</title>
-  <meta name="description" content="CNA ships Microsoft::Xna::Framework::Net: NetworkSession, LocalNetworkGamer and PacketReader/PacketWriter over real ENet peer-to-peer UDP. Hosting, LAN discovery, best-effort host migration, working SimulatedLatency/SimulatedPacketLoss, and the honest limits.">
+  <title>Tutorial 97: Network Sessions on the Local Network - CNA</title>
+  <meta name="description" content="LAN multiplayer with CNA's Microsoft::Xna::Framework::Net: sign in a local offline profile, then host, find and join SystemLink sessions over ENet UDP with no server. Packets, events, host migration, simulated latency, and how online PlayerMatch and Ranked sessions differ.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/97-networking.html">
-  <meta property="og:title"       content="Tutorial 97: Networking and Multiplayer Basics - CNA">
-  <meta property="og:description" content="CNA ships Microsoft::Xna::Framework::Net: NetworkSession, LocalNetworkGamer and PacketReader/PacketWriter over real ENet peer-to-peer UDP. Hosting, LAN discovery, best-effort host migration, working SimulatedLatency/SimulatedPacketLoss, and the honest limits.">
+  <meta property="og:title"       content="Tutorial 97: Network Sessions on the Local Network - CNA">
+  <meta property="og:description" content="LAN multiplayer with CNA's Microsoft::Xna::Framework::Net: sign in a local offline profile, then host, find and join SystemLink sessions over ENet UDP with no server. Packets, events, host migration, simulated latency, and how online PlayerMatch and Ranked sessions differ.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/97-networking.html">
@@ -18,10 +18,10 @@
 {
   "@context": "https://schema.org",
   "@type": "TechArticle",
-  "headline": "Tutorial 97: Networking and Multiplayer Basics",
+  "headline": "Tutorial 97: Network Sessions on the Local Network",
   "url": "https://libcna.com/docs/tutorials/97-networking.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-09-25",
+  "dateModified": "2026-10-04",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -86,7 +86,7 @@
         </ol>
       </nav>
 
-      <h1>Tutorial 97: Networking and Multiplayer Basics</h1>
+      <h1>Tutorial 97: Network Sessions on the Local Network</h1>
         <p class="doc-meta">CNA &mdash; C++ XNA 4.0 reimplementation</p>
 
         <div class="callout callout--info">
@@ -94,11 +94,11 @@
           <p><strong>What you&rsquo;ll learn</strong></p>
           <ul>
             <li>Enabling CNA's XNA-compatible networking API in your build.</li>
-            <li>Signing in, hosting, finding and joining a session.</li>
-            <li>Sending and receiving packets, and handling session events.</li>
-            <li>Lockstep versus client-server, and what the API does not cover.</li>
+            <li>Signing in a local offline profile, then hosting, finding and joining a <code>SystemLink</code> session &mdash; with no server and no Internet.</li>
+            <li>Sending and receiving packets, handling session events, and owning the session object correctly.</li>
+            <li>What changes for online <code>PlayerMatch</code> and <code>Ranked</code> sessions, and the limits worth designing around.</li>
           </ul>
-          <p><strong>Before you start</strong> &mdash; <a href="04-game-lifecycle.html">Tutorial 04: The Game Class Lifecycle</a> (session state maps onto lifecycle callbacks) and <a href="18-game-states.html">Tutorial 18: Game States</a> (lobby and in-game are game states). Networking is opt-in at build configure time.</p>
+          <p><strong>Before you start</strong> &mdash; <a href="04-game-lifecycle.html">Tutorial 04: The Game Class Lifecycle</a> (session state maps onto lifecycle callbacks) and <a href="18-game-states.html">Tutorial 18: Game States</a> (lobby and in-game are game states). The <a href="../gamer-services.html">Gamer Services</a> page describes the profiles, the Guide and the optional server this tutorial builds on.</p>
         </div>
 
         <h2>CNA ships an XNA-compatible networking API</h2>
@@ -109,11 +109,14 @@
           that spawns a host and a client as separate OS processes and makes them exchange packets.
         </p>
         <p>
-          The transport is real: <strong>peer-to-peer ENet over UDP</strong>. CNA vendors ENet and wraps it behind
-          the XNA API surface, so <code>NetworkSession</code> is reliable/unreliable UDP with packet sequencing,
-          not a stub. LAN session discovery is a real broadcast protocol on UDP port <code>61190</code>, and the
-          <code>QualityOfService</code> attached to a discovered session carries a genuinely measured
-          round-trip time, sampled from the wall-clock delay between the discovery query and the host's reply.
+          What travels where depends on the session type. <code>Local</code> and <code>LocalWithLeaderboards</code>
+          sessions live in one process. <strong><code>SystemLink</code></strong> sessions are <strong>peer-to-peer ENet over
+          UDP on the local network</strong>: CNA vendors ENet and wraps it behind the XNA API surface, LAN session
+          discovery is a real broadcast protocol on UDP port <code>61190</code>, and the <code>QualityOfService</code>
+          attached to a discovered session carries a measured round-trip time and measured upstream and downstream
+          bandwidth. <code>SystemLink</code> needs no server and works offline. Online <code>PlayerMatch</code> and
+          <code>Ranked</code> sessions go through the optional CNA Gamer Services server instead (see
+          <a href="#online">Online sessions</a> below). This tutorial is about the local network.
         </p>
 
         <div class="callout callout--note">
@@ -131,74 +134,94 @@
         </p>
 <pre><code class="language-cmake">target_link_libraries(MyGame PRIVATE
     CNA
-    CNA_GamerServices   # SignedInGamer, GamerServicesDispatcher
+    CNA_GamerServices   # SignedInGamer, Guide, GamerServicesComponent
     CNA_Net             # NetworkSession, PacketReader/Writer, ...
     SHARP_RUNTIME)</code></pre>
         <p>
           <code>CNA_GamerServices</code> is not optional: every session is created for one or more
-          <code>SignedInGamer</code> instances, and those come from the GamerServices layer.
+          <code>SignedInGamer</code> instances, and those come from the GamerServices layer. Voice chat is built when
+          libopus 1.3 or newer is found; <code>CNA_ENABLE_VOICE</code> (<code>AUTO</code>, <code>ON</code> or
+          <code>OFF</code>) controls that, and voice is never built for Emscripten or Android.
         </p>
         <div class="callout callout--warn">
           <span class="callout-icon">&#9888;</span>
           <p>CNA's own networking demos are gated on <code>CNA_ENABLE_NET AND NOT EMSCRIPTEN</code>. The Net
-          library itself builds under Emscripten, but the demos that open real UDP sockets are excluded there,
-          because a browser page cannot open one.</p>
+          library itself builds under Emscripten, but a browser page cannot open a UDP socket, so <code>SystemLink</code>
+          discovery finds nothing there, and the online service, its relay and voice are not available in a browser either.</p>
         </div>
 
         <h2>Signing in a local gamer</h2>
         <p>
-          Before any session call, populate <code>Gamer::SignedInGamers</code> by initializing the
-          GamerServices dispatcher. <code>GamerServicesDispatcher::Initialize()</code> takes an
-          <code>System::IServiceProvider&amp;</code> but never dereferences it, so a null implementation is
-          sufficient:
+          With no server configured &mdash; the default &mdash; CNA&rsquo;s gamers are <strong>local offline profiles</strong>,
+          as on an Xbox 360 without Xbox LIVE, and <strong>nobody is signed in</strong> until the player picks or creates a
+          profile in the Guide&rsquo;s sign-in page (<code>Guide::ShowSignIn</code>) or the auto-sign-in setting signs one in.
+          Add <code>GamerServicesComponent</code> exactly as in XNA, and keep a <code>GraphicsDeviceManager</code> so the Guide
+          can draw:
         </p>
-<pre><code class="language-cpp">#include "Microsoft/Xna/Framework/GamerServices/Gamer.hpp"
-#include "Microsoft/Xna/Framework/GamerServices/GamerServicesDispatcher.hpp"
+<pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Game.hpp"
+#include "Microsoft/Xna/Framework/GraphicsDeviceManager.hpp"
+#include "Microsoft/Xna/Framework/GamerServices/GamerServicesComponent.hpp"
+#include "Microsoft/Xna/Framework/GamerServices/Gamer.hpp"
+#include "Microsoft/Xna/Framework/GamerServices/Guide.hpp"
 #include "Microsoft/Xna/Framework/GamerServices/SignedInGamerCollection.hpp"
-#include "System/IServiceProvider.hpp"
+#include &lt;memory&gt;
 
 using namespace Microsoft::Xna::Framework;
-using Microsoft::Xna::Framework::GamerServices::SignedInGamer;
+using namespace Microsoft::Xna::Framework::GamerServices;
 
-class NullServiceProvider : public System::IServiceProvider {
+class LanGame : public Game {
+    GraphicsDeviceManager graphics_{this};          // the Guide draws through it
 public:
-    [[nodiscard]] void* GetService(const std::type_info&amp;) const override {
-        return nullptr;
+    LanGame() {
+        getComponentsProperty().Add(std::make_shared&lt;GamerServicesComponent&gt;(*this));
     }
-};
-
-NullServiceProvider services;
-GamerServices::GamerServicesDispatcher::Initialize(services);
-SignedInGamer* localGamer =
-    (*GamerServices::Gamer::getSignedInGamersProperty())[0];</code></pre>
+protected:
+    void Update(GameTime&amp; gameTime) override {
+        Game::Update(gameTime);                      // runs GamerServicesDispatcher::Update
+        SignedInGamer* player = (*Gamer::getSignedInGamersProperty())[PlayerIndex::One];
+        if (player == nullptr &amp;&amp; !Guide::getIsVisibleProperty())
+            Guide::ShowSignIn(1, false);             // pick or create a local profile
+        // ... once player is not null, host or join a session (below)
+    }
+};</code></pre>
+        <p>
+          A local profile has <code>IsSignedInToLive</code> false and no online-session privilege, but it plays
+          <code>Local</code> and <code>SystemLink</code> sessions. Profiles are stored per user on the machine
+          (<code>profiles.json</code> under the user&rsquo;s data directory, or under <code>CNA_GAMER_SERVICES_PROFILES_DIR</code>).
+          For unattended runs and CI, set <code>CNA_GAMER_SERVICES_AUTO_SIGN_IN</code> to up to four comma-separated profile
+          names: they are created when missing and signed in when gamer services start, and appear at the first
+          <code>Update</code>.
+        </p>
 
         <h2>Hosting a session</h2>
         <p>
           <code>NetworkSession::Create()</code> returns a raw <code>NetworkSession*</code> that
-          <em>you</em> own. Call <code>Dispose()</code> when you are done with it &mdash; that is what tears
-          down the ENet host and frees every gamer object the session created.
+          <em>you</em> own. <code>Dispose()</code> tears down the ENet host and frees every gamer object the session
+          created, but it does not free the session object itself: call <code>Dispose()</code>, then <code>delete</code>
+          the pointer.
         </p>
 <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Net/NetworkSession.hpp"
 #include "Microsoft/Xna/Framework/Net/LocalNetworkGamer.hpp"
 
 using namespace Microsoft::Xna::Framework::Net;
 
-// sessionType, maxLocalGamers, maxGamers
+// sessionType, maxLocalGamers, maxGamers -- the signed-in profile becomes the local gamer
 NetworkSession* session =
     NetworkSession::Create(NetworkSessionType::SystemLink, 1, 8);
 
 LocalNetworkGamer* me = session-&gt;getLocalGamersProperty()[0];
 
 // ... later, exactly once:
-session-&gt;Dispose();</code></pre>
+session-&gt;Dispose();
+delete session;</code></pre>
         <p>
           There are richer <code>Create()</code> overloads taking <code>privateGamerSlots</code> and a
           <code>NetworkSessionProperties</code> to advertise, plus an overload taking an explicit
           <code>std::vector&lt;SignedInGamer*&gt;</code>. Each has a matching
           <code>BeginCreate()</code>/<code>EndCreate()</code> asynchronous pair. The XNA limits are available as
           <code>NetworkSession::MaxSupportedGamers</code> (31) and <code>NetworkSession::MaxPreviousGamers</code> (100), and the
-          gamer limit you request is preserved. <code>SystemLink</code>, <code>Local</code> and <code>LocalWithLeaderboards</code> sessions can be created (the last two are synthetic and behave alike):
-          asking for <code>PlayerMatch</code> or <code>Ranked</code> throws (see below).
+          gamer limit you request is preserved. <code>Local</code>, <code>LocalWithLeaderboards</code> and <code>SystemLink</code>
+          sessions need no server; asking for <code>PlayerMatch</code> or <code>Ranked</code> without one throws (see below).
         </p>
 
         <h2>Finding and joining a session</h2>
@@ -211,10 +234,10 @@ session-&gt;Dispose();</code></pre>
           <span class="callout-icon">&#9888;</span>
           <p><strong>Discovery is gated to <code>SystemLink</code>, and does nothing on the web.</strong>
           <code>Find()</code> with <code>NetworkSessionType::Local</code> throws <code>ArgumentException</code> (a local session is
-          never discovered), and with <code>PlayerMatch</code> or <code>Ranked</code> it throws
-          <code>GamerServices::GamerServicesNotAvailableException</code> (see the status table). Under Emscripten it does nothing at all,
-          because a browser page cannot open a UDP socket. Do not build a session browser that treats "no results" as "still searching"
-          on the web path.</p>
+          never discovered), and with <code>PlayerMatch</code> or <code>Ranked</code> it searches the server&rsquo;s session directory,
+          or throws <code>GamerServices::GamerServicesNotAvailableException</code> when no server is configured. Under Emscripten
+          <code>SystemLink</code> discovery returns nothing at all, because a browser page cannot open a UDP socket. Do not build a
+          session browser that treats "no results" as "still searching" on the web path.</p>
         </div>
         <div class="callout callout--note">
           <span class="callout-icon">&#9432;</span>
@@ -285,6 +308,7 @@ std::printf("%s (%d/%d) - %.0f ms\n",
 #include "Microsoft/Xna/Framework/Net/PacketWriter.hpp"
 
 void MyGame::Update(GameTime&amp; gameTime) {
+    Game::Update(gameTime);      // gamer services first
     session_-&gt;Update();          // pumps ENet, raises queued events
 
     // Broadcast our position to everyone else in the session.
@@ -305,7 +329,8 @@ void MyGame::Update(GameTime&amp; gameTime) {
         <p>
           The <code>sender</code> out-parameter can point at your own local gamer &mdash; a broadcast is
           delivered to every gamer in the session including the originator &mdash; so the
-          <code>getIsLocalProperty()</code> check above is not optional.
+          <code>getIsLocalProperty()</code> check above is not optional. <code>ReceiveData(PacketReader&amp;, ...)</code> returns
+          the packet&rsquo;s size and sizes the reader to it.
         </p>
         <p><code>SendDataOptions</code> has five members:</p>
         <div class="table-wrap">
@@ -391,6 +416,23 @@ session-&gt;ResetReady();           // clears every gamer's IsReady flag</code><
           <code>Ended</code>. <code>Ended</code> is reached when the local gamer actually leaves the session.
         </p>
 
+        <h2 id="online">Online sessions: PlayerMatch and Ranked</h2>
+        <p>
+          Online sessions use the same API, but they go through the optional <strong>CNA Gamer Services server</strong>
+          (<code>cna-gamer-services-server</code>), which the game finds through configuration outside its code
+          (environment variables, a <code>cna-title.json</code> manifest or a settings file). Without a configured server,
+          <code>Create</code>/<code>Find</code> for <code>PlayerMatch</code> or <code>Ranked</code> throw
+          <code>GamerServicesNotAvailableException</code>. With one:
+        </p>
+        <ul>
+          <li>Only signed-in <strong>server accounts</strong> can take part; local offline profiles and guests are refused.</li>
+          <li>Sessions are created and found through the server&rsquo;s session directory, and <strong>every datagram</strong>, game data and voice alike, travels through the server&rsquo;s authenticated WebSocket relay over TLS. There is no peer-to-peer path and no NAT traversal, so expect TCP&rsquo;s head-of-line latency when packets are lost.</li>
+          <li>The asynchronous <code>Begin*</code> calls complete during <code>GamerServicesDispatcher::Update</code>, which the <code>GamerServicesComponent</code> runs from <code>Game::Update</code>.</li>
+          <li>Invitations work (players invite from the Guide; the invited game hears <code>InviteAccepted</code> and calls <code>JoinInvited</code>), host migration is decided by the server, and <code>Ranked</code> does not allow joining a game in progress.</li>
+          <li>The server is not Xbox LIVE and no public instance is provided: you run your own. Its public-Internet deployment has not been independently qualified.</li>
+        </ul>
+        <p>The <a href="../gamer-services.html">Gamer Services</a> page covers configuration, the server and the security model.</p>
+
         <h2>What works, and what does not</h2>
         <p>
           The networking layer is real, but it is not complete. These limits are all verified against the
@@ -402,31 +444,31 @@ session-&gt;ResetReady();           // clears every gamer's IsReady flag</code><
           <tbody>
             <tr>
               <td><code>NetworkSessionType::SystemLink</code></td>
-              <td><strong>Real transport.</strong> This is the only session type that opens an ENet host and puts bytes on the wire.</td>
+              <td><strong>Real LAN transport, no server needed.</strong> Direct ENet over UDP between the machines, with broadcast discovery. It needs at least one signed-in gamer (a local profile is enough) and works fully offline. The traffic is plain, unauthenticated ENet on your local network: treat every peer as untrusted input.</td>
             </tr>
             <tr>
-              <td><code>NetworkSessionType::Local</code></td>
-              <td>Works as a single-process session: gamers, events and state transitions all work, with no sockets involved. Packets are not delivered: <code>Update()</code> handles <code>PacketSend</code> only for <code>SystemLink</code>, so data sent on a <code>Local</code> session never arrives, not even for the sender (<code>getIsDataAvailableProperty()</code> stays <code>false</code>).</td>
+              <td><code>NetworkSessionType::Local</code>, <code>LocalWithLeaderboards</code></td>
+              <td>Work as single-process sessions: gamers, events and state transitions all work, with no sockets involved. Packets are not delivered: data sent on a <code>Local</code> or <code>LocalWithLeaderboards</code> session never arrives, not even for the sender (<code>getIsDataAvailableProperty()</code> stays <code>false</code>).</td>
             </tr>
             <tr>
               <td><code>PlayerMatch</code>, <code>Ranked</code>, <code>JoinInvited</code></td>
-              <td><strong>Refused.</strong> <code>Create</code>/<code>BeginCreate</code> and <code>Find</code>/<code>BeginFind</code> for these session types throw <code>GamerServices::GamerServicesNotAvailableException</code> naming the missing matchmaking service; <code>JoinInvited</code>/<code>BeginJoinInvited</code> always throw, and <code>EndJoinInvited</code> refuses every result (through the C API these become <code>CNA_RESULT_NOT_SUPPORTED</code>). Matchmaking, ranked play and invitations required Xbox Live, which has no open replacement, and the static <code>InviteAccepted</code> event is declared but never raised. At alpha.1 these types were accepted and silently did nothing; code that selected them now needs <code>SystemLink</code> or <code>Local</code>.</td>
+              <td><strong>Through the CNA Gamer Services server only</strong> (see <a href="#online">Online sessions</a>); refused with <code>GamerServicesNotAvailableException</code> when none is configured. Native builds only.</td>
             </tr>
             <tr>
               <td>Voice chat</td>
-              <td>No-op by design. <code>EnableSendVoice()</code> and <code>SendPartyInvites()</code> have empty bodies; <code>HasVoice</code>/<code>IsTalking</code> never become true.</td>
+              <td>Routed automatically in <code>SystemLink</code> and online sessions when CNA was built with libopus: Opus at 16&nbsp;kHz, one microphone per machine (player one&rsquo;s gamer), <code>HasVoice</code>, <code>IsTalking</code> and <code>IsMutedByLocalUser</code>, and <code>EnableSendVoice</code> to stop sending to a gamer. <code>CNA_VOICE=0</code> turns it off at run time, and <code>Local</code> sessions carry no voice. It was tested in software only; a physical microphone-to-speaker loop has not been verified.</td>
             </tr>
             <tr>
               <td><code>NetworkMachine::RemoveFromSession()</code></td>
-              <td>Throws <code>NotImplementedException</code>, matching FNA's own stub. Remove gamers through the session instead.</td>
+              <td>Implemented: the host removes another machine and its gamers from the session.</td>
             </tr>
             <tr>
-              <td><code>QualityOfService</code> bandwidth</td>
-              <td><code>BytesPerSecondUpstream</code> and <code>BytesPerSecondDownstream</code> are hardcoded to <code>0</code>. Discovery is connectionless UDP with no established peer to measure throughput from. The round-trip time fields <em>are</em> genuinely measured.</td>
+              <td><code>QualityOfService</code></td>
+              <td>For <code>SystemLink</code> search results the round-trip time and the upstream and downstream bandwidth are measured. Online search results report <code>IsAvailable</code> false.</td>
             </tr>
             <tr>
               <td><code>AllowHostMigration</code></td>
-              <td><strong>Implemented, best effort, off by default.</strong> With the default <code>false</code> the session ends when its host disconnects (XNA/FNA&rsquo;s reference behaviour). Set to <code>true</code> and every surviving peer independently computes the same new host &mdash; the lowest remaining wire id &mdash; and either promotes itself or reconnects to the promoted peer, and <code>HostChanged</code> is raised. It is a full reconnect, not a seamless hand-over: the remote-gamer roster is rebuilt (fresh <code>NetworkGamer*</code> objects, real <code>GamerLeft</code> and <code>GamerJoined</code> events), and the session still ends if no reachable host remains.</td>
+              <td><strong>Implemented, best effort, off by default.</strong> With the default <code>false</code> the session ends when its host disconnects (XNA/FNA&rsquo;s reference behaviour). Set to <code>true</code> and every surviving <code>SystemLink</code> peer independently computes the same new host &mdash; the lowest remaining wire id &mdash; and either promotes itself or reconnects to the promoted peer, and <code>HostChanged</code> is raised. It is a full reconnect, not a seamless hand-over: the remote-gamer roster is rebuilt (fresh <code>NetworkGamer*</code> objects, real <code>GamerLeft</code> and <code>GamerJoined</code> events), and the session still ends if no reachable host remains. Online sessions migrate under the server&rsquo;s control instead.</td>
             </tr>
             <tr>
               <td><code>SimulatedLatency</code>, <code>SimulatedPacketLoss</code></td>
@@ -434,7 +476,11 @@ session-&gt;ResetReady();           // clears every gamer's IsReady flag</code><
             </tr>
             <tr>
               <td>Leaderboards / TrueSkill</td>
-              <td>The <code>WriteArbitratedLeaderboard</code>, <code>WriteUnarbitratedLeaderboard</code>, and <code>WriteTrueSkill</code> delegates are wired and can be raised, but nothing in CNA ever raises them.</td>
+              <td>The <code>WriteArbitratedLeaderboard</code>, <code>WriteUnarbitratedLeaderboard</code> and <code>WriteTrueSkill</code> events belong to server-backed gameplay: by a reading of the source they are raised only when a session of server accounts commits its leaderboard writes at the host&rsquo;s <code>EndGame</code>, so a <code>SystemLink</code> session of local profiles never raises them. There is no TrueSkill rating. See <a href="123-achievements.html">Tutorial 123</a>.</td>
+            </tr>
+            <tr>
+              <td>Browser and Android</td>
+              <td>In a browser, <code>SystemLink</code> discovery is empty and the online service, relay and voice are unavailable. An Android build without libcurl has no online service either.</td>
             </tr>
           </tbody>
         </table>
@@ -442,8 +488,12 @@ session-&gt;ResetReady();           // clears every gamer's IsReady flag</code><
         <p>
           In short: build LAN multiplayer on <code>SystemLink</code>, prototype single-process session logic (lobby, readiness, state transitions) on
           <code>Local</code>, test your netcode against the real <code>SimulatedLatency</code>/<code>SimulatedPacketLoss</code>
-          dials, treat host migration as best-effort (it needs <code>AllowHostMigration</code> and a rebuilt roster), and do not plan around voice or matchmaking.
+          dials, treat host migration as best-effort (it needs <code>AllowHostMigration</code> and a rebuilt roster), and plan online play around a server you operate.
         </p>
+        <div class="callout callout--note">
+          <span class="callout-icon">&#9432;</span>
+          <p><strong>What has been qualified.</strong> CNA records its final audit run of this work on Linux (2 October 2026): the GamerServices suite 649 passed and the Net suite 524 passed, with no failures; the two-process loopback test runs on POSIX hosts only. Windows and macOS, a real wide-area network with NAT, and voice on physical audio devices have not been qualified. These are CNA&rsquo;s records, not re-run for this page.</p>
+        </div>
         <div class="callout callout--note">
           <span class="callout-icon">&#9432;</span>
           <p><strong>Changed since alpha.1.</strong> The join handshake now completes before <code>Join()</code> returns; the requested gamer limit is preserved; changes to a session&rsquo;s mutable <code>NetworkSessionProperties</code> replicate to peers; sends that reuse one <code>PacketWriter</code> are trimmed to the bytes written; and <code>PacketReader::ReadColor()</code> now reads the four bytes that <code>PacketWriter::Write(Color)</code> writes (alpha.1 read sixteen). That last one is a wire-format fix: a peer built from alpha.1 and a peer built from this snapshot cannot exchange <code>Color</code> packets, so run both ends of a test from the same revision.</p>
@@ -516,7 +566,7 @@ Vector2 InterpolateRemote(const Vector2&amp; prev, const Vector2&amp; next,
         <h2>Working code to read next</h2>
         <p>
           Everything on this page is drawn from CNA's own networking demos. They live in CNA's own tree and are built with it
-          (when <code>CNA_ENABLE_NET</code> is on and the target is not Emscripten), so they are the authoritative reference when this page and the code disagree:
+          (when <code>CNA_ENABLE_NET</code> is on and the target is not Emscripten), so they are the authoritative reference when this page and the code disagree (one exception: some of them call <code>Dispose()</code> on exit without deleting the session object; your code should do both, as shown above):
         </p>
         <div class="table-wrap">
         <table>
@@ -538,7 +588,7 @@ Vector2 InterpolateRemote(const Vector2&amp; prev, const Vector2&amp; next,
 <h2 id="deep-dives-here">Deep dives on this topic</h2>
 <p>Long-form pages that explain the exact semantics, invariants and evidence behind this subject.</p>
 <ul>
-<li><a href="../../deep-dives/services/network-sessions.html">Network sessions and the SystemLink protocol</a> &mdash; What each NetworkSessionType really does in CNA, the SystemLink wire and discovery protocols, the trust model, delivery guarantees, host migration and the evidence behind them.</li>
+<li><a href="../../deep-dives/services/network-sessions.html">Network sessions and the SystemLink protocol</a> &mdash; What each NetworkSessionType does in CNA, online sessions through the CNA service relay, the SystemLink wire and discovery protocols, the trust model, delivery guarantees, host migration and the evidence behind them.</li>
 </ul>
 </section>
 <!--/p3:deep-links-->
@@ -548,9 +598,8 @@ Vector2 InterpolateRemote(const Vector2&amp; prev, const Vector2&amp; next,
 <p>Current defects, gaps and limitations at this snapshot that touch this subject.</p>
 <ul>
 <li><a href="../../known-issues/bugs/cna-bug-170.html">CNA-BUG-170: A joined SystemLink session answers LAN discovery for itself and handles ClientHello as if it were the host</a> &mdash; Every SystemLink session, including a joined one, registers with discovery and ReplyToQuery ignores IsHost, so Find lists a session once per member and joining through a client&#x27;s entry attaches to that client instead of </li>
-<li><a href="../../known-issues/bugs/cna-bug-172.html">CNA-BUG-172: A joined SystemLink session reports MaxGamers 31 and PrivateGamerSlots 4 instead of the host&#x27;s values</a> &mdash; EndJoin constructs the client&#x27;s NetworkSession with the placeholders MaxSupportedGamers and 4 that FNA marks FIXME, and nothing in the handshake updates them, so a client&#x27;s MaxGamers, PrivateGamerSlots and session-full c</li>
 <li><a href="../../known-issues/bugs/cna-bug-248.html">CNA-BUG-248: PacketReader::ReadColor and PacketWriter::Write(Color) doc comments still say ReadColor reads four floats and is not the inverse of Write(Color)</a> &mdash; Since c4561fd2b ReadColor reads the four bytes Write(Color) writes and a test asserts the round trip, but both public header comments and a test-file comment still describe a four-float asymmetry preserved from &#x27;upstream</li>
-<li><a href="../../known-issues/bugs/cna-bug-250.html">CNA-BUG-250: LocalNetworkGamer::SendData in a Local or LocalWithLeaderboards session silently drops every packet, so neither the sender nor another local gamer ever receives it</a> &mdash; NetworkSession::Update raises PacketSend events only when real networking is enabled (SystemLink), so SendData in a Local or LocalWithLeaderboards session reports success and delivers nothing, although SendData is docume</li>
+<li><a href="../../known-issues/bugs/cna-bug-250.html">CNA-BUG-250: LocalNetworkGamer::SendData in a Local or LocalWithLeaderboards session silently drops every packet, so neither the sender nor another local gamer ever receives it</a> &mdash; NetworkSession::Update raises PacketSend events only when real networking is enabled (SystemLink, or a service-backed PlayerMatch/Ranked session), so SendData in a Local or LocalWithLeaderboards session reports success a</li>
 <li><a href="../../known-issues/limitations/cna-plat-012.html">CNA-PLAT-012: Under Emscripten, SystemLink discovery is empty, hosting binds the fixed port 61191 and Join returns before the handshake</a> &mdash; The web build stubs out discovery (Find returns nothing), hosts on a fixed port only a Node.js relay can use, rebuilds a joining session as an outbound-only client and returns from Join before the server welcome; Node.js</li>
 </ul>
 </section>
@@ -579,7 +628,7 @@ Vector2 InterpolateRemote(const Vector2&amp; prev, const Vector2&amp; next,
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit b0e97bb1 (4 October 2026), a post-alpha.1 development snapshot. CNA exposes 18 renderer identities across 14 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -615,7 +664,7 @@ Vector2 InterpolateRemote(const Vector2&amp; prev, const Vector2&amp; next,
     <div class="footer-bottom">
       <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
       <div class="footer-links">
-        <a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="https://github.com/libcna/cna/blob/b0e97bb1bb876f9b3edd6f4ff1ef3067908ae8ac/LICENSE" target="_blank" rel="noopener">License</a>
         <a href="../../contact.html">Contact</a>
       </div>
     </div>

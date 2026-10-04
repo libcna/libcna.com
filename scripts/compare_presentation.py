@@ -24,6 +24,11 @@ Phase 3 does the same against the PHASE2_BASE inventory (2c4970c):
     compare_presentation.py --phase3 [--report audit/phase3-presentation-comparison.md]
         baseline    audit/data/phase3-baseline-inventory.json
         dispositions audit/data/phase3-dispositions.json
+
+Phase 4 (the b0e97bb1 snapshot update) does the same against the inventory of df85d05, taken before any edit:
+    compare_presentation.py --phase4 [--report audit/phase4-presentation-comparison.md]
+        baseline    audit/data/phase4-baseline-inventory.json
+        dispositions audit/data/phase4-dispositions.json
 """
 
 from __future__ import annotations
@@ -44,6 +49,8 @@ PHASE2_BASELINE = ROOT / "audit" / "data" / "phase2-baseline-inventory.json"
 PHASE2_DISPOSITIONS = ROOT / "audit" / "data" / "phase2-dispositions.json"
 PHASE3_BASELINE = ROOT / "audit" / "data" / "phase3-baseline-inventory.json"
 PHASE3_DISPOSITIONS = ROOT / "audit" / "data" / "phase3-dispositions.json"
+PHASE4_BASELINE = ROOT / "audit" / "data" / "phase4-baseline-inventory.json"
+PHASE4_DISPOSITIONS = ROOT / "audit" / "data" / "phase4-dispositions.json"
 # fraction of the baseline size below which a block / page counts as shrunk
 BLOCK_KEEP = 0.5
 PAGE_KEEP = 0.6
@@ -83,6 +90,16 @@ class Loss:
         return bool(needle) and needle.lower() in self.key.lower()
 
 
+# a CNA source link re-pinned from the previous cnahead to the current one is the same link (see main)
+PIN_MAP: dict[str, str] = {}
+
+
+def repin(href: str) -> str:
+    for old, new in PIN_MAP.items():
+        href = href.replace(old, new)
+    return href
+
+
 def compare_page(rel: str, base: dict, cur: dict | None) -> tuple[list[Loss], list[str]]:
     losses: list[Loss] = []
     notes: list[str] = []
@@ -111,7 +128,7 @@ def compare_page(rel: str, base: dict, cur: dict | None) -> tuple[list[Loss], li
     # CTAs: same href must survive; prominence must not drop
     cur_ctas = cur["ctas"]
     for c in base["ctas"]:
-        same = [x for x in cur_ctas if x["href"] == c["href"]]
+        same = [x for x in cur_ctas if x["href"] == repin(c["href"])]
         if not same:
             near = [x for x in cur_ctas if similar(x["label"], c["label"]) >= 0.9]
             losses.append(Loss(rel, "cta", f"{c['label']} -> {c['href']}",
@@ -129,7 +146,7 @@ def compare_page(rel: str, base: dict, cur: dict | None) -> tuple[list[Loss], li
     sig = {"external-deep", "external-root", "github-repo", "github-deep", "github-org"}
     cur_hrefs = {l["href"] for l in cur["links"]} | {c["href"] for c in cur["ctas"]}
     for l in base["links"]:
-        if l["kind"] in sig and l["href"] not in cur_hrefs:
+        if l["kind"] in sig and repin(l["href"]) not in cur_hrefs:
             losses.append(Loss(rel, "link", f"{l['label']} -> {l['href']}", l["kind"]))
 
     # cards
@@ -212,15 +229,22 @@ def main() -> int:
                     help="compare against the PHASE1_BASE inventory with the strict 10%% shrink guard")
     ap.add_argument("--phase3", action="store_true",
                     help="compare against the PHASE2_BASE inventory with the strict 10%% shrink guard")
+    ap.add_argument("--phase4", action="store_true",
+                    help="compare against the pre-update df85d05 inventory with the strict 10%% shrink guard")
     args = ap.parse_args()
 
-    if args.phase3:
+    # every baseline taken while cnahead was 009d40f5 pinned CNA source links to it; a later pin move re-pins them to the
+    # current cnahead, which is the same link and not a presentation loss
+    PIN_MAP["009d40f5dd085c4e674d3479675fac84b12b3e0a"] = (ROOT / "cnahead").read_text().strip()
+    if args.phase4:
+        baseline_path, disp_path = PHASE4_BASELINE, PHASE4_DISPOSITIONS
+    elif args.phase3:
         baseline_path, disp_path = PHASE3_BASELINE, PHASE3_DISPOSITIONS
     elif args.phase2:
         baseline_path, disp_path = PHASE2_BASELINE, PHASE2_DISPOSITIONS
     else:
         baseline_path, disp_path = BASELINE, DISPOSITIONS
-    if args.phase2 or args.phase3:
+    if args.phase2 or args.phase3 or args.phase4:
         BLOCK_KEEP = PAGE_KEEP = 0.9
     baseline_doc = json.loads(baseline_path.read_text(encoding="utf-8"))
     base = baseline_doc["pages"]
@@ -248,8 +272,8 @@ def main() -> int:
                 break
         (explained if loss.disposition else unexplained).append(loss)
 
-    phase = "Phase-3" if args.phase3 else ("Phase-2" if args.phase2 else "Phase-1")
-    if not (args.phase2 or args.phase3):
+    phase = "Phase-4" if args.phase4 else "Phase-3" if args.phase3 else ("Phase-2" if args.phase2 else "Phase-1")
+    if not (args.phase2 or args.phase3 or args.phase4):
         baseline_label = "be35902"
     lines = [f"# {phase} presentation comparison (baseline `{baseline_label}` vs working tree)", "",
              f"- baseline pages compared: {len(base) if not args.page else len(args.page)}",

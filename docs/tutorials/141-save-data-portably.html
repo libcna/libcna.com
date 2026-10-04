@@ -15,7 +15,7 @@
   <link rel="canonical" href="https://libcna.com/docs/tutorials/141-save-data-portably.html">
   <link rel="stylesheet" href="../../css/prism-tomorrow.min.css">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"TechArticle","headline":"Tutorial 141: Save Data Portably with StorageDevice","description":"Write a portable save slot with the real StorageDevice and StorageContainer API: naming the app, the platform-independent storage root, serialising, path-contained files, error handling, and the web persistence boundary.","url":"https://libcna.com/docs/tutorials/141-save-data-portably.html","datePublished":"2026-09-24","dateModified":"2026-09-25","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Tutorial Series","url":"https://libcna.com/tutorials.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Advanced"}
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Tutorial 141: Save Data Portably with StorageDevice","description":"Write a portable save slot with the real StorageDevice and StorageContainer API: naming the app, the platform-independent storage root, serialising, path-contained files, error handling, and the web persistence boundary.","url":"https://libcna.com/docs/tutorials/141-save-data-portably.html","datePublished":"2026-09-24","dateModified":"2026-10-04","isPartOf":{"@type":"CreativeWorkSeries","name":"CNA Tutorial Series","url":"https://libcna.com/tutorials.html"},"author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Advanced"}
   </script>
   <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
 </head>
@@ -53,13 +53,13 @@
 <main id="main-content"><div class="tutorial-layout"><div class="docs-main"><article class="docs-content">
   <nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="../../index.html">Home</a></li><li><a href="../../tutorials.html">Tutorials</a></li><li aria-current="page">Tutorial 141</li></ol></nav>
   <h1>Tutorial 141: Save Data Portably with StorageDevice</h1>
-  <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; CNA snapshot 009d40f5</p>
+  <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; CNA snapshot b0e97bb1</p>
 
-  <div class="callout callout--info"><span class="callout-icon">&#8505;</span><p><strong>What you&rsquo;ll learn:</strong> How <code>StorageDevice</code> picks a per-platform save root, why to call <code>SetAppNameEXT</code>, how to save and load a slot through <code>StorageContainer</code> streams, which exceptions to expect, and why nothing persists in a browser build.</p></div>
+  <div class="callout callout--info"><span class="callout-icon">&#8505;</span><p><strong>What you&rsquo;ll learn:</strong> How <code>StorageDevice</code> picks a per-platform save root, why to call <code>SetAppNameEXT</code>, how to save and load a slot through <code>StorageContainer</code> streams, which exceptions to expect, and how a browser build keeps saves in IndexedDB.</p></div>
 
   <div class="callout callout--info"><span class="callout-icon">&#8505;</span><p><strong>Before you start</strong> &mdash; <a href="02-setup.html">Tutorial 02</a> (toolchain and sibling checkouts; <code>sharp-runtime</code> on its <code>next</code> branch) and <a href="03-first-window.html">Tutorial 03</a> (a CMake project that pulls CNA in with <code>add_subdirectory</code>). Nothing here needs a window or a graphics device. <a href="19-save-load.html">Tutorial 19</a> shows saving inside a running game; this tutorial is the standalone, portable-by-construction version and uses only the real <code>StorageDevice</code> / <code>StorageContainer</code> API.</p></div>
 
-  <p>Every platform keeps user data in a different place: <code>~/.local/share</code> on Linux, <code>%LOCALAPPDATA%</code> on Windows, <code>~/Library/Application Support</code> on macOS, an app-private directory on Android. XNA&rsquo;s <code>StorageDevice</code> exists so your game never has to know. In this tutorial you write a small program that keeps a save slot &mdash; player name, level, score &mdash; between runs, on any desktop platform, without a single <code>#ifdef</code>. You will also see exactly where the file lands, how to keep two games from colliding, what the API refuses to do, and what does <em>not</em> persist (the web).</p>
+  <p>Every platform keeps user data in a different place: <code>~/.local/share</code> on Linux, <code>%LOCALAPPDATA%</code> on Windows, <code>~/Library/Application Support</code> on macOS, an app-private directory on Android. XNA&rsquo;s <code>StorageDevice</code> exists so your game never has to know. In this tutorial you write a small program that keeps a save slot &mdash; player name, level, score &mdash; between runs, on any desktop platform, without a single <code>#ifdef</code>. You will also see exactly where the file lands, how to keep two games from colliding, what the API refuses to do, and what differs in a browser build.</p>
 
   <nav class="toc" aria-label="Table of contents">
     <h2 class="toc-title">Contents</h2>
@@ -72,7 +72,7 @@
       <li><a href="#slots">Step 4: slots, listing and deleting</a></li>
       <li><a href="#errors">Step 5: what can fail</a></li>
       <li><a href="#run">Build and run</a></li>
-      <li><a href="#web">The web: no persistence</a></li>
+      <li><a href="#web">The web: IndexedDB-backed saves</a></li>
       <li><a href="#pitfalls">Pitfalls</a></li>
       <li><a href="#next">Next steps</a></li>
     </ol>
@@ -84,11 +84,12 @@
     <table>
       <thead><tr><th scope="col">Order</th><th scope="col">Condition</th><th scope="col">Root</th></tr></thead>
       <tbody>
-        <tr><td>1</td><td>Android build</td><td>the package&rsquo;s app-private files directory</td></tr>
-        <tr><td>2</td><td><code>XDG_DATA_HOME</code> set</td><td><code>$XDG_DATA_HOME/&lt;app&gt;</code></td></tr>
-        <tr><td>3</td><td><code>LOCALAPPDATA</code> set (Windows)</td><td><code>%LOCALAPPDATA%\&lt;app&gt;</code></td></tr>
-        <tr><td>4</td><td><code>HOME</code> set</td><td>macOS <code>~/Library/Application Support/&lt;app&gt;</code>; otherwise <code>~/.local/share/&lt;app&gt;</code></td></tr>
-        <tr><td>5</td><td>nothing set</td><td><code>./&lt;app&gt;</code> in the working directory</td></tr>
+        <tr><td>1</td><td>Emscripten (browser) build</td><td><code>/cna-storage/&lt;app&gt;</code>, an IndexedDB-backed mount (see <a href="#web">the web</a>)</td></tr>
+        <tr><td>2</td><td>Android build</td><td>the package&rsquo;s app-private files directory</td></tr>
+        <tr><td>3</td><td><code>XDG_DATA_HOME</code> set</td><td><code>$XDG_DATA_HOME/&lt;app&gt;</code></td></tr>
+        <tr><td>4</td><td><code>LOCALAPPDATA</code> set (Windows)</td><td><code>%LOCALAPPDATA%\&lt;app&gt;</code></td></tr>
+        <tr><td>5</td><td><code>HOME</code> set</td><td>macOS <code>~/Library/Application Support/&lt;app&gt;</code>; otherwise <code>~/.local/share/&lt;app&gt;</code></td></tr>
+        <tr><td>6</td><td>nothing set</td><td><code>./&lt;app&gt;</code> in the working directory</td></tr>
       </tbody>
     </table>
   </div>
@@ -116,7 +117,7 @@ add_executable(save_demo main.cpp)
 # Storage is a self-contained module: it needs only Sharp Runtime. A real game links CNA,
 # which already includes it.
 target_link_libraries(save_demo PRIVATE CNA::Storage)</code></pre>
-  <div class="callout callout--note"><span class="callout-icon">&#128161;</span><p>The code in this tutorial was checked against the CNA headers at snapshot <code>009d40f5</code> (the whole program compiles as C++23 against them). The site did not build and run it, so the output shown is what the code paths in <code>StorageDevice.cpp</code> / <code>StorageContainer.cpp</code> produce, not a captured log.</p></div>
+  <div class="callout callout--note"><span class="callout-icon">&#128161;</span><p>The code in this tutorial was checked against the CNA headers at snapshot <code>b0e97bb1</code> (the whole program compiles as C++23 against them). The site did not build and run it, so the output shown is what the code paths in <code>StorageDevice.cpp</code> / <code>StorageContainer.cpp</code> produce, not a captured log.</p></div>
 
   <h2 id="device">Step 1: name the app, get a device and a container</h2>
   <p>The Begin/End pairs are XNA&rsquo;s async pattern; on CNA they complete synchronously &mdash; your callback (here <code>nullptr</code>) has already run when <code>Begin*</code> returns. Both <code>Begin*</code> calls return a <code>std::unique_ptr&lt;System::IAsyncResult&gt;</code>, and <code>End*</code> takes <code>.get()</code> of it. There is no <code>StorageDevice::GetDefault()</code>, no synchronous <code>OpenContainer()</code> shortcut and no way to ask a container for its path &mdash; the container is the only door.</p>
@@ -282,7 +283,7 @@ std::optional&lt;SaveGame&gt; ReadSave(StorageContainer&amp; container, const st
     <table>
       <thead><tr><th scope="col">Exception</th><th scope="col">When</th><th scope="col">What to do</th></tr></thead>
       <tbody>
-        <tr><td><code>StorageDeviceNotConnectedException</code></td><td>The storage root cannot be created on first use, or free/total space cannot be read.</td><td>Tell the player saving is unavailable; keep playing.</td></tr>
+        <tr><td><code>StorageDeviceNotConnectedException</code></td><td>The storage root cannot be created on first use, free/total space cannot be read, or (in a browser) persistent storage is unavailable.</td><td>Tell the player saving is unavailable; keep playing.</td></tr>
         <tr><td><code>std::invalid_argument</code></td><td>A container name or path is empty, absolute, climbs out with <code>..</code>, or resolves through a symlink outside the container. Also thrown by <code>End*</code> for a result from the wrong <code>Begin*</code>.</td><td>Fix the name. Never build a container name or path from untrusted text without validating it &mdash; CNA refuses, but relying on the refusal is the last line of defence.</td></tr>
         <tr><td>Other <code>std::exception</code></td><td>Stream or filesystem errors (disk full, permissions).</td><td>Report the failure; do not delete the previous save.</td></tr>
       </tbody>
@@ -314,9 +315,9 @@ storage root: /home/you/save-demo/build/xdg/SaveDemo
 slot deleted</code></pre>
   <p>Open <code>build/xdg/SaveDemo/Slot1/AllPlayers/profile.sav</code> to see the text. Run it once <em>without</em> <code>XDG_DATA_HOME</code> and the same file appears under <code>~/.local/share/SaveDemo</code> on Linux; on Windows the root is <code>%LOCALAPPDATA%\SaveDemo</code> and on macOS <code>~/Library/Application Support/SaveDemo</code>. Delete the slot with <code>--reset</code> when you are done.</p>
 
-  <h2 id="web">The web: no persistence</h2>
-  <div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Under Emscripten this program &ldquo;works&rdquo; and saves nothing.</strong> CNA mounts no persistent file system on the web &mdash; a search of the whole snapshot finds no <code>IDBFS</code>, <code>FS.syncfs</code>, <code>FS.mount</code>, <code>IndexedDB</code>, <code>localStorage</code> or OPFS use &mdash; so <code>StorageDevice</code> writes into Emscripten&rsquo;s default in-memory file system. Every <code>CreateFile</code> succeeds and the data is gone on reload. The same is true of the local GamerServices achievement and leaderboard files, which live under the same root.</p></div>
-  <p>The honest options for a browser build are (a) accept it &mdash; a game that keeps state for one page view does not need persistence; (b) save through your own browser storage: after <code>WriteSave</code>, hand the text to JavaScript (<code>localStorage</code> or IndexedDB) yourself, and on start-up read it back and feed it to <code>FromText</code> before falling back to the container; or (c) mount a persistent file system in <em>your</em> Emscripten link flags and page script. CNA does not do (b) or (c) for you, and this site has not verified an end-to-end recipe for either, so none is given here. The <a href="124-web-gotchas.html">web gotchas tutorial</a> lists the other browser boundaries.</p>
+  <h2 id="web">The web: IndexedDB-backed saves</h2>
+  <div class="callout callout--warn"><span class="callout-icon">&#9888;</span><p><strong>Under Emscripten this program saves into the browser&rsquo;s IndexedDB.</strong> CNA&rsquo;s storage module links Emscripten&rsquo;s IDBFS, mounts it at <code>/cna-storage</code>, restores it before <code>main()</code> and flushes later writes automatically, so the storage root becomes <code>/cna-storage/&lt;app&gt;</code> and a save survives a page reload. If the mount or the restore failed, <code>StorageDevice</code> throws <code>StorageDeviceNotConnectedException</code> (&ldquo;Persistent browser storage is unavailable.&rdquo;) rather than saving to memory. The local GamerServices achievement and leaderboard files live under the same root.</p></div>
+  <p>One configuration needs care. A threaded build (<code>-DCNA_ENABLE_EMSCRIPTEN_THREADS=ON</code>) uses WasmFS by default, which cannot host IDBFS, so there <code>StorageDevice</code> throws that exception; configure <code>-DCNA_EMSCRIPTEN_USE_WASMFS=OFF</code> to get persistence (CNA&rsquo;s documentation keeps WasmFS recommended for games that load content on worker threads). The program above already handles the exception, and on the web it is the one to expect. Browser storage belongs to the page&rsquo;s origin and the player can clear it, so test a reload in each browser you ship to. The <a href="124-web-gotchas.html">web gotchas tutorial</a> lists the other browser boundaries.</p>
 
   <h2 id="pitfalls">Pitfalls</h2>
   <div class="table-wrap">
@@ -327,7 +328,7 @@ slot deleted</code></pre>
         <tr><td>An old save &ldquo;vanished&rdquo; after you added <code>SetAppNameEXT</code></td><td>The root moved from <code>.../game</code> to <code>.../YourGame</code>.</td><td>Copy the old folder once, or keep the old name.</td></tr>
         <tr><td><code>std::invalid_argument</code> opening a container</td><td>Empty name, an absolute path, or a <code>..</code> in it.</td><td>Use a simple relative name such as <code>Slot1</code>.</td></tr>
         <tr><td>Compile error: no member <code>GetDefault</code>, <code>OpenContainer</code> or <code>getPathProperty</code></td><td>Older examples used APIs that do not exist.</td><td>Use the Begin/End pairs shown above; files go through the container&rsquo;s streams.</td></tr>
-        <tr><td>Save works on desktop, disappears in the browser</td><td>No persistent file system on the web.</td><td>See the web section.</td></tr>
+        <tr><td>Save works on desktop, <code>StorageDeviceNotConnectedException</code> in the browser</td><td>A threaded WasmFS build, or the browser refused IndexedDB.</td><td>See the web section.</td></tr>
         <tr><td>File order differs between machines</td><td><code>GetFileNames</code> returns the filesystem&rsquo;s order.</td><td>Sort the names.</td></tr>
       </tbody>
     </table>
@@ -345,12 +346,12 @@ slot deleted</code></pre>
 </article></div></div></main>
 <footer><div class="footer-inner">
   <div class="footer-top">
-    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit b0e97bb1 (4 October 2026), a post-alpha.1 development snapshot. CNA exposes 18 renderer identities across 14 implementation families; APIs may change before 1.0.</p></div>
     <div class="footer-col"><h4>Project</h4><ul><li><a href="../../about.html">About</a></li><li><a href="../../features.html">Features</a></li><li><a href="../../architecture.html">Architecture</a></li><li><a href="../../roadmap.html">Roadmap</a></li></ul></div>
     <div class="footer-col"><h4>Docs</h4><ul><li><a href="../getting-started.html">Getting Started</a></li><li><a href="../building.html">Building</a></li><li><a href="../platforms.html">Platforms</a></li><li><a href="../rendering-backends.html">Renderers</a></li><li><a href="../faq.html">FAQ</a></li><li><a href="../../deep-dives/index.html">Deep Dives</a></li><li><a href="../../known-issues/index.html">Known Issues</a></li></ul></div>
     <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../../demos.html">Demos</a></li><li><a href="../../videos.html">Videos</a></li><li><a href="../../contact.html">Contact</a></li></ul></div>
   </div>
-  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/b0e97bb1bb876f9b3edd6f4ff1ef3067908ae8ac/LICENSE" target="_blank" rel="noopener">License</a><a href="../../contact.html">Contact</a></div></div>
 </div></footer>
 <script src="../../js/main.js"></script>
 <script src="../../js/prism/prism.min.js" defer></script>

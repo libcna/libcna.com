@@ -4,12 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tutorial 124: WebAssembly Gotchas: Game Lifetime, Storage and Video - CNA Tutorials</title>
-  <meta name="description" content="Three things that behave differently for CNA games in the browser: what changed about Game lifetime since alpha.1 (a stack-allocated Game is now fine if you link Asyncify), StorageDevice saves never persist, and Video/VideoPlayer throw NotSupportedException because FFmpeg is never built for the web.">
+  <meta name="description" content="Three things that behave differently for CNA games in the browser: what changed about Game lifetime since alpha.1 (a stack-allocated Game is now fine if you link Asyncify), StorageDevice saves persist through IndexedDB except in threaded WasmFS builds, and Video/VideoPlayer throw NotSupportedException because FFmpeg is never built for the web.">
   <meta property="og:type"        content="website">
   <meta property="og:site_name"   content="CNA">
   <meta property="og:url"         content="https://libcna.com/docs/tutorials/124-web-gotchas.html">
   <meta property="og:title"       content="Tutorial 124: WebAssembly Gotchas: Game Lifetime, Storage and Video - CNA Tutorials">
-  <meta property="og:description" content="Three things that behave differently for CNA games in the browser: what changed about Game lifetime since alpha.1 (a stack-allocated Game is now fine if you link Asyncify), StorageDevice saves never persist, and Video/VideoPlayer throw NotSupportedException because FFmpeg is never built for the web.">
+  <meta property="og:description" content="Three things that behave differently for CNA games in the browser: what changed about Game lifetime since alpha.1 (a stack-allocated Game is now fine if you link Asyncify), StorageDevice saves persist through IndexedDB except in threaded WasmFS builds, and Video/VideoPlayer throw NotSupportedException because FFmpeg is never built for the web.">
   <link rel="stylesheet" href="../../css/style.css">
   <link rel="icon" href="../../favicon.svg" type="image/svg+xml">
   <link rel="canonical" href="https://libcna.com/docs/tutorials/124-web-gotchas.html">
@@ -21,7 +21,7 @@
   "headline": "Tutorial 124: WebAssembly Gotchas: Game Lifetime, Storage and Video",
   "url": "https://libcna.com/docs/tutorials/124-web-gotchas.html",
   "datePublished": "2026-08-11",
-  "dateModified": "2026-09-25",
+  "dateModified": "2026-10-04",
   "isPartOf": {
     "@type": "CreativeWorkSeries",
     "name": "CNA Tutorial Series",
@@ -94,14 +94,14 @@
         <p><strong>What you&rsquo;ll learn</strong></p>
         <ul>
           <li>Why alpha.1 needed a heap-allocated <code>Game</code> on the web, what replaced that rule, and the one link option you still need.</li>
-          <li>That saved games do not persist at all in the browser, and what to do instead.</li>
+          <li>How saved games persist in the browser through IndexedDB, and the threaded-build exception.</li>
           <li>That <code>Video</code> and <code>VideoPlayer</code> link on the web but throw <code>NotSupportedException</code>, and how to guard them at build time.</li>
           <li>Which renderers you can actually select under Emscripten.</li>
         </ul>
-        <p><strong>Before you start</strong> &mdash; <a href="81-emscripten.html">Tutorial 81: Building for WebAssembly</a> covers the toolchain and the build itself. This tutorial is about the three things that will bite you <em>after</em> the build succeeds &mdash; one of which is mostly history in this snapshot, but still bites anyone on the alpha.1 tag.</p>
+        <p><strong>Before you start</strong> &mdash; <a href="81-emscripten.html">Tutorial 81: Building for WebAssembly</a> covers the toolchain and the build itself. This tutorial is about the three things that will bite you <em>after</em> the build succeeds &mdash; one of which is mostly history in this snapshot, but still bites anyone on the alpha.1 tag, and one of which now only bites threaded builds.</p>
       </div>
 
-      <p>A CNA game that runs perfectly on the desktop can compile for the browser, start up, and then misbehave in ways that make no sense &mdash; a crash several frames later with no stack (alpha.1), saves that vanish on refresh, a video call that throws. All three have the same cause: the browser is not a small desktop, and CNA is explicit about where it stops pretending otherwise.</p>
+      <p>A CNA game that runs perfectly on the desktop can compile for the browser, start up, and then misbehave in ways that make no sense &mdash; a crash several frames later with no stack (alpha.1), saves that vanish on refresh (a threaded build), a video call that throws. All three have the same cause: the browser is not a small desktop, and CNA is explicit about where it stops pretending otherwise.</p>
 
       <h2 id="game-lifetime">1. Game lifetime: what changed since alpha.1</h2>
 
@@ -150,37 +150,37 @@ int main()
 
       <p>The guarded form is harmless at this snapshot too, so a codebase that must build against both can keep it. CNA&rsquo;s own <code>docs/emscripten-mainloop-game-lifetime.md</code> records the new contract and keeps a spike that reproduces the old unwinding behaviour.</p>
 
-      <h2 id="no-storage">2. Saved games do not persist</h2>
+      <h2 id="no-storage">2. Saved games persist through IndexedDB &mdash; except in threaded builds</h2>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Every save written through <code>StorageDevice</code>/<code>StorageContainer</code> is discarded when the page reloads.</strong> The write succeeds and reports success &mdash; the data simply is not there next time.</p>
+        <p><strong>Saves written through <code>StorageDevice</code>/<code>StorageContainer</code> survive a page reload in a default web build, but not in a default threaded one.</strong> A threaded build uses WasmFS, which cannot host the browser storage CNA mounts, so there <code>StorageDevice</code> reports storage as unavailable unless you configure <code>-DCNA_EMSCRIPTEN_USE_WASMFS=OFF</code>.</p>
       </div>
 
-      <p>Under Emscripten, <code>StorageDevice</code> resolves its per-user directory (<code>$XDG_DATA_HOME/&lt;game&gt;</code> or <code>$HOME/.local/share/&lt;game&gt;</code>, exactly as on Linux) inside Emscripten's virtual filesystem, which is in-memory (MEMFS) by default. CNA mounts no IDBFS and never calls <code>FS.syncfs</code>, so nothing is ever copied into IndexedDB. The XNA storage API works exactly as documented, against a filesystem that ceases to exist when the tab closes.</p>
+      <p>Under Emscripten, CNA&rsquo;s storage module links Emscripten&rsquo;s IDBFS and, before <code>main()</code> runs, mounts it at <code>/cna-storage</code> for <code>StorageDevice</code> (whose root becomes <code>/cna-storage/&lt;app&gt;</code>) and at <code>/save</code> for IsolatedStorage, then restores both from IndexedDB. Both mounts use IDBFS&rsquo;s automatic persistence, so closing or deleting a file is flushed to IndexedDB without any call from your game. If the mount or the restore fails, <code>StorageDevice</code> throws <code>StorageDeviceNotConnectedException</code> (&ldquo;Persistent browser storage is unavailable.&rdquo;) rather than quietly saving to memory. The XNA storage API therefore works unchanged: write saves through <code>StorageContainer</code> exactly as on the desktop.</p>
 
-            <p>If your game targets the browser and needs persistence, do not route it through <code>StorageDevice</code>. Write through your own <code>localStorage</code> or IndexedDB path instead, and keep the XNA storage path for native builds:</p>
+      <p>Threaded builds (<code>-DCNA_ENABLE_EMSCRIPTEN_THREADS=ON</code>) use WasmFS by default, and WasmFS cannot link IDBFS, so the mounts are absent there. <code>-DCNA_EMSCRIPTEN_USE_WASMFS=OFF</code> restores persistence; CNA&rsquo;s documentation keeps WasmFS recommended for games that load content on worker threads, because the legacy file system can wait on the browser&rsquo;s main thread during background loads. Whatever the build, files written outside <code>/cna-storage</code> and <code>/save</code> live in memory and are gone on reload.</p>
 
-      <pre><code class="language-cpp">#ifdef __EMSCRIPTEN__
-#include &lt;emscripten.h&gt;
+      <pre><code class="language-cpp">#include "Microsoft/Xna/Framework/Storage/StorageDeviceNotConnectedException.hpp"
 
-void SaveProgress(const std::string&amp; json)
+void SaveProgressSafely(const std::string&amp; json)
 {
-    // Persist through the browser's own storage rather than the C++ filesystem
-    EM_ASM({ localStorage.setItem('save', UTF8ToString($0)); }, json.c_str());
-}
-#else
-void SaveProgress(const std::string&amp; json)
-{
-    // Real StorageContainer write - see Tutorial 19
-}
-#endif</code></pre>
+    try
+    {
+        SaveProgress(json);   // StorageDevice / StorageContainer, exactly as in Tutorial 19
+    }
+    catch (const Microsoft::Xna::Framework::Storage::StorageDeviceNotConnectedException&amp;)
+    {
+        // In a browser: IndexedDB could not be mounted, or this is a threaded WasmFS build.
+        // Tell the player that progress will not be kept.
+    }
+}</code></pre>
 
-      <p>See <a href="19-save-load.html">Tutorial 19: Saving and Loading Data</a> for the native path, and the <a href="../storage.html">Storage reference</a>.</p>
+      <p>See <a href="19-save-load.html">Tutorial 19: Saving and Loading Data</a> for the save code itself, and the <a href="../storage.html">Storage reference</a>. Browser storage belongs to the page&rsquo;s origin and the player can clear it, so test a reload in every browser you ship to.</p>
 
       <div class="callout callout--note">
         <span class="callout-icon">&#8505;</span>
-        <p><strong>A note on sharp-runtime&rsquo;s IsolatedStorage.</strong> The sibling sharp-runtime library has its own <code>System::IO::IsolatedStorage</code> API whose Emscripten path assumes <em>your startup code</em> mounts an IDBFS filesystem at <code>/save</code>, and which calls <code>FS.syncfs</code> when a stream closes. That is a different API from CNA&rsquo;s <code>StorageDevice</code>, CNA itself mounts nothing, and this tutorial has not verified it as a persistence route for XNA-style saves &mdash; treat it as something to investigate, not as a supported answer.</p>
+        <p><strong>Two stores that are not <code>StorageDevice</code>.</strong> The sibling sharp-runtime library has its own <code>System::IO::IsolatedStorage</code> API whose Emscripten path writes under <code>/save</code> and calls <code>FS.syncfs</code> when a stream closes; CNA now mounts IndexedDB-backed storage there, but this tutorial has not verified IsolatedStorage as a save route of its own. And CNA&rsquo;s Gamer Services keeps its local profiles outside both mounts, so by a reading of the source, local profiles are not expected to persist in a browser (not tested).</p>
       </div>
 
       <h2 id="no-video">3. Video needs FFmpeg, which the web never gets</h2>
@@ -199,7 +199,7 @@ void SaveProgress(const std::string&amp; json)
 
       <h2 id="renderers">Which renderers you can choose</h2>
 
-      <p>Five renderers exist only under Emscripten, and CMake refuses the desktop GL profiles there (and the Windows-only and macOS-only renderers) with a hard error rather than a warning. It does not limit an Emscripten build to these five: <code>WEBGPU</code> has its own browser route, and renderers that need no operating-system API, such as <code>SOFTWARE</code>, <code>HEADLESS</code> and <code>STUB</code>, are not refused by name. The five browser-specific ones are:</p>
+      <p>Three renderers exist only under Emscripten, and CMake refuses the desktop GL profiles there (and the Windows-only and macOS-only renderers) with a hard error rather than a warning. It does not limit an Emscripten build to these three: <code>WEBGPU</code> has its own browser route, and renderers that need no operating-system API, such as <code>SOFTWARE</code>, <code>HEADLESS</code> and <code>STUB</code>, are not refused by name. The three browser-specific ones are (<a href="105-browser-renderers.html">Tutorial 105</a> compares them with <code>WEBGPU</code>):</p>
 
       <div class="table-wrap">
       <table>
@@ -208,8 +208,6 @@ void SaveProgress(const std::string&amp; json)
           <tr><td><code>WEBGL2</code></td><td>2D + 3D</td><td><strong>The Emscripten default.</strong> GLES 3.0 through the shared EasyGL implementation.</td></tr>
           <tr><td><code>WEBGL1</code></td><td>2D + 3D</td><td>GLES 2.0. Genuinely loses MRT, occlusion queries, <code>Texture3D</code>, instancing and multi-stream vertex input.</td></tr>
           <tr><td><code>CANVAS</code></td><td>2D only</td><td>Browser-native 2D canvas, no GPU context.</td></tr>
-          <tr><td><code>HTML_DOM</code></td><td>2D only</td><td>Sprites as CSS-transformed DOM elements. Has real headless-Chromium CI.</td></tr>
-          <tr><td><code>SVG_DOM</code></td><td>2D only</td><td>Sprites as real SVG elements with <code>feColorMatrix</code> tinting.</td></tr>
         </tbody>
       </table>
       </div>
@@ -219,10 +217,10 @@ void SaveProgress(const std::string&amp; json)
       <h2 id="checklist">Pre-ship checklist</h2>
       <ul>
         <li>Does your final web executable link <code>CNA::EmscriptenAsyncify</code> (and, if you build against alpha.1 instead, is your <code>Game</code> heap-allocated)?</li>
-        <li>Does anything call <code>StorageDevice</code> expecting it to survive a reload?</li>
+        <li>If the web build is threaded, did you configure <code>-DCNA_EMSCRIPTEN_USE_WASMFS=OFF</code>, or handle <code>StorageDeviceNotConnectedException</code> and tell the player that saves are not kept?</li>
         <li>Does anything reference <code>VideoPlayer</code> without a <code>CNA_VIDEO_AVAILABLE</code> guard or an exception handler?</li>
         <li>Have you actually reloaded the page mid-game and checked what came back?</li>
-        <li>Have you tested in a real browser, not just Node? Only <code>HTML_DOM</code> has an automatic browser-runtime workflow (a separate multi-renderer workflow builds and links <code>WEBGL2;CANVAS;HTML_DOM;SVG_DOM</code> but does not run them) &mdash; everything else is on you.</li>
+        <li>Have you tested in a real browser, not just Node? No CNA workflow runs a browser: the multi-renderer workflow builds and links <code>WEBGL2;WEBGL1;CANVAS</code> but does not run them &mdash; everything else is on you.</li>
       </ul>
 
       <h2 id="next">Where to go next</h2>
@@ -237,7 +235,7 @@ void SaveProgress(const std::string&amp; json)
 <h2 id="deep-dives-here">Deep dives on this topic</h2>
 <p>Long-form pages that explain the exact semantics, invariants and evidence behind this subject.</p>
 <ul>
-<li><a href="../../deep-dives/platforms/web-build-and-main-loop.html">The web target: Emscripten build contract, browser loop, storage and renderer evidence</a> &mdash; CNA&#x27;s Emscripten build contract (exception ABI, Asyncify, threads), the Asyncify browser loop, content and save storage in the virtual file system, web networking, and the evidence per browser renderer.</li>
+<li><a href="../../deep-dives/platforms/web-build-and-main-loop.html">The web target: Emscripten build contract, browser loop, storage and renderer evidence</a> &mdash; CNA&#x27;s Emscripten build contract (exception ABI, Asyncify, threads), the Asyncify browser loop, content and IndexedDB-backed save storage in the virtual file system, web networking, and the evidence per browser renderer.</li>
 </ul>
 </section>
 <!--/p3:deep-links-->
@@ -251,7 +249,7 @@ void SaveProgress(const std::string&amp; json)
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA commit 009d40f5 (24 September 2026), a post-alpha.1 development snapshot. CNA exposes 25 renderer identities across 21 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit b0e97bb1 (4 October 2026), a post-alpha.1 development snapshot. CNA exposes 18 renderer identities across 14 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -288,7 +286,7 @@ void SaveProgress(const std::string&amp; json)
     <div class="footer-bottom">
       <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
       <div class="footer-links">
-        <a href="https://github.com/libcna/cna/blob/009d40f5dd085c4e674d3479675fac84b12b3e0a/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="https://github.com/libcna/cna/blob/b0e97bb1bb876f9b3edd6f4ff1ef3067908ae8ac/LICENSE" target="_blank" rel="noopener">License</a>
         <a href="../../contact.html">Contact</a>
       </div>
     </div>

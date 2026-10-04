@@ -12,6 +12,7 @@ A fix object:  {"id": "E-17", "page": "docs/x.html", "anchor": "section-id", "ac
            related-pages / pager / </article> tail.  `anchor` must exist and html must not introduce a duplicate id.
 
 Every applied fix is recorded in audit/data/adversarial/applied-page-fixes.json (id, page, action, sha256 of the html) so `check` can prove the fix is still present.
+A record whose text a later update rewrote carries "superseded_by" (the ledger of that update and the reason); `check` skips it.
 """
 
 from __future__ import annotations
@@ -123,7 +124,12 @@ def cmd_apply(args: argparse.Namespace) -> int:
 def cmd_check(_: argparse.Namespace) -> int:
     ledger = load_ledger()
     bad = 0
+    superseded = 0
     for a in ledger["applied"]:
+        if a.get("superseded_by"):
+            # a later pin move rewrote the text this fix corrected (the record keeps why); nothing left to prove on the page
+            superseded += 1
+            continue
         p = ROOT / a["page"]
         if not p.is_file():
             print(f"ERROR {a['id']}: page {a['page']} is gone")
@@ -131,7 +137,7 @@ def cmd_check(_: argparse.Namespace) -> int:
         elif a.get("probe") and a["probe"] not in p.read_text(encoding="utf-8"):
             print(f"ERROR {a['id']}: the text this fix added is no longer on {a['page']} (a generated page rewritten, or a later edit removed it): {a['probe']!r}")
             bad += 1
-    print(f"applied page fixes recorded: {len(ledger['applied'])}; problems {bad}")
+    print(f"applied page fixes recorded: {len(ledger['applied'])} ({superseded} superseded by a later update); problems {bad}")
     return 1 if bad else 0
 
 
