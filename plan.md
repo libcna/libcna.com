@@ -1,5 +1,15 @@
 # libcna.com — CNA accuracy audit and website refresh
 
+## Phase 4 (2026-10-04): pin move to CNA b0e97bb1 — update and expansion
+
+**Pinned by `cnahead`:** `b0e97bb1bb876f9b3edd6f4ff1ef3067908ae8ac` (branch `next`, 2026-10-04; 456 commits after `009d40f5`, 3,333 after `v0.1.0-alpha.1`).
+**Ledger:** `audit/b0e97bb1-phase4-delta.md` · **Fact sheets:** `audit/data/facts/b0e97bb1/` (R1–R10 and the editorial guide) · **Canonical numbers:** `data/current-facts.json`
+· **Preservation:** `audit/data/phase4-baseline-inventory.json` (from `df85d05`) and `audit/data/phase4-dispositions.json`, checked by `compare_presentation.py --phase4`.
+CNA retired seven renderers (now 18 identities in 14 families), the SDL2 platform/audio implementations and the CNAEXT graphics engine layer; the site presents the
+current state only (the removal trail lives in `audit/`, enforced by `scripts/check_retired_renderers.py`). Added: CNA.NET documentation and migration guide, tutorials
+162–168 (Gamer Services, Guide, Avatars) and 170–171 (CNA.NET), the C++ sample campaign (91 complete, 90 playable at samples.libcna.com, Racing ported but not hosted),
+the C and C# binding policy with eight archived bindings in CNA Lab, C ABI 0.44.0, and 47 retired / 5 new Known Issues.
+
 ## Phase 3 (2026-09-25/26): the CNA Bible absorbed — Deep Dives and Known Issues
 
 Same TARGET (`cnahead` = `009d40f5dd085c4e674d3479675fac84b12b3e0a`); Phase-2 base `2c4970c` (`PHASE2_BASE`). Phase 3 absorbed every useful **current** piece of the CNA Bible
@@ -23,7 +33,7 @@ Tooling: `scripts/dev_manifest.py` (page set), `scripts/site_dev.py` (page gener
 `scripts/dev_pack.py`, `check_dev_page.py`, `check_dev_claims.py`, `check_source_links.py`, `developer_ledger.py`, `browser_qa.py`; everything runs through `scripts/validate_all.sh`.
 The maintainer procedure is documented on the site itself: `development/handbook/update-libcna-com.html` and `development/maintenance.html`.
 
-## Current authoritative audit: CNA snapshot 009d40f5 (Phase 1, 2026-09-24)
+## Phase 1 audit: CNA snapshot 009d40f5 (2026-09-24; superseded as the pin by Phase 4)
 
 **Pinned by `cnahead`:** `009d40f5dd085c4e674d3479675fac84b12b3e0a` (branch `next`, 2,877 commits after `v0.1.0-alpha.1`).
 **Ledger:** `audit/009d40f5-phase1-delta.md` · **Presentation baseline:** `audit/phase1-presentation-baseline.md` ·

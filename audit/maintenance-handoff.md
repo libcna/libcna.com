@@ -19,6 +19,9 @@ Internal record (not published; `audit/` is excluded by `_config.yml`). The main
   (`deep-dives/models/gltf-import.html`, `deep-dives/foundations/language-conventions.html`). The expansion sources under
   `audit/data/bible/expansions/` are stale relative to those pages. It is therefore excluded from regeneration; `check` passes.
   Future work: fold the page fixes back into the expansion sources, then include `apply` in the routine.
+  *Phase 4 (2026-10-04):* every expansion source was folded back from its page region (token links reconstructed, the
+  rendered source verified equal to the page region for all 34 expansions), so `apply` is now a no-op on the content of the
+  blocks. It still stamps `dateModified`, and it is still not part of `regenerate_site.sh`.
 - Other tools still default to `/rv/tmp/libcna-v2/...` (`check_cpp_blocks.py`, `check_dev_claims.py`, `dev_pack.py`; all but
   `check_dev_claims.py` honour `CNA_TARGET_TREE`). They are authoring-time helpers, outside `validate_all.sh`.
 - Low-contrast warnings on inherited Phase-1/2 elements remain known presentation debt; deliberately not touched.
