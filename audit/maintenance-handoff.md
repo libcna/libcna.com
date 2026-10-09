@@ -22,6 +22,18 @@ Internal record (not published; `audit/` is excluded by `_config.yml`). The main
   *Phase 4 (2026-10-04):* every expansion source was folded back from its page region (token links reconstructed, the
   rendered source verified equal to the page region for all 34 expansions), so `apply` is now a no-op on the content of the
   blocks. It still stamps `dateModified`, and it is still not part of `regenerate_site.sh`.
+  *Phase 5 (2026-10-09):* the pin move to `c1c316b9` edited 23 of those regions in place (retired renderers and platform
+  backends, new numbers), which made the sources stale again — re-applying them would have restored retired content. Two
+  guards now exist: `apply_expansions.py check` fails on any drift between a source and its page region, and
+  `apply_expansions.py fold` writes edited regions back into their sources (CNA source links pinned to `cnahead` are turned
+  back into `{{src:}}` / `{{tree:}}` tokens; the round trip is verified). After a deliberate page edit inside a
+  `p3:begin`/`p3:end` region, run `fold`, then `check`.
+- *Phase 5:* the footer and doc-meta snapshot sentence is no longer hard-coded: `scripts/site_nav.py` derives it from
+  `cnahead` and `data/current-facts.json`, so the next pin move updates it through `site_nav.py sync` (and the Known
+  Issues/Deep Dives hub generators that import it).
+- *Phase 5:* two retirement guards now run in `validate_all.sh`: `check_retired_renderers.py` (identity spellings plus the
+  prose aliases of retired identities) and `check_retired_platforms.py` (the retired `CNA_PLATFORM` backends, derived from
+  `cmake/PlatformSelection.cmake`; SDL's `x11`/`wayland`/`windows` drivers and native handles stay legal).
 - Other tools still default to `/rv/tmp/libcna-v2/...` (`check_cpp_blocks.py`, `check_dev_claims.py`, `dev_pack.py`; all but
   `check_dev_claims.py` honour `CNA_TARGET_TREE`). They are authoring-time helpers, outside `validate_all.sh`.
 - Low-contrast warnings on inherited Phase-1/2 elements remain known presentation debt; deliberately not touched.

@@ -1,5 +1,16 @@
 # libcna.com — CNA accuracy audit and website refresh
 
+## Phase 5 (2026-10-09): pin move to CNA c1c316b9 — renderer/platform cleanup, Apple M4, Gamer Services server
+
+**Pinned by `cnahead`:** `c1c316b9c7a846ce8002809c151fcd1af14942c9` (branch `apple/m4-stabilization`, 2026-10-09; 354 commits after `b0e97bb1`, 3,687 after `v0.1.0-alpha.1`).
+**Ledger:** `audit/c1c316b9-phase5-delta.md` · **Fact sheets:** `audit/data/facts/c1c316b9/` (R1 renderers/platforms/numbers, R2 Apple M4/iOS, R3 C API and CNA.NET, R4 Gamer Services server, R5 Known Issues, plus the Apple and Gamer Services worklists) · **Canonical numbers:** `data/current-facts.json`
+· **Preservation:** `audit/data/phase5-baseline-inventory.json` (from `7f0dbaa`) and `audit/data/phase5-dispositions.json`, checked by `compare_presentation.py --phase5`.
+CNA retired four more renderers (now 14 identities in 12 families) and its direct Win32, X11 and Wayland platform backends (SDL3 is the one windowing platform and reaches all
+three through SDL's video drivers; HEADLESS and TERMINAL remain). The site presents the current state only; the removal trail lives in `audit/`, enforced by
+`scripts/check_retired_renderers.py` (now with prose aliases) and the new `scripts/check_retired_platforms.py`. Added: CNA's Mac mini M4 campaign (Metal supported but not
+primary-production, seven renderer trees passing on one physical Mac, iOS Simulator evidence, the C API on macOS), C ABI 0.46.0, the CNA.NET rename to `cna-dotnet` with
+local osx-arm64 evidence, the Gamer Services server's full contract and operator infrastructure, and 22 retired / 4 new Known Issues (310 published).
+
 ## Phase 4 (2026-10-04): pin move to CNA b0e97bb1 — update and expansion
 
 **Pinned by `cnahead`:** `b0e97bb1bb876f9b3edd6f4ff1ef3067908ae8ac` (branch `next`, 2026-10-04; 456 commits after `009d40f5`, 3,333 after `v0.1.0-alpha.1`).
