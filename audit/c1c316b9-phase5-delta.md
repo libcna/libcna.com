@@ -239,7 +239,7 @@ Related audit trails brought in line with the rewritten pages (no public effect)
 | `adversarial_audit.py all` | anchors 0 errors, issues 0 errors, lost concepts 0, counts current (Bible graph skipped: Bible repository not present) |
 | `apply_page_fixes.py check` | 474 recorded (109 superseded), 0 problems |
 | `git diff --check` | clean (new untracked files checked separately: no trailing whitespace) |
-| `scripts/regenerate_site.sh --check` | run after the commit (section 15) |
+| `scripts/regenerate_site.sh --check` | after `c522acb`: "regeneration leaves the committed tree unchanged" (worktree under `~/.cache/libcna-com`, not `/tmp`; `CNA_REPO` must be absolute in check mode) |
 
 ## 15. Commits (local, on `develop`; nothing pushed)
 
