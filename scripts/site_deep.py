@@ -421,6 +421,8 @@ def cmd_check(_: argparse.Namespace) -> int:
     for p in sorted(declared - on_disk):
         print("declared but not built:", p)
         rc = 1
+    from tombstones import TOMBSTONES  # retired URLs kept as transition pages, not declared pages
+    on_disk -= set(TOMBSTONES)
     for p in sorted(on_disk - declared):
         print("page not declared in audit/data/deep-pages:", p)
         rc = 1

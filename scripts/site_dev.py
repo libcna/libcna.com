@@ -449,7 +449,8 @@ def cmd_sync(_: argparse.Namespace) -> int:
 
 def cmd_check(_: argparse.Namespace) -> int:
     idx = M.page_index()
-    on_disk = {p.relative_to(ROOT).as_posix() for p in (ROOT / "development").rglob("*.html")}
+    from tombstones import TOMBSTONES  # retired URLs kept as transition pages, not manifest pages
+    on_disk = {p.relative_to(ROOT).as_posix() for p in (ROOT / "development").rglob("*.html")} - set(TOMBSTONES)
     missing = sorted(set(idx) - on_disk)
     extra = sorted(on_disk - set(idx))
     for p in missing:

@@ -47,6 +47,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from inventory_presentation import ROOT, extract_page  # noqa: E402
+from tombstones import TOMBSTONES  # noqa: E402
 
 BASELINE = ROOT / "audit" / "data" / "phase1-baseline-inventory.json"
 DISPOSITIONS = ROOT / "audit" / "data" / "phase1-dispositions.json"
@@ -271,7 +272,9 @@ def main() -> int:
         if args.page and rel not in args.page:
             continue
         path = ROOT / rel
-        cur = extract_page(path.read_text(encoding="utf-8"), rel) if path.exists() else None
+        # a tombstone keeps only the URL of a retired page, none of its presentation: compare it as the absent page,
+        # so the page's recorded "removed" disposition still governs
+        cur = extract_page(path.read_text(encoding="utf-8"), rel) if path.exists() and rel not in TOMBSTONES else None
         losses, notes = compare_page(rel, page, cur)
         all_losses += losses
         all_notes += notes

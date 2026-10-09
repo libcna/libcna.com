@@ -3,6 +3,9 @@
 
     adversarial_audit.py graph      # re-derive the Bible LaTeX inclusion graph from main.tex and compare it with audit/data/bible/units.json
     adversarial_audit.py anchors [--strict|--repair]   # ledger destinations: page + fragment exist, tokens occur at page level (error) and inside the cited anchor section (counted); --repair re-points imprecise anchors
+                                    # also: a SUPERSEDED concept without tokens needs replacement_tokens (checked like tokens) or an explicit review;
+                                    # no current concept may lose its tokens beyond the recorded baseline; and every cited section is read by the
+                                    # semantic renderer / platform / metric checks, so a surviving generic token cannot vouch for a false inventory
     adversarial_audit.py issues     # data/known-issues.json <-> detail pages <-> hubs: counts, orphans, facts, evidence flags, unreviewed duplicate candidates
     adversarial_audit.py counts [--write]   # the published quantities between <!-- counts:begin/end --> in audit/phase3-adversarial-audit.md: --write regenerates, default checks
     adversarial_audit.py all        # graph + anchors + issues + counts (what scripts/validate_all.sh runs)
@@ -297,56 +300,131 @@ def repair_anchors() -> int:
     return 0
 
 
+# A token proves that a phrase survived, not that the statement around it is still true: "deviceEventCallback" stayed on
+# the page while the renderer list beside it named a retired renderer. So every cited section is also read by the
+# semantic checks the site validators use (retired renderers in lists, retired platform backends, stale or impossible
+# metrics), with the values derived from CNA at cnahead, and a concept whose section carries a rejected claim is an error.
+CURRENT_DISPOSITIONS = {"PRESERVED", "NEW PAGE", "EXPANDED", "MOVED", "DUPLICATE"}
+TOKENLESS_BASELINE = ROOT / "audit" / "data" / "adversarial" / "tokenless-current-baseline.json"
+_claims: dict[str, list[tuple[str, str]]] = {}
+_semantic: tuple | None = None
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", "", html.unescape(text))
+
+
+def page_claim_problems(rel: str) -> list[tuple[str, str]]:
+    """(message, matched text) for every claim on a page that the semantic site checks reject."""
+    global _semantic
+    if rel not in _claims:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import check_facts as CF                     # noqa: E402  (imports bs4; only the anchors gate needs it)
+        import check_retired_platforms as RP         # noqa: E402
+        import check_retired_renderers as RR         # noqa: E402
+        if _semantic is None:
+            _semantic = (RR.derive(), RP.retired_platforms(), RP.ci_window_systems(), CF.metric_values())
+        retired_r, retired_p, ci, values = _semantic
+        raw = (ROOT / rel).read_text(encoding="utf-8")
+        out = [(f"retired renderer: {why}", core) for why, _x, core in RR.semantic_findings(raw, retired_r)]
+        out += [(f"retired platform: {why}", core) for why, _x, core in RP.semantic_findings(raw, retired_p, ci)]
+        out += CF.page_claim_findings(rel, raw, values)
+        _claims[rel] = out
+    return _claims[rel]
+
+
+def check_concept(label: str, concept: dict, section_fn=None, claims_fn=None) -> tuple[list[str], list[str], str]:
+    """(errors, anchor-precision misses, result) for one ledger concept; result is ok | reviewed | tokenless | broken.
+    section_fn(page, fragment) and claims_fn(page) default to the live site; scripts/test_validators.py passes fakes."""
+    section_fn = section_fn or section
+    claims_fn = claims_fn or page_claim_problems
+    errs: list[str] = []
+    dests = concept.get("destinations") or []
+    toks = concept.get("tokens") or []
+    page_blob: list[str] = []
+    anchor_blob: list[str] = []
+    for d in dests:
+        base, _, frag = d.partition("#")
+        pg = section_fn(base, "")
+        if pg is None:
+            errs.append(f"{label}: destination page does not exist: {base}")
+            continue
+        page_blob.append(pg)
+        sec = section_fn(base, frag) if frag else pg
+        if sec is None:
+            errs.append(f"{label}: destination anchor does not exist: {d}")
+            continue
+        anchor_blob.append(sec)
+        squashed = _squash(sec)
+        for message, core in claims_fn(base):
+            if _squash(core) and _squash(core) in squashed:
+                errs.append(f"{label}: the cited section {d} carries a claim the semantic checks reject: {message[:200]}")
+    if len(anchor_blob) != len(dests):
+        return errs, [], "broken"
+    if concept.get("disposition") == "SUPERSEDED" and not toks:
+        review = concept.get("review") or {}
+        if concept.get("replacement_tokens"):
+            toks = concept["replacement_tokens"]       # the superseding statement, anchored like a token
+        elif review.get("result") and review.get("reason"):
+            return errs, [], "reviewed"
+        else:
+            errs.append(f"{label}: SUPERSEDED without tokens: give it replacement_tokens from the superseding statement or a review {{result, reason}}")
+            return errs, [], "broken"
+    if not toks:
+        return errs, [], "tokenless"
+    pb, ab = " ".join(page_blob), " ".join(anchor_blob)
+    miss_page = [t for t in toks if _norm(t) not in pb]
+    miss_anchor = [t for t in toks if _norm(t) not in ab]
+    if miss_page:
+        errs.append(f"{label}: token(s) absent from the destination page(s): {miss_page[:4]}")
+        return errs, [], "broken"
+    if miss_anchor:
+        return errs, [f"{label}: {miss_anchor[:3]} not inside {dests[0]}"], "imprecise"
+    return errs, [], "ok" if not errs else "broken"
+
+
 def cmd_anchors(strict: bool = False) -> int:
     errs: list[str] = []
     anchor_only: list[str] = []
     stats: Counter = Counter()
+    tokenless_current: set[str] = set()
     for p in sorted(RECORDS.glob("*.json")):
         rec = json.loads(p.read_text(encoding="utf-8"))
         uid = p.stem
-        items = [(c.get("id", "?"), c.get("destinations") or [], c.get("tokens") or [], True) for c in rec.get("concepts") or []]
-        items += [(f"figure {f.get('unit')}", f.get("destinations") or [], [], False) for f in rec.get("figures") or []]
-        items += [(f"example {e.get('id')}", e.get("destinations") or [], [], False) for e in rec.get("examples") or []]
-        for cid, dests, toks, is_concept in items:
-            page_blob: list[str] = []
-            anchor_blob: list[str] = []
-            broken = False
-            for d in dests:
+        for c in rec.get("concepts") or []:
+            e, a, result = check_concept(f"{uid}/{c.get('id', '?')}", c)
+            errs += e
+            anchor_only += a
+            stats["destinations"] += len(c.get("destinations") or [])
+            stats[result] += 1
+            if result == "tokenless" and c.get("disposition") in CURRENT_DISPOSITIONS:
+                tokenless_current.add(c.get("id", "?"))
+        for f in rec.get("figures") or []:
+            stats["destinations"] += len(f.get("destinations") or [])
+            for d in f.get("destinations") or []:
                 base, _, frag = d.partition("#")
-                pg = section(base, "")
-                if pg is None:
-                    errs.append(f"{uid}/{cid}: destination page does not exist: {base}")
-                    broken = True
-                    continue
-                page_blob.append(pg)
-                if frag:
-                    sec = section(base, frag)
-                    if sec is None:
-                        errs.append(f"{uid}/{cid}: destination anchor does not exist: {d}")
-                        broken = True
-                        continue
-                    anchor_blob.append(sec)
-                else:
-                    anchor_blob.append(pg)
-            stats["destinations"] += len(dests)
-            if broken or not toks or not is_concept:
-                continue
-            pb, ab = " ".join(page_blob), " ".join(anchor_blob)
-            miss_page = [t for t in toks if _norm(t) not in pb]
-            miss_anchor = [t for t in toks if _norm(t) not in ab]
-            if miss_page:
-                errs.append(f"{uid}/{cid}: token(s) absent from the destination page(s): {miss_page[:4]}")
-            elif miss_anchor:
-                anchor_only.append(f"{uid}/{cid}: {miss_anchor[:3]} not inside {dests[0]}")
-            else:
-                stats["ok"] += 1
+                if section(base, "") is None or (frag and section(base, frag) is None):
+                    errs.append(f"{uid}/figure {f.get('unit')}: destination does not exist: {d}")
+        for x in rec.get("examples") or []:
+            stats["destinations"] += len(x.get("destinations") or [])
+            for d in x.get("destinations") or []:
+                base, _, frag = d.partition("#")
+                if section(base, "") is None or (frag and section(base, frag) is None):
+                    errs.append(f"{uid}/example {x.get('id')}: destination does not exist: {d}")
+    # ratchet: a current concept that loses its tokens must be given replacement tokens, not silently join the baseline
+    baseline = set(json.loads(TOKENLESS_BASELINE.read_text(encoding="utf-8"))["ids"]) if TOKENLESS_BASELINE.exists() else set()
+    for cid in sorted(tokenless_current - baseline):
+        errs.append(f"{cid}: a current ({'/'.join(sorted(CURRENT_DISPOSITIONS))}) concept without tokens that is not in "
+                    f"{TOKENLESS_BASELINE.relative_to(ROOT)}: restore control tokens for its current statement")
     for e in errs:
         print("ERROR", e)
     if strict:
         for a in anchor_only:
             print("ERROR (anchor precision)", a)
     print(f"anchors: {stats['destinations']} destinations checked; {stats['ok']} concepts fully anchored; "
-          f"tokens on the page but outside the cited anchor: {len(anchor_only)}; errors {len(errs) + (len(anchor_only) if strict else 0)}")
+          f"tokens on the page but outside the cited anchor: {len(anchor_only)}; SUPERSEDED kept by an explicit review: {stats['reviewed']}; "
+          f"tokenless current concepts: {len(tokenless_current)} (baseline {len(baseline)}); "
+          f"cited sections read by the semantic checks: {len(_claims)} pages; errors {len(errs) + (len(anchor_only) if strict else 0)}")
     return 1 if errs or (strict and anchor_only) else 0
 
 # ---------------------------------------------------------------------------------------------

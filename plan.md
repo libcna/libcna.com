@@ -350,6 +350,9 @@ true statement and it survives verification.
   `85-vulkan-backend.html`, `86-bgfx-backend.html` and `87-custom-backend.html`. Only
   the visible titles and content changed. This is a static site with no redirect
   mechanism, so renaming would have broken every inbound link for no user benefit.
+  When a page has to go (its subject was retired), its URL keeps a short noindex
+  tombstone that points to the current page instead (`scripts/tombstones.py`, added
+  2026-10-09 for the retired Canvas, Win32, X11 and Wayland pages).
 * **`known_bugs.md` is not linked and was not used as a source.** Every heading still
   marked `OPEN` there is superseded by the file's own 2026-08-09 disposition block,
   narrowed into a declared capability boundary, or moot. There are **zero genuinely open

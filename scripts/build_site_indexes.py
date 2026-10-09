@@ -11,6 +11,11 @@ from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import urlparse
 
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from tombstones import TOMBSTONES  # noqa: E402
+
 
 ROOT = Path(__file__).resolve().parent.parent
 SITE = "https://libcna.com"
@@ -18,7 +23,7 @@ UPDATED = "2026-10-09"  # Phase 5: snapshot c1c316b9; every page re-audited (foo
 EXCLUDED = {
     "404.html",
     "search.html",
-}
+} | set(TOMBSTONES)  # a tombstone only catches inbound links to a retired URL; it is never advertised
 
 # Phase 5 audited every public page against CNA snapshot c1c316b9 (facts, footer, metadata), so every
 # page carries the snapshot date. A page that is regenerated later without a content audit should be

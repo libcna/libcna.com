@@ -22,7 +22,8 @@
 #                                 validate_all.sh runs "apply_expansions.py check" and "apply_page_fixes.py check" instead.
 #   6. backlinks.py apply         "Deep dives on this topic" / "Known issues in this area" blocks on docs/ and development/ pages
 #   7. issue_refs.py apply        hand-written <!--issue:KEY--> references -> current visible id and link. After steps 1 and 6.
-#   8. build_site_indexes.py      search-index.json + sitemap.xml. LAST, because it reads the finished pages' metadata.
+#   8. tombstones.py build        noindex transition pages at the URLs of retired pages (kept out of the indexes)
+#   9. build_site_indexes.py      search-index.json + sitemap.xml. LAST, because it reads the finished pages' metadata.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -61,7 +62,7 @@ fi
 # Prerequisites: fail early and clearly.
 for f in cnahead audit/data/bible/issues/issues-source.json audit/data/bible/issues/dispositions.json \
          scripts/known_issues.py scripts/site_deep.py scripts/generate_dev_reference.py scripts/site_dev.py \
-         scripts/site_nav.py scripts/backlinks.py scripts/issue_refs.py scripts/build_site_indexes.py; do
+         scripts/site_nav.py scripts/backlinks.py scripts/issue_refs.py scripts/tombstones.py scripts/build_site_indexes.py; do
   [ -f "$f" ] || { echo "missing required file: $f (run from a complete checkout)" >&2; exit 1; }
 done
 command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
@@ -83,6 +84,7 @@ run python3 scripts/site_dev.py sync
 run python3 scripts/site_nav.py sync
 run python3 scripts/backlinks.py apply
 run python3 scripts/issue_refs.py apply
+run python3 scripts/tombstones.py build
 run python3 scripts/build_site_indexes.py
 
 echo "regenerate: done. Now run ./scripts/validate_all.sh, review 'git diff --stat', and commit source and generated files together."
