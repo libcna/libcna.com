@@ -37,9 +37,9 @@ for n in (170, 171): SECTION_OF[n] = "csharp"
 
 # id, colour, icon, badge, title, description, jump-nav label
 NEW_SECTIONS = [
-    ("native", "red", "&#128421;", "Expert", "Native Platforms and Builds",
-     "Build and run CNA without SDL on native X11, Wayland or Win32, use ALSA audio and CNA's own mixer, configure SDL-free builds, and run CNA in a terminal.",
-     "Native Platforms and Builds"),
+    ("native", "red", "&#128421;", "Expert", "Window Systems and Builds",
+     "Run CNA on X11 and Wayland through SDL3's video drivers, use ALSA audio and CNA's own mixer, configure SDL-free windowless builds, and run CNA in a terminal.",
+     "Window Systems and Builds"),
     ("content-pipeline", "orange", "&#128230;", "Advanced", "Content Pipeline and CNB",
      "Author content with the build-time Content Pipeline, pack it as CNB, interoperate with XNB produced by XNA and MonoGame, and write your own content types.",
      "Content Pipeline and CNB"),

@@ -134,7 +134,7 @@ def main() -> int:
     F["sha_short"] = facts["snapshot"]["cna_sha_short"]
     F["cpp_samples_complete"] = facts["external_pinned"]["cna_samples"]["complete"]
     F["web_builds"] = facts["external_pinned"]["samples_libcna_com"]["playable_web_builds"]
-    F["cs_samples"] = facts["external_pinned"]["cna_cs_samples"]["microsoft_sample_executables"]
+    F["cs_samples"] = facts["external_pinned"]["cna_dotnet_samples"]["microsoft_sample_executables"]
     bad = 0
     cache: dict[str, str] = {}
     for page, pattern, what in CHECKS:
@@ -155,7 +155,14 @@ def main() -> int:
              ("2,877", "009d40f5 commit count"), ("87 / 153", "009d40f5-era sample count"), ("87 of 153", "009d40f5-era sample count"),
              ("ABI 0.29.0", "009d40f5 C ABI"), ("ABI (0.29.0", "009d40f5 C ABI"), ("4,055", "009d40f5 C route count"),
              ("20 workflow files", "009d40f5 workflow count"), ("20 CI workflow", "009d40f5 workflow count"),
-             ("seven host integrations", "009d40f5 platform count"), ("7 platform implementations", "009d40f5 platform count")]
+             ("seven host integrations", "009d40f5 platform count"), ("7 platform implementations", "009d40f5 platform count"),
+             # superseded values of the previous snapshot (b0e97bb1)
+             ("18 renderer identities", "b0e97bb1 renderer count"), ("18 public renderer", "b0e97bb1 renderer count"),
+             ("18 identities", "b0e97bb1 renderer count"), ("14 implementation families", "b0e97bb1 family count"),
+             ("12,021", "b0e97bb1 test definitions"), ("852 C++ test", "b0e97bb1 test files"), ("852 test", "b0e97bb1 test files"),
+             ("3,333 commits", "b0e97bb1 commit count"), ("6 platform implementations", "b0e97bb1 platform count"),
+             ("six platform implementations", "b0e97bb1 platform count"), ("Six platform implementations", "b0e97bb1 platform count"),
+             ("ABI 0.44.0", "b0e97bb1 C ABI"), ("ABI (0.44.0", "b0e97bb1 C ABI"), ("26 jobs", "b0e97bb1 CI job count")]
     for page in [p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.html") if not ({"audit", "scripts", "build-probe", ".git", "known-issues"} & set(p.relative_to(ROOT).parts))]:  # known-issues pages quote stale numbers of CNA's own documents on purpose
         if page == "docs/releases.html":
             continue  # release history compares alpha.1 with the snapshot on purpose
@@ -186,7 +193,7 @@ def main() -> int:
                 if int(m.group(1)) == want:
                     continue
                 ctx = body[max(0, m.start() - 90): m.end() + 60]
-                if re.search(r"alpha\.1|earlier|previous|BASE|was |had |historical|Developer|compiled|of the 18|spread over", ctx, re.I):
+                if re.search(r"alpha\.1|earlier|previous|BASE|was |had |historical|Developer|compiled|of the 14|spread over", ctx, re.I):
                     continue
                 print(f"DRIFT {page}: {what} {m.group(1)} != {want} ... {ctx.strip()[:150]}"); bad += 1
     bad += binding_policy([p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.html")

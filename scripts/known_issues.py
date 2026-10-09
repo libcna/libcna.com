@@ -36,7 +36,7 @@ DISPO = ISS / "dispositions.json"
 PUBLIC = ROOT / "data" / "known-issues.json"
 TARGET = (ROOT / "cnahead").read_text(encoding="utf-8").strip()
 TARGET_SHORT = TARGET[:8]
-TODAY = "2026-10-04"
+TODAY = "2026-10-09"
 
 CLASSES = {
     "bug": {"group": "bugs", "prefix": "CNA-BUG", "label": "Bug"},
@@ -235,14 +235,23 @@ def cmd_check(args: argparse.Namespace) -> int:
 #    "reclassified": {"CNA-BUG-nnn": {"class": "functional-gap", "set": {...}}},       a new id in the target class is allocated after every existing one
 #    "added":        [{... a full entry with a temporary id NEW-AUDIT-nn and cand_ids of the restored candidates ...}],
 #    "retired_added": {"NEW-AUDIT-nn": {"classification": "PROVEN FIXED|OBSOLETE|...", "evidence": "..."}},   retire an ADDED entry (see below)
-#    "repin":        {"from": "009d40f5", "to": "<TARGET_SHORT>", "replace": [["old", "new"], ...], "keep": ["... at 009d40f5", ...]}}   (see below)
+#    "retired_reclassified": {"CNA-PLAT-nnn": {"classification": "...", "evidence": "..."}},   retire a RECLASSIFIED entry, keyed like "reclassified"
+#    "repin":        [{"from": "009d40f5", "to": "b0e97bb1", "replace": [["old", "new"], ...], "keep": ["... at 009d40f5", ...]},
+#                     {"from": "b0e97bb1", "to": "<TARGET_SHORT>", "replace": [...], "keep": [...]}]   (see below; a single object is one step)
 # Every operation runs AFTER the stable ids were allocated, so no surviving entry is ever renumbered and a retired id is never reused.
 # "retired" runs before "added", so it cannot name an added entry, and deleting an element of "added" would renumber every later one.  An added
 # entry whose subject later disappears is therefore retired through "retired_added", keyed by its temporary id: its final id is still allocated
 # (and consumed, never reused), its restored candidates take the retire classification, and it is recorded under "retired" in the audit trail.
-# "repin" moves the snapshot wording of the published text to a new pin after every entry was re-verified there: each "replace" pair is applied
-# first, then every remaining occurrence of "from" in the published text fields becomes "to", except inside a "keep" phrase (statements about
-# what was executed or observed at the old commit stay pinned to it).  "to" must equal the short TARGET, so a later pin move cannot skip this step.
+# A reclassified entry is retired the same way through "retired_reclassified", keyed by its id BEFORE reclassification (the key "reclassified"
+# uses): "retired" runs before "reclassified" and would remove the entry the reclassification needs, and dropping the "reclassified" element would
+# stop its new id from being allocated, which would renumber every later id of that class.  Its new id is allocated (consumed, never reused), its
+# candidates take the retire classification, and the trail records it under "retired" with its key.
+# "repin" moves the snapshot wording of the published text to a new pin after every entry was re-verified there.  It is one step or a LIST of
+# steps applied in order, one per pin move (009d40f5 -> b0e97bb1, then b0e97bb1 -> c1c316b9, ...); every step reads the text the previous step
+# left.  In each step every "replace" pair is applied first, then every remaining occurrence of "from" in the published text fields becomes "to",
+# except inside a "keep" phrase (statements about what was executed, observed or counted at the old commit stay pinned to it, and so does an
+# earlier re-verification note such as "Re-verified at b0e97bb1").  Each step's "from" must be the previous step's "to", and the LAST step's "to"
+# must equal the short TARGET, so a later pin move cannot skip re-verifying the entries: it has to append its own step.
 # ---------------------------------------------------------------------------------------------
 def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, int]) -> tuple[list[dict], list[dict], dict, int]:
     path = ISS / "patches-adversarial.json"
@@ -293,6 +302,11 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
                 d["published_as"] = None
         trail["retired"][iid] = {"classification": spec["classification"], "evidence": spec["evidence"]}
         del by[iid]
+    retired_reclassified = adv.get("retired_reclassified") or {}
+    unknown = set(retired_reclassified) - set(adv.get("reclassified") or {})
+    if unknown:
+        print(f"patches-adversarial.json: retired_reclassified names no reclassified entry: {sorted(unknown)}")
+        return issues, disp, trail, 1
     for iid, spec in sorted((adv.get("reclassified") or {}).items()):
         if not need(iid, "reclassified"):
             return issues, disp, trail, 1
@@ -300,6 +314,19 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
         cls = spec["class"]
         counters[cls] += 1
         new = f"{CLASSES[cls]['prefix']}-{counters[cls]:03d}"
+        rspec = retired_reclassified.get(iid)
+        if rspec:                                      # the new id is consumed (later ids do not move) but the entry is not published
+            if rspec["classification"] not in CLASSIFICATIONS - PUBLISHED:
+                print(f"patches-adversarial.json: retired_reclassified {iid}: classification {rspec['classification']!r} is not a non-published one")
+                return issues, disp, trail, 1
+            for d in disp:
+                if d.get("published_as") == iid:
+                    d["classification"] = rspec["classification"]
+                    d["evidence"] = "Retired by the independent adversarial audit: " + rspec["evidence"]
+                    d["adversarial_retired_entry"] = new
+                    d["published_as"] = None
+            trail["retired"][new] = {"key": iid, "classification": rspec["classification"], "evidence": rspec["evidence"]}
+            continue
         e.update(spec.get("set", {}))
         e["class"], e["id"] = cls, new
         e["origin"] = f"{e.get('origin', '')}; reclassified from {iid} by the adversarial audit"
@@ -363,19 +390,26 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
         return x
     for iid in list(by):
         by[iid] = sub(by[iid])
-    rp = adv.get("repin")
-    if rp:
-        if rp["to"] != TARGET_SHORT:
-            print(f"patches-adversarial.json: repin.to {rp['to']!r} is not the TARGET {TARGET_SHORT!r} (re-verify the entries at the new pin first)")
+    steps = adv.get("repin") or []
+    if isinstance(steps, dict):                                 # the single-object form is one step
+        steps = [steps]
+    for n, rp in enumerate(steps):
+        if n and rp["from"] != steps[n - 1]["to"]:
+            print(f"patches-adversarial.json: repin step {n + 1} starts at {rp['from']!r}, but step {n} ended at {steps[n - 1]['to']!r}")
             return issues, disp, trail, 1
+    if steps and steps[-1]["to"] != TARGET_SHORT:
+        print(f"patches-adversarial.json: the last repin step ends at {steps[-1]['to']!r}, not at the TARGET {TARGET_SHORT!r} "
+              "(re-verify the entries at the new pin and append a step for it)")
+        return issues, disp, trail, 1
+    for rp in steps:
         keep = rp.get("keep") or []
         keep_rx = re.compile("(" + "|".join(map(re.escape, keep)) + ")") if keep else None
 
-        def repin(s: str) -> str:
+        def repin(s: str, rp: dict = rp, keep_rx: re.Pattern | None = keep_rx) -> str:
             for old_s, new_s in rp.get("replace") or []:
                 s = s.replace(old_s, new_s)
             parts = keep_rx.split(s) if keep_rx else [s]       # odd parts are the protected phrases
-            return "".join(p if n % 2 else p.replace(rp["from"], rp["to"]) for n, p in enumerate(parts))
+            return "".join(p if k % 2 else p.replace(rp["from"], rp["to"]) for k, p in enumerate(parts))
         for e in by.values():                                   # the published text fields only (origin and the audit fields keep their history)
             for f in ["title", "summary", "public_contract"] + HTML_FIELDS:
                 if isinstance(e.get(f), str):

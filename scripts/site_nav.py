@@ -19,6 +19,23 @@ import re
 import sys
 from pathlib import Path
 
+# The documented snapshot, read from cnahead and data/current-facts.json so that a pin move needs no code edit here.
+def _snapshot_constants():
+    import datetime as _dt
+    import json as _json
+    _root = Path(__file__).resolve().parent.parent
+    sha = (_root / "cnahead").read_text(encoding="utf-8").strip()
+    facts = _json.loads((_root / "data" / "current-facts.json").read_text(encoding="utf-8"))
+    day = _dt.date.fromisoformat(facts["snapshot"]["commit_date"])
+    f = {k: v["value"] for k, v in facts["facts"].items()}
+    text = (f"Documentation snapshot for CNA commit {sha[:8]} ({day.day} {day:%B %Y}), a post-alpha.1 development snapshot. "
+            f"CNA exposes {f['renderer_identities']} renderer identities across {f['implementation_families']} implementation "
+            f"families; APIs may change before 1.0.")
+    return sha, sha[:8], text
+
+
+SNAPSHOT_SHA, SNAPSHOT_SHORT, FOOTER_SNAPSHOT = _snapshot_constants()
+
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 SITE = "https://libcna.com"
@@ -30,7 +47,7 @@ SIDEBAR: list[tuple[str, str]] = [
     ("building.html", "Building"),
     ("releases.html", "Releases &amp; Versioning"),
     ("platforms.html", "Platforms"),
-    ("native-platforms.html", "Native Platforms (X11, Wayland, Win32)"),
+    ("native-platforms.html", "Windows, X11 and Wayland"),
     ("rendering-backends.html", "Renderers"),
     ("runtime-renderer-selection.html", "Runtime Renderer Selection"),
     ("xna-compatibility.html", "XNA Compatibility"),
@@ -170,12 +187,12 @@ def footer_block(root_prefix: str, docs_prefix: str, tutorial: bool) -> str:
         tail += f'<script src="{root_prefix}js/tutorial-progress.js"></script>\n'
     return f'''<footer><div class="footer-inner">
   <div class="footer-top">
-    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit b0e97bb1 (4 October 2026), a post-alpha.1 development snapshot. CNA exposes 18 renderer identities across 14 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>{FOOTER_SNAPSHOT}</p></div>
     <div class="footer-col"><h4>Project</h4><ul><li><a href="{root_prefix}about.html">About</a></li><li><a href="{root_prefix}features.html">Features</a></li><li><a href="{root_prefix}architecture.html">Architecture</a></li><li><a href="{root_prefix}roadmap.html">Roadmap</a></li></ul></div>
     <div class="footer-col"><h4>Docs</h4><ul><li><a href="{docs_prefix}getting-started.html">Getting Started</a></li><li><a href="{docs_prefix}building.html">Building</a></li><li><a href="{docs_prefix}platforms.html">Platforms</a></li><li><a href="{docs_prefix}rendering-backends.html">Renderers</a></li><li><a href="{docs_prefix}faq.html">FAQ</a></li><li><a href="{root_prefix}deep-dives/index.html">Deep Dives</a></li><li><a href="{root_prefix}known-issues/index.html">Known Issues</a></li></ul></div>
     <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="{root_prefix}demos.html">Demos</a></li><li><a href="{root_prefix}videos.html">Videos</a></li><li><a href="{root_prefix}contact.html">Contact</a></li></ul></div>
   </div>
-  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/b0e97bb1bb876f9b3edd6f4ff1ef3067908ae8ac/LICENSE" target="_blank" rel="noopener">License</a><a href="{root_prefix}contact.html">Contact</a></div></div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/{SNAPSHOT_SHA}/LICENSE" target="_blank" rel="noopener">License</a><a href="{root_prefix}contact.html">Contact</a></div></div>
 </div></footer>
 {tail}</body>
 </html>
@@ -251,7 +268,7 @@ def new_tutorial(number: int, slug: str, title: str, description: str, body: str
     text += f'''<main id="main-content"><div class="tutorial-layout"><div class="docs-main"><article class="docs-content">
   <nav class="breadcrumb" aria-label="Breadcrumb"><ol><li><a href="../../index.html">Home</a></li><li><a href="../../tutorials.html">Tutorials</a></li><li aria-current="page">Tutorial {number}</li></ol></nav>
   <h1>{html.escape(full_title)}</h1>
-  <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; CNA snapshot b0e97bb1</p>
+  <p class="doc-meta">CNA Tutorials &nbsp;&middot;&nbsp; CNA snapshot {SNAPSHOT_SHORT}</p>
 {learn_html}
 {body}
 
@@ -272,7 +289,7 @@ def main() -> int:
     d.add_argument("--description", required=True)
     d.add_argument("--body", required=True, help="file with the article body HTML (h2 sections with ids)")
     d.add_argument("--label")
-    d.add_argument("--meta-line", default="CNA snapshot b0e97bb1")
+    d.add_argument("--meta-line", default=f"CNA snapshot {SNAPSHOT_SHORT}")
     t = sub.add_parser("new-tutorial")
     t.add_argument("--number", type=int, required=True)
     t.add_argument("--slug", required=True)

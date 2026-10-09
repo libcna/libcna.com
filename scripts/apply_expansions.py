@@ -2,7 +2,9 @@
 """Apply additive Bible-derived expansions to existing Phase-1/Phase-2 pages (idempotent).
 
     apply_expansions.py apply [--only KEY ...]     # insert / refresh every expansion under audit/data/bible/expansions/
-    apply_expansions.py check                      # every expansion is applied and its marker region is intact (no writes)
+    apply_expansions.py check                      # every expansion is applied, its marker region is intact and still
+                                                   # equals what its source renders to (no writes)
+    apply_expansions.py fold [--only KEY ...]      # write each drifted marker region back into its source fragment
     apply_expansions.py list
 
 An expansion is a pair of files authored by a work package, never a direct edit of the target page:
@@ -27,10 +29,13 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import html
 import json
+import os
 import re
 import sys
 from pathlib import Path
+from urllib.parse import unquote
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import site_dev as SD  # noqa: E402
@@ -165,6 +170,81 @@ def apply_one(exp: dict, errors: list[str]) -> bool:
     return True
 
 
+def render(exp: dict, errors: list[str]) -> str:
+    frag = SD.expand_tokens(exp["body_path"].read_text(encoding="utf-8"), exp.get("target", ""), errors)
+    frag = re.sub(r"<table\b", '<div class="table-wrap"><table', frag)
+    return frag.replace("</table>", "</table></div>").strip()
+
+
+def region(exp: dict) -> str | None:
+    t = ROOT / exp.get("target", "")
+    if not t.is_file():
+        return None
+    begin, end = marker(exp["key"])
+    m = re.search(re.escape(begin) + r"\n?(.*?)\n?" + re.escape(end), t.read_text(encoding="utf-8"), re.S)
+    return m.group(1).strip() if m else None
+
+
+SRC_LINK_RX = re.compile(r'<a class="src-link" href="https://github\.com/libcna/cna/(blob|tree)/([0-9a-f]{40})/([^"#]*)(#L\d+(?:-L\d+)?)?">'
+                         r'<code>([^<|}]*)</code></a>')
+
+
+PAGE_LINK_RX = re.compile(r'<a href="([^":#/?][^"#?]*\.html)(#[^"|}]+)?">([^<|}]*)</a>')
+
+
+def tokenize(body: str, page: str) -> str:
+    """Turn rendered links back into tokens: CNA source links pinned to the current TARGET into {{src:}} / {{tree:}}, and
+    relative links to existing site pages into {{page:}}, so a folded source re-pins and re-validates itself on the next
+    pin move like an authored one (anything else stays literal HTML; `fold` verifies the round trip)."""
+    target = (ROOT / "cnahead").read_text(encoding="utf-8").strip()
+
+    def page_back(m: re.Match) -> str:
+        href, frag, label = m.group(1), m.group(2) or "", m.group(3)
+        path = os.path.normpath(os.path.join(os.path.dirname(page), href)).replace(os.sep, "/")
+        if path.startswith("..") or not SD.known_page(path) or SD.rel_href(page, path) != href:
+            return m.group(0)
+        return "{{page:" + path + frag + "|" + label + "}}"
+
+    def back(m: re.Match) -> str:
+        kind, rev, path, frag, label = m.groups()
+        if rev != target:
+            return m.group(0)
+        path, label = unquote(path), html.unescape(label)
+        if kind == "tree":
+            path = path.rstrip("/")
+            return "{{tree:" + path + ("" if label == path + "/" else "|" + label) + "}}"
+        return "{{src:" + path + (frag or "") + ("" if label == path else "|" + label) + "}}"
+    return PAGE_LINK_RX.sub(page_back, SRC_LINK_RX.sub(back, body))
+
+
+def cmd_fold(args: argparse.Namespace) -> int:
+    """A page is edited in place when the facts it states change (a pin move rewrites every page, including the regions
+    an expansion once inserted). Re-applying the original fragment would then put the stale text back, so the edited
+    region is folded back into the source fragment: afterwards `apply` is a no-op and `check` passes. Token-free HTML is
+    a valid fragment; table wrappers that `apply` adds are removed so that they are not doubled."""
+    rc = 0
+    for e in load_all():
+        if args.only and e["key"] not in args.only:
+            continue
+        cur = region(e)
+        if cur is None:
+            print(f"not applied (nothing to fold): {e['wp']}/{e['key']} -> {e.get('target')}")
+            rc = 1
+            continue
+        errors: list[str] = []
+        if render(e, errors) == cur:
+            continue
+        body = cur.replace('<div class="table-wrap"><table', "<table").replace("</table></div>", "</table>")
+        e["body_path"].write_text(tokenize(body, e["target"]) + "\n", encoding="utf-8")
+        errors = []
+        if render(e, errors) != cur or errors:
+            print(f"fold did not round-trip: {e['wp']}/{e['key']} {errors[:2]}")
+            rc = 1
+        else:
+            print(f"folded {e['wp']}/{e['key']} <- {e['target']}")
+    return rc
+
+
 def cmd_apply(args: argparse.Namespace) -> int:
     # several work packages may apply expansions at the same time: serialise read-modify-write of the target pages
     EXP.mkdir(parents=True, exist_ok=True)
@@ -197,6 +277,12 @@ def cmd_check(_: argparse.Namespace) -> int:
         if not t.is_file() or begin not in t.read_text(encoding="utf-8") or end not in t.read_text(encoding="utf-8"):
             print(f"not applied: {e['wp']}/{e['key']} -> {e.get('target')}")
             rc = 1
+            continue
+        errors: list[str] = []
+        if render(e, errors) != region(e):
+            # `apply` would overwrite the page's current text with the source's older text
+            print(f"drift: {e['wp']}/{e['key']} -> {e.get('target')} differs from its source (run `fold` after a deliberate page edit)")
+            rc = 1
     print("expansions ok" if rc == 0 else "expansions pending")
     return rc
 
@@ -213,9 +299,11 @@ def main() -> int:
     a = sub.add_parser("apply")
     a.add_argument("--only", nargs="*")
     sub.add_parser("check")
+    f = sub.add_parser("fold")
+    f.add_argument("--only", nargs="*")
     sub.add_parser("list")
     args = ap.parse_args()
-    return {"apply": cmd_apply, "check": cmd_check, "list": cmd_list}[args.cmd](args)
+    return {"apply": cmd_apply, "check": cmd_check, "fold": cmd_fold, "list": cmd_list}[args.cmd](args)
 
 
 if __name__ == "__main__":

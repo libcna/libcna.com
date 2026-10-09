@@ -3,7 +3,7 @@
 
 The diagram replaces the alpha.1-era Mermaid image, which showed a retired renderer, the old
 CNA_GRAPHICS_BACKEND name and an SDL-only platform layer.  Every label is a fact from the fact
-sheets for CNA b0e97bb1 (18 renderer identities in 14 families, 6 platform implementations, 3 audio
+sheets for CNA c1c316b9 (14 renderer identities in 12 families, 3 platform implementations, 3 audio
 implementations, four independent selection axes).
 
     make_architecture_diagram.py [--png]
@@ -75,8 +75,8 @@ def top(b):
 
 def build() -> str:
     out.append(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" '
-               f'aria-labelledby="t d"><title id="t">CNA architecture at snapshot b0e97bb1</title>'
-               f'<desc id="d">The game calls the XNA-shaped Framework API; GraphicsDevice asks the renderer selection for one of 18 renderer '
+               f'aria-labelledby="t d"><title id="t">CNA architecture at snapshot c1c316b9</title>'
+               f'<desc id="d">The game calls the XNA-shaped Framework API; GraphicsDevice asks the renderer selection for one of 14 renderer '
                f'identities behind IGraphicsRenderer; a platform implementation and an audio implementation, chosen independently, '
                f'sit on the target operating system.</desc>')
     out.append('<defs><marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">'
@@ -114,7 +114,7 @@ def build() -> str:
         boxes.append(box(sx + i * (sw_ + gap), 336, sw_, 74, lines, "#f4f6f8"))
     for b in boxes:
         path_arrow(f"M{fw[0] + fw[2] / 2} {fw[1] + fw[3]} C {fw[0] + fw[2] / 2} 300, {b[0] + b[2] / 2} 300, {b[0] + b[2] / 2} 336")
-    sharp = box(1590, 226, 190, 52, ["sharp-runtime", "System.* (branch next)"], "#fff8e1", "#d0a52a", 15, "bold")
+    sharp = box(1550, 226, 230, 52, ["sharp-runtime  (System.*)", "branch apple/m4-stabilization"], "#fff8e1", "#d0a52a", 13, "bold")
     arrow(fw[0] + fw[2], 252, sharp[0], 252)
 
     # ---- renderer selection ---------------------------------------------------------------
@@ -130,7 +130,7 @@ def build() -> str:
 
     # ---- side panels: build-time selection and sprite draw flow ---------------------------------
     group(40, 460, 420, 190, "Build-time selection")
-    box(60, 490, 380, 40, ["CNA_GRAPHICS_RENDERER=<one of the 18>"], "#f4f6f8", size=13)
+    box(60, 490, 380, 40, ["CNA_GRAPHICS_RENDERER=<one of the 14>"], "#f4f6f8", size=13)
     box(60, 538, 380, 40, ["CNA_GRAPHICS_RENDERERS=\"A;B;C\"  (compatible set)"], "#f4f6f8", size=13)
     box(60, 586, 380, 44, ["default: WEBGL2 (Emscripten) · OPENGLES3 (Linux)", "SDL_RENDERER (everything else)"], "#f4f6f8", size=13)
     group(1340, 460, 420, 190, "Sprite draw flow")
@@ -140,21 +140,21 @@ def build() -> str:
     arrow(1540, 502, 1560, 502); path_arrow("M1650 518 C 1650 530, 1450 520, 1450 536"); arrow(1540, 552, 1560, 552); path_arrow("M1650 568 C 1650 578, 1550 578, 1550 588")
 
     # ---- renderer groups ----------------------------------------------------------------------
-    group(40, 690, 1720, 250, "18 public renderer identities in 14 implementation families  (one binary, or several with CNA_GRAPHICS_RENDERERS)")
+    group(40, 690, 1720, 250, "14 public renderer identities in 12 implementation families  (one binary, or several with CNA_GRAPHICS_RENDERERS)")
     g1 = (60, 722, 890, 200)
     rect(*g1, fill="#e8f5e9", stroke="#5fae68", rx=8)
-    text(g1[0] + 14, g1[1] + 22, "GPU renderers (13 identities, 3D + 2D)", 14, "bold", "#2e7d32", "start")
-    gpu = [("OPENGLES2 · OPENGLES3 · OPENGL33", "WEBGL1 · WEBGL2   (five identities, one EasyGL family)"),
+    text(g1[0] + 14, g1[1] + 22, "GPU renderers (10 identities, 3D + 2D)", 14, "bold", "#2e7d32", "start")
+    gpu = [("OPENGLES3 · OPENGL33 · WEBGL2", "three identities, one EasyGL family"),
            ("VULKAN", ""), ("SDL_GPU", "SDL3 GPU API"), ("WEBGPU", "native + browser"),
-           ("METAL", "macOS"), ("FNA3D", "FNA3D adapter"), ("DIRECTX9 · DIRECTX11 · DIRECTX12", "Windows")]
+           ("METAL", "macOS + iOS"), ("FNA3D", "FNA3D adapter"), ("DIRECTX9 · DIRECTX11", "Windows")]
     cells = [(70, 752, 430, 70), (510, 752, 130, 70), (650, 752, 140, 70), (800, 752, 140, 70),
              (70, 832, 200, 70), (280, 832, 200, 70), (490, 832, 450, 70)]
     for (a, b), (x, y, w, h) in zip(gpu, cells):
         box(x, y, w, h, [a] + ([b] if b else []), "#ffffff", "#5fae68", 13, "bold")
     g2 = (970, 722, 400, 200)
     rect(*g2, fill="#fff3e0", stroke="#e0a040", rx=8)
-    text(g2[0] + 14, g2[1] + 22, "2D-only renderers (2)", 14, "bold", "#b26a00", "start")
-    for j, (n, sub) in enumerate([("SDL_RENDERER", "SDL3 2D renderer"), ("CANVAS", "browser 2D canvas")]):
+    text(g2[0] + 14, g2[1] + 22, "2D-only renderer (1)", 14, "bold", "#b26a00", "start")
+    for j, (n, sub) in enumerate([("SDL_RENDERER", "SDL3 2D renderer")]):
         box(980 + j * 195, 752, 185, 70, [n, sub], "#ffffff", "#e0a040", 13, "bold")
     g3 = (1390, 722, 350, 200)
     rect(*g3, fill="#eceff1", stroke="#78909c", rx=8)
@@ -165,12 +165,12 @@ def build() -> str:
 
     # ---- platform / audio / OS -----------------------------------------------------------------------
     plat = box(40, 990, 820, 96, ["Platform implementation  ·  CNA_PLATFORM  (default SDL3)",
-                                   "SDL3 · X11 · WAYLAND · WIN32 · HEADLESS · TERMINAL",
-                                   "X11, Wayland and Win32 are native (no SDL); CNA_ENABLE_SDL=AUTO | ON | OFF"], "#e0f2f1", "#4db6ac", 14, "bold")
+                                   "SDL3 · HEADLESS · TERMINAL",
+                                   "SDL3 reaches Windows, X11 and Wayland through SDL's video drivers; CNA_ENABLE_SDL=AUTO | ON | OFF"], "#e0f2f1", "#4db6ac", 14, "bold")
     aud = box(900, 990, 500, 96, ["Audio implementation  ·  CNA_AUDIO_PLATFORM  (default SDL3)",
                                    "SDL3 · ALSA · NULL",
                                    "SOUND_ENABLED (XNA playback mixer): SDL3 and ALSA"], "#e0f2f1", "#4db6ac", 14, "bold")
-    ext = box(1440, 990, 320, 96, ["Optional layers (off by default)", "CNAEXT extensions · Diagnostics", "Inspector · experimental C ABI 0.44.0"], "#f3f4f6", "#9aa5b1", 13, "bold")
+    ext = box(1440, 990, 320, 96, ["Optional layers (off by default)", "CNAEXT extensions · Diagnostics", "Inspector · experimental C ABI 0.46.0"], "#f3f4f6", "#9aa5b1", 13, "bold")
     arrow(400, 940, 400, 990)
     path_arrow("M1150 936 L1150 990", "#52606d")
     os_ = box(40, 1150, 1360, 62, ["Target operating system:  Linux · Windows (MSVC, MinGW-w64) · macOS · iOS · Android · WebAssembly (Emscripten)"], "#eceff1", "#78909c", 15, "bold")
@@ -181,8 +181,8 @@ def build() -> str:
     bt = box(1440, 1150, 320, 62, ["Build-time only", "cna-content → .xnb / .cnb"], "#fff8e1", "#d0a52a", 14, "bold")
     arrow(1600, 1086, 1600, 1150, "#b0bcc5", "5 4")
     text(900, 1256, "Four independent axes: target operating system · platform implementation · graphics renderer · audio implementation.", 14, "normal", "#52606d")
-    text(900, 1280, "A name outside the 18 renderer identities is a CMake configure error; nothing falls back silently.", 14, "normal", "#52606d")
-    text(900, 1310, "CNA snapshot b0e97bb1 (4 October 2026, branch next)  ·  libcna.com", 13, "normal", "#7b8794")
+    text(900, 1280, "A name outside the 14 renderer identities is a CMake configure error; nothing falls back silently.", 14, "normal", "#52606d")
+    text(900, 1310, "CNA snapshot c1c316b9 (9 October 2026, branch apple/m4-stabilization)  ·  libcna.com", 13, "normal", "#7b8794")
     out.append("</svg>")
     return "\n".join(out) + "\n"
 

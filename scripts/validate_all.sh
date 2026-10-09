@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run every site validator. check_retired_renderers.py and the source-link/ledger checks need the pinned CNA
-# material (see audit/b0e97bb1-phase4-delta.md and audit/developer-absorption-phase2.md): the CNA clone next to this
+# material (see audit/c1c316b9-phase5-delta.md and audit/developer-absorption-phase2.md): the CNA clone next to this
 # repository (../cna or $CNA_REPO), whose Git objects are read and never modified.
 set -u
 cd "$(dirname "$0")/.."
@@ -23,6 +23,8 @@ else
 fi
 # reads the CNA Git objects (../cna or $CNA_REPO) or, when given, the extracted trees; it fails rather than skips
 run python3 scripts/check_retired_renderers.py
+# the retired CNA platform backends are derived from cmake/PlatformSelection.cmake at cnahead in the same CNA clone
+run python3 scripts/check_retired_platforms.py
 run python3 scripts/site_deep.py check
 run python3 scripts/check_deep_page.py --all
 run python3 scripts/apply_expansions.py check
@@ -34,6 +36,7 @@ if [ -f data/known-issues.json ]; then
 fi
 run python3 scripts/compare_presentation.py --phase3 --quiet
 run python3 scripts/compare_presentation.py --phase4 --quiet
+run python3 scripts/compare_presentation.py --phase5 --quiet
 if [ "${PHASE3_FINAL:-0}" = "1" ]; then
   run python3 scripts/bible_ledger.py check --final
 fi
