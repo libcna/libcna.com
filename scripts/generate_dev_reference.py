@@ -115,6 +115,32 @@ FAMILY_GUIDES = {
 PAGE = "development/reference/{}.html"
 
 
+NUMBER_WORDS = "zero one two three four five six seven eight nine ten eleven twelve".split()
+
+
+def identity_family_map() -> dict[str, str]:
+    """identity -> family namespace (the part before '|') from the _map in cmake/RendererRegistry.cmake."""
+    body = re.search(r"set\(_map\n(.*?)\)\n", show("cmake/RendererRegistry.cmake"), re.S).group(1)
+    toks = re.sub(r"#[^\n]*", "", body).split()
+    return {ident: entry.split("|")[0] for ident, entry in zip(toks[0::2], toks[1::2])}
+
+
+def shared_family_sentence() -> str:
+    """'EasyGL serves three: OPENGLES3, OPENGL33 and WEBGL2', counted from the registry (never written by hand)."""
+    by_family: dict[str, list[str]] = {}
+    for ident, ns in identity_family_map().items():
+        by_family.setdefault(ns, []).append(ident)
+    shared = {ns: ids for ns, ids in by_family.items() if len(ids) > 1}
+    if not shared:
+        return "every family serves one"
+    parts = []
+    for ns, ids in sorted(shared.items()):
+        names = [f"<code>{esc(i)}</code>" for i in ids]
+        count = NUMBER_WORDS[len(ids)] if len(ids) < len(NUMBER_WORDS) else str(len(ids))
+        parts.append(f"{esc(ns)} serves {count}: {', '.join(names[:-1])} and {names[-1]}")
+    return "; ".join(parts)
+
+
 def guide_link(page: str, target: str | None) -> str:
     if not target:
         return "no dedicated internals page"
@@ -169,7 +195,7 @@ def gen_modules() -> tuple[dict, str]:
             '<th scope="col">Entry points</th><th scope="col">Maintainer page</th></tr></thead><tbody>' + "".join(rows) + "</tbody></table>"
             '<h2 id="renderer-families">Renderer directories under <code>modules/renderers/</code></h2>'
             '<p>A directory that owns a <code>src/</code> is an <em>implementation family</em>; one family can serve several public identities '
-            '(EasyGL serves five). <code>common/</code> holds shared helpers. The identity-to-family map is in the '
+            f'({shared_family_sentence()}). <code>common/</code> holds shared helpers. The identity-to-family map is in the '
             f'<a href="{esc(site_dev.rel_href(page, PAGE.format("selection-axes")))}">selection axes index</a>.</p>'
             '<table><thead><tr><th scope="col">Directory</th><th scope="col">Role</th><th scope="col">Headers</th><th scope="col">Sources</th>'
             '<th scope="col">Test files</th><th scope="col">Entry point</th><th scope="col">Maintainer page</th></tr></thead><tbody>'
@@ -391,12 +417,21 @@ def gen_axes() -> tuple[dict, str]:
     audio_res = re.search(r"set\(_cna_audio_platforms_reserved\s+([A-Z0-9_ ]+)\)", audio).group(1).split()
     if len(platforms) != FACTS["platform_implementations"]["value"] or len(audio_avail) != FACTS["audio_implementations"]["value"]:
         raise SystemExit(f"platform/audio counts drifted: {len(platforms)} / {len(audio_avail)}")
+    # The host-conditional sentence below is written for this registry shape: SDL3 and HEADLESS on every host, TERMINAL
+    # appended only off Windows, and CNA's former direct window-system implementations refused by name. Refuse to
+    # write the page if the shape changes, rather than publish a sentence the registry no longer supports.
+    always = re.search(r"set\(_cna_platforms_available\s+([A-Z0-9_ ]+)\)", plat).group(1).split()
+    posix_only = re.findall(r"if\(NOT WIN32\)\s*list\(APPEND _cna_platforms_available\s+([A-Z0-9_ ]+)\)", plat)
+    retired_m = re.search(r"set\(_cna_platforms_retired\s+([A-Z0-9_ ]+)\)", plat)
+    retired_plat = retired_m.group(1).split() if retired_m else []
+    if always != ["SDL3", "HEADLESS"] or [x.split() for x in posix_only] != [["TERMINAL"]] or sorted(platforms) != sorted(always + ["TERMINAL"]):
+        raise SystemExit("PlatformSelection.cmake changed shape (always-available / POSIX-only sets); rewrite the platform paragraph")
     plat_notes = {
-        "SDL3": "default; SDL3 windowing, events and input", "SDL2": "SDL2 windowing, events and input (partial services)",
-        "X11": "native Xlib backend, no SDL; offered only where the X development environment exists",
-        "WAYLAND": "native Wayland client, no SDL and no X11 library; offered only where the Wayland development environment exists",
-        "WIN32": "native user32/gdi32 backend; offered when the target is Windows",
-        "HEADLESS": "no window; injected events; conformance and CI role", "TERMINAL": "POSIX terminal session (termios); CPU-frame presentation",
+        "SDL3": "default, on every host; CNA's one windowing implementation: SDL's own video drivers reach Windows, X11, Wayland, "
+                "macOS, iOS, Android and the browser, and the renderer receives the native handle through "
+                "<code>IPlatformWindow::GetNativeHandle()</code>",
+        "HEADLESS": "on every host; no window; injected events; conformance and CI role",
+        "TERMINAL": "POSIX hosts only (termios); CPU-frame presentation",
     }
     audio_notes = {
         "SDL3": "default; SDL3 device transport with the SDL3_mixer-backed XNA playback engine (defines <code>SOUND_ENABLED</code>)",
@@ -417,7 +452,12 @@ def gen_axes() -> tuple[dict, str]:
             '<th scope="col">Implementation family</th><th scope="col">Descriptor accessor</th></tr></thead><tbody>' + "".join(id_rows) + "</tbody></table>"
             '<h2 id="platforms">Platform implementations (<code>CNA_PLATFORM</code>)</h2>'
             f'<p>From {src("cmake/PlatformSelection.cmake")}. <code>SDL12</code> and <code>EMSCRIPTEN</code> are reserved identifiers that are refused rather than aliased. '
-            'Some implementations are host-conditional (Terminal is POSIX-only, Win32 Windows-only, X11 and Wayland need their development packages) and are refused with an explanation rather than replaced by SDL3.</p>'
+            '<code>SDL3</code> and <code>HEADLESS</code> are offered on every host. Only <code>TERMINAL</code> is host-conditional: it is built on termios, so on a Windows host '
+            'it is reserved and refused with an explanation rather than replaced by SDL3. Windows is a host environment, not an implementation, and X11 and Wayland are display '
+            'environments: <code>SDL3</code> reaches all three through SDL&rsquo;s own video drivers, so whatever is host- or driver-specific lives inside SDL, while '
+            '<code>HEADLESS</code> opens no window at all.'
+            + (f' The values {", ".join(f"<code>{r}</code>" for r in retired_plat[:-1])} and <code>{retired_plat[-1]}</code> are refused by name, with a message that says to configure SDL3.'
+               if retired_plat else '') + '</p>'
             '<table><thead><tr><th scope="col">Value</th><th scope="col">Role</th></tr></thead><tbody>' + prow + "</tbody></table>"
             '<h2 id="audio">Audio implementations (<code>CNA_AUDIO_PLATFORM</code>)</h2>'
             f'<p>From {src("cmake/AudioPlatformSelection.cmake")}. Reserved and refused: {", ".join(f"<code>{r}</code>" for r in audio_res)}. '

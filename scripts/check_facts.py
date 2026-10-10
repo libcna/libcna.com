@@ -17,8 +17,18 @@ counted macro", "five GL profiles", "the two 2D-only renderers", ...) and fail o
 one, unless the number is attributed to an earlier revision in its own clause. A sentence that puts more files with a
 counted macro than test files ("821 of 813") fails as impossible. Two wording rules: an evidence callout that says
 "at the pinned commit" must name the cnahead commit as the one read (older evidence says "at the stated evidence
-commit"), and the C ABI release gate's planned rows are "public C++ declarations", never bare "unmapped symbols".
-scripts/test_validators.py feeds the reviewer's exact stale sentences through METRIC_RULES.
+commit"), and the C ABI release gate's planned rows are "public C++ declarations", never bare "unmapped symbols" (nor "public
+C++ symbols still unmapped" or "missing C exports").
+
+The second review showed that headline rules miss shorthand and inverted subsets, so more is derived from CNA and judged by
+what a sentence claims: the compiled-effect sets (identities that can run compiled effects, the always-on family, hence the
+identities that never can and those a default configuration refuses), the families that override the Texture2D and the
+render-target format classifier (the identities outside them accept only SurfaceFormat::Color), and the examples/ files (all
+.cpp, and those named *_test.cpp). EasyGL shorthand ("EasyGL serves five", "five-identity EasyGL...", "two EasyGL profiles other
+than A, B and C"), the named test-file metrics, any "other N" larger than the whole, and the compiled-effect and format
+complements (concept_findings: polarity and default-configuration wording decide which of 11 / 3 / 13 a count must be) are
+rejected when they disagree with the source.
+scripts/test_validators.py feeds the reviewers' exact stale sentences through these rules.
 """
 
 from __future__ import annotations
@@ -68,11 +78,39 @@ def derive_from_cna(sha: str) -> dict:
               for p in [p.split(":", 1)[1]]}
     routes = sum(int(line.rsplit(":", 1)[1]) for line in
                  _git("grep", "-c", "^CNA_C_API", sha, "--", "modules/c-api/include/CNA/C/*.h").splitlines() if line.strip())
+    # identity -> family directory, through the registry's namespace column (EasyGL -> easygl, SdlGpu -> sdl-gpu)
+    key = lambda s: re.sub(r"[^a-z0-9]", "", s.lower())  # noqa: E731
+    by_key = {key(d): d for d in families}
+    body = re.search(r"set\(_map\n(.*?)\)\n", registry, re.S).group(1)
+    toks = re.sub(r"#[^\n]*", "", body).split()
+    family_of = {i: by_key[key(e.split("|")[0])] for i, e in zip(toks[0::2], toks[1::2]) if i in public}
+
+    def families_defining(symbol: str) -> set[str]:
+        hits = _git("grep", "-lF", symbol, sha, "--", "modules/renderers").splitlines()
+        return {p.split(":", 1)[1].split("/")[2] for p in hits} & families
+
+    def identities_of(fams: set[str]) -> int:
+        return sum(1 for i in public if family_of[i] in fams)
+    # compiled effects: a family behind a CNA_<FAMILY>_COMPILED_EFFECTS option (its header answers true only inside that option's
+    # #if), plus a family whose renderer answers true with no option at all (FNA3D)
+    selection = _git("show", f"{sha}:cmake/RendererSelection.cmake")
+    optioned = {by_key[key(o)] for o in re.findall(r"option\(CNA_([A-Z0-9_]+)_COMPILED_EFFECTS\b", selection) if key(o) in by_key}
+    always = families_defining("SupportsCompiledEffects() const override { return true; }") - optioned
+    compiled = optioned | always
+    # format verdicts: families that override the Texture2D / render-target classifier; every other family defers (Color only)
+    tex_cls, rt_cls = families_defining("ClassifySurfaceFormatEXT"), families_defining("ClassifyRenderTargetFormatEXT")
+    examples = [p for p in tree if not p.startswith("third_party/") and re.search(r"(^|/)examples/.*\.cpp$", p)]
     return {"renderer_identities": len(public), "implementation_families": len(families),
             "platform_implementations": len(platforms), "audio_implementations": len(audio_ids),
             "gl_profiles": len(gl), "cpp_test_source_files": len(tests), "cpp_test_files_with_macros": len(per_file),
             "static_test_definitions": sum(per_file), "c_abi_version": version, "c_api_routes": routes,
-            "parity_families": len(parity)}
+            "parity_families": len(parity),
+            "compiled_effect_identities": identities_of(compiled), "compiled_effect_families": len(compiled),
+            "compiled_effect_always_on_identities": identities_of(always),
+            "format_classifying_families": len(tex_cls), "format_classifying_identities": identities_of(tex_cls),
+            "rt_format_classifying_families": len(rt_cls), "rt_format_classifying_identities": identities_of(rt_cls),
+            "standalone_pixel_programs": sum(1 for p in examples if p.endswith("_test.cpp")),
+            "example_cpp_files": len(examples), "module_example_cpp_files": sum(1 for p in examples if p.startswith("modules/"))}
 
 
 def source_cross_check(sha: str) -> int:
@@ -135,22 +173,51 @@ METRIC_RULES: list[tuple[str, str, int, str]] = [
     ("gl_profiles", r"(?<!WebGL )(?<!OpenGL )(?<!ES )(?<!GL )\b" + NUM + r"\s+(?:public\s+)?(?:renderer\s+)?identities\s+(?:share|sharing)\b[^.;]{0,40}?\b(?:EasyGL|one (?:CNA )?implementation)", 0,
      "EasyGL profile count"),
     ("gl_profiles", r"\bEasyGL (?:family )?\(" + NUM + r"(?: public)? identities", 0, "EasyGL profile count"),
-    ("parity_families", r"\bparity\b[^.;]{0,80}?\b(?:registered for|on|for) (?:the )?" + NUM + r" (?:renderer )?families\b", 0, "parity-fixture family count"),
+    # shorthand the rules above missed: "EasyGL serves five," / "EasyGL owns five renderer identities", "the five-identity
+    # EasyGLRendererDescriptor.cpp", "five EasyGL profiles", "five identities are served by EasyGL", "EasyGL family (5)"
+    ("gl_profiles", r"\bEasyGL\b[^.;]{0,40}?\b(?:serves|supplies|carries|implements|covers|has|owns|provides|backs|hosts|exposes|handles)\s+(?:all\s+)?"
+     + NUM + r"(?=\s*(?:[,.;:)]|$|\band\b|\((?!\s*\d)|(?:public\s+|renderer\s+|GL[- ]profile\s+|GL\s+)*(?:identit|profiles?\b)))", 0, "EasyGL identity count"),
+    ("gl_profiles", r"\b" + NUM + r"[- ](?:identity|profile|GL-profile)\s+(?:<code>)?EasyGL", 0, "EasyGL identity count"),
+    ("gl_profiles", r"(?<!between )\b" + NUM + r"\s+EasyGL\s+(?:public\s+)?(?:renderer\s+)?(?:profiles|identities)\b(?!\s+(?:other than|besides|except|that|which)\b)", 0,
+     "EasyGL identity count"),
+    ("gl_profiles", r"\b" + NUM + r"\s+(?:public\s+)?(?:renderer\s+)?identities\s+(?:are served by|use|map to|belong to|come from|run on)\s+(?:the\s+)?(?:one\s+)?EasyGL", 0,
+     "EasyGL identity count"),
+    ("gl_profiles", r"\bEasyGL(?: family)?\s*\(\s*" + NUM + r"\s*\)", 0, "EasyGL identity count"),
+    ("gl_profiles", r"\bEasyGL(?: family)?\s*[:\u2014\u2013]\s*" + NUM + r"\s+(?:public\s+)?(?:renderer\s+)?(?:identities|profiles)\b", 0, "EasyGL identity count"),
+    ("gl_profiles", r"\bEasyGL\b[^.;]{0,30}?\b(?:is\s+)?(?:shared|used|selected)\s+by\s+(?:all\s+)?" + NUM + r"\s+(?:public\s+)?(?:renderer\s+)?identities\b", 0,
+     "EasyGL identity count"),
+    ("parity_families", r"\bparity\b[^.;]{0,80}?\b(?:registered for|on|for|covers?|covering|span|spans) (?:the )?" + NUM + r" (?:renderer )?families\b", 0, "parity-fixture family count"),
     ("parity_families", r"\bregistered for (?:the )?" + NUM + r" renderer families\b", 0, "parity-fixture family count"),
     ("parity_families", r"\b" + NUM + r" (?:renderer )?families call cna_register_parity_fixtures\b", 0, "parity-fixture family count"),
-    ("compiled_effect_identities", r"\b" + NUM + r" (?:of the \d+ )?(?:renderer )?identities (?:that )?(?:support|can run|run) compiled\b", 0, "compiled-effect identity count"),
+    ("compiled_effect_identities", r"(?<!other )(?<!remaining )\b" + NUM + r" (?:of the \d+ )?(?:renderer )?identities (?:that )?(?:support|can run|run) compiled\b", 0,
+     "compiled-effect identity count"),
     ("compiled_effect_identities", r"(?<!refusals: )\bcompiled(?:(?!false|unsupported|refus|\bnot\b)[^.;]){0,60}?\b" + NUM + r" of the \d+ (?:renderer )?identities\b", 0,
      "compiled-effect identity count"),
     ("compiled_effect_more", r"\b" + NUM + r" more (?:renderer )?identities\b", 0, "compiled-effect identities besides FNA3D"),
     ("two_d_only_renderers", r"\b" + NUM + r" (?:deliberately )?2D-only (?:renderers|identities|families)\b", 0, "2D-only identity count"),
     ("two_d_only_renderers", r"\b" + NUM + r" (?:renderer )?identit(?:y|ies) (?:is|are) (?:deliberately )?2D-only\b", 0, "2D-only identity count"),
+    ("two_d_only_renderers", r"\b" + NUM + r" (?:shipped |current |public |CNA )?(?:renderers|renderer identities|identities|families) (?:is |are )?(?:deliberately |intentionally |still )?"
+     r"(?:2D-only|2D only)\b", 0, "2D-only identity count"),
     ("platform_implementations", r"\b" + NUM + r" (?:CNA_PLATFORM |platform )implementations\b", 0, "platform implementation count"),
     ("platform_implementations", r"\bCNA_PLATFORM\b (?:now )?offers " + NUM + r" implementations\b", 0, "platform implementation count"),
     ("audio_implementations", r"\b" + NUM + r" (?:CNA_AUDIO_PLATFORM |audio )implementations\b", 0, "audio implementation count"),
     ("cpp_test_source_files", r"\b" + NUM + r" (?:CNA-owned )?C\+\+ test (?:source )?files\b", 500, "C++ test source file count"),
     ("cpp_test_source_files", r"\btest figures \(" + NUM + r" files\b", 0, "C++ test source file count"),
-    ("cpp_test_files_with_macros", r"\b" + NUM + r" (?:of (?:the files|the test files|which|them) |(?:test )?files )?(?:contain|contains|with) (?:at least one|a counted|such a|counted)\b",
-     500, "test files containing a counted macro"),
+    ("cpp_test_source_files", r"\b" + NUM + r" (?:CNA-owned )?test source files\b", 500, "C++ test source file count"),
+    ("cpp_test_files_with_macros", r"\b" + NUM + r" (?:of (?:the files|the test files|which|them) |(?:test )?files )?(?:contain|contains|with) (?:at least one|a counted|such a|counted"
+     r"|an? (?:GoogleTest(?:-family)? |counted |test )macro|GoogleTest(?:-family)? macros?)\b", 500, "test files containing a counted macro"),
+    # named metrics that must not borrow a neighbouring count: files literally named *_test.cpp (all under examples/), standalone
+    # pixel programs (the same set), and every .cpp under an examples/ directory (878 under modules/, 879 with the loose demo)
+    ("standalone_pixel_programs", r"\b" + NUM + r"\s+(?:<code>)?\*_test\.cpp\b", 0, "files named *_test.cpp"),
+    ("standalone_pixel_programs", r"\b" + NUM + r"\s+(?:of them\s+|files\s+|programs\s+|example programs\s+)?(?:are\s+)?named\s+\*_test\.cpp", 0, "files named *_test.cpp"),
+    ("standalone_pixel_programs", r"\b" + NUM + r"\s+standalone\s+(?:example\s+)?(?:pixel\s+)?(?:or\s+contract\s+)?programs\b", 0, "standalone examples/**/*_test.cpp programs"),
+    ("standalone_pixel_programs", r"\*_test\.cpp\b[^.;]{0,80}?\(\s*" + NUM + r"\s+(?:across|in|under|throughout)\b", 0, "files named *_test.cpp"),
+    ("example_cpp_files", r"\b" + NUM + r"\s+\.cpp\s+files\b(?=[^.;]{0,60}\bexamples?\b)", 0, ".cpp files under examples/ directories"),
+    # a complement larger than the whole: "the other 15 renderer identities" (14 in all), "the other 20 families" (12 in all)
+    ("complement_identities", r"\b(?:other|remaining)\s+" + NUM + r"\s+(?:public\s+|selectable\s+)?(?:renderer\s+)?identities\b", 0, "a complement of the renderer identities"),
+    ("complement_identities", r"\b" + NUM + r"\s+other\s+(?:public\s+)?(?:renderer\s+)?identities\b", 0, "a complement of the renderer identities"),
+    ("complement_families", r"\b(?:other|remaining)\s+" + NUM + r"\s+(?:renderer\s+|implementation\s+)?families\b", 0, "a complement of the implementation families"),
+    ("complement_families", r"\b" + NUM + r"\s+other\s+(?:renderer\s+|implementation\s+)?families\b", 0, "a complement of the implementation families"),
     ("static_test_definitions", r"(?<!with )(?<!has )(?<!holds )\b" + NUM + r" (?:static(?:ally)?(?: declared| discoverable)? (?:GoogleTest-family )?definitions|static test definitions)\b",
      1000, "static GoogleTest-family definitions (whole tree)"),
     ("production_modules", r"\b" + NUM + r"\s+production\s+modules\b", 0, "production module count"),
@@ -158,12 +225,13 @@ METRIC_RULES: list[tuple[str, str, int, str]] = [
 _MACRO_RULE = next(r[1] for r in METRIC_RULES if r[0] == "cpp_test_files_with_macros")
 # the number belongs to an earlier revision, in its own clause, before it
 HISTORY = re.compile(r"alpha\.1|b0e97bb1|009d40f5|d6e9ff05|1bb2145d|\bearlier\b|\bprevious(?:ly)?\b|\bbefore\b|\bwas\b|\bwere\b|"
-                     r"\bhad\b|\bfrom\b|historical|\bresearch\b|audited (?:commit|revision)|\bused to\b|\bthen\b|\bonce\b|"
+                     r"\bhad\b|\bfrom\b|historical|\bresearch\b|audited (?:commit|revision)|\bused to\b|\b(?:back|until|by) then\b|\bthen-current\b|\bonce\b|"
                      r"\bremoved\b|\brestored\b|\bretired\b|\bnarrowed\b|\bshipped\b|\btagged\b", re.I)
 # the number is quoted from a document (typically one of CNA's own stale files, the subject of a Known Issue): a quotation
 # mark, a reporting verb or a file name earlier in the same sentence
 QUOTED = re.compile(r"[\u201c\"]|\b(?:says?|states?|reads?|pins?|claims?|speaks? of|describes?|quotes?|Doxygen|comment|header)\b|"
                     r"\.(?:md|cmake|json|h|hpp|py)\b|CHANGELOG", re.I)
+QUOTED_MARK = re.compile(r"[\u201c\"]|\.(?:md|cmake|json|h|hpp|py)\b|CHANGELOG")
 # a rule that applies only in a sentence of a given subject
 REQUIRES = {"compiled_effect_more": re.compile(r"compil|COMPILED|opt-in build option|Effect Framework", re.I)}
 # a sentence about compiled effects may name the compiled-effect subset
@@ -194,16 +262,21 @@ def metric_findings(body: str, values: dict) -> list[tuple[str, str]]:
             continue
         for m in re.finditer(rx, body, re.I):
             got = as_int(m.group("n"))
-            if got == want or got < minimum:
+            if key.startswith("complement_"):
+                if got < want:                              # want is the whole; any smaller complement is arithmetic for the page
+                    continue
+            elif (got in want if isinstance(want, (set, frozenset)) else got == want) or got < minimum:
                 continue
             sentence = _sentence(body, m.start(), m.end())
-            if HISTORY.search(_clause_before(body, m.start("n"))) or QUOTED.search(sentence[:max(0, sentence.find(m.group(0)))]):
+            quoted = QUOTED_MARK if key.startswith("complement_") else QUOTED   # a reporting verb cannot excuse impossible arithmetic
+            if HISTORY.search(_clause_before(body, m.start("n"))) or quoted.search(sentence[:max(0, sentence.find(m.group(0)))]):
                 continue
             if key in REQUIRES and not REQUIRES[key].search(sentence):
                 continue
             if key in SUBSET and re.search(SUBSET[key][0], sentence, re.I) and got == values.get(SUBSET[key][1]):
                 continue
-            found.append((f"{what} {got} != {want}: \u2026{body[max(0, m.start() - 90): m.end() + 50].strip()}\u2026", m.group(0)))
+            claim = f"{what} {got} is not smaller than the whole ({want})" if key.startswith("complement_") else f"{what} {got} != {want}"
+            found.append((f"{claim}: \u2026{body[max(0, m.start() - 90): m.end() + 50].strip()}\u2026", m.group(0)))
     # impossible combinations: more files with a counted macro than test files, or "X of Y" with X > Y
     for m in re.finditer(r"\b(\d[\d,]*) C\+\+ test (?:source )?files\b", body):
         sentence = _sentence(body, m.start(), m.end())
@@ -215,6 +288,139 @@ def metric_findings(body: str, values: dict) -> list[tuple[str, str]]:
         a, b = as_int(m.group(1)), as_int(m.group(2))
         if a > b >= 10 and not HISTORY.search(_clause_before(body, m.start())):
             found.append((f"impossible ratio {m.group(1)} of {m.group(2)}: \u2026{body[max(0, m.start() - 80): m.end() + 40].strip()}\u2026", m.group(0)))
+    return found + concept_findings(body, values)
+
+
+# ---------------------------------------------------------------------------------------------
+# concept rules: subset and complement counts of two concepts the site states again and again
+# ---------------------------------------------------------------------------------------------
+# Compiled effects. Three numbers are true at once and a sentence must use the one its own wording claims: identities that
+# CAN run compiled effects (11, in 9 families), identities that never can (3), and identities that refuse them in a DEFAULT
+# configuration because every option but FNA3D's always-on path defaults to OFF (13). A count is judged by the clause it
+# stands in: a negative predicate ("refused on", "cannot", "without", "report false") wants the incapable count, or the
+# default-refusal count only when the sentence names the default configuration; a positive one wants the capable count,
+# or capable-minus-FNA3D (10) when it says "other"/"more". Family counts: 9, or 8 for "other"/"more"/the optioned set.
+# Format classification. Eight families (10 identities) classify the Texture2D formats themselves and seven (9 identities)
+# the render-target formats; every other identity defers, which means SurfaceFormat::Color only. "The other N identities"
+# accept only Color must be the complement: 4 for textures, 5 where the sentence is about render targets.
+COMPILED_CTX = re.compile(r"compiled[- ](?:XNA |XNA/FNA )?effects?|CompiledEffects|COMPILED_EFFECTS|Effect Framework|\.fxb\b|effect bytecode", re.I)
+FORMAT_CTX = re.compile(r"SurfaceFormat::Color\b|\bColor[- ]only\b|\bonly\s+(?:SurfaceFormat::)?Color\b|\bclassif\w*\b[^.;]{0,40}\bformats?\b|"
+                        r"\bpromot\w*\b[^.;]{0,30}\bformats?\b|format[- ]classif", re.I)
+RT_CTX = re.compile(r"render[- ]targets?\b|RenderTarget", re.I)
+DEFAULT_CONFIG = re.compile(r"\bdefault\s+(?:configur\w*|build|CMake)\b|\bby default\b|\bin a default\b|\bdefault-configured\b|"
+                            r"\boptions?\s+defaults?\s+to\s+OFF\b|\bdefaults?\s+to\s+OFF\b", re.I)
+NEGATIVE = re.compile(r"\b(?:cannot|can't|can\s?not|never|do not|don't|does not|doesn't|lacks?|without|refus\w*|unsupported|not supported|"
+                      r"incapable|throws?|false|unavailable|not available|except)\b", re.I)
+_OTHER = r"(?P<other>(?:the\s+)?(?:other|remaining)\s+)?"
+_MORE = r"(?:\s+(?P<more>other|more))?"
+IDENT_COUNT = re.compile(r"(?<!of )(?<!of the )(?<![\d.])" + _OTHER + r"\b" + NUM + _MORE + r"(?:\s+of\s+(?:the\s+)?\d+)?\s+(?:public\s+|selectable\s+)?(?:renderer\s+)?identities\b", re.I)
+FAMILY_COUNT = re.compile(r"(?<!of )(?<!of the )(?<![\d.])" + _OTHER + r"\b" + NUM + _MORE + r"\s+(?:renderer\s+|implementation\s+)?families\b", re.I)
+# "14 public renderer identities in 12 implementation families": the registry as a whole, not a compiled-effect or format subset
+REGISTRY_PHRASE = re.compile(r"\s+(?:in|over|across)\s+\d+\s+(?:renderer\s+|implementation\s+)?families\b", re.I)
+COLOR_ONLY_COUNT = re.compile(r"\b" + NUM + r"\s+(?:shipped\s+|current\s+|public\s+)?(?:renderers|identities|renderer identities|families)\s+(?:are|stay|remain)\s+"
+                              r"(?:SurfaceFormat::)?Color[- ]only\b", re.I)
+EASYGL_CTX = re.compile(r"EasyGL|\bGL\b|OPENGL", re.I)
+
+
+def _clauses(sentence: str) -> list[tuple[int, str]]:
+    """(offset, text) of the semicolon/colon/dash clauses of one sentence."""
+    out, pos = [], 0
+    for m in re.finditer(r";\s|:\s|\s\u2014\s", sentence):
+        out.append((pos, sentence[pos:m.start()]))
+        pos = m.end()
+    return out + [(pos, sentence[pos:])]
+
+
+def _polarity(sentence: str, start: int, end: int) -> bool:
+    """True when the sentence says the counted group does NOT have the feature. The predicate after the count stops at a
+    parenthesis, comma or clause break (so "11 of the 14 identities (SDL_RENDERER ... do not)" stays positive); the words
+    before it count from the last parenthesis or comma ("unsupported on 13 of the 14", "refused on the 11", "Named
+    refusals: compiled effects on 3 of the 14")."""
+    after = re.split(r"[(,;]|\s\u2014\s", sentence[end:end + 90], maxsplit=1)[0]
+    before = re.split(r"[(,;]|\s\u2014\s", sentence[max(0, start - 60):start])[-1]
+    return bool(NEGATIVE.search(after) or NEGATIVE.search(before))
+
+
+GL_NAMES = r"(?:OPENGLES3|OPENGL33|WEBGL2|OpenGL ES 3(?:\.0)?|OpenGL 3\.3|WebGL 2)"
+# "the two EasyGL profiles other than OPENGL33, OPENGLES3 and WEBGL2": a subset and its exclusions must add up to the family
+EASYGL_EXCEPT = re.compile(r"\b" + NUM + r"\s+(?:EasyGL|GL)\s+(?:profiles|identities)\s+(?:other than|besides|except(?: for)?)\s+((?:" + GL_NAMES
+                           + r")(?:\s*(?:,\s*(?:and\s+)?|\band\b)\s*" + GL_NAMES + r")*)", re.I)
+
+
+def concept_findings(body: str, values: dict) -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    for m in EASYGL_EXCEPT.finditer(body):
+        listed = len(re.findall(GL_NAMES, m.group(m.lastindex)))
+        if "gl_profiles" in values and as_int(m.group("n")) + listed != values["gl_profiles"]:
+            found.append((f"EasyGL subset arithmetic: {m.group('n')} profiles other than {listed} named ones is not the {values['gl_profiles']} "
+                          f"EasyGL identities: \u2026{m.group(0)}\u2026", m.group(0)))
+    if "compiled_effect_identities" not in values or "format_classifying_identities" not in values:
+        return found
+    total = values["renderer_identities"]
+    capable, always = values["compiled_effect_identities"], values["compiled_effect_always_on_identities"]
+    fams, cap_fams = values["implementation_families"], values["compiled_effect_families"]
+    for m in COLOR_ONLY_COUNT.finditer(body):
+        sentence = _sentence(body, m.start(), m.end())
+        want = {total - values["format_classifying_identities"]} | ({total - values["rt_format_classifying_identities"]} if RT_CTX.search(sentence) else set())
+        if as_int(m.group("n")) not in want and not HISTORY.search(_clause_before(body, m.start())):
+            found.append((f"Color-only renderer count {m.group('n')}, expected {' or '.join(map(str, sorted(want)))} (the identities outside the "
+                          f"classifying families): \u2026{m.group(0)}\u2026", m.group(0)))
+    for sentence in re.split(r"(?<=[.!?])\s+", body):
+        if HISTORY.search(sentence) and re.search(r"alpha\.1|b0e97bb1|009d40f5|d6e9ff05|\bearlier\b|\bprevious", sentence, re.I):
+            continue                                        # a sentence about an earlier revision
+        clauses = _clauses(sentence)
+        for idx, (off, clause) in enumerate(clauses):
+            compiled = COMPILED_CTX.search(clause) or (idx and COMPILED_CTX.search(clauses[idx - 1][1])
+                                                       and re.search(r"\b(?:other|more|rest|remaining|it|them)\b", clause, re.I))
+            fmt = FORMAT_CTX.search(clause) or (idx and FORMAT_CTX.search(clauses[idx - 1][1]))
+            if not (compiled or fmt):
+                continue
+            for m in IDENT_COUNT.finditer(clause):
+                got = as_int(m.group("n"))
+                other = bool(m.group("other") or m.group("more"))
+                if QUOTED.search(clause[:m.start()]) or HISTORY.search(clause[max(0, m.start() - 40):m.start()]):
+                    continue
+                if REGISTRY_PHRASE.match(clause[m.end():]):
+                    continue
+                negative = _polarity(sentence, off + m.start(), off + m.end())
+                if compiled:
+                    if negative:
+                        want = {total - capable} | ({total - always} if DEFAULT_CONFIG.search(sentence) else set())
+                        what = "identities that cannot run compiled effects" + (" (or refuse them in a default configuration)" if len(want) > 1 else "")
+                    elif other:
+                        want, what = {capable - always}, "other identities that can run compiled effects besides the always-on family"
+                    else:
+                        want, what = {capable}, "identities that can run compiled effects"
+                        if got == values["gl_profiles"] and EASYGL_CTX.search(clause):
+                            continue                        # "the EasyGL option covers its three identities"
+                    if got not in want:
+                        found.append((f"compiled-effect {what}: {got}, expected {' or '.join(map(str, sorted(want)))}: "
+                                      f"\u2026{clause.strip()[:220]}\u2026", m.group(0)))
+                elif fmt and (other or re.match(r"(?:\s+[\w-]+){0,5}?\s*(?:accept|support|take|allow)s?\s+only\b|\s+without\s+an?\s+(?:[\w-]+\s+)?classifier\b",
+                                                clause[m.end():], re.I)):
+                    rt = bool(RT_CTX.search(sentence))
+                    want = {total - values["format_classifying_identities"]} | ({total - values["rt_format_classifying_identities"]} if rt else set())
+                    if got not in want:
+                        found.append((f"format-classification complement: {got} identities outside the classifying families, expected "
+                                      f"{' or '.join(map(str, sorted(want)))}: \u2026{clause.strip()[:220]}\u2026", m.group(0)))
+            for m in FAMILY_COUNT.finditer(clause):
+                got = as_int(m.group("n"))
+                other = bool(m.group("other") or m.group("more"))
+                if QUOTED.search(clause[:m.start()]) or HISTORY.search(clause[max(0, m.start() - 40):m.start()]):
+                    continue
+                if re.search(r"identities\s+(?:in|over|across)\s+$", clause[:m.start()], re.I):
+                    continue                                # the registry phrase again, from the family side
+                if compiled:
+                    negative = _polarity(sentence, off + m.start(), off + m.end())
+                    want = {fams - cap_fams} if negative else ({cap_fams - 1} if other else {cap_fams, cap_fams - 1})
+                    if got not in want:
+                        found.append((f"compiled-effect family count {got}, expected {' or '.join(map(str, sorted(want)))}: "
+                                      f"\u2026{clause.strip()[:220]}\u2026", m.group(0)))
+                elif fmt and re.match(r"\s*(?:\([^)]*\)\s*)?(?:that\s+)?(?:classify|promote|classifies|promotes)\b", clause[m.end():], re.I):
+                    want = {values["format_classifying_families"]} | ({values["rt_format_classifying_families"]} if RT_CTX.search(sentence) else set())
+                    if got not in want:
+                        found.append((f"format-classifying family count {got}, expected {' or '.join(map(str, sorted(want)))}: "
+                                      f"\u2026{clause.strip()[:220]}\u2026", m.group(0)))
     return found
 
 
@@ -232,7 +438,12 @@ def evidence_heading_findings(raw: str, sha_short: str) -> list[str]:
     return out
 
 
-AMBIGUOUS_MAPPING = re.compile(r"\b(\d[\d,]*) (?:unmapped (?:public )?symbols|(?:public )?symbols (?:are )?(?:still )?unmapped)\b")
+_DECL = r"(?:in-scope |planned |runtime-scope )?(?:public )?(?:C\+\+ )?(?:symbols|declarations)"
+# "631 unmapped symbols", "631 public C++ symbols still unmapped", "631 missing C ABI exports" (beside the gate) all misread the
+# release gate's planned rows as missing C exports, broken routes or link failures
+AMBIGUOUS_MAPPING = re.compile(r"\b(\d[\d,]*) (?:unmapped " + _DECL + r"|" + _DECL + r" (?:are |remain )?(?:still )?unmapped)\b"
+                               r"|\b(\d[\d,]*) (?:missing|absent|broken|unexported) (?:C )?(?:ABI )?(?:exports|routes|symbols|entry points)\b"
+                               r"(?=[^.]{0,120}\b(?:release gate|C mapping|planned)\b)")
 
 
 def mapping_wording_findings(body: str) -> list[str]:
@@ -358,14 +569,20 @@ CHECKS = [
 def metric_values() -> dict:
     """The value table METRIC_RULES compare against: the source-derived counts (source_cross_check must have run, or
     this derives them) plus the facts-file values that have no source method here."""
-    if "gl_profiles" not in F:
+    if "format_classifying_families" not in F:
         F.update(derive_from_cna((ROOT / "cnahead").read_text(encoding="utf-8").strip()))
     values = {k: F[k] for k in ("renderer_identities", "implementation_families", "gl_profiles", "platform_implementations",
                                 "audio_implementations", "cpp_test_source_files", "cpp_test_files_with_macros",
                                 "static_test_definitions", "compiled_effect_identities", "two_d_only_renderers", "parity_families")}
+    values |= {k: F[k] for k in ("compiled_effect_families", "compiled_effect_always_on_identities", "format_classifying_families",
+                                 "format_classifying_identities", "rt_format_classifying_families", "rt_format_classifying_identities",
+                                 "standalone_pixel_programs")}
     values["production_modules"] = 23
-    values["implementation_families_subset"] = int(re.search(r"\((\d+) families\)", facts["facts"]["compiled_effect_identities"]["label"]).group(1))
-    values["compiled_effect_more"] = F["compiled_effect_identities"] - 1   # FNA3D always, the rest behind options
+    values["implementation_families_subset"] = F["compiled_effect_families"]
+    values["compiled_effect_more"] = F["compiled_effect_identities"] - F["compiled_effect_always_on_identities"]   # FNA3D always, the rest behind options
+    values["example_cpp_files"] = {F["example_cpp_files"], F["module_example_cpp_files"]}   # with or without the loose demo
+    values["complement_identities"] = F["renderer_identities"]
+    values["complement_families"] = F["implementation_families"]
     return values
 
 

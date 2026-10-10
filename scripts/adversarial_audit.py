@@ -3,7 +3,8 @@
 
     adversarial_audit.py graph      # re-derive the Bible LaTeX inclusion graph from main.tex and compare it with audit/data/bible/units.json
     adversarial_audit.py anchors [--strict|--repair]   # ledger destinations: page + fragment exist, tokens occur at page level (error) and inside the cited anchor section (counted); --repair re-points imprecise anchors
-                                    # also: a SUPERSEDED concept without tokens needs replacement_tokens (checked like tokens) or an explicit review;
+                                    # also: a SUPERSEDED concept without tokens needs replacement_tokens (checked like tokens) or an explicit review
+                                    # (REVIEW_RESULTS: a classification, a reason of at least six words, and the replacement anchor or evidence it names);
                                     # no current concept may lose its tokens beyond the recorded baseline; and every cited section is read by the
                                     # semantic renderer / platform / metric checks, so a surviving generic token cannot vouch for a false inventory
     adversarial_audit.py issues     # data/known-issues.json <-> detail pages <-> hubs: counts, orphans, facts, evidence flags, unreviewed duplicate candidates
@@ -333,6 +334,31 @@ def page_claim_problems(rel: str) -> list[tuple[str, str]]:
     return _claims[rel]
 
 
+# The written-review escape for a tokenless SUPERSEDED concept. No concept uses it at c1c316b9; when one does, the review must
+# say which kind of supersession it is and point at something a reader can check, not just carry any non-empty text.
+REVIEW_RESULTS = {
+    "retired": "evidence",                 # the subject no longer exists at TARGET: the CNA path or commit that shows it
+    "no-current-statement": "evidence",    # the site deliberately states nothing current about it: the source that decided it
+    "replaced": "replacement",             # another current statement supersedes it: the page#anchor that carries it
+}
+
+
+def review_problems(review: dict, section_fn) -> list[str]:
+    result, reason = review.get("result"), str(review.get("reason") or "").strip()
+    out = []
+    if result not in REVIEW_RESULTS:
+        out.append(f"review.result must be one of {', '.join(sorted(REVIEW_RESULTS))} (got {result!r})")
+    if len(reason) < 40 or len(reason.split()) < 6 or reason.lower() == str(result).lower():
+        out.append("review.reason must explain the supersession in a sentence of at least six words")
+    if REVIEW_RESULTS.get(result) == "replacement":
+        base, _, frag = str(review.get("replacement") or "").partition("#")
+        if not (base and frag) or section_fn(base, "") is None or section_fn(base, frag) is None:
+            out.append("review.replacement must name an existing page#anchor that carries the superseding statement")
+    if REVIEW_RESULTS.get(result) == "evidence" and not str(review.get("evidence") or "").strip():
+        out.append("review.evidence must name the CNA source (path or commit) that establishes the disposition")
+    return out
+
+
 def check_concept(label: str, concept: dict, section_fn=None, claims_fn=None) -> tuple[list[str], list[str], str]:
     """(errors, anchor-precision misses, result) for one ledger concept; result is ok | reviewed | tokenless | broken.
     section_fn(page, fragment) and claims_fn(page) default to the live site; scripts/test_validators.py passes fakes."""
@@ -365,7 +391,11 @@ def check_concept(label: str, concept: dict, section_fn=None, claims_fn=None) ->
         review = concept.get("review") or {}
         if concept.get("replacement_tokens"):
             toks = concept["replacement_tokens"]       # the superseding statement, anchored like a token
-        elif review.get("result") and review.get("reason"):
+        elif review:
+            problems = review_problems(review, section_fn)
+            if problems:
+                errs += [f"{label}: SUPERSEDED review is not explicit: {x}" for x in problems]
+                return errs, [], "broken"
             return errs, [], "reviewed"
         else:
             errs.append(f"{label}: SUPERSEDED without tokens: give it replacement_tokens from the superseding statement or a review {{result, reason}}")

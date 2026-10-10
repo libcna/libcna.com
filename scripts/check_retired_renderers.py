@@ -39,7 +39,13 @@ by what the list is about:
     identity in CMake spelling), when the clause before it is about renderers, families, identities or
     registrations, or when CNA itself is said to accept/support/offer it;
   * flagged when a table cell holds nothing but the retired name in a column headed Family/Renderer/Identity/Backend
-    (or, without such a header, in a column whose other cells are current renderers).
+    (or, without such a header, in a column whose other cells are current renderers, or in a table whose caption or
+    nearest heading is about renderers/families and not about drivers or APIs);
+  * flagged when the name is the subject of a role predicate ("DirectX 12 is one of the renderer families"), when the
+    previous sentence of the block sets the renderer context and this sentence starts with the list or refers back to it
+    ("CNA has twelve renderer families. Direct3D 11 and Direct3D 12 are among them."), and when the block is nothing but
+    a list item / line of names whose introducing heading or line is about renderers ("<h3>Renderer families</h3><ul>
+    <li>EasyGL</li><li>Direct3D 12</li></ul>", "Renderers:<br>EasyGL<br>Direct3D 12").
 scripts/test_validators.py feeds the exact bypasses and the legitimate SDL-driver sentences through it.
 """
 
@@ -165,7 +171,7 @@ CURRENT_CNA_ONLY = (r"EasyGL|SDL[_ ]GPU|SDL[_ ]Renderer|FNA3D|Software|Headless|
 # names that can be a CNA renderer or a graphics API (or another project's driver), so they only extend a list
 API_LIKE = (r"(?:Direct3D|DirectX|D3D)[ -]?\d+(?:\s*/\s*\d+)*|DX\d+|Vulkan|Metal|WebGPU|WebGL[ -]?\d(?:\.\d)?|WebGL|"
             r"OpenGL(?:[ -]?ES)?[ -]?\d(?:\.\d)?|OpenGL(?:[ -]?ES)?|GLES[ -]?\d(?:\.\d)?|Canvas(?:2D)?")
-LIST_SEP = r"\s*(?:,\s*(?:and|or)\s+|,|/|&|\band\b|\bor\b|\bplus\b)\s*(?:the\s+)?"
+LIST_SEP = r"\s*(?:,\s*(?:and|or)\s+|,|/|&|\u00b7|\band\b|\bor\b|\bplus\b)\s*(?:the\s+)?"
 NON_RENDERER_HEADS = {
     "driver", "drivers", "api", "apis", "device", "devices", "debug-layer", "debug", "runtime", "runtimes", "adapter",
     "adapters", "sdk", "sdks", "header", "headers", "library", "libraries", "dll", "dlls", "feature", "features",
@@ -178,10 +184,17 @@ NON_RENDERER_HEADS = {
 ROLE_HEADS = {"renderer", "renderers", "backend", "backends", "identity", "identities", "family", "families",
               "profile", "profiles", "implementation", "implementations"}
 ROLE_CONTEXT = re.compile(r"\b(?:renderers?|backends?|identit(?:y|ies)|famil(?:y|ies)|registers?|registered|registrations?)\b", re.I)
-CNA_CLAIM = re.compile(r"\bCNA(?:['\u2019]s)?\b[^.;]{0,60}\b(?:accepts?|supports?|offers?|exposes?|ships?|includes?|provides?)\b")
+CNA_CLAIM = re.compile(r"\bCNA(?:['\u2019]s)?\b[^.;]{0,60}\b(?:accepts?|supports?|offers?|exposes?|ships?|includes?|provides?|implements?|targets?|"
+                       r"(?:renders?|draws?|presents?)\s+(?:through|with|via|using|on))\b")
 SDL_OWNED = re.compile(r"\bSDL(?:3|_gpu|_GPU)?\s*['\u2019]s\s+(?:own\s+)?(?:GPU\s+API\s*['\u2019]s\s+)?$")
 CELL_ROLE_HEADER = re.compile(r"\b(?:famil(?:y|ies)|renderers?|identit(?:y|ies)|backends?)\b", re.I)
 CELL_NON_RENDERER_HEADER = re.compile(r"\b(?:drivers?|API|devices?|librar(?:y|ies)|hosts?|platforms?|SDKs?)\b", re.I)
+# "Direct3D 12 is one of the renderer families", "... are CNA's renderers": the list is the subject of a role predicate
+ROLE_PREDICATE = re.compile(r"^\s*(?:is|are|was|remains?|counts?\s+as|serves?\s+as|stays?)\s+(?:still\s+|also\s+)?(?:(?:one|another|each)\s+of\s+)?"
+                            r"(?:the\s+|a\s+|an\s+|CNA['\u2019]s\s+|its\s+)?(?:[\w-]+\s+){0,2}?(?:renderers?|backends?|identit(?:y|ies)|famil(?:y|ies)|implementations?)\b", re.I)
+# the sentence after a renderer sentence, referring back to it ("They include ...", "Among them ...") or starting with the list
+ANAPHORA = re.compile(r"^\s*(?:(?:they|these|those)\s+(?:include|are|cover)|among\s+them|the\s+(?:list|set)\s+(?:includes|is)|this\s+includes)?\s*$", re.I)
+NON_RENDERER_CONTEXT = re.compile(r"\b(?:drivers?|APIs?|devices?|debug[- ]layers?|SDKs?|SDL['\u2019]s|SDL_gpu|wgpu)\b", re.I)
 
 
 def visible_blocks(html_text: str, cell_headers: bool = False) -> list[str]:
@@ -256,8 +269,36 @@ def judge_list(block: str, retired_rx: re.Pattern[str], weak: bool = False) -> l
         if ROLE_CONTEXT.search(before):
             out.append(("retired renderer listed in a renderer/family/identity context", excerpt, text))
             continue
-        if CNA_CLAIM.search(before):
+        if CNA_CLAIM.search(before) and not NON_RENDERER_CONTEXT.search(before):
             out.append(("retired renderer presented as something CNA accepts/supports/offers", excerpt, text))
+            continue
+        sentence_rest = re.split(r"(?<=[.!?])\s", rest, maxsplit=1)[0]
+        if ROLE_PREDICATE.match(rest) and not NON_RENDERER_CONTEXT.search(sentence_rest):
+            out.append(("retired renderer is the subject of a renderer/family/identity predicate", excerpt, text))
+            continue
+        sentences = re.split(r"(?<=[.!?])\s+", block[:run.start()])
+        if len(sentences) > 1 and ANAPHORA.match(sentences[-1]) and ROLE_CONTEXT.search(sentences[-2]) \
+                and not NON_RENDERER_CONTEXT.search(sentences[-2] + " " + sentence_rest):
+            out.append(("retired renderer listed in the sentence after a renderer/family/identity sentence", excerpt, text))
+    return out
+
+
+def judge_items(blocks: list[str], retired_rx: re.Pattern[str]) -> list[tuple[str, str, str]]:
+    """A block that is nothing but a list of names (a list item, a <br> line, a header-less cell) holding a retired name,
+    introduced by the nearest preceding block that is not such a list: flagged when that introduction is about renderers,
+    families or identities and not about drivers or APIs."""
+    item = r"(?:" + CURRENT_CNA_ONLY + r"|" + API_LIKE + r"|" + retired_rx.pattern + r")"
+    only = re.compile(r"^\s*(?:<code>)?" + item + r"(?:" + LIST_SEP + item + r")*\s*[.;,:]?\s*$")
+    out: list[tuple[str, str, str]] = []
+    for i, block in enumerate(blocks):
+        if not (only.match(block) and retired_rx.search(block)):
+            continue
+        j = i - 1
+        while j >= 0 and only.match(blocks[j]):
+            j -= 1
+        intro = blocks[j] if j >= 0 else ""
+        if ROLE_CONTEXT.search(intro) and not NON_RENDERER_CONTEXT.search(intro) and not CELL_NON_RENDERER_HEADER.search(intro):
+            out.append((f"retired renderer in a list introduced by '{intro[:60]}'", f"{intro[:80]} \u2026 {block}", block))
     return out
 
 
@@ -272,6 +313,9 @@ def judge_cells(html_text: str, retired_rx: re.Pattern[str]) -> list[tuple[str, 
         header_row = table.find("tr")
         headers = [c.get_text(" ", strip=True) for c in header_row.find_all(["th", "td"])] if header_row and header_row.find("th") else []
         rows = [[c.get_text(" ", strip=True) for c in tr.find_all(["th", "td"])] for tr in table.find_all("tr")]
+        heading, caption = table.find_previous(["h1", "h2", "h3", "h4"]), table.find("caption")
+        context = (caption.get_text(" ") if caption else "") or (heading.get_text(" ") if heading else "")
+        role_table = bool(ROLE_CONTEXT.search(context)) and not NON_RENDERER_CONTEXT.search(context) and not CELL_NON_RENDERER_HEADER.search(context)
         for row in rows:
             for col, cell in enumerate(row):
                 if not whole.match(cell):
@@ -280,7 +324,7 @@ def judge_cells(html_text: str, retired_rx: re.Pattern[str]) -> list[tuple[str, 
                 if head and CELL_NON_RENDERER_HEADER.search(head) and not CELL_ROLE_HEADER.search(head):
                     continue
                 neighbours = [r[col] for r in rows if r is not row and col < len(r)]
-                if CELL_ROLE_HEADER.search(head) or any(current.search(n) for n in neighbours):
+                if CELL_ROLE_HEADER.search(head) or any(current.search(n) for n in neighbours) or (role_table and not CELL_NON_RENDERER_HEADER.search(head)):
                     out.append((f"table cell '{cell}' in a renderer column ({head or 'no header'})", " | ".join(row)[:160], " ".join(row)[:80]))
     return out
 
@@ -298,6 +342,8 @@ def semantic_findings(html_text: str, retired: set[str]) -> list[tuple[str, str,
         for block in blocks:
             if rx.search(block):
                 found += judge_list(block, rx, weak)
+        if not weak:
+            found += judge_items(blocks, rx)
         found += judge_cells(html_text, rx)
     seen, unique = set(), []
     for f in found:

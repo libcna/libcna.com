@@ -10,6 +10,15 @@ sentence of the same vocabulary (SDL's Direct3D 12 driver, SDL's Wayland video d
 Weston and Xvfb, a number attributed to alpha.1) and must pass. The retired sets and CI facts are derived from the CNA
 clone exactly as the validators derive them (../cna or $CNA_REPO), so the fixtures exercise the real configuration.
 
+The second independent review (of f412fa0) found claims that still passed: the generated selection-axes sentence calling
+Win32, X11 and Wayland host-conditional "implementations" (hardcoded in scripts/generate_dev_reference.py), "EasyGL serves
+five", compiled effects "refused on the 11 identities without a compiled-effect runtime", "the other thirteen identities
+accept only SurfaceFormat::Color", "879 *_test.cpp files", "631 public C++ symbols still unmapped", "the two EasyGL profiles
+other than OPENGL33, OPENGLES3 and WEBGL2", and renderer shapes the semantic pass did not read ("DirectX 12 is one of the
+renderer families", a bare D3D12 cell under a renderer heading, a list whose renderer context is the previous sentence).
+Those sentences, verbatim where the page had them, are the *_SECOND_REVIEW fixtures below, each beside allowed
+counterparts; the ledger fixtures cover the hardened written-review escape.
+
     test_validators.py        # exit 0 when every fixture behaves; validate_all.sh runs it first
 """
 
@@ -69,6 +78,24 @@ RENDERER_REJECT = [
     "<p>The GL family: OpenGL ES 2, OPENGLES3, OPENGL33 and WebGL 1 share one EasyGL implementation.</p>",
     "<p>The browser renderers are WEBGL2, WEBGPU and the Canvas renderer.</p>",
 ]
+RENDERER_REJECT_SECOND_REVIEW = [
+    "<p>DirectX 12 is one of the renderer families.</p>",
+    "<p>DirectX12 is one of CNA's renderers.</p>",
+    "<p>D3D12 is a renderer family on Windows.</p>",
+    # a bare D3D12 cell: under a Family header, and in a header-less table under a renderer heading
+    "<table><tr><th>Family</th><th>Window</th></tr><tr><td>EasyGL</td><td>OpenGL</td></tr><tr><td>D3D12</td><td>HWND</td></tr></table>",
+    "<h3>Renderer families</h3><table><tr><td>EasyGL</td></tr><tr><td>D3D12</td></tr></table>",
+    "<h2>The renderer families</h2><table><tr><th>Name</th><th>Notes</th></tr><tr><td>Vulkan</td><td>native</td></tr><tr><td>D3D12</td><td>Windows</td></tr></table>",
+    # heading + following list, a <br> inventory, a newline inventory
+    "<h3>Renderer families</h3><ul><li>EasyGL</li><li>Vulkan</li><li>Direct3D 12</li></ul>",
+    "<p>Renderer families:<br>EasyGL<br>Vulkan<br>Direct3D 12</p>",
+    "<p>Renderers:\nEasyGL\nVulkan\nDirect3D 12</p>",
+    # the renderer context is the preceding sentence
+    "<p>CNA has twelve renderer families. Direct3D 11 and Direct3D 12 are among them.</p>",
+    "<p>CNA has twelve renderer families. They include Direct3D 11 and Direct3D 12.</p>",
+    # found by this remediation's own adversarial probes
+    "<p>CNA renders through Direct3D 12 on Windows.</p>",
+]
 RENDERER_ALLOW = [
     "<p>SDL_GPU uses SDL's Direct3D 12 driver on Windows.</p>",
     "<p>SDL_GPU can use SDL&rsquo;s Direct3D 12 driver.</p>",
@@ -81,6 +108,13 @@ RENDERER_ALLOW = [
     "<table><thead><tr><th>Host</th><th>SDL_gpu driver</th></tr></thead><tbody><tr><td>Linux</td><td>Vulkan</td></tr><tr><td>Windows</td><td>Direct3D 12</td></tr></tbody></table>",
     "<p>A browser build draws into an HTML canvas element.</p>",
     "<p>meta-gl exposes the GLES 2.0 entry points and WebGL 1/2 flags of the context.</p>",
+    "<p>SDL_GPU is a renderer. Direct3D 12 is one of the drivers SDL's GPU API chooses from.</p>",
+    "<p>SDL_GPU is CNA's renderer for SDL3's GPU API. Direct3D 12 is the driver SDL picks on Windows.</p>",
+    "<h3>SDL_GPU drivers</h3><ul><li>Vulkan</li><li>Metal</li><li>Direct3D 12</li></ul>",
+    "<h2>SDL_GPU drivers</h2><table><tr><th>Name</th></tr><tr><td>Vulkan</td></tr><tr><td>D3D12</td></tr></table>",
+    "<p>Direct3D 12 is the API SDL_gpu reaches on Windows.</p>",
+    "<p>Output matching a Direct3D 12 debug-layer ERROR line from SDL's Direct3D 12 driver fails every test in the directory.</p>",
+    "<p>CNA renders through SDL_gpu, which picks Direct3D 12 on Windows.</p>",
 ]
 
 PLATFORM_REJECT = [
@@ -101,6 +135,43 @@ PLATFORM_REJECT = [
     "<p>See modules/platform/src/X11 for the event pump.</p>",
     "<p>Configure with -DCNA_PLATFORM=WAYLAND.</p>",
 ]
+PLATFORM_REJECT_SECOND_REVIEW = [
+    # development/reference/selection-axes.html at f412fa0, written by scripts/generate_dev_reference.py
+    '<h2 id="platforms">Platform implementations (<code>CNA_PLATFORM</code>)</h2><p>From <a class="src-link" href="cmake/PlatformSelection.cmake">'
+    '<code>cmake/PlatformSelection.cmake</code></a>. <code>SDL12</code> and <code>EMSCRIPTEN</code> are reserved identifiers that are refused rather '
+    'than aliased. Some implementations are host-conditional (Terminal is POSIX-only, Win32 Windows-only, X11 and Wayland need their development '
+    'packages) and are refused with an explanation rather than replaced by SDL3.</p>',
+    "<p>CNA ships a Win32 implementation.</p>",
+    "<p>The X11 implementation reads XInput2 itself.</p>",
+    "<p>The Wayland implementation negotiates fractional scaling.</p>",
+    "<p>The implementations include SDL3, Win32, X11 and Wayland.</p>",
+    "<p>Our platform implementations are SDL3, X11 and Headless.</p>",
+    "<p>X11 remains a native implementation.</p>",
+    "<p>It falls back to the native X11 implementation.</p>",
+    "<p>The Wayland platform layer handles scaling.</p>",
+    "<p>The Win32 platform implementation owns its message loop.</p>",
+    # an unrelated mention of Windows or of SDL's drivers elsewhere in the sentence does not excuse the name
+    "<p>Win32 is a host-conditional implementation offered only on Windows.</p>",
+    "<p>X11 is a platform implementation of its own, unlike SDL3, which goes through SDL's video drivers.</p>",
+    # development/takeover/curriculum.html at f412fa0 (found by this remediation's manual search; the noun is in the sentence before)
+    '<li><strong>Compare implementations of one contract.</strong> For the platform, compare <a href="sdl3.html">SDL3</a> with '
+    '<a href="sdl3.html">Win32</a> or <a href="sdl3.html">X11</a>, and contrast <a href="headless.html">Headless</a>.</li>',
+    # docs/input.html at f412fa0: the retired Win32 backend's event mapper described as current
+    "<p>Text input is a mode, not a no-op on desktop: on Win32, for example, the event mapper consumes every WM_CHAR without raising a "
+    "TextInput event until the window's mode has been enabled by StartTextInput(), and the mapper's own source comment says a game that never "
+    "called it sees the same on every other backend.</p>",
+    # platform implementation table rows (by heading, by header, by neighbouring current implementations)
+    '<h2>Platform implementations (<code>CNA_PLATFORM</code>)</h2><table><tr><th>Value</th><th>Role</th></tr><tr><td><code>SDL3</code></td>'
+    '<td>default</td></tr><tr><td><code>X11</code></td><td>windowing on Linux</td></tr></table>',
+    "<table><tr><th>Platform implementation</th><th>Notes</th></tr><tr><td>Win32</td><td>message loop</td></tr></table>",
+    "<table><tr><th>Value</th><th>Role</th></tr><tr><td>HEADLESS</td><td>no window</td></tr><tr><td>WIN32</td><td>windowing</td></tr></table>",
+    # source diagrams whose tokens are separated by tags and newlines
+    "<pre>platform/\n  src/\n    <span>Sdl3/</span>\n    <span>X11/</span>\n    <span>Headless/</span></pre>",
+    "<pre>modules/platform/src/<b>Sdl3</b>\n<b>Wayland</b>\n<b>Terminal</b></pre>",
+    # found by this remediation's own adversarial probes: one name per list item
+    "<p>CNA_PLATFORM accepts:</p><ul><li>SDL3</li><li>X11</li><li>Headless</li></ul>",
+    "<p>Platforms: SDL3 &middot; X11 &middot; Headless &middot; Terminal</p>",
+]
 PLATFORM_ALLOW = [
     "<p>SDL3 can run through the Wayland video driver.</p>",
     "<p>SDL's x11 driver on a private Xvfb and its wayland driver on a private headless Weston.</p>",
@@ -111,6 +182,29 @@ PLATFORM_ALLOW = [
     "<p>The retired WIN32, X11 and WAYLAND values say to use SDL3.</p>",
     "<p>A NativeWindowHandle names which of Win32, X11, Wayland, Cocoa, UIKit, Android, Web, Headless or Terminal its pointers belong to.</p>",
     "<p>no workflow builds the C API library, and the platform workflow covers X11 and Wayland only through SDL3 on a private Xvfb and a private headless Weston.</p>",
+    # the generated replacement paragraph and the SDL3 row (scripts/generate_dev_reference.py)
+    "<p><code>SDL3</code> and <code>HEADLESS</code> are offered on every host. Only <code>TERMINAL</code> is host-conditional: it is built on termios, so on "
+    "a Windows host it is reserved and refused with an explanation rather than replaced by SDL3. Windows is a host environment, not an implementation, and "
+    "X11 and Wayland are display environments: <code>SDL3</code> reaches all three through SDL&rsquo;s own video drivers, so whatever is host- or "
+    "driver-specific lives inside SDL, while <code>HEADLESS</code> opens no window at all. The values <code>WIN32</code>, <code>X11</code> and "
+    "<code>WAYLAND</code> are refused by name, with a message that says to configure SDL3.</p>",
+    "<table><tr><th>Value</th><th>Role</th></tr><tr><td><code>SDL3</code></td><td>default, on every host; CNA's one windowing implementation: SDL's own "
+    "video drivers reach Windows, X11, Wayland, macOS, iOS, Android and the browser</td></tr></table>",
+    "<p>A GPU backend must not assume that the tag hides an X11 or Wayland surface; there is none.</p>",
+    "<p>a platform-implementation matrix (SDL3 on X11 and on Wayland, an SDL-free headless build, terminal and headless)</p>",
+    "<p>X11 is not a CNA platform implementation; SDL3 reaches it.</p>",
+    "<p>The SDL X11 driver and the SDL Wayland driver both hand over a native handle (HWND, the X11 native handle or the Wayland native handle).</p>",
+    "<table><tr><th>NativeWindowSystem</th></tr><tr><td>Win32</td></tr><tr><td>X11</td></tr><tr><td>Cocoa</td></tr><tr><td>Headless</td></tr></table>",
+    "<li><strong>Compare implementations of one contract.</strong> For the platform, compare SDL3 with Terminal, and contrast Headless.</li>",
+    "<p>Text input is a mode: CNA's SDL3 platform turns SDL's text input on only from StartTextInput(), so a game that never calls it receives no "
+    "TextInput events on Windows, X11 or Wayland alike.</p>",
+    "<p>On Linux a windowed build also wants the X11, GL, Vulkan, ALSA and D-Bus development packages so the vendored SDL3 (and the native backends) get real drivers.</p>",
+    "<p>The exception lists the video drivers compiled into that SDL build, which separates \u201cthis session is not running X11/Wayland\u201d from "
+    "\u201cthis SDL was configured without that backend\u201d.</p>",
+    "<p>modules/CMakeLists.txt sets the FFmpeg flag OFF for MINGW OR WIN32 OR EMSCRIPTEN, and the build then compiles the no-video backend.</p>",
+    "<table><tr><th>Value</th><th>Status</th></tr><tr><td>SDL3</td><td>available</td></tr><tr><td>X11</td><td>retired: use SDL3</td></tr></table>",
+    "<p>NativeWindowSystem names the window system:</p><ul><li>Win32</li><li>X11</li><li>Wayland</li><li>Headless</li></ul>",
+    "<p>The retired values:</p><ul><li>WIN32</li><li>X11</li><li>WAYLAND</li></ul><p>The current ones:</p><ul><li>SDL3</li><li>HEADLESS</li></ul>",
 ]
 
 METRIC_REJECT = [
@@ -134,6 +228,59 @@ METRIC_REJECT = [
     '<div class="callout callout--note dev-evidence"><p><strong>Evidence basis:</strong> source-verified at the pinned commit. Claims on this page were '
     'checked by reading the CNA source at commit <code>b0e97bb1</code>; nothing was built.</p></div>',
 ]
+METRIC_REJECT_SECOND_REVIEW = [
+    # development/repository/source-ownership.html and development/reference/modules.html at f412fa0
+    "<td>One family can serve several public identities: EasyGL serves five, and every other family serves one.</td>",
+    "<p>A directory that owns a src/ is an implementation family; one family can serve several public identities (EasyGL serves five).</p>",
+    "<p>EasyGL serves five identities.</p>",
+    "<p>EasyGL owns five renderer identities.</p>",
+    "<p>Five identities are served by EasyGL.</p>",
+    "<p>The GL family has five EasyGL profiles.</p>",
+    "<li>then one small descriptor such as StubRendererDescriptor.cpp and the five-identity EasyGLRendererDescriptor.cpp.</li>",
+    # development/internals/graphics/selection.html at f412fa0: the subset and its exclusions do not add up
+    "<td>Implemented by Vulkan (MSAA clamp only) and the two EasyGL profiles other than <code>OPENGL33</code>, <code>OPENGLES3</code> and "
+    "<code>WEBGL2</code> (render-target format: <code>Color</code> only).</td>",
+    # deep-dives/practice/xna-api-surface-auditing.html at f412fa0, and the same inversion in other words
+    "<li><code>Effect(GraphicsDevice&amp;, bytes)</code> is represented perfectly and still refused on the 11 identities without a compiled-effect runtime.</li>",
+    "<p>Compiled effects are refused on 11 identities.</p>",
+    "<p>Eleven renderer identities cannot consume compiled effects.</p>",
+    "<p>The 13 identities without a compiled-effect runtime throw NotSupportedException.</p>",
+    # about.html, docs/tutorials/108, 128 and 151, docs/content-pipeline-xnb.html at f412fa0
+    "<li>XNA Effect Framework bytecode is a separate compatibility path on qualified renderer builds (13 of the 14 identities).</li>",
+    "<p>(In this snapshot thirteen other identities (nine implementation families) can also execute compiled XNA effects that you supply.)</p>",
+    "<p>Load XNA/FNA D3D9 Effect Framework bytecode and XNB Effect assets in CNA on the 14 renderer identities that support them.</p>",
+    "<li>Tutorial 128 &mdash; the compiled-effect path, which is portable across 14 renderer identities instead.</li>",
+    "<p>That succeeds only when the renderer reports CompiledEffects (FNA3D always provides it; nine other renderer families offer it through opt-in build options).</p>",
+    # docs/migration-from-monogame.html at f412fa0
+    "<li>on top of that, eight renderer families promote the broader public texture formats and the other thirteen identities accept only "
+    "<code>SurfaceFormat::Color</code>. Verify the active renderer.</li>",
+    "<p>Nine renderer families classify the broader texture formats; the other five identities accept only SurfaceFormat::Color.</p>",
+    # development/repository/source-ownership.html at f412fa0: a count of every examples/ .cpp under the *_test.cpp name
+    "<td>Demos and standalone pixel or contract programs (879 <code>*_test.cpp</code> files), registered by the owning module's own CMake.</td>",
+    "<p>The examples hold 879 standalone pixel programs.</p>",
+    "<p>The tree has 813 files named *_test.cpp.</p>",
+    # development/handbook/investigate-a-sample-failure.html and docs/tutorials/87-custom-backend.html at f412fa0
+    "<td>Standalone <code>*_test.cpp</code> programs registered beside each module (879 across the tree)</td>",
+    "<p>The default is Defer, and that rule is SurfaceFormat::Color only. That is why seven shipped renderers are Color-only without writing a line of format code.</p>",
+    "<p>The tree has 781 test source files.</p>",
+    "<p>879 test files with a GoogleTest macro.</p>",
+    # docs/tutorials/87-custom-backend.html at f412fa0 (one identity, SDL_RENDERER, is 2D-only)
+    "<p>You override what your API can genuinely do. Seven shipped renderers are 2D-only, and two produce no pixels at all.</p>",
+    # complements larger than the whole
+    "<li>A green single-renderer run describes the selected family, not the other 20 families.</li>",
+    "<p>The other 15 renderer identities share the same C surface but are not in the matrix at all.</p>",
+    "<td>No oracle-corpus number recorded. Unbound-texture expectations cover seven renderers; parity fixtures cover five families.</td>",
+    # docs/c-api.html and docs/roadmap.html at f412fa0
+    "<p>CNA&rsquo;s own release gate for the C ABI says &ldquo;Not ready&rdquo;, with 631 public C++ symbols still unmapped.</p>",
+    "<td>631 public C++ symbols are still unmapped in the generated inventory.</td>",
+    "<p>631 missing C ABI exports keep the release gate at Not ready.</p>",
+    # found by this remediation's own adversarial probes
+    "<p>EasyGL is shared by five identities.</p>",
+    "<p>Compiled effects are unavailable on eleven identities.</p>",
+    "<p>Six identities without a classifier accept only SurfaceFormat::Color.</p>",
+    "<p>EasyGL: five identities, one implementation.</p>",
+    "<p>Compiled effects work everywhere except on 11 identities.</p>",
+]
 METRIC_ALLOW = [
     "<p>The source tree has 813 C++ test files and 11,380 statically discoverable GoogleTest-family definitions (781 files contain at least one; alpha.1 had 568 and 8,263).</p>",
     "<p>Since alpha.1 the set has been deliberately curated from 50 identities over 46 implementation families to 14 over 12.</p>",
@@ -146,6 +293,37 @@ METRIC_ALLOW = [
     '<p>Quote the gate as committed: "Not ready, one criterion unmet: 631 public symbols are still unmapped".</p>',
     "<p>631 planned public C++ declarations do not yet have C mappings.</p>",
     "<table><tr><th>Area</th><th>Alpha.1</th><th>Snapshot</th></tr><tr><td>Renderers</td><td>50 public identities over 46 implementation families</td><td>14 over 12</td></tr></table>",
+    "<td>One family can serve several public identities: EasyGL serves three (OPENGLES3, OPENGL33 and WEBGL2), and every other family serves one.</td>",
+    "<p>All three GL identities are one implementation: agreement between two EasyGL profiles does not independently confirm code they share.</p>",
+    "<td>Vulkan (MSAA clamp only) and two of the three EasyGL identities, OPENGLES3 and WEBGL2 (render-target format: Color only).</td>",
+    "<td>One EasyGL identity on one host, not all renderer families.</td>",
+    "<p>The EasyGL family (3) serves OPENGLES3, OPENGL33 and WEBGL2.</p>",
+    "<li><code>Effect(GraphicsDevice&amp;, bytes)</code> is still refused wherever the active renderer has no compiled-effect runtime. The three identities that "
+    "cannot have one (SDL_RENDERER, HEADLESS and STUB) always refuse it; in a default configuration 13 of the 14 identities refuse it, all but FNA3D, "
+    "because every compiled-effect build option defaults to OFF. Only the first set is a renderer limit: the other ten identities can run compiled "
+    "effects once their option is turned on.</li>",
+    "<p>Named refusals: compiled effects on 3 of the 14 identities, 3D calls on the 2D-only renderer.</p>",
+    "<p>Eleven of the 14 identities run compiled effects (SDL_RENDERER, HEADLESS and STUB do not).</p>",
+    "<p>FNA3D always, and 10 more renderer identities behind default-OFF CNA_*_COMPILED_EFFECTS options.</p>",
+    "<p>A default configure reports compiled effects as supported on FNA3D only (unsupported on 13 of 14 identities).</p>",
+    "<p>A default configure reports the CompiledEffects capability true on FNA3D only; the other 13 identities report false.</p>",
+    "<p>FNA3D always provides it; eight other renderer families offer it through opt-in build options.</p>",
+    "<p>Compiled effects run on nine renderer families (11 identities); the EasyGL option covers its three identities.</p>",
+    "<p>14 public renderer identities in 12 implementation families, capabilities, compiled effects and verification.</p>",
+    "<li>eight renderer families (ten of the 14 identities) classify the broader public texture formats themselves, while the other four identities "
+    "(DIRECTX9, SDL_RENDERER, HEADLESS and STUB) have no classifier and accept only <code>SurfaceFormat::Color</code> for a public Texture2D.</li>",
+    "<p>Seven families classify render-target formats themselves; the other five identities accept only Color for render targets.</p>",
+    "<td>Standalone <code>*_test.cpp</code> programs registered beside each module (781 across the tree)</td>",
+    "<p>That is why four shipped renderers are Color-only for textures, and five for render targets.</p>",
+    "<td>Demos and standalone pixel or contract programs: 879 <code>.cpp</code> files in all (878 under modules/&lt;name&gt;/examples/ plus the loose "
+    "demo), 781 of them named <code>*_test.cpp</code>. That 781 is a different set from the 781 test files with a GoogleTest macro.</td>",
+    "<p>The source tree has 813 C++ test source files; 781 files contain at least one counted macro, and 781 standalone pixel programs sit under examples/.</p>",
+    "<p>A green single-renderer run describes the selected family, not the other 11 families.</p>",
+    "<p>One shipped renderer is 2D-only (SDL_RENDERER), and two produce no pixels at all (HEADLESS and STUB).</p>",
+    "<p>The other 11 renderer identities share the same C surface but are not in the matrix at all.</p>",
+    "<p>32 parity fixtures are registered for four renderer families; parity fixtures cover four families.</p>",
+    "<p>CNA&rsquo;s own release gate says &ldquo;Not ready&rdquo;, because 631 in-scope public C++ declarations still lack C mappings.</p>",
+    "<td>631 planned public C++ declarations remain without C mappings; 3,210 C routes are declared and exported.</td>",
     '<div class="callout callout--note dev-evidence"><p><strong>Evidence basis:</strong> source-verified at the stated evidence commit. Claims on this page were '
     'checked by reading the CNA source at commit <code>b0e97bb1</code>; nothing was built.</p></div>',
 ]
@@ -162,8 +340,8 @@ def ledger_result(section_html: str, concept: dict) -> list[str]:
     tree.feed(section_html)
     sec = AA._norm(AA.section_text(tree.ids["device-loss"]))
 
-    def section_fn(page: str, frag: str) -> str:
-        return sec
+    def section_fn(page: str, frag: str) -> str | None:
+        return sec if frag in ("", "device-loss") else None
 
     def claims_fn(page: str) -> list[tuple[str, str]]:
         out = [(f"retired renderer: {w}", core) for w, _x, core in RR.semantic_findings(section_html, RETIRED_R)]
@@ -206,11 +384,30 @@ def main() -> int:
            ledger_result(CURRENT_SECTION_HTML, {**tokenless, "replacement_tokens": ["four families call it"]}), False)
     expect("ledger", "tokenless SUPERSEDED with a stale replacement token",
            ledger_result(CURRENT_SECTION_HTML, {**tokenless, "replacement_tokens": ["five families call it"]}), True)
-    expect("ledger", "tokenless SUPERSEDED with an explicit review",
-           ledger_result(CURRENT_SECTION_HTML, {**tokenless, "review": {"result": "no current statement", "reason": "subject retired"}}), False)
+    # the written-review escape: any non-empty result/reason used to pass; now it needs a classification, a reason and a checkable pointer
+    why = "the device-loss statement it recorded belongs to a renderer family CNA no longer ships"
+    reviews = [
+        ("free-text review (passed before the second review)", {"result": "no current statement", "reason": "subject retired"}, True),
+        ("review with an unknown classification", {"result": "superseded somehow", "reason": why, "evidence": "cmake/RendererIdentities.cmake"}, True),
+        ("review with a token reason", {"result": "retired", "reason": "retired", "evidence": "cmake/RendererIdentities.cmake"}, True),
+        ("retired review without evidence", {"result": "retired", "reason": why}, True),
+        ("replaced review without a replacement anchor", {"result": "replaced", "reason": why}, True),
+        ("replaced review naming a missing anchor", {"result": "replaced", "reason": why, "replacement": "fixture.html#nowhere"}, True),
+        ("explicit retired review with evidence", {"result": "retired", "reason": why, "evidence": "cmake/RendererIdentities.cmake CNA_RENDERER_RETIRED_IDENTITIES"}, False),
+        ("explicit replaced review naming the replacement", {"result": "replaced", "reason": why, "replacement": "fixture.html#device-loss"}, False),
+    ]
+    for name, review, reject in reviews:
+        expect("ledger", f"tokenless SUPERSEDED, {name}", ledger_result(CURRENT_SECTION_HTML, {**tokenless, "review": review}), reject)
+
+    groups = [(RENDERER_REJECT_SECOND_REVIEW, renderer_problems, "retired-renderer"), (PLATFORM_REJECT_SECOND_REVIEW, platform_problems, "retired-platform"),
+              (METRIC_REJECT_SECOND_REVIEW, metric_problems, "metric")]
+    for fixtures, fn, kind in groups:
+        for f in fixtures:
+            expect(f"{kind} (second review)", f, fn(f), True)
 
     total = (len(RENDERER_REJECT) + len(RENDERER_ALLOW) + len(PLATFORM_REJECT) + len(PLATFORM_ALLOW)
-             + len(METRIC_REJECT) + len(METRIC_ALLOW) + 6)
+             + len(METRIC_REJECT) + len(METRIC_ALLOW) + 5 + len(reviews)
+             + len(RENDERER_REJECT_SECOND_REVIEW) + len(PLATFORM_REJECT_SECOND_REVIEW) + len(METRIC_REJECT_SECOND_REVIEW))
     print(f"validator fixtures: {total} run; {failures} failed")
     return 1 if failures else 0
 
