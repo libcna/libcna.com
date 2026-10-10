@@ -37,6 +37,10 @@ test gate pins. Compiled-effect counts now separate the capable set (11 identiti
 identities, 8 families and options), so "FNA3D plus nine optioned families" and "nine opt-in configurations" fail. These are
 recognizers for named concepts in the site's usual phrasings, not a parser of English: a number outside these concepts, or a
 phrasing none of the patterns knows, is not checked.
+
+The final review (of 56a5ff4) found two registry counts no rule read: "the public renderer identities are a curated set of 18"
+(the count after its noun) and "18 CNA_RENDERER_<X> switches" in a configure-order diagram, where the .cmake names on the lines
+above had also excused it as a quotation. Both shapes now fail, and only a quotation mark excuses the switch count.
 scripts/test_validators.py feeds the reviewers' exact stale sentences through these rules.
 """
 
@@ -207,6 +211,12 @@ METRIC_RULES: list[tuple[str, str, int, str]] = [
     ("renderer_identities", r"\bcanonical " + NUM + r"-entry table\b", 0, "identity table size"),
     ("renderer_identities", r"\bthe " + NUM + r" renderers at a glance\b", 0, "renderer identity count"),
     ("renderer_identities", r"\b" + NUM + r"-identity\b(?=[^.;]{0,30}\bregistry\b)", 0, "renderer identity count"),
+    # the count after the noun: "the public renderer identities are a curated set of 18"
+    ("renderer_identities", r"\b(?:identities\s+(?:are|form)\s+a\s+(?:curated\s+|closed\s+|fixed\s+)?|curated\s+(?:renderer\s+)?)set\s+of\s+" + NUM + r"\b", 10,
+     "renderer identity count"),
+    # one CNA_RENDERER_<X> switch per public identity: "+ 18 CNA_RENDERER_<X> switches (exactly one may be ON)"
+    ("renderer_switches", r"\b" + NUM + r"\s+(?:per-identity\s+|compatibility\s+)?CNA_RENDERER_(?:<[A-Z]+>|\*)\s+(?:compatibility\s+)?(?:switches|options)\b", 10,
+     "per-identity CNA_RENDERER_<X> switch count"),
     ("implementation_families", r"(?<![\d.])\b" + NUM + r"[- ](?:renderer[- ]|physical[- ]|implementation[- ])+famil(?:y|ies)\b", 10, "implementation family count"),
     ("implementation_families", r"\b" + NUM + r"[- ]family registry\b", 0, "implementation family count"),
     ("implementation_families", r"\b" + NUM + r" families implementing\b", 0, "implementation family count"),
@@ -306,6 +316,8 @@ HISTORY = re.compile(r"alpha\.1|b0e97bb1|009d40f5|d6e9ff05|1bb2145d|\bearlier\b|
 QUOTED = re.compile(r"[\u201c\"]|\b(?:says?|states?|reads?|pins?|claims?|speaks? of|describes?|quotes?|Doxygen|comment|header)\b|"
                     r"\.(?:md|cmake|json|h|hpp|py)\b|CHANGELOG", re.I)
 QUOTED_MARK = re.compile(r"[\u201c\"]|\.(?:md|cmake|json|h|hpp|py)\b|CHANGELOG")
+# a configure-order diagram names a .cmake file on every line, so for the switch count only a quotation mark is a quote
+QUOTE_ONLY = re.compile(r"[\u201c\"]")
 # a rule that applies only in a sentence of a given subject
 REQUIRES = {"compiled_effect_more": re.compile(r"compil|COMPILED|opt-in build option|Effect Framework", re.I),
             "renderer_names_outside": re.compile(r"renderer|CNA_GRAPHICS_RENDERER|identit", re.I),
@@ -346,7 +358,8 @@ def metric_findings(body: str, values: dict) -> list[tuple[str, str]]:
             elif (got in want if isinstance(want, (set, frozenset)) else got == want) or got < minimum:
                 continue
             sentence = _sentence(body, m.start(), m.end())
-            quoted = QUOTED_MARK if key.startswith("complement_") else QUOTED   # a reporting verb cannot excuse impossible arithmetic
+            # a reporting verb cannot excuse impossible arithmetic
+            quoted = QUOTED_MARK if key.startswith("complement_") else QUOTE_ONLY if key == "renderer_switches" else QUOTED
             if (REVISION if key in NARROW_HISTORY else HISTORY).search(_clause_before(body, m.start("n"))) or quoted.search(sentence[:max(0, sentence.find(m.group(0)))]):
                 continue
             if key in REQUIRES and not REQUIRES[key].search(sentence):
@@ -794,7 +807,7 @@ def metric_values() -> dict:
     values["implementation_families_subset"] = F["compiled_effect_families"]
     values["compiled_effect_more"] = F["compiled_effect_identities"] - F["compiled_effect_always_on_identities"]   # FNA3D always, the rest behind options
     values["example_cpp_files"] = {F["example_cpp_files"], F["module_example_cpp_files"]}   # with or without the loose demo
-    values["complement_identities"] = values["renderer_names_outside"] = F["renderer_identities"]
+    values["complement_identities"] = values["renderer_names_outside"] = values["renderer_switches"] = F["renderer_identities"]
     values["complement_families"] = F["implementation_families"]
     return values
 

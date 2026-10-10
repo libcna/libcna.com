@@ -28,6 +28,10 @@ EasyGL", "The remaining thirteen accept Color only", "DirectX 12 belongs to the 
 *_test.cpp". They are the *_THIRD_REVIEW fixtures, with the corrected sentences and other valid counterparts beside them and
 the shapes this remediation's own probes found.
 
+The final review (of 56a5ff4) found two registry counts still at 18: "the public renderer identities are a curated set of 18"
+and "18 CNA_RENDERER_<X> switches" in the configure diagram of development/internals/graphics/selection.html. They end
+METRIC_REJECT_THIRD_REVIEW; the corrected sentences and the same counts attributed to b0e97bb1 end METRIC_ALLOW_THIRD_REVIEW.
+
     test_validators.py        # exit 0 when every fixture behaves; validate_all.sh runs it first
 """
 
@@ -349,6 +353,18 @@ METRIC_ALLOW = [
     'checked by reading the CNA source at commit <code>b0e97bb1</code>; nothing was built.</p></div>',
 ]
 
+# development/internals/graphics/selection.html at 56a5ff4, verbatim up to the stale line: the .cmake names above it excused the count as a quotation
+SELECTION_DIAGRAM = ('<pre class="diagram">CMakeLists.txt\n'
+                     '  → cmake/RendererIdentities.cmake        refuse any name outside the 14 public identities\n'
+                     '                                          (all three routes), before SDL or any dependency\n'
+                     '  → cmake/PlatformSelection.cmake, AudioPlatformSelection.cmake\n'
+                     '  → cmake/SdlAvailability.cmake\n'
+                     '      → RendererIdentityDefault.cmake     per-host default, needed to decide whether SDL is needed\n'
+                     '  → cmake/RendererSelection.cmake\n'
+                     '      → RendererIdentityDefault.cmake / RendererIdentities.cmake   (re-included, no-op)\n'
+                     '      → CNA_GRAPHICS_RENDERER cache value + {n} CNA_RENDERER_&lt;X&gt; switches (exactly one may be ON)\n'
+                     '      → RendererDefaultSelection.cmake    set + default first + dedupe → CNA_RENDERER_IDENTITIES</pre>')
+
 METRIC_REJECT_THIRD_REVIEW = [
     # development/internals/modules/core.html at 0077b63: the 18-identity enum, its ordinals and its classification arithmetic
     "<p><code>GraphicsRendererType</code> is dense: 18 enumerators from <code>SdlRenderer</code> (0) to <code>Fna3d</code> (17).</p>",
@@ -397,6 +413,9 @@ METRIC_REJECT_THIRD_REVIEW = [
     "<p>Besides FNA3D, eleven identities need an opt-in option for compiled effects.</p>",
     "<p>The unbound-texture test skips on the other eight identities.</p>",
     "<p>SurfaceFormat::Color is the only texture format on eleven renderers.</p>",
+    # the final review of 56a5ff4: development/handbook/conventions.html and the selection.html diagram
+    "<td>The public renderer identities are a curated set of 18, with fixed C ABI values that are never reassigned; a name outside the set is refused at configure time.</td>",
+    SELECTION_DIAGRAM.format(n=18),
 ]
 METRIC_ALLOW_THIRD_REVIEW = [
     # the corrected sentences of the pages above
@@ -443,6 +462,11 @@ METRIC_ALLOW_THIRD_REVIEW = [
     "<p>Two identities, HEADLESS and STUB, are Diagnostic; of the six Native identities, two are EasyGL profiles.</p>",
     "<p>The Direct3D pair, DIRECTX9 and DIRECTX11, needs Windows.</p>",
     "<td>A renderer name outside the 14, through <code>CNA_GRAPHICS_RENDERER</code> or a member of <code>CNA_GRAPHICS_RENDERERS</code></td>",
+    # the corrected final-review sentences, and the old count attributed to the snapshot that had it
+    "<td>The public renderer identities are a curated set of 14, with fixed C ABI values that are never reassigned; a name outside the set is refused at configure time.</td>",
+    SELECTION_DIAGRAM.format(n=14),
+    "<p>At b0e97bb1 the public renderer identities were a curated set of 18; at c1c316b9 they are 14.</p>",
+    "<p>At b0e97bb1, RendererSelection.cmake read 18 CNA_RENDERER_&lt;X&gt; switches, one per public identity of that snapshot.</p>",
 ]
 
 # the ledger gate: a concept whose token survives must still fail when its cited section carries a rejected claim
