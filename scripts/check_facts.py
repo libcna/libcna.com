@@ -28,6 +28,15 @@ render-target format classifier (the identities outside them accept only Surface
 than A, B and C"), the named test-file metrics, any "other N" larger than the whole, and the compiled-effect and format
 complements (concept_findings: polarity and default-configuration wording decide which of 11 / 3 / 13 a count must be) are
 rejected when they disagree with the source.
+
+The third review found the registry's classification outside every rule ("18 enumerators from SdlRenderer (0) to Fna3d (17)",
+"the three Direct3D identities", "eight Production, seven Supported", "the remaining eight are Native"), so the enum, its
+ordinals and the per-identity GraphicsBackendMaturity / GraphicsBackendCategory switches are now read too, with the Direct3D
+(DirectX* registry namespace), browser-only (category Web) and non-web EasyGL subsets, and the identities the unbound-texture
+test gate pins. Compiled-effect counts now separate the capable set (11 identities, 9 families) from its optioned part (10
+identities, 8 families and options), so "FNA3D plus nine optioned families" and "nine opt-in configurations" fail. These are
+recognizers for named concepts in the site's usual phrasings, not a parser of English: a number outside these concepts, or a
+phrasing none of the patterns knows, is not checked.
 scripts/test_validators.py feeds the reviewers' exact stale sentences through these rules.
 """
 
@@ -38,6 +47,7 @@ import os
 import re
 import subprocess
 import sys
+from collections import Counter
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -91,6 +101,34 @@ def derive_from_cna(sha: str) -> dict:
 
     def identities_of(fams: set[str]) -> int:
         return sum(1 for i in public if family_of[i] in fams)
+    # the C++ enum (enumerator count, ordinals) and its name table, then the two classification switches keyed by identity
+    rtype = _git("show", f"{sha}:modules/core/include/CNA/GraphicsRendererType.hpp")
+    enum = re.sub(r"/\*.*?\*/|//[^\n]*", "", re.search(r"enum class GraphicsRendererType\s*\{(.*?)\}", rtype, re.S).group(1), flags=re.S)
+    enumerators = [e.strip() for e in enum.split(",") if e.strip()]
+    name_of = dict(re.findall(r'case GraphicsRendererType::(\w+):\s*return "(\w+)";', rtype))
+    if sorted(name_of[e] for e in enumerators) != sorted(public):
+        raise AttributeError("GraphicsRendererType does not enumerate exactly the public identities")
+
+    def classification(kind: str) -> dict[str, str]:
+        """identity -> GraphicsBackendMaturity / GraphicsBackendCategory value, read from the get<kind>() switch"""
+        src = _git("show", f"{sha}:modules/core/include/CNA/{kind}.hpp")
+        body = src[src.index(f"get{kind}(GraphicsRendererType type)"):]
+        out, pending = {}, []
+        for m in re.finditer(rf"case GraphicsRendererType::(\w+):|return {kind}::(\w+);", body[:body.index("\n    }\n")]):
+            if m.group(1):
+                pending.append(m.group(1))
+            else:
+                out |= {name_of[e]: m.group(2) for e in pending}
+                pending = []
+        if sorted(out) != sorted(public):
+            raise AttributeError(f"get{kind}() does not classify exactly the public identities")
+        return out
+    category = classification("GraphicsBackendCategory")
+    web = {i for i, c in category.items() if c == "Web"}                   # "Only available in a browser/Emscripten build"
+    direct3d = {i for i in public if family_of[i].startswith("directx")}   # the registry's DirectX* namespaces
+    # the identities the unbound-texture (null-texture) expectations are pinned for: the test's own renderer gate
+    null_tex = _git("show", f"{sha}:modules/graphics/tests/Microsoft/Xna/Framework/Graphics/StockEffectNullTextureTests.cpp")
+    unbound = {name_of[e.strip()] for e in re.search(r"if \(!CNA_RENDERER_IS\(([^)]*)\)\)", null_tex).group(1).split(",")}
     # compiled effects: a family behind a CNA_<FAMILY>_COMPILED_EFFECTS option (its header answers true only inside that option's
     # #if), plus a family whose renderer answers true with no option at all (FNA3D)
     selection = _git("show", f"{sha}:cmake/RendererSelection.cmake")
@@ -107,6 +145,15 @@ def derive_from_cna(sha: str) -> dict:
             "parity_families": len(parity),
             "compiled_effect_identities": identities_of(compiled), "compiled_effect_families": len(compiled),
             "compiled_effect_always_on_identities": identities_of(always),
+            "compiled_effect_optioned_identities": identities_of(optioned), "compiled_effect_optioned_families": len(optioned),
+            "compiled_effect_never_identities": len(public) - identities_of(compiled),
+            "compiled_effect_default_refusing_identities": len(public) - identities_of(always),
+            "renderer_enumerators": len(enumerators), "renderer_last_ordinal": len(enumerators) - 1,
+            "renderer_ordinals": {e: i for i, e in enumerate(enumerators)},
+            "renderer_maturity": dict(sorted(Counter(classification("GraphicsBackendMaturity").values()).items())),
+            "renderer_category": dict(sorted(Counter(category.values()).items())),
+            "direct3d_identities": len(direct3d), "web_only_identities": len(web), "non_web_gl_profiles": len(gl - web),
+            "unbound_texture_identities": len(unbound), "unbound_texture_families": len({family_of[i] for i in unbound}),
             "format_classifying_families": len(tex_cls), "format_classifying_identities": identities_of(tex_cls),
             "rt_format_classifying_families": len(rt_cls), "rt_format_classifying_identities": identities_of(rt_cls),
             "standalone_pixel_programs": sum(1 for p in examples if p.endswith("_test.cpp")),
@@ -117,7 +164,7 @@ def source_cross_check(sha: str) -> int:
     """Fail when data/current-facts.json disagrees with the source; afterwards F holds the source-derived values."""
     try:
         derived = derive_from_cna(sha)
-    except (OSError, subprocess.CalledProcessError, AttributeError) as exc:
+    except (OSError, subprocess.CalledProcessError, AttributeError, KeyError, ValueError) as exc:
         print(f"FAIL cannot recompute the facts from CNA {sha[:8]} in {CNA_REPO} (set CNA_REPO): {exc}")
         return 1
     bad = 0
@@ -170,22 +217,25 @@ METRIC_RULES: list[tuple[str, str, int, str]] = [
     ("gl_profiles", r"\b" + NUM + r" profiles, one EasyGL\b", 0, "EasyGL profile count"),
     ("gl_profiles", r"\bEasyGL\b[^.;]{0,60}?\b(?:serves|supplies|carries|implements|covers|has)\s+" + NUM + r"\s+(?:public\s+)?(?:renderer\s+)?identities\b", 0,
      "EasyGL profile count"),
-    ("gl_profiles", r"(?<!WebGL )(?<!OpenGL )(?<!ES )(?<!GL )\b" + NUM + r"\s+(?:public\s+)?(?:renderer\s+)?identities\s+(?:share|sharing)\b[^.;]{0,40}?\b(?:EasyGL|one (?:CNA )?implementation)", 0,
-     "EasyGL profile count"),
+    ("gl_profiles", r"(?<!WebGL )(?<!OpenGL )(?<!ES )(?<!GL )\b" + NUM + r"\s+(?:public\s+|renderer\s+|current\s+)*(?:identities|renderers|backends|profiles)\s+(?:share|sharing)\b"
+     r"[^.;]{0,40}?\b(?:EasyGL|one (?:CNA )?implementation)", 0, "EasyGL profile count"),
     ("gl_profiles", r"\bEasyGL (?:family )?\(" + NUM + r"(?: public)? identities", 0, "EasyGL profile count"),
     # shorthand the rules above missed: "EasyGL serves five," / "EasyGL owns five renderer identities", "the five-identity
     # EasyGLRendererDescriptor.cpp", "five EasyGL profiles", "five identities are served by EasyGL", "EasyGL family (5)"
     ("gl_profiles", r"\bEasyGL\b[^.;]{0,40}?\b(?:serves|supplies|carries|implements|covers|has|owns|provides|backs|hosts|exposes|handles)\s+(?:all\s+)?"
      + NUM + r"(?=\s*(?:[,.;:)]|$|\band\b|\((?!\s*\d)|(?:public\s+|renderer\s+|GL[- ]profile\s+|GL\s+)*(?:identit|profiles?\b)))", 0, "EasyGL identity count"),
     ("gl_profiles", r"\b" + NUM + r"[- ](?:identity|profile|GL-profile)\s+(?:<code>)?EasyGL", 0, "EasyGL identity count"),
-    ("gl_profiles", r"(?<!between )\b" + NUM + r"\s+EasyGL\s+(?:public\s+)?(?:renderer\s+)?(?:profiles|identities)\b(?!\s+(?:other than|besides|except|that|which)\b)", 0,
+    ("gl_profiles", r"(?<!between )\b" + NUM + r"\s+EasyGL\s+(?:public\s+)?(?:renderer\s+)?(?:profiles|identities|renderers|backends)\b(?!\s+(?:other than|besides|except|that|which)\b)", 0,
      "EasyGL identity count"),
     ("gl_profiles", r"\b" + NUM + r"\s+(?:public\s+)?(?:renderer\s+)?identities\s+(?:are served by|use|map to|belong to|come from|run on)\s+(?:the\s+)?(?:one\s+)?EasyGL", 0,
      "EasyGL identity count"),
     ("gl_profiles", r"\bEasyGL(?: family)?\s*\(\s*" + NUM + r"\s*\)", 0, "EasyGL identity count"),
     ("gl_profiles", r"\bEasyGL(?: family)?\s*[:\u2014\u2013]\s*" + NUM + r"\s+(?:public\s+)?(?:renderer\s+)?(?:identities|profiles)\b", 0, "EasyGL identity count"),
-    ("gl_profiles", r"\bEasyGL\b[^.;]{0,30}?\b(?:is\s+)?(?:shared|used|selected)\s+by\s+(?:all\s+)?" + NUM + r"\s+(?:public\s+)?(?:renderer\s+)?identities\b", 0,
-     "EasyGL identity count"),
+    ("gl_profiles", r"\bEasyGL\b[^.;]{0,30}?\b(?:is\s+)?(?:shared|used|selected|served)\s+(?:between|among|by)\s+(?:all\s+)?(?:the\s+)?" + NUM
+     + r"(?=\s*(?:[,.;:)]|$|\band\b|(?:public\s+|renderer\s+|current\s+)*(?:identit|renderers?\b|backends?\b|profiles?\b)))", 0, "EasyGL identity count"),
+    # the two GL identities that are not WEBGL2 ("the three non-web EasyGL profiles", "three native GL-profile identities")
+    ("non_web_gl_profiles", r"\b" + NUM + r"\s+(?:non-web|non-browser|native|desktop(?:/mobile)?)\s+(?:EasyGL\s+|GL[- ]profile\s+|GL\s+|OpenGL\s+)"
+     r"(?:profiles|identities|renderers|profile identities)\b", 0, "non-web EasyGL identity count"),
     ("parity_families", r"\bparity\b[^.;]{0,80}?\b(?:registered for|on|for|covers?|covering|span|spans) (?:the )?" + NUM + r" (?:renderer )?families\b", 0, "parity-fixture family count"),
     ("parity_families", r"\bregistered for (?:the )?" + NUM + r" renderer families\b", 0, "parity-fixture family count"),
     ("parity_families", r"\b" + NUM + r" (?:renderer )?families call cna_register_parity_fixtures\b", 0, "parity-fixture family count"),
@@ -209,7 +259,10 @@ METRIC_RULES: list[tuple[str, str, int, str]] = [
     # named metrics that must not borrow a neighbouring count: files literally named *_test.cpp (all under examples/), standalone
     # pixel programs (the same set), and every .cpp under an examples/ directory (878 under modules/, 879 with the loose demo)
     ("standalone_pixel_programs", r"\b" + NUM + r"\s+(?:<code>)?\*_test\.cpp\b", 0, "files named *_test.cpp"),
-    ("standalone_pixel_programs", r"\b" + NUM + r"\s+(?:of them\s+|files\s+|programs\s+|example programs\s+)?(?:are\s+)?named\s+\*_test\.cpp", 0, "files named *_test.cpp"),
+    # the name decides the count, whatever adjectives precede the noun: "879 test files named *_test.cpp" is the *_test.cpp set
+    ("standalone_pixel_programs", r"\b" + NUM + r"\s+(?:of\s+them\s+)?(?:(?:[\w.+/*-]+\s+){0,3}?(?:files|programs|sources)\s+)?(?:are\s+)?(?:named|called)\s+(?:<code>)?\*?_test\.cpp", 0,
+     "files named *_test.cpp"),
+    ("standalone_pixel_programs", r"\b" + NUM + r"\s+(?:[\w.+/*-]+\s+){0,3}?(?:files|programs|sources)\s+whose\s+names?\s+ends?\s+(?:in|with)\s+_test\.cpp", 0, "files named *_test.cpp"),
     ("standalone_pixel_programs", r"\b" + NUM + r"\s+standalone\s+(?:example\s+)?(?:pixel\s+)?(?:or\s+contract\s+)?programs\b", 0, "standalone examples/**/*_test.cpp programs"),
     ("standalone_pixel_programs", r"\*_test\.cpp\b[^.;]{0,80}?\(\s*" + NUM + r"\s+(?:across|in|under|throughout)\b", 0, "files named *_test.cpp"),
     ("example_cpp_files", r"\b" + NUM + r"\s+\.cpp\s+files\b(?=[^.;]{0,60}\bexamples?\b)", 0, ".cpp files under examples/ directories"),
@@ -221,6 +274,27 @@ METRIC_RULES: list[tuple[str, str, int, str]] = [
     ("static_test_definitions", r"(?<!with )(?<!has )(?<!holds )\b" + NUM + r" (?:static(?:ally)?(?: declared| discoverable)? (?:GoogleTest-family )?definitions|static test definitions)\b",
      1000, "static GoogleTest-family definitions (whole tree)"),
     ("production_modules", r"\b" + NUM + r"\s+production\s+modules\b", 0, "production module count"),
+    # "a renderer name outside the 18" (a sentence about renderer names; see REQUIRES)
+    ("renderer_names_outside", r"\bnames?\s+(?:that\s+is\s+|is\s+)?(?:outside|beyond|not\s+(?:one\s+)?of)\s+(?:the\s+)?" + NUM + r"\b", 0,
+     "renderer identity count"),
+    # the C++ enum behind the identities: "18 enumerators from SdlRenderer (0) to Fna3d (17)", "ends at ordinal 17"
+    ("renderer_enumerators", r"\bGraphicsRendererType\b[^.;]{0,60}?\b" + NUM + r"\s+(?:enumerators|members|entries)\b", 0, "GraphicsRendererType enumerator count"),
+    ("renderer_enumerators", r"\bGraphicsRendererType\b[^.;]{0,40}?\b(?:enumerates|has|holds|lists|declares|defines)\s+" + NUM
+     + r"\s+(?:public\s+|renderer\s+)*(?:identities|enumerators|members|entries)\b", 0, "GraphicsRendererType enumerator count"),
+    ("renderer_enumerators", r"\b" + NUM + r"[- ](?:enumerator|member|entry)\s+GraphicsRendererType\b", 0, "GraphicsRendererType enumerator count"),
+    ("renderer_enumerators", r"\b" + NUM + r"\s+enumerators\b(?=[^.;]{0,60}\b(?:SdlRenderer|Fna3d)\b)", 0, "GraphicsRendererType enumerator count"),
+    ("renderer_enumerators", r"\brenderer[- ](?:type\s+)?enum(?:eration)?\b[^.;]{0,40}?\b" + NUM + r"\s+(?:enumerators|members|entries)\b", 0, "GraphicsRendererType enumerator count"),
+    ("renderer_last_ordinal", r"\bends?\s+at\s+(?:the\s+)?(?:C\+\+\s+)?ordinal\s+" + NUM, 0, "last GraphicsRendererType ordinal"),
+    ("renderer_last_ordinal", r"\b(?:last|final|highest|maximum|largest|top)\s+(?:C\+\+\s+)?(?:enumerator['\u2019]s\s+)?ordinal\s+(?:is\s+|of\s+|=\s*)?" + NUM, 0,
+     "last GraphicsRendererType ordinal"),
+    ("renderer_last_ordinal", r"\bordinals?\s+(?:(?:run|go|range|span|count)s?\s+)?(?:from\s+)?0\s*(?:\u2013|-|\u2026|\.\.\.?|to|through)\s*" + NUM + r"\b", 0, "last GraphicsRendererType ordinal"),
+    # subsets the registry fixes: the Direct3D identities (one is a legitimate subset reference, hence the minimum of 2), the
+    # browser-only (Web category) identity; "the three Direct3D identities" kept the retired DIRECTX12 alive without naming it
+    ("direct3d_identities", r"(?<![\d.])\b" + NUM + r"\s+(?:(?:public|current|shipped|selectable|native|Windows-only)\s+)?(?:Direct3D|DirectX|D3D)\s+(?:renderer\s+)?"
+     r"(?:identities|identity|renderers|backends|families)\b", 2, "Direct3D renderer identity count"),
+    ("web_only_identities", r"\b" + NUM + r"\s+(?:browser|web)[- ]only\s+(?:renderer\s+)?(?:identities|identity|renderers?|backends?|profiles?)\b", 0,
+     "browser-only (Web category) identity count"),
+    ("web_only_identities", r"\b" + NUM + r"\s+(?:renderer\s+)?(?:identities|renderers)\s+(?:are|is)\s+(?:browser|web)[- ]only\b", 0, "browser-only (Web category) identity count"),
 ]
 _MACRO_RULE = next(r[1] for r in METRIC_RULES if r[0] == "cpp_test_files_with_macros")
 # the number belongs to an earlier revision, in its own clause, before it
@@ -233,7 +307,11 @@ QUOTED = re.compile(r"[\u201c\"]|\b(?:says?|states?|reads?|pins?|claims?|speaks?
                     r"\.(?:md|cmake|json|h|hpp|py)\b|CHANGELOG", re.I)
 QUOTED_MARK = re.compile(r"[\u201c\"]|\.(?:md|cmake|json|h|hpp|py)\b|CHANGELOG")
 # a rule that applies only in a sentence of a given subject
-REQUIRES = {"compiled_effect_more": re.compile(r"compil|COMPILED|opt-in build option|Effect Framework", re.I)}
+REQUIRES = {"compiled_effect_more": re.compile(r"compil|COMPILED|opt-in build option|Effect Framework", re.I),
+            "renderer_names_outside": re.compile(r"renderer|CNA_GRAPHICS_RENDERER|identit", re.I),
+            "renderer_last_ordinal": re.compile(r"GraphicsRendererType|\brenderer identit|\bFna3d\b|\bSdlRenderer\b")}
+# rules whose own wording contains "from" ("ordinals from 0 to 13"): only an explicit earlier revision excuses the number
+NARROW_HISTORY = {"renderer_enumerators", "renderer_last_ordinal"}
 # a sentence about compiled effects may name the compiled-effect subset
 SUBSET = {"implementation_families": ("compiled", "implementation_families_subset"),
           "renderer_identities": ("compiled", "compiled_effect_identities")}
@@ -269,7 +347,7 @@ def metric_findings(body: str, values: dict) -> list[tuple[str, str]]:
                 continue
             sentence = _sentence(body, m.start(), m.end())
             quoted = QUOTED_MARK if key.startswith("complement_") else QUOTED   # a reporting verb cannot excuse impossible arithmetic
-            if HISTORY.search(_clause_before(body, m.start("n"))) or quoted.search(sentence[:max(0, sentence.find(m.group(0)))]):
+            if (REVISION if key in NARROW_HISTORY else HISTORY).search(_clause_before(body, m.start("n"))) or quoted.search(sentence[:max(0, sentence.find(m.group(0)))]):
                 continue
             if key in REQUIRES and not REQUIRES[key].search(sentence):
                 continue
@@ -292,33 +370,60 @@ def metric_findings(body: str, values: dict) -> list[tuple[str, str]]:
 
 
 # ---------------------------------------------------------------------------------------------
-# concept rules: subset and complement counts of two concepts the site states again and again
+# concept rules: subset and complement counts of the concepts the site states again and again
 # ---------------------------------------------------------------------------------------------
-# Compiled effects. Three numbers are true at once and a sentence must use the one its own wording claims: identities that
-# CAN run compiled effects (11, in 9 families), identities that never can (3), and identities that refuse them in a DEFAULT
-# configuration because every option but FNA3D's always-on path defaults to OFF (13). A count is judged by the clause it
-# stands in: a negative predicate ("refused on", "cannot", "without", "report false") wants the incapable count, or the
-# default-refusal count only when the sentence names the default configuration; a positive one wants the capable count,
-# or capable-minus-FNA3D (10) when it says "other"/"more". Family counts: 9, or 8 for "other"/"more"/the optioned set.
+# Compiled effects. Several numbers are true at once and a sentence must use the one its own wording claims: identities that
+# CAN run compiled effects (11, in 9 families), of which 10 (in 8 families, one CNA_<FAMILY>_COMPILED_EFFECTS option each) need
+# a default-OFF option and 1 (FNA3D) has the path always on; identities that never can (3); identities that refuse them in a
+# DEFAULT configuration (13). A count is judged by the clause it stands in: a negative predicate ("refused on", "cannot",
+# "without", "report false") wants the incapable count, or the default-refusal count only when the sentence names the default
+# configuration; a positive one wants the capable count, or the optioned count (10 identities, 8 families or options) when it
+# says "other"/"more", qualifies its noun ("optioned", "opt-in", "default-OFF") or puts the count behind the options ("ten
+# identities behind default-OFF options", "FNA3D plus eight optioned families"). The unit decides the number: "renderers" and
+# "backends" count identities, "families" families, "options"/"configurations" the eight options, and a bare "nine opt-in" /
+# "nine behind ..." must be one of the optioned counts.
 # Format classification. Eight families (10 identities) classify the Texture2D formats themselves and seven (9 identities)
 # the render-target formats; every other identity defers, which means SurfaceFormat::Color only. "The other N identities"
-# accept only Color must be the complement: 4 for textures, 5 where the sentence is about render targets.
+# (or "the remaining N", "N Color-only renderers") accept only Color must be the complement: 4 for textures, 5 where the
+# sentence is about render targets.
+# Unbound textures. StockEffectNullTextureTests.cpp pins its unbound-texture expectations for the identities its
+# CNA_RENDERER_IS gate names (8, in 7 families): "renderers"/"identities" there must be 8 and "families" 7.
 COMPILED_CTX = re.compile(r"compiled[- ](?:XNA |XNA/FNA )?effects?|CompiledEffects|COMPILED_EFFECTS|Effect Framework|\.fxb\b|effect bytecode", re.I)
 FORMAT_CTX = re.compile(r"SurfaceFormat::Color\b|\bColor[- ]only\b|\bonly\s+(?:SurfaceFormat::)?Color\b|\bclassif\w*\b[^.;]{0,40}\bformats?\b|"
                         r"\bpromot\w*\b[^.;]{0,30}\bformats?\b|format[- ]classif", re.I)
 RT_CTX = re.compile(r"render[- ]targets?\b|RenderTarget", re.I)
+UNBOUND_CTX = re.compile(r"unbound[- ]textures?|null[- ]textures?|StockEffectNullTexture", re.I)
 DEFAULT_CONFIG = re.compile(r"\bdefault\s+(?:configur\w*|build|CMake)\b|\bby default\b|\bin a default\b|\bdefault-configured\b|"
                             r"\boptions?\s+defaults?\s+to\s+OFF\b|\bdefaults?\s+to\s+OFF\b", re.I)
 NEGATIVE = re.compile(r"\b(?:cannot|can't|can\s?not|never|do not|don't|does not|doesn't|lacks?|without|refus\w*|unsupported|not supported|"
                       r"incapable|throws?|false|unavailable|not available|except)\b", re.I)
 _OTHER = r"(?P<other>(?:the\s+)?(?:other|remaining)\s+)?"
 _MORE = r"(?:\s+(?P<more>other|more))?"
-IDENT_COUNT = re.compile(r"(?<!of )(?<!of the )(?<![\d.])" + _OTHER + r"\b" + NUM + _MORE + r"(?:\s+of\s+(?:the\s+)?\d+)?\s+(?:public\s+|selectable\s+)?(?:renderer\s+)?identities\b", re.I)
-FAMILY_COUNT = re.compile(r"(?<!of )(?<!of the )(?<![\d.])" + _OTHER + r"\b" + NUM + _MORE + r"\s+(?:renderer\s+|implementation\s+)?families\b", re.I)
+_QUAL = r"opt-in|optioned|option-gated|default-OFF|default-off"
+IDENT_COUNT = re.compile(r"(?<![\d.])" + _OTHER + r"\b" + NUM + _MORE + r"(?:\s+of\s+(?:the\s+)?\d+)?\s+(?P<q>(?:(?:public|selectable|capable|supported|supporting|"
+                         r"shipped|current|renderer|further|additional|" + _QUAL + r")\s+)*)(?:identities|renderers|backends)\b", re.I)
+FAMILY_COUNT = re.compile(r"(?<![\d.])" + _OTHER + r"\b" + NUM + _MORE + r"\s+(?P<q>(?:(?:renderer|implementation|compiled-effect|capable|further|additional|"
+                          + _QUAL + r")\s+)*)families\b", re.I)
+OPTION_COUNT = re.compile(r"(?<![\d.])\b" + NUM + r"(?:\s+(?:more|other|further))?\s+(?P<q>(?:(?:opt-in|optional|default-OFF|default-off|CMake|build|compiled-effect|"
+                          r"family|per-family|CNA_\*_COMPILED_EFFECTS)\s+)*)(?:configurations|options|switches)\b", re.I)
+# "FNA3D always, nine opt-in" / "nine behind opt-in build options": a count with no noun, which must be an optioned count
+BARE_OPTIONED = re.compile(r"(?<![\w.-])" + NUM + r"(?:\s+(?:more|other))?\s+(?:opt-in\b(?!\s+(?:[\w*-]+\s+){0,3}?(?:identit|renderer|famil|backend|configuration|option|build|switch))"
+                           r"|behind\b)", re.I)
+OPT_AFTER = re.compile(r"^\s*\)?\s*(?:(?:are|is)\s+)?(?:behind|through|via|with|gated\s+by|provided\s+by|controlled\s+by|enabled\s+by|needs?|requires?)\b[^.;]*?"
+                       r"\b(?:opt-in|optioned|options?|default-OFF|default-off|switch(?:es)?)\b", re.I)
+OPT_BEFORE = re.compile(r"\bFNA3D\b(?:\s+\(?always\)?)?\s*(?:plus|and|\+)\s+(?:the\s+)?$|\b(?:besides|beyond|apart\s+from|other\s+than|in\s+addition\s+to)\s+FNA3D\s*,?\s*(?:the\s+)?$", re.I)
+# "eight optioned families (ten identities)", "optioned on eight families (ten identities)": the identities of an optioned family count
+OPT_FAMILY_PAREN = re.compile(r"\b(?:more|other|further|" + _QUAL + r")\b[^.;()]{0,40}\bfamilies\s*\(\s*$", re.I)
+# a clause that refers back to the compiled-effect route of the previous sentence ("Ten renderers implement it")
+PRONOUN_PRED = re.compile(r"\b(?:implement|support|run|provide|offer|expose|execute|accept)s?\s+(?:it|them)\b", re.I)
 # "14 public renderer identities in 12 implementation families": the registry as a whole, not a compiled-effect or format subset
-REGISTRY_PHRASE = re.compile(r"\s+(?:in|over|across)\s+\d+\s+(?:renderer\s+|implementation\s+)?families\b", re.I)
+REGISTRY_PHRASE = re.compile(r"\s+(?:in|over|across)\s+" + NUM.replace("?P<n>", "?:") + r"\s+(?:renderer\s+|implementation\s+)?families\b", re.I)
 COLOR_ONLY_COUNT = re.compile(r"\b" + NUM + r"\s+(?:shipped\s+|current\s+|public\s+)?(?:renderers|identities|renderer identities|families)\s+(?:are|stay|remain)\s+"
                               r"(?:SurfaceFormat::)?Color[- ]only\b", re.I)
+COLOR_ONLY_NOUN = re.compile(r"\b" + NUM + r"\s+(?:(?:shipped|current|public)\s+)?(?:SurfaceFormat::)?Color[- ]only\s+(?:renderers|identities|renderer identities|backends)\b", re.I)
+# "the remaining thirteen accept Color only", "and four accept only Color": a complement with no noun
+FORMAT_BARE = [re.compile(r"\b(?:the\s+)?(?:other|remaining)\s+" + NUM + r"(?=\s+(?:accept|support|take|allow|are|stay|remain|keep)s?\b)", re.I),
+               re.compile(r"(?:^|[;:(]\s*|,\s+|\band\s+)" + NUM + r"(?=\s+(?:accept|support|take|allow)s?\s+only\b)", re.I)]
 EASYGL_CTX = re.compile(r"EasyGL|\bGL\b|OPENGL", re.I)
 
 
@@ -341,6 +446,19 @@ def _polarity(sentence: str, start: int, end: int) -> bool:
     return bool(NEGATIVE.search(after) or NEGATIVE.search(before))
 
 
+def _optioned(sentence: str, start: int, end: int, quals: str) -> bool:
+    """True when the count is the optioned part of the compiled-effect set: its noun is qualified as opt-in, the words after
+    it put it behind the options, or it follows "FNA3D plus"."""
+    after = re.split(r"[(,;]|\s\u2014\s", sentence[end:end + 120], maxsplit=1)[0]
+    before = sentence[max(0, start - 60):start]
+    return bool(re.search(_QUAL, quals or "", re.I) or OPT_AFTER.match(after) or OPT_BEFORE.search(before) or OPT_FAMILY_PAREN.search(before))
+
+
+def _after_of(clause: str, m: re.Match) -> bool:
+    """"11 of the 14 identities": the 14 is the whole the subset is taken from, not a claim of its own."""
+    return not m.group("other") and bool(re.search(r"\bof\s+(?:the\s+)?$", clause[:m.start()], re.I))
+
+
 GL_NAMES = r"(?:OPENGLES3|OPENGL33|WEBGL2|OpenGL ES 3(?:\.0)?|OpenGL 3\.3|WebGL 2)"
 # "the two EasyGL profiles other than OPENGL33, OPENGLES3 and WEBGL2": a subset and its exclusions must add up to the family
 EASYGL_EXCEPT = re.compile(r"\b" + NUM + r"\s+(?:EasyGL|GL)\s+(?:profiles|identities)\s+(?:other than|besides|except(?: for)?)\s+((?:" + GL_NAMES
@@ -354,73 +472,165 @@ def concept_findings(body: str, values: dict) -> list[tuple[str, str]]:
         if "gl_profiles" in values and as_int(m.group("n")) + listed != values["gl_profiles"]:
             found.append((f"EasyGL subset arithmetic: {m.group('n')} profiles other than {listed} named ones is not the {values['gl_profiles']} "
                           f"EasyGL identities: \u2026{m.group(0)}\u2026", m.group(0)))
+    found += classification_findings(body, values)
     if "compiled_effect_identities" not in values or "format_classifying_identities" not in values:
         return found
     total = values["renderer_identities"]
     capable, always = values["compiled_effect_identities"], values["compiled_effect_always_on_identities"]
     fams, cap_fams = values["implementation_families"], values["compiled_effect_families"]
-    for m in COLOR_ONLY_COUNT.finditer(body):
+    opt_ids, opt_fams = values.get("compiled_effect_optioned_identities", capable - always), values.get("compiled_effect_optioned_families", cap_fams - 1)
+    tex_complement = total - values["format_classifying_identities"]
+    rt_complement = total - values["rt_format_classifying_identities"]
+    for m in list(COLOR_ONLY_COUNT.finditer(body)) + list(COLOR_ONLY_NOUN.finditer(body)):
         sentence = _sentence(body, m.start(), m.end())
-        want = {total - values["format_classifying_identities"]} | ({total - values["rt_format_classifying_identities"]} if RT_CTX.search(sentence) else set())
+        want = {tex_complement} | ({rt_complement} if RT_CTX.search(sentence) else set())
         if as_int(m.group("n")) not in want and not HISTORY.search(_clause_before(body, m.start())):
             found.append((f"Color-only renderer count {m.group('n')}, expected {' or '.join(map(str, sorted(want)))} (the identities outside the "
                           f"classifying families): \u2026{m.group(0)}\u2026", m.group(0)))
+    previous = ""
     for sentence in re.split(r"(?<=[.!?])\s+", body):
+        prev, previous = previous, sentence
         if HISTORY.search(sentence) and re.search(r"alpha\.1|b0e97bb1|009d40f5|d6e9ff05|\bearlier\b|\bprevious", sentence, re.I):
             continue                                        # a sentence about an earlier revision
         clauses = _clauses(sentence)
         for idx, (off, clause) in enumerate(clauses):
-            compiled = COMPILED_CTX.search(clause) or (idx and COMPILED_CTX.search(clauses[idx - 1][1])
-                                                       and re.search(r"\b(?:other|more|rest|remaining|it|them)\b", clause, re.I))
+            compiled = (COMPILED_CTX.search(clause)
+                        or (idx and COMPILED_CTX.search(clauses[idx - 1][1]) and re.search(r"\b(?:other|more|rest|remaining|it|them|FNA3D|opt-in|optioned|options?|default-OFF|default-off)\b", clause, re.I))
+                        or (PRONOUN_PRED.search(clause) and COMPILED_CTX.search(prev if idx == 0 else clauses[idx - 1][1])))
             fmt = FORMAT_CTX.search(clause) or (idx and FORMAT_CTX.search(clauses[idx - 1][1]))
-            if not (compiled or fmt):
+            unbound = UNBOUND_CTX.search(clause) and not compiled
+            if not (compiled or fmt or unbound):
                 continue
+            rt = bool(RT_CTX.search(sentence))
+            fmt_want = {tex_complement} | ({rt_complement} if rt else set())
             for m in IDENT_COUNT.finditer(clause):
                 got = as_int(m.group("n"))
                 other = bool(m.group("other") or m.group("more"))
-                if QUOTED.search(clause[:m.start()]) or HISTORY.search(clause[max(0, m.start() - 40):m.start()]):
+                if _after_of(clause, m) or QUOTED.search(clause[:m.start()]) or HISTORY.search(clause[max(0, m.start() - 40):m.start()]):
                     continue
-                if REGISTRY_PHRASE.match(clause[m.end():]):
+                if got == total and REGISTRY_PHRASE.match(clause[m.end():]):
+                    continue
+                if unbound:
+                    window = clause[max(0, m.start() - 40):m.end() + 40]
+                    outside = other or _polarity(sentence, off + m.start(), off + m.end()) or re.search(r"\bskip|\boutside\b", window, re.I)
+                    cover = total - values["unbound_texture_identities"] if outside else values["unbound_texture_identities"]
+                    if got != cover:
+                        found.append((f"unbound-texture expectations cover {values['unbound_texture_identities']} renderer identities "
+                                      f"({values['unbound_texture_families']} families){' and skip the other ' + str(cover) if outside else ''}, not {got}: \u2026{clause.strip()[:220]}\u2026", m.group(0)))
                     continue
                 negative = _polarity(sentence, off + m.start(), off + m.end())
+                default = bool(DEFAULT_CONFIG.search(sentence))
                 if compiled:
                     if negative:
-                        want = {total - capable} | ({total - always} if DEFAULT_CONFIG.search(sentence) else set())
-                        what = "identities that cannot run compiled effects" + (" (or refuse them in a default configuration)" if len(want) > 1 else "")
-                    elif other:
-                        want, what = {capable - always}, "other identities that can run compiled effects besides the always-on family"
+                        want = {total - capable} | ({total - always} if default else set())
+                        what = "identities that cannot run compiled effects" + (" (or refuse them in a default configuration)" if default else "")
+                    elif other or _optioned(sentence, off + m.start(), off + m.end(), m.group("q")):
+                        want, what = {opt_ids}, "identities that can run compiled effects behind a default-OFF option (besides the always-on family)"
                     else:
-                        want, what = {capable}, "identities that can run compiled effects"
-                        if got == values["gl_profiles"] and EASYGL_CTX.search(clause):
+                        want = {capable} | ({always} if default else set())
+                        what = "identities that can run compiled effects" + (" (or have them on in a default configuration)" if default else "")
+                        if got == values["gl_profiles"] and (EASYGL_CTX.search(clause) or (idx and EASYGL_CTX.search(clauses[idx - 1][1]))):
                             continue                        # "the EasyGL option covers its three identities"
                     if got not in want:
                         found.append((f"compiled-effect {what}: {got}, expected {' or '.join(map(str, sorted(want)))}: "
                                       f"\u2026{clause.strip()[:220]}\u2026", m.group(0)))
-                elif fmt and (other or re.match(r"(?:\s+[\w-]+){0,5}?\s*(?:accept|support|take|allow)s?\s+only\b|\s+without\s+an?\s+(?:[\w-]+\s+)?classifier\b",
+                elif fmt and (other or re.search(r"\bonly\b[^.;]{0,40}\b(?:on|for)\s+(?:the\s+)?$", clause[:m.start()], re.I) or re.match(r"(?:\s+[\w-]+){0,5}?\s*(?:accept|support|take|allow)s?\s+only\b|\s+without\s+an?\s+(?:[\w-]+\s+)?classifier\b",
                                                 clause[m.end():], re.I)):
-                    rt = bool(RT_CTX.search(sentence))
-                    want = {total - values["format_classifying_identities"]} | ({total - values["rt_format_classifying_identities"]} if rt else set())
-                    if got not in want:
+                    if got not in fmt_want:
                         found.append((f"format-classification complement: {got} identities outside the classifying families, expected "
-                                      f"{' or '.join(map(str, sorted(want)))}: \u2026{clause.strip()[:220]}\u2026", m.group(0)))
+                                      f"{' or '.join(map(str, sorted(fmt_want)))}: \u2026{clause.strip()[:220]}\u2026", m.group(0)))
             for m in FAMILY_COUNT.finditer(clause):
                 got = as_int(m.group("n"))
                 other = bool(m.group("other") or m.group("more"))
-                if QUOTED.search(clause[:m.start()]) or HISTORY.search(clause[max(0, m.start() - 40):m.start()]):
+                if _after_of(clause, m) or QUOTED.search(clause[:m.start()]) or HISTORY.search(clause[max(0, m.start() - 40):m.start()]):
                     continue
-                if re.search(r"identities\s+(?:in|over|across)\s+$", clause[:m.start()], re.I):
+                lead = re.search(r"\b" + NUM + r"\s+(?:\w+\s+){0,3}?identities\s+(?:in|over|across)\s+$", clause[:m.start()], re.I)
+                if lead and as_int(lead.group("n")) == total:
                     continue                                # the registry phrase again, from the family side
+                if unbound:
+                    if got != values["unbound_texture_families"]:
+                        found.append((f"unbound-texture expectations cover {values['unbound_texture_families']} implementation families, not {got}: "
+                                      f"\u2026{clause.strip()[:220]}\u2026", m.group(0)))
+                    continue
                 if compiled:
-                    negative = _polarity(sentence, off + m.start(), off + m.end())
-                    want = {fams - cap_fams} if negative else ({cap_fams - 1} if other else {cap_fams, cap_fams - 1})
+                    if _polarity(sentence, off + m.start(), off + m.end()):
+                        want = {fams - cap_fams} | ({fams - 1} if DEFAULT_CONFIG.search(sentence) else set())
+                    elif other or _optioned(sentence, off + m.start(), off + m.end(), m.group("q")):
+                        want = {opt_fams}
+                    else:
+                        want = {cap_fams, opt_fams}
                     if got not in want:
                         found.append((f"compiled-effect family count {got}, expected {' or '.join(map(str, sorted(want)))}: "
                                       f"\u2026{clause.strip()[:220]}\u2026", m.group(0)))
                 elif fmt and re.match(r"\s*(?:\([^)]*\)\s*)?(?:that\s+)?(?:classify|promote|classifies|promotes)\b", clause[m.end():], re.I):
-                    want = {values["format_classifying_families"]} | ({values["rt_format_classifying_families"]} if RT_CTX.search(sentence) else set())
+                    want = {values["format_classifying_families"]} | ({values["rt_format_classifying_families"]} if rt else set())
                     if got not in want:
                         found.append((f"format-classifying family count {got}, expected {' or '.join(map(str, sorted(want)))}: "
                                       f"\u2026{clause.strip()[:220]}\u2026", m.group(0)))
+            if compiled:
+                for m in OPTION_COUNT.finditer(clause):
+                    got = as_int(m.group("n"))
+                    if got != opt_fams and (got > opt_fams or m.group("q").strip()) and not HISTORY.search(clause[max(0, m.start() - 40):m.start()]):
+                        found.append((f"compiled-effect build options: {got}, expected {opt_fams} (one default-OFF option per optioned family): "
+                                      f"\u2026{clause.strip()[:220]}\u2026", m.group(0)))
+                for m in BARE_OPTIONED.finditer(clause):
+                    got = as_int(m.group("n"))
+                    if got not in (opt_ids, opt_fams):
+                        found.append((f"compiled-effect optioned count {got}, expected {opt_ids} identities or {opt_fams} families: "
+                                      f"\u2026{clause.strip()[:220]}\u2026", m.group(0)))
+            if fmt:
+                for rx in FORMAT_BARE:
+                    for m in rx.finditer(clause):
+                        if as_int(m.group("n")) not in fmt_want:
+                            found.append((f"format-classification complement: {m.group('n')} outside the classifying families, expected "
+                                          f"{' or '.join(map(str, sorted(fmt_want)))}: \u2026{clause.strip()[:220]}\u2026", m.group(0)))
+    return found
+
+
+# Registry classification. GraphicsRendererType's enumerators and ordinals, and the per-identity switches of
+# GraphicsBackendMaturity.hpp and GraphicsBackendCategory.hpp: "Fna3d (17)", "six Production, five Supported, three
+# Experimental", "four identities (...) are TranslationLayer", "the remaining eight are Native", "the Direct3D trio".
+# Category and maturity names are matched case-sensitively, so "two native GL-profile identities" is not the Native category.
+_CLASS = r"Production|Supported|Experimental|Historical|Deprecated|Native|TranslationLayer|Translation\s+Layer|Software|Web|Diagnostic"
+_NUM_CS = r"(?P<n>\d[\d,]*|(?i:" + "|".join(WORDS) + r"))"
+CLASS_COUNT = re.compile(r"(?<![\w.-])" + _NUM_CS + r"\s+(?:(?:public|renderer|of\s+the\s+\d+)\s+)*(?:(?:identities|renderers|backends)\s+)?(?:\([^)]*\)\s+)?"
+                         r"(?:(?:are|is)\s+)?(?:(?:declared|classified)\s+)?(?:as\s+)?(?P<c>" + _CLASS + r")\b(?=\s*(?:[,;.:)(]|$|and\b|or\b|identit|renderers?\b|backends?\b))")
+# "Production: eight identities"
+CLASS_COUNT_REV = re.compile(r"(?<![\w-])(?P<c>" + _CLASS + r")\s*(?::|=|\u2013|\u2014)\s*" + _NUM_CS + r"\s+(?:public\s+|renderer\s+)*(?:identities|renderers|backends)\b")
+CLASS_CTX = re.compile(r"maturit|categor|GraphicsBackend|declare|classif|identit|renderer", re.I)
+ORDINAL_CTX = re.compile(r"\bordinals?\b|\benumerators?\b|GraphicsRendererType", re.I)
+MATURITY_NAMES = {"Production", "Supported", "Experimental", "Historical", "Deprecated"}
+# an earlier revision named in the clause; narrower than HISTORY, whose "from" would excuse "from SdlRenderer (0) to Fna3d (17)"
+REVISION = re.compile(r"alpha\.1|b0e97bb1|009d40f5|d6e9ff05|1bb2145d|\bearlier\b|\bprevious(?:ly)?\b|\bwas\b|\bwere\b|\bhad\b|\bused to\b|\bthen-current\b|\bonce\b|\bbefore\b", re.I)
+
+
+def classification_findings(body: str, values: dict) -> list[tuple[str, str]]:
+    found: list[tuple[str, str]] = []
+    ords = values.get("renderer_ordinals") or {}
+    names = "|".join(map(re.escape, sorted(ords, key=len, reverse=True)))
+    for sentence in re.split(r"(?<=[.!?])\s+", body):
+        if ords and ORDINAL_CTX.search(sentence):
+            for m in re.finditer(r"\b(" + names + r")\s*\(\s*(\d+)\s*\)|\b(" + names + r")\s+(?:is|has|at|=)\s+(?:\w+\s+)?(?:C\+\+\s+)?ordinal\s+(\d+)", sentence):
+                name, got = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+                if int(got) != ords[name] and not REVISION.search(_clause_before(sentence, m.start())):
+                    found.append((f"GraphicsRendererType::{name} is ordinal {ords[name]}, not {got}: \u2026{m.group(0)}\u2026", m.group(0)))
+            if re.search(r"GraphicsRendererType|\brenderer identit", sentence):
+                for m in re.finditer(r"\bordinal\s+(\d+)\b", sentence):
+                    if int(m.group(1)) > values["renderer_last_ordinal"] and not REVISION.search(_clause_before(sentence, m.start())):
+                        found.append((f"renderer ordinal {m.group(1)} is outside GraphicsRendererType (0..{values['renderer_last_ordinal']}): "
+                                      f"\u2026{sentence.strip()[:200]}\u2026", m.group(0)))
+        if "renderer_maturity" in values and CLASS_CTX.search(sentence):
+            for m in list(CLASS_COUNT.finditer(sentence)) + list(CLASS_COUNT_REV.finditer(sentence)):
+                cls = re.sub(r"\s+", "", m.group("c"))
+                table = values["renderer_maturity"] if cls in MATURITY_NAMES else values["renderer_category"]
+                if as_int(m.group("n")) != table.get(cls, 0) and not REVISION.search(_clause_before(sentence, m.start())):
+                    found.append((f"{'maturity' if cls in MATURITY_NAMES else 'category'} {cls} covers {table.get(cls, 0)} identities, not {m.group('n')}: "
+                                  f"\u2026{sentence.strip()[:200]}\u2026", m.group(0)))
+        if "direct3d_identities" in values:
+            for m in re.finditer(r"\b(?:Direct3D|DirectX|D3D)\s+(trio|triple|triplet|pair|duo)\b", sentence, re.I):
+                size = 3 if m.group(1).lower().startswith("tri") else 2
+                if size != values["direct3d_identities"]:
+                    found.append((f"the Direct3D renderer identities are {values['direct3d_identities']}, not a {m.group(1)}: \u2026{sentence.strip()[:200]}\u2026", m.group(0)))
     return found
 
 
@@ -576,12 +786,15 @@ def metric_values() -> dict:
                                 "static_test_definitions", "compiled_effect_identities", "two_d_only_renderers", "parity_families")}
     values |= {k: F[k] for k in ("compiled_effect_families", "compiled_effect_always_on_identities", "format_classifying_families",
                                  "format_classifying_identities", "rt_format_classifying_families", "rt_format_classifying_identities",
-                                 "standalone_pixel_programs")}
+                                 "standalone_pixel_programs", "compiled_effect_optioned_identities", "compiled_effect_optioned_families",
+                                 "compiled_effect_never_identities", "compiled_effect_default_refusing_identities", "renderer_enumerators",
+                                 "renderer_last_ordinal", "renderer_ordinals", "renderer_maturity", "renderer_category", "direct3d_identities",
+                                 "web_only_identities", "non_web_gl_profiles", "unbound_texture_identities", "unbound_texture_families")}
     values["production_modules"] = 23
     values["implementation_families_subset"] = F["compiled_effect_families"]
     values["compiled_effect_more"] = F["compiled_effect_identities"] - F["compiled_effect_always_on_identities"]   # FNA3D always, the rest behind options
     values["example_cpp_files"] = {F["example_cpp_files"], F["module_example_cpp_files"]}   # with or without the loose demo
-    values["complement_identities"] = F["renderer_identities"]
+    values["complement_identities"] = values["renderer_names_outside"] = F["renderer_identities"]
     values["complement_families"] = F["implementation_families"]
     return values
 

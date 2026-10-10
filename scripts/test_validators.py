@@ -19,6 +19,15 @@ renderer families", a bare D3D12 cell under a renderer heading, a list whose ren
 Those sentences, verbatim where the page had them, are the *_SECOND_REVIEW fixtures below, each beside allowed
 counterparts; the ledger fixtures cover the hardened written-review escape.
 
+The third independent review (of 0077b63) found stale registry classification and compiled-effect arithmetic that still
+passed: "18 enumerators from SdlRenderer (0) to Fna3d (17)", "the three Direct3D identities" (the retired DIRECTX12 kept by a
+count), "eight Production, seven Supported", "the remaining eight are Native", "ten renderers: FNA3D always, nine opt-in",
+"FNA3D always, nine families behind default-OFF options", "nine opt-in configurations", "the 14 capable renderer identities",
+"Unbound-texture expectations cover seven renderers" (8 identities, 7 families), and the probes "Five public backends share
+EasyGL", "The remaining thirteen accept Color only", "DirectX 12 belongs to the renderer family set" and "879 test files named
+*_test.cpp". They are the *_THIRD_REVIEW fixtures, with the corrected sentences and other valid counterparts beside them and
+the shapes this remediation's own probes found.
+
     test_validators.py        # exit 0 when every fixture behaves; validate_all.sh runs it first
 """
 
@@ -115,6 +124,18 @@ RENDERER_ALLOW = [
     "<p>Direct3D 12 is the API SDL_gpu reaches on Windows.</p>",
     "<p>Output matching a Direct3D 12 debug-layer ERROR line from SDL's Direct3D 12 driver fails every test in the directory.</p>",
     "<p>CNA renders through SDL_gpu, which picks Direct3D 12 on Windows.</p>",
+    "<p>Direct3D 12 belongs to SDL's GPU driver set, not to CNA's renderer families.</p>",
+    "<p>Direct3D 12 is among the drivers SDL_gpu picks from.</p>",
+]
+RENDERER_REJECT_THIRD_REVIEW = [
+    "<p>DirectX 12 belongs to the renderer family set.</p>",
+    "<p>DirectX 12 is a CNA renderer family.</p>",
+    "<p>Direct3D 12 is part of CNA's renderers.</p>",
+    "<p>DirectX 12 is among the renderer identities.</p>",
+    "<p>The DirectX 12 renderer identity is selectable.</p>",
+    # found by this remediation's own adversarial probes
+    "<p>DirectX 12 counts among CNA's renderer families.</p>",
+    "<p>DirectX 12 still ships as a CNA renderer.</p>",
 ]
 
 PLATFORM_REJECT = [
@@ -328,6 +349,102 @@ METRIC_ALLOW = [
     'checked by reading the CNA source at commit <code>b0e97bb1</code>; nothing was built.</p></div>',
 ]
 
+METRIC_REJECT_THIRD_REVIEW = [
+    # development/internals/modules/core.html at 0077b63: the 18-identity enum, its ordinals and its classification arithmetic
+    "<p><code>GraphicsRendererType</code> is dense: 18 enumerators from <code>SdlRenderer</code> (0) to <code>Fna3d</code> (17).</p>",
+    "<p>GraphicsRendererType ends at ordinal 17.</p>",
+    "<p>Maturity: <code>SDL_RENDERER</code>, the three non-web EasyGL profiles, <code>VULKAN</code> and the three Direct3D identities are <code>Production</code>; "
+    "<code>WEBGPU</code>, <code>SOFTWARE</code> and <code>FNA3D</code> are <code>Experimental</code>; the rest are <code>Supported</code>.</p>",
+    "<p>Category: <code>HEADLESS</code> and <code>STUB</code> are <code>Diagnostic</code>, <code>SOFTWARE</code> is <code>Software</code>, the three browser-only "
+    "identities are <code>Web</code>, four identities (<code>SDL_RENDERER</code>, <code>WEBGPU</code>, <code>SDL_GPU</code> and <code>FNA3D</code>) are "
+    "<code>TranslationLayer</code>, and the remaining eight are <code>Native</code>.</p>",
+    # docs/faq.html at 0077b63: the maturity split of the 18-identity registry
+    "<p>CNA itself declares a maturity for each of the 14 identities in code (eight <em>Production</em>, seven <em>Supported</em>, three <em>Experimental</em>).</p>",
+    "<p>CNA's categories: eight Native identities, four TranslationLayer, one Software, three Web and two Diagnostic.</p>",
+    # development/internals/graphics/selection.html and deep-dives/models/vertex-packing-and-strides.html at 0077b63: the retired
+    # DIRECTX12 kept alive by a count
+    "<p><code>CNA_PLATFORM=TERMINAL</code> admits only <code>SOFTWARE</code>, <code>HEADLESS</code> and <code>STUB</code>; the three Direct3D identities require a "
+    "Windows target; <code>METAL</code> requires macOS; the browser identities require Emscripten; the three native GL-profile identities refuse Emscripten.</p>",
+    "<p>The canonical table exists because seven rasterizing renderers (Vulkan, Software, WebGPU, SDL_GPU and the three Direct3D renderers) do not translate a "
+    "<code>VertexDeclaration</code>.</p>",
+    # compiled effects: docs/verification.html, docs/tutorials/87, deep-dives/reference/graphics-quick-reference.html,
+    # deep-dives/graphics/shader-routes-four-answers.html and docs/tutorials/52 and 53 at 0077b63
+    "<td>Already-compiled XNA/FNA effects can be retained when the active renderer exposes <code>CompiledEffects</code> (ten renderers: <code>FNA3D</code> always, nine opt-in).</td>",
+    "<p>A second, separate route exists for XNA-authored effects: <code>SupportsCompiledEffects()</code> and <code>CreateCompiledEffect(&hellip;)</code> let a renderer "
+    "execute compiled Direct3D 9 Effect Framework bytecode. Ten renderers implement it &mdash; <code>FNA3D</code> always, nine behind opt-in "
+    "<code>CNA_*_COMPILED_EFFECTS</code> build options &mdash; and it is a large piece of work.</p>",
+    "<td>the byte constructor works where <code>CompiledEffects</code> is true: FNA3D always, nine families behind default-OFF options; it is not a source compiler</td>",
+    "<li>A game that loads compiled XNA/FNA Effect Framework bytecode needs FNA3D or one of the nine opt-in configurations (route three).</li>",
+    "<li>The separate <code>Effect(device, effectCode)</code> compatibility path accepts XNA/FNA Effect Framework bytecode only on the 14 capable renderer identities.</li>",
+    "<li><strong>Compiled XNA effects</strong> (<code>Effect(device, bytes)</code> or an XNB <code>Effect</code>, on the 14 capable renderer identities) reflect a complete graph.</li>",
+    "<p>Ten renderers support compiled effects through nine opt-in configurations.</p>",
+    "<p>FNA3D plus nine optioned families support compiled effects.</p>",
+    "<p>There are nine opt-in compiled-effect families.</p>",
+    # development/takeover/xna-oracle.html at 0077b63: the 8-identity unbound-texture gate counted as seven renderers
+    "<td>No oracle-corpus number recorded. Unbound-texture expectations cover seven renderers; parity fixtures cover four families.</td>",
+    # the natural complement and inverse forms the third review found passing
+    "<p>Five public backends share EasyGL.</p>",
+    "<p>Eleven renderers cannot consume compiled effects.</p>",
+    "<p>The remaining thirteen accept Color only.</p>",
+    "<p>879 test files named *_test.cpp.</p>",
+    # development/build/index.html at 0077b63, found by this remediation's final sweep
+    "<td>A renderer name outside the 18, through <code>CNA_GRAPHICS_RENDERER</code> or a member of <code>CNA_GRAPHICS_RENDERERS</code></td>",
+    # found by this remediation's own adversarial probes
+    "<p>GraphicsRendererType ordinals run from 0 to 17.</p>",
+    "<p>CNA's GraphicsRendererType enumerates 18 identities.</p>",
+    "<p>Production: eight identities.</p>",
+    "<p>CNA classifies three identities as TranslationLayer.</p>",
+    "<p>Besides FNA3D, eleven identities need an opt-in option for compiled effects.</p>",
+    "<p>The unbound-texture test skips on the other eight identities.</p>",
+    "<p>SurfaceFormat::Color is the only texture format on eleven renderers.</p>",
+]
+METRIC_ALLOW_THIRD_REVIEW = [
+    # the corrected sentences of the pages above
+    "<p><code>GraphicsRendererType</code> is dense: 14 enumerators from <code>SdlRenderer</code> (0) to <code>Fna3d</code> (13).</p>",
+    "<p>GraphicsRendererType ends at ordinal 13; SdlRenderer is therefore ordinal 0 in C++ but 1 in C.</p>",
+    "<p>Maturity: six identities are <code>Production</code> (<code>SDL_RENDERER</code>, the two non-web EasyGL profiles <code>OPENGLES3</code> and <code>OPENGL33</code>, "
+    "<code>VULKAN</code>, and the two Direct3D identities <code>DIRECTX9</code> and <code>DIRECTX11</code>); three are <code>Experimental</code> (<code>WEBGPU</code>, "
+    "<code>SOFTWARE</code> and <code>FNA3D</code>); the remaining five are <code>Supported</code> (<code>WEBGL2</code>, <code>HEADLESS</code>, <code>STUB</code>, "
+    "<code>SDL_GPU</code> and <code>METAL</code>); <code>Historical</code> and <code>Deprecated</code> are unused.</p>",
+    "<p>Category: <code>HEADLESS</code> and <code>STUB</code> are <code>Diagnostic</code>, <code>SOFTWARE</code> is <code>Software</code>, the one browser-only identity, "
+    "<code>WEBGL2</code>, is <code>Web</code>, four identities (<code>SDL_RENDERER</code>, <code>WEBGPU</code>, <code>SDL_GPU</code> and <code>FNA3D</code>) are "
+    "<code>TranslationLayer</code>, and the remaining six (<code>OPENGLES3</code>, <code>OPENGL33</code>, <code>VULKAN</code>, <code>DIRECTX9</code>, "
+    "<code>DIRECTX11</code> and <code>METAL</code>) are <code>Native</code>.</p>",
+    "<p>CNA itself declares a maturity for each of the 14 identities in code (six <em>Production</em>, five <em>Supported</em>, three <em>Experimental</em>).</p>",
+    "<p>the two Direct3D identities (<code>DIRECTX9</code> and <code>DIRECTX11</code>) require a Windows target; the browser-only <code>WEBGL2</code> requires Emscripten; "
+    "the two native GL-profile identities (<code>OPENGLES3</code> and <code>OPENGL33</code>) refuse Emscripten.</p>",
+    "<p>seven rasterizing renderers (Vulkan, Software, WebGPU, SDL_GPU, Metal and the two Direct3D renderers, DIRECTX9 and DIRECTX11) do not translate a VertexDeclaration.</p>",
+    "<p>Only one Direct3D renderer, DIRECTX9, runs Microsoft's recompiled stock effects; two native GL-profile identities accept them too.</p>",
+    "<td>Already-compiled XNA/FNA effects can be retained when the active renderer exposes <code>CompiledEffects</code> (11 renderer identities in nine implementation "
+    "families: <code>FNA3D</code> always, the other ten identities only with their family's opt-in option, eight options in all).</td>",
+    "<p>Eleven renderer identities in nine implementation families implement it &mdash; <code>FNA3D</code> always, the other ten identities in eight families behind "
+    "opt-in <code>CNA_*_COMPILED_EFFECTS</code> build options &mdash; and it is a large piece of work.</p>",
+    "<td>the byte constructor works where <code>CompiledEffects</code> is true: FNA3D always, eight more families (ten identities) behind default-OFF options</td>",
+    "<li>A game that loads compiled XNA/FNA Effect Framework bytecode needs FNA3D or a build of one of the other ten capable identities with its family's opt-in "
+    "option on (eight options, route three).</li>",
+    "<li>The separate <code>Effect(device, effectCode)</code> compatibility path accepts XNA/FNA Effect Framework bytecode only on the 11 capable renderer identities.</li>",
+    "<p>Eleven renderer identities across nine implementation families can support compiled effects.</p>",
+    "<p>Ten capable identities are provided by eight optioned implementation families, plus FNA3D.</p>",
+    "<p>Thirteen identities refuse compiled effects in the default configuration.</p>",
+    "<p>Three identities can never support compiled effects.</p>",
+    "<p>Three renderers cannot consume compiled effects.</p>",
+    "<p>-DCNA_EASYGL_COMPILED_EFFECTS=ON (default OFF); one option enables all three identities.</p>",
+    "<td>No oracle-corpus number recorded. Unbound-texture expectations cover eight renderer identities across seven implementation families; parity fixtures cover four families.</td>",
+    "<p>The unbound-texture gate spans seven implementation families.</p>",
+    "<p>Three public backends share EasyGL.</p>",
+    "<p>EasyGL is shared by three identities.</p>",
+    "<p>Eight renderer families classify the broader texture formats. The remaining four accept Color only.</p>",
+    "<p>The remaining four accept Color only.</p>",
+    "<p>Seven families classify render-target formats themselves; the remaining five accept only Color for render targets.</p>",
+    "<p>781 test files named *_test.cpp sit under examples/; 879 .cpp files sit under examples/ directories.</p>",
+    "<p>The compiled-effect path is optioned on eight families (ten identities).</p>",
+    "<p>The unbound-texture test skips on the other six identities.</p>",
+    "<p>SurfaceFormat::Color is the only texture format on four renderers.</p>",
+    "<p>Two identities, HEADLESS and STUB, are Diagnostic; of the six Native identities, two are EasyGL profiles.</p>",
+    "<p>The Direct3D pair, DIRECTX9 and DIRECTX11, needs Windows.</p>",
+    "<td>A renderer name outside the 14, through <code>CNA_GRAPHICS_RENDERER</code> or a member of <code>CNA_GRAPHICS_RENDERERS</code></td>",
+]
+
 # the ledger gate: a concept whose token survives must still fail when its cited section carries a rejected claim
 STALE_SECTION_HTML = ("<h2 id='device-loss'>Device loss</h2><p><code>createRenderer()</code> hands every family a <code>deviceEventCallback</code>. "
                       "At this snapshot five families call it: DirectX 9, DirectX 11 and DirectX 12 report loss and reset.</p>")
@@ -404,10 +521,17 @@ def main() -> int:
     for fixtures, fn, kind in groups:
         for f in fixtures:
             expect(f"{kind} (second review)", f, fn(f), True)
+    for f in RENDERER_REJECT_THIRD_REVIEW:
+        expect("retired-renderer (third review)", f, renderer_problems(f), True)
+    for f in METRIC_REJECT_THIRD_REVIEW:
+        expect("metric (third review)", f, metric_problems(f), True)
+    for f in METRIC_ALLOW_THIRD_REVIEW:
+        expect("metric (third review)", f, metric_problems(f) + renderer_problems(f), False)
 
     total = (len(RENDERER_REJECT) + len(RENDERER_ALLOW) + len(PLATFORM_REJECT) + len(PLATFORM_ALLOW)
              + len(METRIC_REJECT) + len(METRIC_ALLOW) + 5 + len(reviews)
-             + len(RENDERER_REJECT_SECOND_REVIEW) + len(PLATFORM_REJECT_SECOND_REVIEW) + len(METRIC_REJECT_SECOND_REVIEW))
+             + len(RENDERER_REJECT_SECOND_REVIEW) + len(PLATFORM_REJECT_SECOND_REVIEW) + len(METRIC_REJECT_SECOND_REVIEW)
+             + len(RENDERER_REJECT_THIRD_REVIEW) + len(METRIC_REJECT_THIRD_REVIEW) + len(METRIC_ALLOW_THIRD_REVIEW))
     print(f"validator fixtures: {total} run; {failures} failed")
     return 1 if failures else 0
 

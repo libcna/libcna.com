@@ -41,7 +41,8 @@ by what the list is about:
   * flagged when a table cell holds nothing but the retired name in a column headed Family/Renderer/Identity/Backend
     (or, without such a header, in a column whose other cells are current renderers, or in a table whose caption or
     nearest heading is about renderers/families and not about drivers or APIs);
-  * flagged when the name is the subject of a role predicate ("DirectX 12 is one of the renderer families"), when the
+  * flagged when the name is the subject of a role predicate ("DirectX 12 is one of the renderer families", "... belongs to
+    the renderer family set", "... counts among CNA's renderer families", "... still ships as a CNA renderer"), when the
     previous sentence of the block sets the renderer context and this sentence starts with the list or refers back to it
     ("CNA has twelve renderer families. Direct3D 11 and Direct3D 12 are among them."), and when the block is nothing but
     a list item / line of names whose introducing heading or line is about renderers ("<h3>Renderer families</h3><ul>
@@ -190,7 +191,9 @@ SDL_OWNED = re.compile(r"\bSDL(?:3|_gpu|_GPU)?\s*['\u2019]s\s+(?:own\s+)?(?:GPU\
 CELL_ROLE_HEADER = re.compile(r"\b(?:famil(?:y|ies)|renderers?|identit(?:y|ies)|backends?)\b", re.I)
 CELL_NON_RENDERER_HEADER = re.compile(r"\b(?:drivers?|API|devices?|librar(?:y|ies)|hosts?|platforms?|SDKs?)\b", re.I)
 # "Direct3D 12 is one of the renderer families", "... are CNA's renderers": the list is the subject of a role predicate
-ROLE_PREDICATE = re.compile(r"^\s*(?:is|are|was|remains?|counts?\s+as|serves?\s+as|stays?)\s+(?:still\s+|also\s+)?(?:(?:one|another|each)\s+of\s+)?"
+# "... belongs to the renderer family set", "... is part of CNA's renderers", "... is among the renderer identities"
+ROLE_PREDICATE = re.compile(r"^\s*(?:still\s+|also\s+)?(?:is|are|was|remains?|ships?\s+as|appears?\s+as|counts?\s+(?:as|among)|serves?\s+as|stays?|belongs?\s+to|(?:is|are)\s+(?:(?:a\s+)?part|members?|a\s+member)\s+of|"
+                            r"(?:is|are)\s+(?:listed\s+|counted\s+)?(?:in|among))\s+(?:still\s+|also\s+)?(?:(?:one|another|each)\s+of\s+)?"
                             r"(?:the\s+|a\s+|an\s+|CNA['\u2019]s\s+|its\s+)?(?:[\w-]+\s+){0,2}?(?:renderers?|backends?|identit(?:y|ies)|famil(?:y|ies)|implementations?)\b", re.I)
 # the sentence after a renderer sentence, referring back to it ("They include ...", "Among them ...") or starting with the list
 ANAPHORA = re.compile(r"^\s*(?:(?:they|these|those)\s+(?:include|are|cover)|among\s+them|the\s+(?:list|set)\s+(?:includes|is)|this\s+includes)?\s*$", re.I)
