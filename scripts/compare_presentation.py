@@ -11,7 +11,7 @@ Exit status: 0 = no unexplained loss; 1 = unexplained loss(es).
 
 Usage:
     compare_presentation.py                       # whole site
-    compare_presentation.py --page demos.html     # one page (use after each protected-page edit)
+    compare_presentation.py --page play.html     # one page (use after each protected-page edit)
     compare_presentation.py --report audit/phase1-presentation-comparison.md
 
 Phase 2 uses the same engine against the PHASE1_BASE inventory with a stricter size guard:
@@ -64,6 +64,8 @@ BLOCK_KEEP = 0.5
 PAGE_KEEP = 0.6
 ROLE_RANK = {"primary": 3, "secondary": 2, "outline": 1, "plain": 0}
 FUZZY = 0.82
+PAGE_RENAMES = {"demos.html": "play.html"}
+TEXT_RENAMES = {"CNA Demos": "Play CNA Games"}
 
 
 def norm(text: str) -> str:
@@ -105,6 +107,7 @@ PIN_MAP: dict[str, str] = {}
 def repin(href: str) -> str:
     for old, new in PIN_MAP.items():
         href = href.replace(old, new)
+    href = href.replace("demos.html", "play.html")
     return href
 
 
@@ -119,9 +122,10 @@ def compare_page(rel: str, base: dict, cur: dict | None) -> tuple[list[Loss], li
     cur_heads = [h["text"] for h in cur["headings"]]
     cur_ids = {h["id"] for h in cur["headings"] if h["id"]} | set(cur["section_ids"])
     for h in base["headings"]:
+        expected_heading = TEXT_RENAMES.get(h["text"], h["text"])
         if h["level"] > 3 and rel.startswith("docs/tutorials/"):
             continue  # deep tutorial sub-headings are content, covered by word-count check
-        if best(h["text"], cur_heads) >= FUZZY:
+        if best(expected_heading, cur_heads) >= FUZZY:
             continue
         if h["id"] and h["id"] in cur_ids:
             notes.append(f"{rel}: heading `{h['text']}` retitled (id #{h['id']} kept)")
@@ -211,10 +215,11 @@ def compare_page(rel: str, base: dict, cur: dict | None) -> tuple[list[Loss], li
     for b in base["blocks"]:
         if not b["heading"]:
             continue
-        cand = [x for x in cur_blocks if similar(x["heading"], b["heading"]) >= FUZZY]
+        expected_heading = TEXT_RENAMES.get(b["heading"], b["heading"])
+        cand = [x for x in cur_blocks if similar(x["heading"], expected_heading) >= FUZZY]
         if not cand:
             # block may have been split/merged: fall back to a heading anywhere
-            if best(b["heading"], cur_heads) < FUZZY:
+            if best(expected_heading, cur_heads) < FUZZY:
                 losses.append(Loss(rel, "block", b["heading"], f"{b['words']} words"))
             continue
         w = max(x["words"] for x in cand)
@@ -271,10 +276,11 @@ def main() -> int:
     for rel, page in sorted(base.items()):
         if args.page and rel not in args.page:
             continue
-        path = ROOT / rel
+        current_rel = PAGE_RENAMES.get(rel, rel)
+        path = ROOT / current_rel
         # a tombstone keeps only the URL of a retired page, none of its presentation: compare it as the absent page,
         # so the page's recorded "removed" disposition still governs
-        cur = extract_page(path.read_text(encoding="utf-8"), rel) if path.exists() and rel not in TOMBSTONES else None
+        cur = extract_page(path.read_text(encoding="utf-8"), current_rel) if path.exists() and rel not in TOMBSTONES else None
         losses, notes = compare_page(rel, page, cur)
         all_losses += losses
         all_notes += notes

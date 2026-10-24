@@ -153,7 +153,7 @@ def nav_block(root_prefix: str, active: str) -> str:
     items = [("index.html", "Home"), ("about.html", "About"), ("features.html", "Features"),
              ("architecture.html", "Architecture"), ("documentation.html", "Documentation"),
              ("development/index.html", "Development"), ("deep-dives/index.html", "Deep Dives"),
-             ("tutorials.html", "Tutorials"), ("demos.html", "Demos"), ("showcase.html", "Showcase"),
+             ("tutorials.html", "Tutorials"), ("play.html", "Play"), ("showcase.html", "Showcase"),
              ("videos.html", "Videos"), ("roadmap.html", "Roadmap"), ("contact.html", "Contact"),
              ("network.html", "Network"), ("search.html", "Search")]
     links = "\n".join(
@@ -190,7 +190,7 @@ def footer_block(root_prefix: str, docs_prefix: str, tutorial: bool) -> str:
     <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>{FOOTER_SNAPSHOT}</p></div>
     <div class="footer-col"><h4>Project</h4><ul><li><a href="{root_prefix}about.html">About</a></li><li><a href="{root_prefix}features.html">Features</a></li><li><a href="{root_prefix}architecture.html">Architecture</a></li><li><a href="{root_prefix}roadmap.html">Roadmap</a></li></ul></div>
     <div class="footer-col"><h4>Docs</h4><ul><li><a href="{docs_prefix}getting-started.html">Getting Started</a></li><li><a href="{docs_prefix}building.html">Building</a></li><li><a href="{docs_prefix}platforms.html">Platforms</a></li><li><a href="{docs_prefix}rendering-backends.html">Renderers</a></li><li><a href="{docs_prefix}faq.html">FAQ</a></li><li><a href="{root_prefix}deep-dives/index.html">Deep Dives</a></li><li><a href="{root_prefix}known-issues/index.html">Known Issues</a></li></ul></div>
-    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="{root_prefix}demos.html">Demos</a></li><li><a href="{root_prefix}videos.html">Videos</a></li><li><a href="{root_prefix}contact.html">Contact</a></li></ul></div>
+    <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="{root_prefix}play.html">Play</a></li><li><a href="{root_prefix}videos.html">Videos</a></li><li><a href="{root_prefix}contact.html">Contact</a></li></ul></div>
   </div>
   <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/{SNAPSHOT_SHA}/LICENSE" target="_blank" rel="noopener">License</a><a href="{root_prefix}contact.html">Contact</a></div></div>
 </div></footer>

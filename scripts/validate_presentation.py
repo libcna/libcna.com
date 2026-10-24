@@ -18,6 +18,7 @@ from inventory_presentation import ROOT, extract_page  # noqa: E402
 CNA_TARGET = "c1c316b9c7a846ce8002809c151fcd1af14942c9"
 SPEEDY_BLUPI_URL = "https://speedyblupi.com/SpeedyBlupi2013/"
 BASELINE = ROOT / "audit" / "data" / "phase1-baseline-inventory.json"
+PAGE_RENAMES = {"demos.html": "play.html"}
 
 
 def page(rel: str) -> dict:
@@ -60,27 +61,27 @@ def main() -> int:
                       f"{block['cards']} cards, {block['images']} images)")
 
     # --- demos: Speedy Blupi ------------------------------------------------------------
-    demos = page("demos.html")
+    demos = page("play.html")
     sb = next((b for b in demos["blocks"] if "speedy blupi" in b["heading"].lower()), None)
     if sb is None:
-        errors.append("demos.html: Speedy Blupi section missing")
+        errors.append("play.html: Speedy Blupi section missing")
     else:
         if sb["words"] < 120:
-            errors.append(f"demos.html Speedy Blupi section too thin ({sb['words']} words < 120)")
+            errors.append(f"play.html Speedy Blupi section too thin ({sb['words']} words < 120)")
         if sb["cards"] < 3:
-            errors.append(f"demos.html Speedy Blupi section has {sb['cards']} items (< 3)")
-        ok.append(f"demos.html Speedy Blupi section present ({sb['words']} words, {sb['cards']} items)")
+            errors.append(f"play.html Speedy Blupi section has {sb['cards']} items (< 3)")
+        ok.append(f"play.html Speedy Blupi section present ({sb['words']} words, {sb['cards']} items)")
     play = [c for c in demos["ctas"] if c["href"] == SPEEDY_BLUPI_URL]
     if not play:
-        errors.append(f"demos.html: no CTA to {SPEEDY_BLUPI_URL}")
+        errors.append(f"play.html: no CTA to {SPEEDY_BLUPI_URL}")
     else:
         c = play[0]
         if c["role"] != "primary":
-            errors.append(f"demos.html Speedy Blupi CTA is '{c['role']}', must stay primary (btn-primary)")
+            errors.append(f"play.html Speedy Blupi CTA is '{c['role']}', must stay primary (btn-primary)")
         if not re.search(r"play in browser", c["label"], re.I):
-            errors.append(f"demos.html Speedy Blupi CTA label is '{c['label']}', must read 'Play in Browser'")
+            errors.append(f"play.html Speedy Blupi CTA label is '{c['label']}', must read 'Play in Browser'")
         if c["role"] == "primary" and re.search(r"play in browser", c["label"], re.I):
-            ok.append("demos.html Speedy Blupi 'Play in Browser' is a primary CTA -> " + c["href"])
+            ok.append("play.html Speedy Blupi 'Play in Browser' is a primary CTA -> " + c["href"])
 
     # --- baseline primary CTAs: no silent downgrade or loss ---------------------------
     if BASELINE.exists():
@@ -90,7 +91,8 @@ def main() -> int:
         problems = 0
         total = 0
         for rel, p in base.items():
-            cur = page(rel) if (ROOT / rel).exists() else None
+            current_rel = PAGE_RENAMES.get(rel, rel)
+            cur = page(current_rel) if (ROOT / current_rel).exists() else None
             for c in p["ctas"]:
                 if c["role"] != "primary":
                     continue

@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 PROTECTED = [
-    "index.html", "demos.html", "showcase.html", "videos.html", "features.html", "about.html",
+    "index.html", "play.html", "showcase.html", "videos.html", "features.html", "about.html",
     "documentation.html", "tutorials.html", "architecture.html", "roadmap.html", "network.html",
     "contact.html",
 ]

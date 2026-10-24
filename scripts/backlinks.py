@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import deep_manifest as DM  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
-PROTECTED = {"index.html", "demos.html", "showcase.html", "videos.html", "features.html", "about.html", "documentation.html", "tutorials.html",
+PROTECTED = {"index.html", "play.html", "showcase.html", "videos.html", "features.html", "about.html", "documentation.html", "tutorials.html",
              "architecture.html", "roadmap.html", "network.html", "contact.html"}
 TAIL_RX = [re.compile(r'<section class="dev-layers"'), re.compile(r"<!--dev:pager-->"), re.compile(r"<!--deep:pager-->"),
            re.compile(r'<nav class="docs-pagination"'), re.compile(r"</article>")]
