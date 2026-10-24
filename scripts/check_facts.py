@@ -744,7 +744,7 @@ def binding_policy(pages: list[str]) -> int:
     for lang in LB["archived"]:
         if not re.search(rf"\b{re.escape(lang)}\b", archived):
             print(f"FAIL binding policy: {page}#archived-bindings does not name {lang}"); bad += 1
-    for needle in ("Archived", "not maintained", "CNA Lab", "community interest"):
+    for needle in ("Archived", "not maintained", "CNA Cemetery", "community interest"):
         if needle not in archived:
             print(f"FAIL binding policy: {page}#archived-bindings lacks '{needle}'"); bad += 1
     lead = "actively maintains " + ", ".join(LB["maintained"][:-1]) + " and " + LB["maintained"][-1] + " bindings"
