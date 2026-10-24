@@ -34,7 +34,7 @@ Classes: **SRC** source fact · **BUILD** build fact · **RUN** runtime-qualifie
 | cna-samples | develop | `10e3c35b5fa6fcdf6680a79ffd29cee4adbdb798` | 2026-10-04T19:32:32+02:00 | dirty: `M tools/run_renderer_matrix.py`, `?? matrix-results/` (not used; facts from `git show HEAD:`) |
 | cna | samples (working tree NOT used) | read at T = `b0e97bb1bb876f9b3edd6f4ff1ef3067908ae8ac` (2026-10-04T13:20:39+02:00, "docs: point release links at libcna") | — | working tree dirty (2 M, 1 ??) — ignored |
 | samples.libcna.com | main (= origin/main) | `b3939de558fdb0a41f0aaa6599b7051b2680a6f7` | 2026-10-03T21:06:05+02:00 | clean |
-| demos.libcna.com | — | `fa6d0bcf9d8890778851786811f7c350bcc9820d` | 2026-09-30 | — |
+| play.libcna.com | — | `fa6d0bcf9d8890778851786811f7c350bcc9820d` | 2026-09-30 | — |
 
 Command: `for r in cna-cs-samples cna-cs cna-samples cna; do git -C $r rev-parse --abbrev-ref HEAD; git -C $r log -1 --format='%H %cI %s'; git -C $r status --porcelain; done`.
 
@@ -178,7 +178,7 @@ Evidence-safe statement: **83 of the 91 rows the C++ campaign marks complete als
 
 ## 7. Public hosting
 
-- **No C# / CNA.NET build is publicly hosted.** samples.libcna.com@b3939de tracks 90 `*_cna_samples.wasm` (C++ Emscripten ports) and 0 .NET runtime files (`git ls-files | grep -ciE '_framework|dotnet\.|\.dll$|blazor'` → 0); demos.libcna.com@fa6d0bc likewise 0. CSS browser bundles exist only locally under gitignored `build-consumer/browser/` (CSS .gitignore:55). CCS CSX-154 guide states no official binaries or packages exist yet (CCS CAMPAIGN.md:181).
+- **No C# / CNA.NET build is publicly hosted.** samples.libcna.com@b3939de tracks 90 `*_cna_samples.wasm` (C++ Emscripten ports) and 0 .NET runtime files (`git ls-files | grep -ciE '_framework|dotnet\.|\.dll$|blazor'` → 0); play.libcna.com@fa6d0bc likewise 0. CSS browser bundles exist only locally under gitignored `build-consumer/browser/` (CSS .gitignore:55). CCS CSX-154 guide states no official binaries or packages exist yet (CCS CAMPAIGN.md:181).
 - The C# route is only **described** publicly: samples.libcna.com README.md:66-73 and index.html:37-40 ("runs nearly all of the same samples from their original, unchanged C# source on the Web, …"), RacingGame.html:27. Note "the Web" there means headless-Chromium evidence only.
 - Source is public on GitHub (`libcna/cna-cs-samples`, `develop` = origin/develop at `1e6d763`).
 

@@ -271,18 +271,18 @@ Generated mechanically by `scripts/inventory_presentation.py` + `scripts/invento
 |---|---|---|---|---|---|
 | Browse and play CNA Samples → | `https://samples.libcna.com/` | primary | _blank | external-root | demo-platform: 📚 cna-samples (GitHub) |
 | View on GitHub | `https://github.com/libcna/cna-samples` | secondary | _blank | github-repo | demo-platform: 📚 cna-samples (GitHub) |
-| Play in Browser | `https://demos.libcna.com/cna_demo_house_3d/cna_house3d_demo.html` | primary | _blank | external-deep | demo-item: House 3D Demo |
-| Play in Browser | `https://demos.libcna.com/cna_demo_2d/cna_demo_2d.html` | primary | _blank | external-deep | demo-item: cna-demo (2D Sprite Demo) |
-| Play in Browser | `https://demos.libcna.com/cna-craft/CnaCraft.html` | primary | _blank | external-deep | demo-item: CNA Craft |
-| Play in Browser | `https://demos.libcna.com/cna-examples/cna_examples.html` | primary | _blank | external-deep | demo-item: CNA Examples |
-| Play in Browser | `https://demos.libcna.com/mesh-craft/MeshCraft.html` | primary | _blank | external-deep | demo-item: Mesh Craft |
-| Play in Browser | `https://demos.libcna.com/black-pine/black-pine.html` | primary | _blank | external-deep | demo-item: Black Pine |
-| Play in Browser | `https://demos.libcna.com/iron-gang/play.html` | primary | _blank | external-deep | demo-item: Iron Gang |
-| Play in Browser | `https://demos.libcna.com/lines-cna/winlinez_cna.html` | primary | _blank | external-deep | demo-item: Lines CNA |
-| Play in Browser | `https://demos.libcna.com/mario-cna/copper-boots.html` | primary | _blank | external-deep | demo-item: Copper Boots |
-| Play in Browser | `https://demos.libcna.com/people-cna/People.html` | primary | _blank | external-deep | demo-item: People |
-| Play in Browser | `https://demos.libcna.com/tamagotchi-cna/TamagotchiCna.html` | primary | _blank | external-deep | demo-item: Tamagotchi CNA |
-| Play in Browser | `https://demos.libcna.com/wolf-cna/wolf-cna.html` | primary | _blank | external-deep | demo-item: Wolf CNA |
+| Play in Browser | `https://play.libcna.com/cna_demo_house_3d/cna_house3d_demo.html` | primary | _blank | external-deep | demo-item: House 3D Demo |
+| Play in Browser | `https://play.libcna.com/cna_demo_2d/cna_demo_2d.html` | primary | _blank | external-deep | demo-item: cna-demo (2D Sprite Demo) |
+| Play in Browser | `https://play.libcna.com/cna-craft/CnaCraft.html` | primary | _blank | external-deep | demo-item: CNA Craft |
+| Play in Browser | `https://play.libcna.com/cna-examples/cna_examples.html` | primary | _blank | external-deep | demo-item: CNA Examples |
+| Play in Browser | `https://play.libcna.com/mesh-craft/MeshCraft.html` | primary | _blank | external-deep | demo-item: Mesh Craft |
+| Play in Browser | `https://play.libcna.com/black-pine/black-pine.html` | primary | _blank | external-deep | demo-item: Black Pine |
+| Play in Browser | `https://play.libcna.com/iron-gang/play.html` | primary | _blank | external-deep | demo-item: Iron Gang |
+| Play in Browser | `https://play.libcna.com/lines-cna/winlinez_cna.html` | primary | _blank | external-deep | demo-item: Lines CNA |
+| Play in Browser | `https://play.libcna.com/mario-cna/copper-boots.html` | primary | _blank | external-deep | demo-item: Copper Boots |
+| Play in Browser | `https://play.libcna.com/people-cna/People.html` | primary | _blank | external-deep | demo-item: People |
+| Play in Browser | `https://play.libcna.com/tamagotchi-cna/TamagotchiCna.html` | primary | _blank | external-deep | demo-item: Tamagotchi CNA |
+| Play in Browser | `https://play.libcna.com/wolf-cna/wolf-cna.html` | primary | _blank | external-deep | demo-item: Wolf CNA |
 | Build Instructions | `docs/building.html` | secondary |  | internal | demo-item: House 3D Demo - Linux |
 | Build Instructions | `docs/building.html` | secondary |  | internal | demo-item: 2D Sprite Demo - Linux |
 | Build Instructions | `docs/building.html` | secondary |  | internal | demo-item: Input Demo - Linux |
@@ -336,7 +336,7 @@ Generated mechanically by `scripts/inventory_presentation.py` + `scripts/invento
 
 | Label | href | Kind |
 |---|---|---|
-| demos.libcna.com | `https://demos.libcna.com/` | external-root |
+| play.libcna.com | `https://play.libcna.com/` | external-root |
 | samples.libcna.com | `https://samples.libcna.com/` | external-root |
 
 ## `showcase.html`
@@ -382,8 +382,8 @@ Generated mechanically by `scripts/inventory_presentation.py` + `scripts/invento
 
 | Label | href | Role | target | Kind | Context |
 |---|---|---|---|---|---|
-| ▶ Play in Browser | `https://demos.libcna.com/cna_demo_house_3d/cna_house3d_demo.html` | primary | _blank | external-deep | card: House 3D Demo |
-| ▶ Play in Browser | `https://demos.libcna.com/cna_demo_2d/cna_demo_2d.html` | primary | _blank | external-deep | card: CNA 2D Demo |
+| ▶ Play in Browser | `https://play.libcna.com/cna_demo_house_3d/cna_house3d_demo.html` | primary | _blank | external-deep | card: House 3D Demo |
+| ▶ Play in Browser | `https://play.libcna.com/cna_demo_2d/cna_demo_2d.html` | primary | _blank | external-deep | card: CNA 2D Demo |
 
 ### Cards / callouts
 
@@ -925,7 +925,7 @@ Generated mechanically by `scripts/inventory_presentation.py` + `scripts/invento
 | bible.libcna.com ↗ | `https://bible.libcna.com/` | secondary | _blank | external-root | card: CNA Bible |
 | book.libcna.com ↗ | `https://book.libcna.com/` | secondary | _blank | external-root | card: CNA Book |
 | blog.libcna.com ↗ | `https://blog.libcna.com/` | secondary | _blank | external-root | card: Blog |
-| demos.libcna.com ↗ | `https://demos.libcna.com/` | primary | _blank | external-root | card: Demos |
+| play.libcna.com ↗ | `https://play.libcna.com/` | primary | _blank | external-root | card: Demos |
 | samples.libcna.com ↗ | `https://samples.libcna.com/` | primary | _blank | external-root | card: Samples |
 | easygl.libcna.com ↗ | `https://easygl.libcna.com/` | secondary | _blank | external-root | card: EasyGL |
 | meshcraft.libcna.com ↗ | `https://meshcraft.libcna.com/` | secondary | _blank | external-root | card: MeshCraft |
@@ -938,7 +938,7 @@ Generated mechanically by `scripts/inventory_presentation.py` + `scripts/invento
 | card | CNA Bible | 12 | bible.libcna.com ↗ |
 | card | CNA Book | 12 | book.libcna.com ↗ |
 | card | Blog | 11 | blog.libcna.com ↗ |
-| card | Demos | 10 | demos.libcna.com ↗ |
+| card | Demos | 10 | play.libcna.com ↗ |
 | card | Samples | 12 | samples.libcna.com ↗ |
 | card | EasyGL | 7 | easygl.libcna.com ↗ |
 | card | MeshCraft | 7 | meshcraft.libcna.com ↗ |
