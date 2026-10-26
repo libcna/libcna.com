@@ -1,5 +1,24 @@
 # libcna.com — CNA accuracy audit and website refresh
 
+## Phase 6 (2026-10-25): pin move to CNA c6dec91f — after the 0.1.0 release, four more renderers retired, link-size work
+
+**Pinned by `cnahead`:** `c6dec91fbf3ef5440f60e5329e4a4758b2d80c22` (branch `next`, 2026-10-24; 834 commits after `c1c316b9`, 812 after the
+`v0.1.0` release of 2026-10-10, 4,521 after `v0.1.0-alpha.1`; version string `0.1.0`).
+**Ledger:** `audit/c6dec91f-phase6-delta.md` · **Fact sheets:** `audit/data/facts/c6dec91f/` (00 editorial guide, R1 renderers/platforms/numbers,
+R2 deep dives, R3 tutorials, R4 development, R5 Known Issues, R6 framework math, R7/R9/R10 sweeps, R8 Bible ledger) · **Canonical numbers:** `data/current-facts.json`
+· **Preservation:** `audit/data/phase6-baseline-inventory.json` (from `bca024b`) and `audit/data/phase6-dispositions.json`, checked by
+`compare_presentation.py --phase6`.
+The site now frames the snapshot as a development snapshot after the 0.1.0 release (footer, releases page, hubs). CNA retired VULKAN, DIRECTX11,
+METAL and SDL_RENDERER (10 identities in 8 families; `SDL_GPU` is the Windows/macOS/iOS default, qualified on Linux and under Wine only) and its
+modern GPU layer (compute, storage, texture arrays, indirect draws, GPU timers); six pages became tombstones and every inbound link moved. Added:
+`docs/link-size.html` (per-module link closure, size options, installed C++ SDK, per-type content readers), C ABI 0.47–0.50 with generated C
+routes, CNA.NET's 0.47.0 pairing (it refuses this snapshot's 0.50.0), PBR on every pixel-producing renderer, the content-pipeline and CNB
+changes. Validators: `check_facts.py` (renamed maturity/category headers, format-classifier families from overriding code, `c1c316b9` stale
+needles), `check_retired_renderers.py` (Vulkan/Metal as weak words with owned-driver lists legal, CMake option forms), `test_validators.py`
+rebased with Phase 6 fixtures.
+Known Issues: 248 published (64 retired, CNA-VGAP-058 retired later, 3 added — CNA-VGAP-061, CNA-BUG-278, CNA-BUG-279 — and CNA-GAP-010 reclassified as CNA-BUG-280). Older presentation
+baselines (phases 1–5) received dispositions for every element this update removed.
+
 ## Phase 5 (2026-10-09): pin move to CNA c1c316b9 — renderer/platform cleanup, Apple M4, Gamer Services server
 
 **Pinned by `cnahead`:** `c1c316b9c7a846ce8002809c151fcd1af14942c9` (branch `apple/m4-stabilization`, 2026-10-09; 354 commits after `b0e97bb1`, 3,687 after `v0.1.0-alpha.1`).

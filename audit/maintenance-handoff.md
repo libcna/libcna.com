@@ -28,14 +28,26 @@ Internal record (not published; `audit/` is excluded by `_config.yml`). The main
   `apply_expansions.py fold` writes edited regions back into their sources (CNA source links pinned to `cnahead` are turned
   back into `{{src:}}` / `{{tree:}}` tokens; the round trip is verified). After a deliberate page edit inside a
   `p3:begin`/`p3:end` region, run `fold`, then `check`.
+  *Phase 6 (2026-10-25):* the pin move to `c6dec91f` edited 29 regions in place and folded them back (`fold`, then
+  `check`: expansions ok).
 - *Phase 5:* the footer and doc-meta snapshot sentence is no longer hard-coded: `scripts/site_nav.py` derives it from
   `cnahead` and `data/current-facts.json`, so the next pin move updates it through `site_nav.py sync` (and the Known
   Issues/Deep Dives hub generators that import it).
 - *Phase 5:* two retirement guards now run in `validate_all.sh`: `check_retired_renderers.py` (identity spellings plus the
   prose aliases of retired identities) and `check_retired_platforms.py` (the retired `CNA_PLATFORM` backends, derived from
   `cmake/PlatformSelection.cmake`; SDL's `x11`/`wayland`/`windows` drivers and native handles stay legal).
-- Other tools still default to `/rv/tmp/libcna-v2/...` (`check_cpp_blocks.py`, `check_dev_claims.py`, `dev_pack.py`; all but
-  `check_dev_claims.py` honour `CNA_TARGET_TREE`). They are authoring-time helpers, outside `validate_all.sh`.
+- ~~Other tools still default to `/rv/tmp/libcna-v2/...`~~ *Phase 6:* `check_cpp_blocks.py`, `check_dev_claims.py` and
+  `dev_pack.py` now default to `~/.cache/libcna-com/cna-target` (the tree `extract_cna_trees.sh` writes; the old default
+  was an extraction of the Phase 1 pin `009d40f5`) and all honour `CNA_TARGET_TREE`. They are authoring-time helpers,
+  outside `validate_all.sh`.
+- *Phase 6:* every presentation comparison (`compare_presentation.py`, phases 1–6) runs in `validate_all.sh`, so an
+  element removed in a later update must be dispositioned in every phase file whose baseline holds it, not only the
+  newest (Phase 6 added 24 / 37 / 162 / 565 / 594 entries to phases 1–5). Likewise `apply_page_fixes.py check` needs a
+  `superseded_by` on each earlier fix whose text an update rewrote.
+- *Phase 6, pre-existing and not fixed:* every page loads `prism-cpp.min.js` and `prism-glsl.min.js` without
+  `prism-c.min.js` (the file exists in `js/prism/`; `scripts/site_nav.py` writes the list), so both throw
+  `TypeError: Cannot set properties of undefined` at load and C++/GLSL blocks are not highlighted. Fix: add
+  `prism-c.min` before `prism-cpp.min` in `site_nav.py`, then `site_nav.py sync`.
 - Low-contrast warnings on inherited Phase-1/2 elements remain known presentation debt; deliberately not touched.
 
 ## Owner decision pending (do not decide in code or public prose)
