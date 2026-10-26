@@ -28,7 +28,9 @@ def _snapshot_constants():
     facts = _json.loads((_root / "data" / "current-facts.json").read_text(encoding="utf-8"))
     day = _dt.date.fromisoformat(facts["snapshot"]["commit_date"])
     f = {k: v["value"] for k, v in facts["facts"].items()}
-    text = (f"Documentation snapshot for CNA commit {sha[:8]} ({day.day} {day:%B %Y}), a post-alpha.1 development snapshot. "
+    snap = facts["snapshot"]
+    text = (f"Documentation snapshot for CNA commit {sha[:8]} ({day.day} {day:%B %Y}), a development snapshot "
+            f"{snap['commits_since_latest_release']} commits after the {snap['latest_release_tag'].lstrip('v')} release. "
             f"CNA exposes {f['renderer_identities']} renderer identities across {f['implementation_families']} implementation "
             f"families; APIs may change before 1.0.")
     return sha, sha[:8], text
@@ -39,12 +41,13 @@ SNAPSHOT_SHA, SNAPSHOT_SHORT, FOOTER_SNAPSHOT = _snapshot_constants()
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 SITE = "https://libcna.com"
-TODAY = "2026-10-04"
+TODAY = "2026-10-25"
 
 # (file, sidebar label) in display order
 SIDEBAR: list[tuple[str, str]] = [
     ("getting-started.html", "Getting Started"),
     ("building.html", "Building"),
+    ("link-size.html", "Link Boundaries &amp; Size"),
     ("releases.html", "Releases &amp; Versioning"),
     ("platforms.html", "Platforms"),
     ("native-platforms.html", "Windows, X11 and Wayland"),

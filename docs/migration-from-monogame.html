@@ -22,7 +22,7 @@
   "description": "Porting a C# XNA 4.0 or MonoGame game to CNA (C++23): namespace mapping, the C++ substitutions, Game, memory and content migration (including the new build-time pipeline), audio, known gaps and side-by-side code that compiles against this snapshot.",
   "url": "https://libcna.com/docs/migration-from-monogame.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-10-09",
+  "dateModified": "2026-10-25",
   "author": {
     "@type": "Organization",
     "name": "libcna",
@@ -78,6 +78,7 @@
             <ul class="docs-nav-list">
         <li><a href="getting-started.html" class="docs-nav-link">Getting Started</a></li>
         <li><a href="building.html" class="docs-nav-link">Building</a></li>
+        <li><a href="link-size.html" class="docs-nav-link">Link Boundaries &amp; Size</a></li>
         <li><a href="releases.html" class="docs-nav-link">Releases &amp; Versioning</a></li>
         <li><a href="platforms.html" class="docs-nav-link">Platforms</a></li>
         <li><a href="native-platforms.html" class="docs-nav-link">Windows, X11 and Wayland</a></li>
@@ -147,7 +148,7 @@
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Snapshot status:</strong> the XNA-shaped namespaces and core types make structural translation largely mechanical, and every documented type and member of the XNA 4.0 runtime is represented (331/331 types, 3,627/3,627 members &mdash; representation, not behaviour; see <a href="xna-compatibility.html">XNA Compatibility</a>). CNA reads built-in XNB types, lets games register explicit C++ type readers, and now has a build-time content pipeline (<code>cna-content</code>) that can write <code>.xnb</code> and <code>.cnb</code>. Already-compiled XNA/FNA Effect Framework bytecode loads on FNA3D and on builds that opt in to a compiled-effect option (11 of the 14 renderer identities); HLSL source and MonoGame MGFX still need a separate porting strategy.</p>
+        <p><strong>Snapshot status:</strong> the XNA-shaped namespaces and core types make structural translation largely mechanical, and every documented type and member of the XNA 4.0 runtime is represented (331/331 types, 3,627/3,627 members &mdash; representation, not behaviour; see <a href="xna-compatibility.html">XNA Compatibility</a>). CNA reads built-in XNB types, lets games register explicit C++ type readers, and now has a build-time content pipeline (<code>cna-content</code>) that can write <code>.xnb</code> and <code>.cnb</code>. Already-compiled XNA/FNA Effect Framework bytecode loads on FNA3D and on builds that opt in to a compiled-effect option (8 of the 10 renderer identities); HLSL source and MonoGame MGFX still need a separate porting strategy.</p>
       </div>
 
       <div class="callout callout--tip">
@@ -427,9 +428,9 @@ protected:
       <p>XNA relies on the .NET garbage collector: objects are allocated with <code>new</code> and reclaimed automatically. C++ has no garbage collector; you manage object lifetimes explicitly. CNA follows standard modern C++ ownership conventions:</p>
       <ul>
         <li><strong><code>std::unique_ptr&lt;T&gt;</code></strong> — single-owner resource. Use this for game components, renderers, and anything your <code>Game</code> class owns exclusively. The resource is released automatically when the owning pointer goes out of scope or is reset.</li>
-        <li><strong><code>std::shared_ptr&lt;T&gt;</code></strong> — shared ownership, for objects that several owners really do share. Content assets are <em>not</em> the usual case: <code>ContentManager::Load&lt;T&gt;</code> returns each asset (<code>Texture2D</code>, <code>SoundEffect</code>, <code>SpriteFont</code>, <code>Model</code>) <strong>by value</strong>, and the GPU state behind a texture is shared-owned, so a copy you hold stays valid even after the manager unloads. Keep assets as value or <code>std::optional</code> members; types without a default constructor (<code>SpriteFont</code>, <code>Video</code>) need <code>std::optional</code> or a <code>unique_ptr</code>.</li>
+        <li><strong><code>std::shared_ptr&lt;T&gt;</code></strong> — shared ownership, for objects that several owners really do share. Content assets are <em>not</em> the usual case: <code>ContentManager::Load&lt;T&gt;</code> returns each asset (<code>Texture2D</code>, <code>SoundEffect</code>, <code>SpriteFont</code>, <code>Model</code>) <strong>by value</strong>, and the GPU state behind a texture is shared-owned: a copy you hold shares it with the manager, and <code>Unload()</code> disposes it for every copy, as XNA does. Keep assets as value or <code>std::optional</code> members; types without a default constructor (<code>SpriteFont</code>, <code>Video</code>) need <code>std::optional</code> or a <code>unique_ptr</code>.</li>
         <li><strong>Stack allocation</strong> — use for temporaries such as <code>Vector2</code>, <code>Color</code>, <code>Rectangle</code>, and <code>GameTime</code>. These are small value types and incur no heap allocation.</li>
-        <li><strong><code>ContentManager::Unload()</code></strong> — releases all assets currently held by the content manager's cache. Call this when transitioning between scenes to free GPU and CPU memory. Copies you already hold remain valid.</li>
+        <li><strong><code>ContentManager::Unload()</code></strong> — disposes, in read order, every disposable object the content readers created for this manager (textures, effects, model buffers, &hellip;), as XNA does, and clears its cache. Call this when transitioning between scenes to free GPU and CPU memory, and drop the copies you hold from that manager with it: they share the disposed resources. Use one <code>ContentManager</code> per scene or level for assets with different lifetimes.</li>
         <li><strong>Game components</strong> — add drawable/updatable components to the <code>getComponentsProperty()</code> collection (identical to XNA; a <code>std::shared_ptr</code> overload keeps the component alive for you), or hold them as <code>std::unique_ptr</code> members on your <code>Game</code> subclass.</li>
       </ul>
       <p>The key rule: if you would write <code>new Foo(...)</code> in C#, write <code>std::make_unique&lt;Foo&gt;(...)</code> in C++ and store the result in a <code>std::unique_ptr&lt;Foo&gt;</code> member. The destructor will run automatically when your game object is destroyed.</p>
@@ -439,7 +440,7 @@ protected:
 
       <div class="callout callout--note">
         <span class="callout-icon">&#9432;</span>
-        <p>A <code>Game</code> registers the built-in XNB readers in its constructor, so a game subclass needs no setup. A stand-alone <code>ContentManager</code> used without a <code>Game</code> (a tool, a test) still starts with an empty registry and must call <code>CNA::Internal::Xnb::RegisterAllBuiltInXnbReaders()</code> itself. See <a href="content-pipeline-xnb.html">XNB Loading</a> for the full reader list and the known gaps.</p>
+        <p>No setup is needed for the built-in XNB readers: since the 0.1.0 release each <code>Load&lt;T&gt;()</code> installs the readers its <code>T</code> needs on first use, in a <code>Game</code> or in a stand-alone <code>ContentManager</code> (a tool, a test); <code>CNA::Internal::Xnb::RegisterAllBuiltInXnbReaders()</code> still installs them all at once. See <a href="content-pipeline-xnb.html">XNB Loading</a> for the full reader list and the known gaps.</p>
       </div>
 
       <div class="table-wrap">
@@ -473,7 +474,7 @@ protected:
             </tr>
             <tr>
               <td>Custom shaders: <code>.fx</code> HLSL compiled by pipeline</td>
-              <td>XNA/FNA D3D9 Effect Framework binaries load on FNA3D or on builds that opt in to a compiled-effect option (11 of the 14 renderer identities; see <a href="effects.html#compiled-effects">Effects</a>). Otherwise migrate to renderer-native <code>ShaderEffect</code>. HLSL <code>.fx</code> source and MGFX are not accepted at run time; <code>cna-content</code> can compile <code>.fx</code> at build time through an external legacy <code>fxc</code> (unverified against a genuine Microsoft <code>fxc</code>).</td>
+              <td>XNA/FNA D3D9 Effect Framework binaries load on FNA3D or on builds that opt in to a compiled-effect option (8 of the 10 renderer identities; see <a href="effects.html#compiled-effects">Effects</a>). Otherwise migrate to renderer-native <code>ShaderEffect</code>. HLSL <code>.fx</code> source and MGFX are not accepted at run time; <code>cna-content</code> can compile <code>.fx</code> at build time through an external legacy <code>fxc</code> (unverified against a genuine Microsoft <code>fxc</code>).</td>
             </tr>
             <tr>
               <td>Custom / user-defined content types</td>
@@ -500,15 +501,15 @@ protected:
         <span class="callout-icon">&#9888;</span>
         <p><strong>Before porting, review these known gaps.</strong> The API surface is largely there, but the items below are absent, partial, or need hardware validation. See <a href="verification.html">Verification &amp; Known Issues</a> for the complete current list.</p>
         <ul>
-          <li><strong>Compiled effects have a renderer boundary.</strong> XNA/FNA D3D9 Effect Framework binaries and XNB Effect payloads load on FNA3D always and on 10 more renderer identities when their default-off <code>CNA_*_COMPILED_EFFECTS</code> build option is enabled (a default configure reports the capability on FNA3D only). HLSL <code>.fx</code> source and MonoGame MGFX are not accepted at run time. Query <code>GraphicsCapability::CompiledEffects</code> before depending on the path.</li>
-          <li><strong>Surface formats are profile- and renderer-dependent</strong> &mdash; the default <code>Reach</code> profile now refuses the wider formats (and multiple render targets, occlusion queries, 32-bit indices, float targets and large cubes) on <em>every</em> renderer unless <code>HiDef</code> is requested with <code>graphics.setGraphicsProfileProperty(GraphicsProfile::HiDef)</code>; on top of that, eight renderer families (ten of the 14 identities) classify the broader public texture formats themselves, each accepting its own subset, while the other four identities (<code>DIRECTX9</code>, <code>SDL_RENDERER</code>, <code>HEADLESS</code> and <code>STUB</code>) have no classifier and accept only <code>SurfaceFormat::Color</code> for a public <code>Texture2D</code>. Verify the active renderer.</li>
+          <li><strong>Compiled effects have a renderer boundary.</strong> XNA/FNA D3D9 Effect Framework binaries and XNB Effect payloads load on FNA3D always and on 7 more renderer identities when their default-off <code>CNA_*_COMPILED_EFFECTS</code> build option is enabled (a default configure reports the capability on FNA3D only). HLSL <code>.fx</code> source and MonoGame MGFX are not accepted at run time. Query <code>GraphicsCapability::CompiledEffects</code> before depending on the path.</li>
+          <li><strong>Surface formats are profile- and renderer-dependent</strong> &mdash; the default <code>Reach</code> profile now refuses the wider formats (and multiple render targets, occlusion queries, 32-bit indices, float targets and large cubes) on <em>every</em> renderer unless <code>HiDef</code> is requested with <code>graphics.setGraphicsProfileProperty(GraphicsProfile::HiDef)</code>; on top of that, six renderer families (eight of the 10 identities) classify the broader public texture formats themselves, each accepting its own subset, while the other two identities (<code>HEADLESS</code> and <code>STUB</code>) have no classifier and accept only <code>SurfaceFormat::Color</code> for a public <code>Texture2D</code>. Verify the active renderer.</li>
           <li><strong>XNB is supported, with explicit registration for custom types</strong> &mdash; built-in video, typed external-reference and renderer-qualified effect readers exist, and a <code>Game</code> registers the built-ins. Custom types can register a reader/creator, but there is no reflection-based catch-all. See <a href="content-pipeline-xnb.html">XNB Loading</a>.</li>
           <li><strong>GamerServices is offline by default, with an optional CNA server</strong> &mdash; all 52 types are present with complete signatures, and unlike FNA's no-op shim CNA backs them with a real <em>local</em> implementation. Achievements and leaderboard entries are genuinely written as JSON under <code>&lt;StorageDevice root&gt;/GamerServices/</code> (the <a href="storage.html#storage-root">storage root</a>, not <code>SDL_GetPrefPath()</code>) and reload in a later process, and <code>LeaderboardWriter</code>/<code>LeaderboardReader</code> do real sorting, ranking and paging. <code>Guide::BeginShowMessageBox</code> and <code>BeginShowKeyboardInput</code> are complete implementations with overlay rendering. The Guide is a CNA-drawn system UI whose standard pages open, and <code>AvatarRenderer::Draw()</code> draws CNA&rsquo;s own avatars. Accounts, social features and <code>PlayerMatch</code>/<code>Ranked</code>/<code>JoinInvited</code> sessions need a self-hosted CNA Gamer Services server, configured outside game code (not Xbox LIVE; no Steam integration); without one those session types throw <code>GamerServicesNotAvailableException</code>.</li>
           <li><strong>Media is build-dependent</strong> &mdash; the catalogue and playback layers are real, while FFmpeg-backed video decodes only where the optional backend was built (<code>CNA_ENABLE_VIDEO</code>; Linux and macOS with FFmpeg found). On Windows, Emscripten, Android and iOS the <code>Video</code> types link but file-backed playback throws <code>NotSupportedException</code>. See <a href="video-playback.html">Video Playback</a>.</li>
           <li><strong>Touch input</strong> &mdash; the <code>TouchPanel</code> API and gesture pipeline are fully wired, with all 10 XNA gesture types genuinely detected. One bug: <code>TouchCollection</code> reports <code>IsReadOnly == true</code> but its mutators mutate rather than throwing.</li>
-          <li><strong>Apple targets are scoped</strong> &mdash; macOS/Metal has automatic CI. iOS is experimental and limited to SDL_RENDERER final-link plus a one-frame simulator smoke path; tvOS is unsupported.</li>
+          <li><strong>Apple targets are scoped</strong> &mdash; macOS has automatic CI (a <code>SOFTWARE</code> build and a gating <code>SDL_GPU</code> smoke set on hosted runners), and its <code>SDL_GPU</code> default has not been re-qualified on Apple hardware. iOS is experimental and limited to <code>SOFTWARE</code> final-link plus a simulator smoke path; tvOS is unsupported.</li>
           <li><strong>Renderer-dependent state</strong> &mdash; <code>FillMode::WireFrame</code> and some other state are not honoured on every renderer, and state objects throw <code>InvalidOperationException</code> if you mutate them after binding (as in XNA). Query <code>SupportsCapability()</code> and the <code>RendererCapabilityProfile</code>, and verify visually. See <a href="graphics-state.html">Graphics State</a>.</li>
-          <li><strong>Web builds</strong> &mdash; no save persistence (the storage root lands in Emscripten's in-memory file system), no LAN discovery, and video throws. A stack-allocated <code>Game</code> is fine.</li>
+          <li><strong>Web builds</strong> &mdash; saves persist in the browser&rsquo;s IndexedDB (<code>IDBFS</code>), except in a threaded build on Emscripten&rsquo;s default WasmFS, where <code>StorageDevice</code> refuses with <code>StorageDeviceNotConnectedException</code> (see <a href="storage.html">Storage</a>); there is no LAN discovery, and video throws. A stack-allocated <code>Game</code> is fine.</li>
         </ul>
       </div>
 
@@ -722,8 +723,8 @@ SpriteFont font =
     getContentProperty()
       .Load&lt;SpriteFont&gt;("fonts/ui");
 
-// Unload all assets (copies you
-// hold stay valid)
+// Unload all assets (disposes them,
+// copies you still hold included)
 getContentProperty().Unload();</code></pre></td>
             </tr>
           </tbody>
@@ -764,7 +765,7 @@ getContentProperty().Unload();</code></pre></td>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA commit c1c316b9 (9 October 2026), a post-alpha.1 development snapshot. CNA exposes 14 renderer identities across 12 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit c6dec91f (24 October 2026), a development snapshot 812 commits after the 0.1.0 release. CNA exposes 10 renderer identities across 8 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -803,7 +804,7 @@ getContentProperty().Unload();</code></pre></td>
     <div class="footer-bottom">
       <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
       <div class="footer-links">
-        <a href="https://github.com/libcna/cna/blob/c1c316b9c7a846ce8002809c151fcd1af14942c9/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="https://github.com/libcna/cna/blob/c6dec91fbf3ef5440f60e5329e4a4758b2d80c22/LICENSE" target="_blank" rel="noopener">License</a>
         <a href="../contact.html">Contact</a>
       </div>
     </div>

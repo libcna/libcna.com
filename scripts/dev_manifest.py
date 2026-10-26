@@ -207,8 +207,6 @@ GROUPS: list[dict] = [
               "graphics/backends.html"),
             P("development/internals/graphics/easygl.html", "EasyGL renderer internals", "EasyGL",
               "graphics/easygl.html"),
-            P("development/internals/graphics/vulkan.html", "Vulkan renderer internals", "Vulkan",
-              "graphics/vulkan.html"),
             P("development/internals/graphics/sdl-gpu.html", "SDL_gpu renderer internals", "SDL_gpu",
               "graphics/sdl-gpu.html"),
             P("development/internals/graphics/software.html", "Software renderer internals", "Software",

@@ -19,7 +19,7 @@ from tombstones import TOMBSTONES  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SITE = "https://libcna.com"
-UPDATED = "2026-10-09"  # Phase 5: snapshot c1c316b9; every page re-audited (footer, facts, metadata) against the new pin
+UPDATED = "2026-10-25"  # Phase 6: snapshot c6dec91f; every page re-audited (footer, facts, metadata) against the new pin
 EXCLUDED = {
     "404.html",
     "search.html",
@@ -34,6 +34,7 @@ MATERIALLY_UPDATED: set[str] = set()  # filled from the file system in main(); s
 # (NEW_TAGS, the previous index or a page's keywords): the index must not advertise what CNA no longer has, and the
 # HTML canvas element or Windows/X11/Wayland as environments are reachable through other tags
 RETIRED_TAG = re.compile(r"(?i)^(?:canvas(?: 2d| renderer)?|d3d ?12|direct ?x ?12|direct3d ?12|webgl ?1|opengl ?es ?2|gles ?2|"
+                         r"vulkan|metal|d3d ?11|direct ?x ?11|direct3d ?11|sdl[_ -]?renderer|"
                          r"win32(?: platform| backend)?|win32platform|win32window|win32eventmapper|x11platform|waylandplatform|"
                          r"native platforms?|native (?:x11|wayland|win32)|sdl-free (?:x11|wayland|win32))$")
 # a carried-over tag naming something that was renamed is rewritten to the current name
@@ -42,7 +43,7 @@ SUPERSEDED_TAG = re.compile(r"(?i)direct2d|free-?direct|free-api|portablegl|html
                             r"cna_software_2d_only")
 
 NEW_TAGS = {
-    "/docs/rendering-backends.html": ["rendering", "renderers", "sdl_renderer", "opengl", "easygl", "vulkan", "webgpu", "metal", "d3d11", "direct3d", "fna3d", "headless", "software"],
+    "/docs/rendering-backends.html": ["rendering", "renderers", "opengl", "easygl", "webgpu", "sdl_gpu", "direct3d", "fna3d", "headless", "software"],
     "/features.html": ["features", "renderers", "cross-platform", "opengl", "sdl3", "webgpu", "direct3d"],
     "/docs/content-pipeline.html": ["content", "pipeline", "cna-content", "xnb", "cnb", "importer", "processor"],
     "/docs/cnb-format.html": ["cnb", "format", "content", "binary", "zstd"],

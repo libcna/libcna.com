@@ -22,7 +22,7 @@
   "description": "CNA storage documentation: StorageDevice, StorageContainer and StorageDeviceNotConnectedException for save-game and user-data file I/O, with the persistence-path chain, path containment, tests and the web boundary.",
   "url": "https://libcna.com/docs/storage.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-10-09",
+  "dateModified": "2026-10-25",
   "author": {
     "@type": "Organization",
     "name": "libcna",
@@ -78,6 +78,7 @@
             <ul class="docs-nav-list">
         <li><a href="getting-started.html" class="docs-nav-link">Getting Started</a></li>
         <li><a href="building.html" class="docs-nav-link">Building</a></li>
+        <li><a href="link-size.html" class="docs-nav-link">Link Boundaries &amp; Size</a></li>
         <li><a href="releases.html" class="docs-nav-link">Releases &amp; Versioning</a></li>
         <li><a href="platforms.html" class="docs-nav-link">Platforms</a></li>
         <li><a href="native-platforms.html" class="docs-nav-link">Windows, X11 and Wayland</a></li>
@@ -133,12 +134,12 @@
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Implementation status: implemented, and represented in full.</strong> All three <code>Storage</code> types are implemented &mdash; real <code>std::filesystem</code> I/O, a hand-written glob matcher for the pattern-based directory queries, and <code>&lt;root&gt;/&lt;displayName&gt;/Player{N}</code> save namespacing. All 35 documented <code>Storage</code> members of the XNA 4.0 runtime are represented in CNA&rsquo;s member census (representation, not behaviour; see <a href="xna-compatibility.html#presence-vs-behaviour">XNA Compatibility</a>). The async <code>Begin*</code>/<code>End*</code> pairs are implemented synchronously, which is the correct behaviour on desktop. New in this snapshot: container names and paths are <a href="#path-containment">contained</a> (absolute paths, <code>..</code> escapes and symlink escapes are rejected), and the storage root is resolved by a documented <a href="#storage-root">chain</a> of environment variables rather than by <code>SDL_GetPrefPath</code> (on Android the first step reaches SDL indirectly, through Sharp Runtime's <code>StoragePaths</code>).</p>
+        <p><strong>Implementation status: implemented, and represented in full.</strong> All three <code>Storage</code> types are implemented &mdash; real <code>std::filesystem</code> I/O, a hand-written glob matcher for the pattern-based directory queries, and <code>&lt;root&gt;/&lt;displayName&gt;/Player{N}</code> save namespacing. All 35 documented <code>Storage</code> members of the XNA 4.0 runtime are represented in CNA&rsquo;s member census (representation, not behaviour; see <a href="xna-compatibility.html#presence-vs-behaviour">XNA Compatibility</a>). The async <code>Begin*</code>/<code>End*</code> pairs are implemented synchronously, which is the correct behaviour on desktop. Errors use XNA&rsquo;s exception types (<code>System::ArgumentException</code>, <code>ArgumentNullException</code>, <code>ArgumentOutOfRangeException</code>, <code>InvalidOperationException</code>, <code>ObjectDisposedException</code>, <code>System::IO::IOException</code> and its subclasses, <code>UnauthorizedAccessException</code>), not C++ standard exceptions. Container names and paths are <a href="#path-containment">contained</a> (absolute paths, <code>..</code> escapes and symlink escapes are rejected), and the storage root is resolved by a documented <a href="#storage-root">chain</a> of environment variables rather than by <code>SDL_GetPrefPath</code> (on Android the first step reaches SDL indirectly, through Sharp Runtime's <code>StoragePaths</code>).</p>
       </div>
 
       <div class="callout callout--warn">
         <span class="callout-icon">&#9888;</span>
-        <p><strong>Storage remains lightly tested.</strong> This snapshot has one Storage test source with <strong>14</strong> GoogleTest-family definitions (alpha.1 had five): ten cover device and container <a href="#path-containment">path containment</a> and <code>DeleteContainer</code>, and four cover the <code>StorageDeviceNotConnectedException</code> serialization round trip. That disproves the old &ldquo;<code>StorageContainer</code> has no tests&rdquo; claim, but there is still <strong>no test that writes bytes through a container and reads them back</strong>, so the read/write semantics themselves are verified only by implementation audit. Test the filesystem behaviour your game depends on.</p>
+        <p><strong>What the storage tests cover.</strong> This snapshot has seven Storage test sources with <strong>70</strong> GoogleTest-family definitions. They cover <a href="#path-containment">path containment</a> (symlink escapes included), the XNA exception types and parameter names of its refusals, the <code>Begin*</code>/<code>End*</code> result contract, disposal, the lazily created storage root, <code>DeleteContainer</code>, file sharing, file and directory deletion, enumeration, and the <code>StorageDeviceNotConnectedException</code> serialization round trip. Their byte-level checks write and read back single bytes (an append, a refused open that must not truncate); <strong>no test round-trips a realistic save file</strong>, and the file-sharing matrix is skipped in browser builds. These are CNA&rsquo;s tests, not run for this page. Test the filesystem behaviour your game depends on.</p>
       </div>
 
       <h2>Overview</h2>
@@ -194,11 +195,11 @@
           <tbody>
             <tr>
               <td><code>StorageDevice::BeginShowSelector(callback, state)</code></td>
-              <td>Starts the (synchronous on CNA) device-selection operation and returns a <code>std::unique_ptr&lt;System::IAsyncResult&gt;</code>. <code>callback</code> is a <code>std::function&lt;void(System::IAsyncResult*)&gt;</code> (may be empty) that has already run by the time the call returns; <code>state</code> is a <code>void*</code> passed through. Four overloads exist: <code>(callback, state)</code>, <code>(PlayerIndex, callback, state)</code>, <code>(sizeInBytes, directoryCount, callback, state)</code> and the combination; the size and count arguments are accepted and ignored.</td>
+              <td>Starts the (synchronous on CNA) device-selection operation and returns a <code>std::unique_ptr&lt;System::IAsyncResult&gt;</code>. <code>callback</code> is a <code>std::function&lt;void(System::IAsyncResult*)&gt;</code> (may be empty) that has already run by the time the call returns; <code>state</code> is a <code>void*</code> passed through. Four overloads exist: <code>(callback, state)</code>, <code>(PlayerIndex, callback, state)</code>, <code>(sizeInBytes, directoryCount, callback, state)</code> and the combination. As in XNA, a player other than <code>One</code>&ndash;<code>Four</code> (or the shared value 255) and then a negative <code>sizeInBytes</code> throw <code>System::ArgumentOutOfRangeException</code> before the callback runs; otherwise the size and the unchecked directory count are ignored.</td>
             </tr>
             <tr>
               <td><code>StorageDevice::EndShowSelector(result)</code></td>
-              <td>Takes the <code>IAsyncResult*</code> (<code>result.get()</code>) and returns a <code>std::unique_ptr&lt;StorageDevice&gt;</code>. It never returns <code>nullptr</code>: a device is always available on CNA, and a result that did not come from <code>BeginShowSelector</code> throws <code>std::invalid_argument</code>. Choosing the overload with a <code>PlayerIndex</code> scopes the device&rsquo;s containers to that player (see the layout below).</td>
+              <td>Takes the <code>IAsyncResult*</code> (<code>result.get()</code>) and returns a <code>std::unique_ptr&lt;StorageDevice&gt;</code>. It never returns <code>nullptr</code>: a device is always available on CNA. A null result, or one that did not come from <code>BeginShowSelector</code>, throws <code>System::ArgumentNullException</code>; ending the same result twice throws <code>System::InvalidOperationException</code>. Choosing the overload with a <code>PlayerIndex</code> scopes the device&rsquo;s containers to that player (see the layout below).</td>
             </tr>
           </tbody>
         </table>
@@ -213,11 +214,11 @@
           <tbody>
             <tr>
               <td><code>device.BeginOpenContainer(name, callback, state)</code></td>
-              <td>Begins opening a <code>StorageContainer</code> with the given display name; returns a <code>std::unique_ptr&lt;System::IAsyncResult&gt;</code> and, like the selector, completes before it returns. The container maps to a subdirectory within the device root. An empty name, an absolute name or one that escapes the root throws <code>std::invalid_argument</code>.</td>
+              <td>Begins opening a <code>StorageContainer</code> with the given display name; returns a <code>std::unique_ptr&lt;System::IAsyncResult&gt;</code> and, like the selector, completes before it returns. The container maps to a subdirectory within the device root. The name is not checked here: as in XNA, validation happens in <code>EndOpenContainer</code>.</td>
             </tr>
             <tr>
               <td><code>device.EndOpenContainer(result)</code></td>
-              <td>Takes <code>result.get()</code> and returns a <code>std::unique_ptr&lt;StorageContainer&gt;</code>, creating the container&rsquo;s directory if it does not exist. The caller should <code>Dispose()</code> the container when done (the destructor also disposes it).</td>
+              <td>Takes <code>result.get()</code> and returns a <code>std::unique_ptr&lt;StorageContainer&gt;</code>, creating every missing directory of its path, the storage root included. The result is consumed even when this call fails, so a second <code>End</code> throws <code>System::InvalidOperationException</code>. An empty name throws <code>System::ArgumentNullException</code>; an absolute name or one that escapes the root throws <code>System::ArgumentException</code>, as does a result another device started; a file occupying any directory of the path throws <code>System::IO::IOException</code> (the file is kept), and a directory that cannot be created for lack of permission throws <code>System::UnauthorizedAccessException</code>. The caller should <code>Dispose()</code> the container when done (the destructor also disposes it); the device must outlive it.</td>
             </tr>
           </tbody>
         </table>
@@ -230,12 +231,12 @@
             <tr><th>Member</th><th>Description</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>getIsConnectedProperty()</code></td><td>True while the storage root, or its nearest existing ancestor, is reachable; never throws.</td></tr>
+            <tr><td><code>getIsConnectedProperty()</code></td><td>Resolves and, if needed, creates the storage root; true when that succeeds, false when it fails. Never throws.</td></tr>
             <tr><td><code>getFreeSpaceProperty()</code>, <code>getTotalSpaceProperty()</code></td><td><code>std::filesystem::space</code> of the root (<code>available</code> and <code>capacity</code>, as <code>long long</code>). Failure is reported as <code>StorageDeviceNotConnectedException</code>.</td></tr>
             <tr><td><code>DeviceChanged</code></td><td>The static XNA event. It exists for source compatibility; nothing in CNA raises it, because the local device is always present.</td></tr>
-            <tr><td><code>DeleteContainer(titleName)</code></td><td>Recursively removes <code>&lt;root&gt;/&lt;titleName&gt;</code> (every player folder, whichever player the device was selected for). Empty, absolute and escaping names throw <code>std::invalid_argument</code>. XNA 4.0's own <code>DeleteContainer</code> is narrower: it deletes only the device's own <code>Player{N}</code> (or <code>AllPlayers</code>) folder of that title, so CNA's delete also removes the other players' folders (XNA side read from the decompiled reference, CNA side from <code>StorageDevice.cpp</code>; neither executed).</td></tr>
-            <tr><td><code>StorageDevice::SetAppNameEXT(name)</code> <span class="status-badge status-partial">CNAEXT</span></td><td>Names the application folder under the root (see below). Call it <em>before</em> the first container is opened.</td></tr>
-            <tr><td><code>StorageDevice::GetStorageRootEXT()</code> <span class="status-badge status-partial">CNAEXT</span></td><td>Returns the resolved root as a UTF-8, forward-slash string (creating the directory), so a game can show or log where saves go.</td></tr>
+            <tr><td><code>DeleteContainer(titleName)</code></td><td>As in XNA 4.0, removes only this device&rsquo;s own folder of that title, <code>&lt;root&gt;/&lt;titleName&gt;/Player{N}</code> (or <code>AllPlayers</code>), with everything below it; another player&rsquo;s folder and the title folder itself stay. A missing container, or a file of that name, is left alone and nothing is created; an empty name addresses the player folder at the root itself. Unlike XNA, an absolute or escaping name throws <code>System::ArgumentException</code> and deletes nothing. An entry that cannot be removed for lack of permission throws <code>System::UnauthorizedAccessException</code>, any other failure <code>System::IO::IOException</code> (read from <code>StorageDevice.cpp</code> and <code>StorageContainer.cpp</code>; not executed here).</td></tr>
+            <tr><td><code>StorageDevice::SetAppNameEXT(name)</code> <span class="status-badge status-partial">CNAEXT</span></td><td>Names the application folder under the root (see below). It only records the name and creates nothing. Call it <em>before</em> the first container is opened.</td></tr>
+            <tr><td><code>StorageDevice::GetStorageRootEXT()</code> <span class="status-badge status-partial">CNAEXT</span></td><td>Returns the resolved root as a UTF-8, forward-slash string (creating the directory), so a game can show or log where saves go. A root that cannot be resolved or created throws <code>StorageDeviceNotConnectedException</code>.</td></tr>
           </tbody>
         </table>
       </div>
@@ -266,13 +267,13 @@
           </tbody>
         </table>
       </div>
-      <p><code>&lt;app&gt;</code> is the literal string <strong><code>game</code></strong> unless the program calls <code>StorageDevice::SetAppNameEXT("MyGame")</code>. Nothing derives it from the window title or the executable name, so two CNA games that never call <code>SetAppNameEXT</code> share one folder. <code>SetAppNameEXT</code> discards the cached root (so call it before the first container is opened, or an earlier save stays under the old name) and also re-points Sharp Runtime&rsquo;s isolated-storage root at <code>&lt;root&gt;/.cna_isolated_storage</code>. UTF-8 roots and names are handled on Windows by the root resolution and the container paths, but <code>getIsConnectedProperty()</code>, <code>getFreeSpaceProperty()</code> and <code>getTotalSpaceProperty()</code> still build narrow paths from the UTF-8 root, so with a non-ASCII root they may not resolve it correctly there. If the root cannot be created, the first access throws <code>StorageDeviceNotConnectedException</code>; that failure is not repeated, because the root is then latched empty and later calls silently resolve against the working directory (both points read from the source, not executed).</p>
+      <p><code>&lt;app&gt;</code> is the literal string <strong><code>game</code></strong> unless the program calls <code>StorageDevice::SetAppNameEXT("MyGame")</code>. Nothing derives it from the window title or the executable name, so two CNA games that never call <code>SetAppNameEXT</code> share one folder. <code>SetAppNameEXT</code> discards the cached root (so call it before the first container is opened, or an earlier save stays under the old name) and also re-points Sharp Runtime&rsquo;s isolated-storage root at <code>&lt;root&gt;/.cna_isolated_storage</code>. UTF-8 roots and names are handled on Windows by the root resolution and the container paths, but <code>getIsConnectedProperty()</code>, <code>getFreeSpaceProperty()</code> and <code>getTotalSpaceProperty()</code> still build narrow paths from the UTF-8 root, so with a non-ASCII root they may not resolve it correctly there. The root is created lazily, by the first storage access, and only a successful resolution is cached: an access that fails is retried by the next one. How a failure surfaces depends on the access. Opening a container creates the whole directory chain the way XNA&rsquo;s <code>DirectoryInfo.Create</code> does, so a file in the way is a <code>System::IO::IOException</code> and a permission failure a <code>System::UnauthorizedAccessException</code>; the CNA extensions (<code>GetStorageRootEXT()</code>, the space properties) and Sharp Runtime&rsquo;s isolated storage (once <code>SetAppNameEXT</code> has pointed it at this root) report <code>StorageDeviceNotConnectedException</code> instead. With none of the environment variables set and no working directory, there is no root at all: opening a container and the extensions throw <code>StorageDeviceNotConnectedException</code>, and <code>getIsConnectedProperty()</code> answers false (read from the source and CNA&rsquo;s storage tests, not executed here).</p>
 
       <h3 id="path-containment">Path containment</h3>
-      <p>A <code>StorageContainer</code> is an authority boundary. A container name, and every file or directory path passed to a container, must be relative and must stay inside the container. An empty name or path, an absolute path, a <code>..</code> that climbs past the container root, or a path that resolves through a symlink to somewhere outside it throws <code>std::invalid_argument</code>. (<code>DeleteContainer</code> had its own containment check in alpha.1; the file, directory and container-name checks are new.) Code that passed <code>"../other"</code> or an absolute path to a container must be changed.</p>
+      <p>A <code>StorageContainer</code> is an authority boundary. A container name, and every file or directory path passed to a container, must be relative and must stay inside the container. An absolute path, a <code>..</code> that climbs past the container root, or a path that resolves through a symlink to somewhere outside it throws <code>System::ArgumentException</code>; a final symlink whose target does not exist yet is followed to where a file would be created, so a dangling link cannot create a file outside either. XNA (through <code>Path.Combine</code>) would follow such paths; CNA refuses them deliberately. An empty file or directory argument throws <code>System::ArgumentNullException</code> with the parameter name <code>file</code> or <code>directory</code>, as in XNA, and an empty container name throws it from <code>EndOpenContainer</code>. A component the filesystem cannot inspect (no search permission, a symlink loop) is not treated as an escape: the operation fails with the filesystem&rsquo;s own error, as XNA&rsquo;s does. Code that passed <code>"../other"</code> or an absolute path to a container must be changed.</p>
 
       <h2>StorageContainer</h2>
-      <p><code>StorageContainer</code> provides file and directory access scoped to a named save context within a device. It implements the XNA 4.0 API. All paths passed to its methods are relative to the container root directory and are <a href="#path-containment">contained</a> in it. The container also exposes <code>getDisplayNameProperty()</code>, <code>getIsDisposedProperty()</code>, <code>getStorageDeviceProperty()</code>, the <code>Disposing</code> event, and an idempotent <code>Dispose()</code>.</p>
+      <p><code>StorageContainer</code> provides file and directory access scoped to a named save context within a device. It implements the XNA 4.0 API. All paths passed to its methods are relative to the container root directory and are <a href="#path-containment">contained</a> in it. The container also exposes <code>getDisplayNameProperty()</code>, <code>getIsDisposedProperty()</code>, <code>getStorageDeviceProperty()</code>, the <code>Disposing</code> event, and an idempotent <code>Dispose()</code>. After disposal, every file and directory method and the <code>DisplayName</code> and <code>StorageDevice</code> getters throw <code>System::ObjectDisposedException</code>, before they look at their arguments or touch the filesystem; <code>getIsDisposedProperty()</code> and a repeated <code>Dispose()</code> stay available, and files and already-open streams are kept.</p>
 
       <h3>File operations</h3>
       <div class="table-wrap">
@@ -284,32 +285,32 @@
             <tr>
               <td><code>CreateFile(path)</code></td>
               <td><code>std::unique_ptr&lt;System::IO::Stream&gt;</code></td>
-              <td>Creates (or replaces) the file and returns a stream for writing; equivalent to <code>FileMode::Create</code>.</td>
+              <td>Creates (or replaces) the file and returns an exclusive read/write stream (<code>FileMode::Create</code>, <code>FileAccess::ReadWrite</code>, <code>FileShare::None</code>). While another stream holds the file without sharing, it throws <code>System::IO::IOException</code> and leaves the stored data untruncated.</td>
             </tr>
             <tr>
               <td><code>OpenFile(path, mode)</code></td>
               <td><code>std::unique_ptr&lt;System::IO::Stream&gt;</code></td>
-              <td>Opens or creates a file at <code>path</code> using the given <code>System::IO::FileMode</code> (Create, Open, OpenOrCreate, Append, Truncate). Overloads add <code>FileAccess</code> and <code>FileShare</code> (the share argument is accepted and ignored). The stream is a Sharp Runtime <code>Stream</code>: <code>Read(buffer, offset, count)</code>, <code>Write(buffer, offset, count)</code>, <code>getLengthProperty()</code>, <code>Flush()</code>, <code>Close()</code>.</td>
+              <td>Opens or creates a file at <code>path</code> using the given <code>System::IO::FileMode</code> (Create, Open, OpenOrCreate, Append, Truncate). As in XNA, the two-argument form opens read/write (write-only for <code>Append</code>) and the two- and three-argument forms share nothing (<code>FileShare::None</code>). The four-argument form passes its <code>FileShare</code> to the native file: Windows enforces the access and share masks, POSIX systems take an advisory lock (exclusive for <code>None</code>, shared otherwise), and on a file system without locking, such as the browser&rsquo;s, sharing is best-effort. A refused open throws <code>System::IO::IOException</code>. CNA records validation of this sharing on Linux; on Windows it is still pending platform validation. CNA&rsquo;s storage module calls Sharp Runtime&rsquo;s four-argument <code>FileStream</code> constructor, which sharp-runtime added in commit <code>c6984ece</code> (23 October 2026); older checkouts declare the same version 0.1.0 but lack it. The stream is a Sharp Runtime <code>Stream</code>: <code>Read(buffer, offset, count)</code>, <code>Write(buffer, offset, count)</code>, <code>getLengthProperty()</code>, <code>Flush()</code>, <code>Close()</code>.</td>
             </tr>
             <tr>
               <td><code>FileExists(path)</code></td>
               <td><code>bool</code></td>
-              <td>Returns <code>true</code> if a regular file exists at <code>path</code> within the container.</td>
+              <td>Returns <code>true</code> if a regular file exists at <code>path</code> within the container; like XNA&rsquo;s <code>File.Exists</code>, it answers <code>false</code> for any failure, such as a path beneath a file.</td>
             </tr>
             <tr>
               <td><code>DeleteFile(path)</code></td>
               <td><code>void</code></td>
-              <td>Deletes the file at <code>path</code>. A path that does not exist is a silent no-op, not an error; other I/O failures throw.</td>
+              <td>Deletes the file at <code>path</code>, with XNA&rsquo;s <code>File.Delete</code> semantics: a missing file is a silent no-op, a missing parent directory throws <code>System::IO::DirectoryNotFoundException</code>, and a directory is refused with <code>System::UnauthorizedAccessException</code> and left in place.</td>
             </tr>
             <tr>
               <td><code>GetFileNames()</code></td>
               <td><code>std::vector&lt;std::string&gt;</code></td>
-              <td>Returns the names of all regular files in the container root (non-recursive). The order is the filesystem&rsquo;s; sort if you need one.</td>
+              <td>Returns the names of all regular files in the container root (non-recursive). The order is the filesystem&rsquo;s; sort if you need one. If the container&rsquo;s directory has been removed meanwhile, it throws <code>System::IO::DirectoryNotFoundException</code>.</td>
             </tr>
             <tr>
               <td><code>GetFileNames(pattern)</code></td>
               <td><code>std::vector&lt;std::string&gt;</code></td>
-              <td>Returns file names matching a wildcard pattern (e.g. <code>"*.sav"</code>; <code>*</code> and <code>?</code> are supported).</td>
+              <td>Returns file names matching a wildcard pattern (e.g. <code>"*.sav"</code>; <code>*</code> and <code>?</code> are supported). An empty pattern returns no names without touching the filesystem, as in XNA.</td>
             </tr>
           </tbody>
         </table>
@@ -325,17 +326,17 @@
             <tr>
               <td><code>CreateDirectory(path)</code></td>
               <td><code>void</code></td>
-              <td>Creates a subdirectory within the container (creates intermediate directories as needed).</td>
+              <td>Creates a subdirectory within the container (creates intermediate directories as needed; an existing directory is fine). A file in the way throws <code>System::IO::IOException</code> and is kept.</td>
             </tr>
             <tr>
               <td><code>DeleteDirectory(path)</code></td>
               <td><code>void</code></td>
-              <td>Removes the directory. The call is not recursive: an empty directory is removed, a non-empty one fails with a filesystem error, and a missing one is a no-op.</td>
+              <td>Removes the directory. The call is not recursive: an empty directory is removed; a non-empty one, or a path that names a file, throws <code>System::IO::IOException</code> and changes nothing; a missing one throws <code>System::IO::DirectoryNotFoundException</code>; a permission failure throws <code>System::UnauthorizedAccessException</code>.</td>
             </tr>
             <tr>
               <td><code>DirectoryExists(path)</code></td>
               <td><code>bool</code></td>
-              <td>Returns <code>true</code> if the directory exists within the container.</td>
+              <td>Returns <code>true</code> if the directory exists within the container; <code>false</code> for any failure.</td>
             </tr>
             <tr>
               <td><code>GetDirectoryNames()</code></td>
@@ -345,7 +346,7 @@
             <tr>
               <td><code>GetDirectoryNames(pattern)</code></td>
               <td><code>std::vector&lt;std::string&gt;</code></td>
-              <td>Returns directory names matching a wildcard pattern (an empty pattern throws <code>std::invalid_argument</code>).</td>
+              <td>Returns directory names matching a wildcard pattern (an empty pattern returns no names, as in XNA).</td>
             </tr>
           </tbody>
         </table>
@@ -355,18 +356,24 @@
       <p>The pattern-taking overloads are backed by a hand-written glob matcher rather than a delegation to the platform shell or a regex engine. That keeps wildcard semantics identical across every platform CNA builds for, instead of inheriting whatever the host's directory-enumeration API happens to do.</p>
 
       <h2>StorageDeviceNotConnectedException</h2>
-      <p><code>StorageDeviceNotConnectedException</code> is thrown when a <code>StorageDevice</code> that was previously valid is no longer accessible &mdash; on Xbox 360, for example, if a memory unit was ejected. In CNA, because storage always maps to the local filesystem, it is raised only when the storage root cannot be created on first use (&ldquo;Unable to create the storage directory.&rdquo;) or when <code>getFreeSpaceProperty()</code> / <code>getTotalSpaceProperty()</code> cannot query the root, with the underlying filesystem error attached as the inner exception.</p>
-      <p>It derives from <code>ExternalException</code>, carries a human-readable message, and has a protected serialization constructor and a <code>GetObjectData</code> round trip (covered by four of the module&rsquo;s tests). Catch it wherever you first touch the device if your application needs to handle an unusable save location gracefully; note that ordinary I/O errors and bad paths surface as other exceptions (<code>std::invalid_argument</code> for a contained-path violation, stream or filesystem errors for I/O).</p>
+      <p><code>StorageDeviceNotConnectedException</code> is thrown when a <code>StorageDevice</code> that was previously valid is no longer accessible &mdash; on Xbox 360, for example, if a memory unit was ejected. In CNA, because storage always maps to the local filesystem, it is raised in four cases: no storage root can be resolved at all (no per-user data directory and no working directory), which also fails <code>EndOpenContainer</code>; <code>GetStorageRootEXT()</code> or Sharp Runtime&rsquo;s isolated storage (after <code>SetAppNameEXT</code>) cannot create the root (&ldquo;Unable to create the storage directory.&rdquo;); <code>getFreeSpaceProperty()</code> / <code>getTotalSpaceProperty()</code> cannot query the root; and, in a browser build, the persistent browser storage is unavailable. The underlying filesystem error, where there is one, is attached as the inner exception. A root that cannot be created while a container is being opened is reported the way XNA reports it, as <code>System::IO::IOException</code> or <code>System::UnauthorizedAccessException</code>.</p>
+      <p>It derives from <code>ExternalException</code>, carries a human-readable message, and has a protected serialization constructor and a <code>GetObjectData</code> round trip (covered by four of the module&rsquo;s tests). Catch it wherever you first touch the device if your application needs to handle an unusable save location gracefully; note that ordinary I/O errors and bad paths surface as XNA&rsquo;s other exception types (<code>System::ArgumentNullException</code> for an empty name or path, <code>System::ArgumentException</code> for a contained-path violation, <code>System::IO::IOException</code> and its subclasses or <code>System::UnauthorizedAccessException</code> for I/O, <code>System::ObjectDisposedException</code> after disposal). All of them derive from <code>std::exception</code>, so <code>what()</code> works.</p>
       <pre><code class="language-cpp">try {
     auto opening   = device-&gt;BeginOpenContainer("SaveData", nullptr, nullptr);
     auto container = device-&gt;EndOpenContainer(opening.get());
     // ... use container ...
     container-&gt;Dispose();
 } catch (const StorageDeviceNotConnectedException&amp; ex) {
-    // Storage unavailable &mdash; the root could not be created or queried
+    // Storage unavailable &mdash; no root could be resolved
     ShowErrorDialog(ex.what());
-} catch (const std::invalid_argument&amp; ex) {
-    // The container name was empty, absolute, or escaped the storage root
+} catch (const System::IO::IOException&amp; ex) {
+    // A file occupies a directory of the container's path
+    ShowErrorDialog(ex.what());
+} catch (const System::UnauthorizedAccessException&amp; ex) {
+    // A directory of the container's path could not be created
+    ShowErrorDialog(ex.what());
+} catch (const System::ArgumentException&amp; ex) {
+    // The container name was empty (ArgumentNullException), absolute, or escaped the storage root
     ShowErrorDialog(ex.what());
 }</code></pre>
 
@@ -376,7 +383,7 @@
         <li>Call the <code>Begin*</code> method, supplying an optional callback and state object. It returns a <code>std::unique_ptr&lt;System::IAsyncResult&gt;</code>.</li>
         <li>In the callback (or right after the call), pass <code>result.get()</code> to the matching <code>End*</code> method to retrieve the result.</li>
       </ol>
-      <p>In CNA, all storage operations complete synchronously: the <code>Begin*</code> call finishes its work, invokes your callback, and only then returns the <code>IAsyncResult</code>. The pattern is preserved so that XNA save-game code ports with little change, and synchronous completion is the correct semantics for a desktop filesystem &mdash; there is no system UI to wait on and no removable media to negotiate. <code>End*</code> throws <code>std::invalid_argument</code> if handed a result that another <code>Begin*</code> produced.</p>
+      <p>In CNA, all storage operations complete synchronously: the <code>Begin*</code> call finishes its work, invokes your callback, and only then returns the <code>IAsyncResult</code>. The pattern is preserved so that XNA save-game code ports with little change, and synchronous completion is the correct semantics for a desktop filesystem &mdash; there is no system UI to wait on and no removable media to negotiate. As in XNA, <code>End*</code> throws <code>System::ArgumentNullException</code> for a null result or one produced by a different kind of <code>Begin*</code>, <code>System::ArgumentException</code> when <code>EndOpenContainer</code> is handed another device&rsquo;s result, and <code>System::InvalidOperationException</code> when a result is ended a second time &mdash; including a result already ended inside its callback. A matching result is consumed even when its <code>End*</code> fails.</p>
 
       <h2>Code examples</h2>
       <p>These use the real signatures at this snapshot: results are owned by <code>std::unique_ptr</code>, <code>End*</code> takes <code>result.get()</code>, and stream lengths and reads use Sharp Runtime&rsquo;s <code>getLengthProperty()</code> and <code>Read</code>/<code>Write(buffer, offset, count)</code> with <code>SharpRuntime::bytecs</code> buffers. For a complete, runnable save-slot program see <a href="tutorials/141-save-data-portably.html">Tutorial 141: Save Data Portably</a>.</p>
@@ -435,13 +442,13 @@ container-&gt;Dispose();</code></pre>
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p>Always call <code>container-&gt;Dispose()</code> when you are finished with a <code>StorageContainer</code> (or let the <code>std::unique_ptr</code> go out of scope: the destructor disposes it). On CNA this raises the <code>Disposing</code> event; on Xbox 360 it was required to flush and unlock the device. Keeping containers open longer than necessary is discouraged.</p>
+        <p>Always call <code>container-&gt;Dispose()</code> when you are finished with a <code>StorageContainer</code> (or let the <code>std::unique_ptr</code> go out of scope: the destructor disposes it). On CNA this raises the <code>Disposing</code> event, and the container then refuses further use with <code>System::ObjectDisposedException</code> (streams you already opened stay usable until you close them); on Xbox 360 it was required to flush and unlock the device. Keeping containers open longer than necessary is discouraged.</p>
       </div>
 
 
     <!--p3:begin wp15-storage-container-details-->
 <h2 id="container-details">StorageContainer details that affect save code</h2>
-<p>Three behaviours are easy to miss when XNA save code is ported; each was checked by reading <a class="src-link" href="https://github.com/libcna/cna/blob/c1c316b9c7a846ce8002809c151fcd1af14942c9/modules/storage/src/StorageContainer.cpp"><code>StorageContainer.cpp</code></a> at this snapshot (not executed). The internals are on <a href="../development/internals/modules/storage.html#authority">the storage internals page</a>.</p>
+<p>Three behaviours are easy to miss when XNA save code is ported; each was checked by reading <a class="src-link" href="https://github.com/libcna/cna/blob/c6dec91fbf3ef5440f60e5329e4a4758b2d80c22/modules/storage/src/StorageContainer.cpp"><code>StorageContainer.cpp</code></a> at this snapshot (not executed). The internals are on <a href="../development/internals/modules/storage.html#authority">the storage internals page</a>.</p>
 <h3 id="reading-a-save-completely">Reading a save back completely</h3>
 <p><code>Stream::Read</code> returns how many bytes it actually copied, which may be fewer than requested. Loop until the expected length is reached or a read returns 0, and treat a short result as a truncated save rather than parsing it:</p>
 <pre><code class="language-cpp">std::unique_ptr&lt;System::IO::Stream&gt; in =
@@ -456,11 +463,11 @@ while (offset &lt; total) {
     offset += n;
 }
 if (offset != total) { /* reject a truncated save */ }</code></pre>
-<p>Syntax-checked with <code>g++ -fsyntax-only</code> against the snapshot's headers and a sibling sharp-runtime checkout; not run.</p>
+<p>Syntax-checked with <code>g++ -fsyntax-only</code> against an earlier snapshot&rsquo;s headers and a sibling sharp-runtime checkout; the calls it uses are unchanged at c6dec91f. Not run.</p>
 <h3 id="wildcard-patterns">Wildcard patterns, exactly</h3>
-<p><code>GetFileNames(pattern)</code> and <code>GetDirectoryNames(pattern)</code> match each entry name at the container's top level (not recursively) against the whole pattern with CNA's own matcher: <code>*</code> matches any run of bytes, including none; <code>?</code> matches exactly one byte, so a non-ASCII character, which is several UTF-8 bytes, needs several; every other byte, <code>.</code> included, matches only itself, case-sensitively on every host. There are no character classes and no escapes, and an empty pattern throws <code>std::invalid_argument</code>. <code>"slot?.sav"</code> therefore finds <code>slot1.sav</code> but not <code>Slot1.SAV</code> or <code>slot10.sav</code>. The storage tests exercise path containment, not the matcher's edge cases, so test the patterns your game depends on.</p>
+<p><code>GetFileNames(pattern)</code> and <code>GetDirectoryNames(pattern)</code> match each entry name at the container's top level (not recursively) against the whole pattern with CNA's own matcher: <code>*</code> matches any run of bytes, including none; <code>?</code> matches exactly one byte, so a non-ASCII character, which is several UTF-8 bytes, needs several; every other byte, <code>.</code> included, matches only itself, case-sensitively on every host. There are no character classes and no escapes, and an empty pattern returns no names without touching the filesystem, as in XNA. <code>"slot?.sav"</code> therefore finds <code>slot1.sav</code> but not <code>Slot1.SAV</code> or <code>slot10.sav</code>. The storage tests match plain prefixes and suffixes (<code>"*.bin"</code>, <code>"directory-*"</code>) against non-ASCII names, not the matcher&rsquo;s <code>?</code> and case edge cases, so test the patterns your game depends on.</p>
 <h3 id="disposal-and-sharing">Disposal and concurrent writers</h3>
-<p><code>Dispose()</code> sets <code>IsDisposed</code> and raises <code>Disposing</code> once, but no file or directory method checks the flag: calls after disposal still reach the filesystem. Treat a disposed container as unusable anyway: no code should depend on calls after disposal working. The <code>FileShare</code> argument of the four-argument <code>OpenFile</code> is accepted and not applied: the stream is opened with path, mode and access only, and there is no cross-process lock, so <code>FileShare::None</code>, <code>Read</code> and <code>ReadWrite</code> behave the same. Do not rely on it to keep two writers apart; serialise saves in the game.</p>
+<p><code>Dispose()</code> sets <code>IsDisposed</code> and then raises <code>Disposing</code> once. From then on every file and directory method, and the <code>DisplayName</code> and <code>StorageDevice</code> getters, throw <code>System::ObjectDisposedException</code> before validating arguments or touching the filesystem, as XNA does; files on disk and streams opened earlier are kept. Sharing follows XNA&rsquo;s defaults: <code>CreateFile</code> and the two- and three-argument <code>OpenFile</code> open with <code>FileShare::None</code>, so a second open of the same file fails with <code>System::IO::IOException</code> while the first is held, and a refused <code>Create</code> or <code>Truncate</code> open does not truncate the stored data first. The four-argument <code>OpenFile</code> applies the share mode you pass: Windows enforces it, POSIX systems use advisory locks, which only other processes that also lock respect, and the browser&rsquo;s virtual file system makes no promise. CNA records this on Linux; Windows validation is still pending. Within one game, serialise saves rather than relying on locks.</p>
 <!--p3:end wp15-storage-container-details-->
 <!--p3:deep-links-->
 <section class="deep-links" aria-labelledby="deep-dives-here">
@@ -480,12 +487,8 @@ if (offset != total) { /* reject a truncated save */ }</code></pre>
 <li><a href="../known-issues/bugs/cna-bug-047.html">CNA-BUG-047: StorageContainer::GetFileNames/GetDirectoryNames(searchPattern): GlobMatch treats ? as one byte and compares case-sensitively on every host</a> &mdash; The hand-written matcher behind the pattern overloads matches ? against one UTF-8 byte rather than one character and compares bytes case-sensitively even on Windows, where XNA&#x27;s Directory.GetFiles matching is not; only s</li>
 <li><a href="../known-issues/bugs/cna-bug-150.html">CNA-BUG-150: StorageDevice::EnsureStorageRoot caches the process-wide storage root in unsynchronised statics</a> &mdash; The storage root is cached in a plain static bool and std::string with no lock or atomic, so two threads touching storage for the first time both resolve it and write the string concurrently, a data race, and a reader ma</li>
 <li><a href="../known-issues/bugs/cna-bug-152.html">CNA-BUG-152: StorageDevice::getFreeSpaceProperty, getTotalSpaceProperty and getIsConnectedProperty pass the UTF-8 root to std::filesystem through the narrow path constructor</a> &mdash; The three device properties hand the UTF-8 root string straight to fs::exists, fs::space and fs::path, which on Windows reinterpret it in the ANSI code page, so with a non-ASCII root they query a different path.</li>
-<li><a href="../known-issues/bugs/cna-bug-153.html">CNA-BUG-153: StorageContainer::DeleteFile removes an empty directory and DeleteDirectory removes a file</a> &mdash; Both methods call std::filesystem::remove on the resolved path without checking the entry type, so each deletes the other kind of entry, and a missing directory is a silent no-op where XNA throws.</li>
-<li><a href="../known-issues/bugs/cna-bug-155.html">CNA-BUG-155: StorageContainer members keep working after Dispose instead of throwing ObjectDisposedException</a> &mdash; No StorageContainer member checks the disposed flag, so file and directory operations, name listings and the DisplayName and StorageDevice getters succeed after Dispose, where XNA 4.0 throws ObjectDisposedException.</li>
-<li><a href="../known-issues/gaps/cna-gap-048.html">CNA-GAP-048: StorageContainer::OpenFile(file, mode, access, share) ignores its FileShare argument</a> &mdash; The four-argument OpenFile accepts a FileShare value and discards it, because the Sharp Runtime FileStream it constructs has no share mode, so FileShare::None does not keep a second writer out.</li>
 <li><a href="../known-issues/gaps/cna-gap-049.html">CNA-GAP-049: StorageDevice::DeviceChanged is declared but never raised</a> &mdash; The static event exists for API compatibility, but nothing in the snapshot raises it; genuine XNA 4.0 raises it through FrameworkCallbackLinker.StorageDeviceChanged when a storage device changes, and CNA&#x27;s desktop storag</li>
 <li><a href="../known-issues/limitations/cna-plat-011.html">CNA-PLAT-011: Threaded Emscripten builds on the default WasmFS have no persistent storage, so StorageDevice refuses rather than saving</a> &mdash; Threaded Emscripten builds default to WasmFS, which cannot link IDBFS, so StorageDevice there reports StorageDeviceNotConnectedException instead of persisting saves unless the application configures CNA_EMSCRIPTEN_USE_WA</li>
-<li><a href="../known-issues/verification-gaps/cna-vgap-038.html">CNA-VGAP-038: No C++ storage test writes bytes through a StorageContainer stream and reads them back</a> &mdash; StorageDeviceTests.cpp checks containment, directory operations and file existence; the only byte round trip is the C ABI smoke test, which runs only in builds with the C API.</li>
 </ul>
 </section>
 <!--/p3:issue-links-->
@@ -512,7 +515,7 @@ if (offset != total) { /* reject a truncated save */ }</code></pre>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA commit c1c316b9 (9 October 2026), a post-alpha.1 development snapshot. CNA exposes 14 renderer identities across 12 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit c6dec91f (24 October 2026), a development snapshot 812 commits after the 0.1.0 release. CNA exposes 10 renderer identities across 8 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -551,7 +554,7 @@ if (offset != total) { /* reject a truncated save */ }</code></pre>
     <div class="footer-bottom">
       <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
       <div class="footer-links">
-        <a href="https://github.com/libcna/cna/blob/c1c316b9c7a846ce8002809c151fcd1af14942c9/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="https://github.com/libcna/cna/blob/c6dec91fbf3ef5440f60e5329e4a4758b2d80c22/LICENSE" target="_blank" rel="noopener">License</a>
         <a href="../contact.html">Contact</a>
       </div>
     </div>

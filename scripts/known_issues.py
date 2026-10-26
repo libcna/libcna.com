@@ -36,7 +36,7 @@ DISPO = ISS / "dispositions.json"
 PUBLIC = ROOT / "data" / "known-issues.json"
 TARGET = (ROOT / "cnahead").read_text(encoding="utf-8").strip()
 TARGET_SHORT = TARGET[:8]
-TODAY = "2026-10-09"
+TODAY = "2026-10-25"
 
 CLASSES = {
     "bug": {"group": "bugs", "prefix": "CNA-BUG", "label": "Bug"},
@@ -246,6 +246,10 @@ def cmd_check(args: argparse.Namespace) -> int:
 # uses): "retired" runs before "reclassified" and would remove the entry the reclassification needs, and dropping the "reclassified" element would
 # stop its new id from being allocated, which would renumber every later id of that class.  Its new id is allocated (consumed, never reused), its
 # candidates take the retire classification, and the trail records it under "retired" with its key.
+# A reclassification written after "added" entries of the target class exist would take an id BEFORE them (reclassifications are allocated
+# first) and renumber every one of them.  Such a reclassification carries "late": true: it is allocated after every "added" entry instead, so
+# it takes the next id of its class and no existing id moves.  Late reclassifications are allocated in key order among themselves, after the
+# ordinary ones and after "added"; "retired_reclassified" retires a late one the same way.  Never flip "late" on an existing reclassification.
 # "repin" moves the snapshot wording of the published text to a new pin after every entry was re-verified there.  It is one step or a LIST of
 # steps applied in order, one per pin move (009d40f5 -> b0e97bb1, then b0e97bb1 -> c1c316b9, ...); every step reads the text the previous step
 # left.  In each step every "replace" pair is applied first, then every remaining occurrence of "from" in the published text fields becomes "to",
@@ -307,10 +311,14 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
     if unknown:
         print(f"patches-adversarial.json: retired_reclassified names no reclassified entry: {sorted(unknown)}")
         return issues, disp, trail, 1
-    for iid, spec in sorted((adv.get("reclassified") or {}).items()):
+    reclassified = sorted((adv.get("reclassified") or {}).items())
+    late = [(iid, spec) for iid, spec in reclassified if spec.get("late")]    # allocated after "added" (see the format comment)
+    for iid, _spec in late:
         if not need(iid, "reclassified"):
             return issues, disp, trail, 1
-        e = by.pop(iid)
+    late_entries = {iid: by.pop(iid) for iid, _spec in late}               # out of reach of "added" and the id resolution until allocated
+
+    def reclassify(iid: str, spec: dict, e: dict) -> bool:
         cls = spec["class"]
         counters[cls] += 1
         new = f"{CLASSES[cls]['prefix']}-{counters[cls]:03d}"
@@ -318,7 +326,7 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
         if rspec:                                      # the new id is consumed (later ids do not move) but the entry is not published
             if rspec["classification"] not in CLASSIFICATIONS - PUBLISHED:
                 print(f"patches-adversarial.json: retired_reclassified {iid}: classification {rspec['classification']!r} is not a non-published one")
-                return issues, disp, trail, 1
+                return False
             for d in disp:
                 if d.get("published_as") == iid:
                     d["classification"] = rspec["classification"]
@@ -326,7 +334,7 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
                     d["adversarial_retired_entry"] = new
                     d["published_as"] = None
             trail["retired"][new] = {"key": iid, "classification": rspec["classification"], "evidence": rspec["evidence"]}
-            continue
+            return True
         e.update(spec.get("set", {}))
         e["class"], e["id"] = cls, new
         e["origin"] = f"{e.get('origin', '')}; reclassified from {iid} by the adversarial audit"
@@ -337,6 +345,15 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
                 d["published_as"] = new
         by[new] = e
         trail["reclassified"][iid] = new
+        return True
+
+    for iid, spec in reclassified:
+        if spec.get("late"):
+            continue
+        if not need(iid, "reclassified"):
+            return issues, disp, trail, 1
+        if not reclassify(iid, spec, by.pop(iid)):
+            return issues, disp, trail, 1
     retired_added = adv.get("retired_added") or {}
     unknown = set(retired_added) - {e["id"] for e in adv.get("added") or []}
     if unknown:
@@ -371,6 +388,9 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
                     d["evidence"] = "Restored by the independent adversarial audit (earlier dismissal: " + d.get("evidence", "")[:200] + ")"
         by[new] = e
         trail["added"][tmp] = new
+    for iid, spec in late:                             # "late": true -- after every added entry, so no added id moves
+        if not reclassify(iid, spec, late_entries[iid]):
+            return issues, disp, trail, 1
     # text written before the final ids were known refers to entries as {{issue:NEW-AUDIT-nn}} (an added entry) or {{issue:CNA-XXX-nnn}} (an id that was folded or reclassified);
     # the reference is resolved here, after allocation, so no later operation can leave a wrong id in the published text
     resolve = {**trail["added"], **trail["reclassified"], **trail["folded"]}

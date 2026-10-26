@@ -22,6 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 TUT = ROOT / "docs" / "tutorials"
 HUB = ROOT / "tutorials.html"
+TOMBSTONE_MARKER = '<meta name="cna-page-kind" content="tombstone">'
 
 # tutorial number -> section id (existing sections or NEW_SECTIONS ids)
 SECTION_OF = {}
@@ -68,7 +69,8 @@ def collect() -> dict[int, tuple[str, str]]:
     out = {}
     for p in sorted(TUT.glob("*.html")):
         m = re.match(r"(\d+)-", p.name)
-        if m:
+        # a tombstone keeps a retired tutorial's URL only: it is neither listed nor chained (scripts/tombstones.py)
+        if m and TOMBSTONE_MARKER not in p.read_text(encoding="utf-8"):
             out[int(m.group(1))] = (p.name, title_of(p))
     return out
 

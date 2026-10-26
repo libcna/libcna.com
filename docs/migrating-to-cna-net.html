@@ -15,7 +15,7 @@
   <link rel="canonical" href="https://libcna.com/docs/migrating-to-cna-net.html">
   <link rel="stylesheet" href="../css/prism-tomorrow.min.css">
   <script type="application/ld+json">
-  {"@context":"https://schema.org","@type":"TechArticle","headline":"Migrating an XNA 4.0, FNA or MonoGame C# Game to CNA.NET","description":"Step-by-step guide: build CNA&#x27;s C ABI and CNA.NET, wrap an unchanged XNA 4.0 C# game in an SDK-style project, use its original .xnb content, and run it on Linux, in the browser or on Android.","url":"https://libcna.com/docs/migrating-to-cna-net.html","datePublished":"2026-10-04","dateModified":"2026-10-09","author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Advanced"}
+  {"@context":"https://schema.org","@type":"TechArticle","headline":"Migrating an XNA 4.0, FNA or MonoGame C# Game to CNA.NET","description":"Step-by-step guide: build CNA&#x27;s C ABI and CNA.NET, wrap an unchanged XNA 4.0 C# game in an SDK-style project, use its original .xnb content, and run it on Linux, in the browser or on Android.","url":"https://libcna.com/docs/migrating-to-cna-net.html","datePublished":"2026-10-04","dateModified":"2026-10-25","author":{"@type":"Organization","name":"libcna","url":"https://github.com/libcna"},"technicalAudience":"Software Developer","proficiencyLevel":"Advanced"}
   </script>
   <script>(function(){try{var t=localStorage.getItem("cna-theme");if(t==="light"||t==="dark")document.documentElement.setAttribute("data-theme",t);}catch(e){}})();</script>
 </head>
@@ -59,6 +59,7 @@
       <ul class="docs-nav-list">
         <li><a href="getting-started.html" class="docs-nav-link">Getting Started</a></li>
         <li><a href="building.html" class="docs-nav-link">Building</a></li>
+        <li><a href="link-size.html" class="docs-nav-link">Link Boundaries &amp; Size</a></li>
         <li><a href="releases.html" class="docs-nav-link">Releases &amp; Versioning</a></li>
         <li><a href="platforms.html" class="docs-nav-link">Platforms</a></li>
         <li><a href="native-platforms.html" class="docs-nav-link">Windows, X11 and Wayland</a></li>
@@ -127,7 +128,7 @@
           <li><a href="#limits">What to expect</a></li>
         </ul>
       </nav>
-      <p class="doc-meta">CNA snapshot c1c316b9</p>
+      <p class="doc-meta">CNA snapshot c6dec91f</p>
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
@@ -141,7 +142,7 @@
           <thead><tr><th>Piece</th><th>What it is</th></tr></thead>
           <tbody>
             <tr><td>CNA</td><td>The C++ runtime. You build its C ABI library, <code>cna_c_api</code> (<code>libcna_c_api.so</code> on Linux).</td></tr>
-            <tr><td>The C ABI</td><td>CNA&rsquo;s stable-within-a-version C interface, currently <strong>0.46.0</strong> (<a href="c-api.html">C API page</a>). CNA.NET calls nothing else.</td></tr>
+            <tr><td>The C ABI</td><td>CNA&rsquo;s stable-within-a-version C interface (<a href="c-api.html">C API page</a>): <strong>0.50.0</strong> at this documentation snapshot, while each CNA.NET revision admits exactly one version, currently <strong>0.47.0</strong>. CNA.NET calls nothing else.</td></tr>
             <tr><td><code>CNA.Framework</code></td><td>The idiomatic managed layer over the ABI: handles, lifetimes, error translation.</td></tr>
             <tr><td><code>CNA.XnaCompat</code></td><td>The <code>Microsoft.Xna.Framework</code> facade your game compiles against, with an MSBuild targets file that applies the XNA build settings.</td></tr>
             <tr><td>Your wrapper project</td><td>A new SDK-style <code>.csproj</code> that lists the original source files and content. It is the only file you write.</td></tr>
@@ -157,24 +158,25 @@
       </ul>
 
       <h2 id="build-cna">1. Build CNA&rsquo;s C ABI library</h2>
-      <p>The configuration CNA.NET qualifies on Linux: the OpenGL ES 3 renderer, the C API, and compiled XNA effects enabled (needed for games that load <code>.xnb</code> effects; the option is off by default).</p>
-      <pre><code class="language-bash">cmake -S "$CNA_ROOT" -B "$CNA_ROOT/build" -G Ninja \
+      <p>Build it from the CNA revision CNA.NET pins, not from this documentation snapshot: CNA.NET&rsquo;s CI uses commit <code>fbd8e64a3</code> of CNA&rsquo;s <code>next</code> branch, whose C ABI is the 0.47.0 that CNA.NET admits, while snapshot <code>c6dec91f</code> exports 0.50.0 and is refused when the library loads. The configuration CNA.NET qualifies on Linux: the OpenGL ES 3 renderer, the C API, and compiled XNA effects enabled (needed for games that load <code>.xnb</code> effects; the option is off by default).</p>
+      <pre><code class="language-bash">git -C "$CNA_ROOT" checkout fbd8e64a3
+cmake -S "$CNA_ROOT" -B "$CNA_ROOT/build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DCNA_GRAPHICS_RENDERER=OPENGLES3 \
   -DCNA_BUILD_C_API=ON \
   -DCNA_EASYGL_COMPILED_EFFECTS=ON
 cmake --build "$CNA_ROOT/build" --target cna_c_api --parallel
 export CNA_NATIVE_LIBRARY="$CNA_ROOT/build/modules/c-api/libcna_c_api.so"</code></pre>
-      <p>On macOS (Apple silicon) OpenGL ES does not exist; CNA&rsquo;s Apple campaign built the C ABI with <code>SOFTWARE</code> or <code>METAL</code> instead, each with its own compiled-effects option, installed the <code>CNACApi</code> component and ran CNA.NET against it on a physical Mac mini M4 (local evidence, not a shipping claim; not re-run for this page). <code>METAL</code> needs SDL&rsquo;s <code>cocoa</code> video driver and the game on the main thread:</p>
+      <p>On macOS (Apple silicon) OpenGL ES does not exist; CNA&rsquo;s Apple campaign built the C ABI with the <code>SOFTWARE</code> renderer and its compiled-effects option instead, installed the <code>CNACApi</code> component and ran CNA.NET against it on a physical Mac mini M4 (local evidence, not a shipping claim; not re-run for this page):</p>
       <pre><code class="language-bash">cmake -S "$CNA_ROOT" -B "$CNA_ROOT/build" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCNA_GRAPHICS_RENDERER=METAL \
+  -DCNA_GRAPHICS_RENDERER=SOFTWARE \
   -DCNA_BUILD_C_API=ON \
-  -DCNA_METAL_COMPILED_EFFECTS=ON
+  -DCNA_SOFTWARE_COMPILED_EFFECTS=ON
 cmake --build "$CNA_ROOT/build" --target cna_c_api --parallel
 cmake --install "$CNA_ROOT/build" --component CNACApi --prefix "$HOME/cna"
 export CNA_NATIVE_LIBRARY="$HOME/cna/lib/libcna_c_api.dylib"</code></pre>
-      <p>The library reports its ABI version at load time; CNA.NET admits exactly 0.46.0, the version of this documentation snapshot. Windows build steps exist in the upstream guide, but nothing has been run on Windows yet, so treat them as a source-build workflow rather than a support promise.</p>
+      <p>The library reports its ABI version at load time; CNA.NET admits exactly 0.47.0 and refuses any other version, this documentation snapshot&rsquo;s 0.50.0 included. Windows build steps exist in the upstream guide, but nothing has been run on Windows yet, so treat them as a source-build workflow rather than a support promise.</p>
 
       <h2 id="build-cna-net">2. Build CNA.NET</h2>
       <pre><code class="language-bash">cd cna-dotnet
@@ -260,12 +262,12 @@ CNA_DOTNET_ROOT=/path/to/cna-dotnet "$DOTNET_ROOT_ANDROID/dotnet" build Platform
 
 <footer><div class="footer-inner">
   <div class="footer-top">
-    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit c1c316b9 (9 October 2026), a post-alpha.1 development snapshot. CNA exposes 14 renderer identities across 12 implementation families; APIs may change before 1.0.</p></div>
+    <div class="footer-brand"><div class="footer-brand-name">CNA</div><p>Documentation snapshot for CNA commit c6dec91f (24 October 2026), a development snapshot 812 commits after the 0.1.0 release. CNA exposes 10 renderer identities across 8 implementation families; APIs may change before 1.0.</p></div>
     <div class="footer-col"><h4>Project</h4><ul><li><a href="../about.html">About</a></li><li><a href="../features.html">Features</a></li><li><a href="../architecture.html">Architecture</a></li><li><a href="../roadmap.html">Roadmap</a></li></ul></div>
     <div class="footer-col"><h4>Docs</h4><ul><li><a href="getting-started.html">Getting Started</a></li><li><a href="building.html">Building</a></li><li><a href="platforms.html">Platforms</a></li><li><a href="rendering-backends.html">Renderers</a></li><li><a href="faq.html">FAQ</a></li><li><a href="../deep-dives/index.html">Deep Dives</a></li><li><a href="../known-issues/index.html">Known Issues</a></li></ul></div>
     <div class="footer-col"><h4>Community</h4><ul><li><a href="https://github.com/libcna/cna" target="_blank" rel="noopener">GitHub</a></li><li><a href="https://discord.gg/vrnc4n6DaE" target="_blank" rel="noopener">Discord</a></li><li><a href="../play.html">Play</a></li><li><a href="../videos.html">Videos</a></li><li><a href="../contact.html">Contact</a></li></ul></div>
   </div>
-  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/c1c316b9c7a846ce8002809c151fcd1af14942c9/LICENSE" target="_blank" rel="noopener">License</a><a href="../contact.html">Contact</a></div></div>
+  <div class="footer-bottom"><p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p><div class="footer-links"><a href="https://github.com/libcna/cna/blob/c6dec91fbf3ef5440f60e5329e4a4758b2d80c22/LICENSE" target="_blank" rel="noopener">License</a><a href="../contact.html">Contact</a></div></div>
 </div></footer>
 <script src="../js/main.js"></script>
 <script src="../js/prism/prism.min.js" defer></script>

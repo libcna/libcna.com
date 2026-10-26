@@ -15,6 +15,7 @@ vendored third-party symbols, external repositories and Developer-site tokens ar
 from __future__ import annotations
 
 import html
+import os
 import json
 import re
 import subprocess
@@ -25,8 +26,34 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import site_dev  # noqa: E402
 
 ROOT = site_dev.ROOT
-SNAP = Path("/rv/tmp/libcna-v2/cna-target")
-WORDS = set((SNAP.parent / "target-words.txt").read_text(encoding="utf-8").split("\n"))
+SNAP = Path(os.environ.get("CNA_TARGET_TREE") or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "libcna-com" / "cna-target")
+
+
+def _target_words() -> set[str]:
+    """Every identifier and file-name word of the extracted TARGET tree, cached beside it and rebuilt when the tree's
+    extraction stamp changes (a word list from an older extraction would accept stale symbols)."""
+    stamp_file = SNAP / ".extracted-from"
+    stamp = stamp_file.read_text(encoding="utf-8").strip() if stamp_file.exists() else ""
+    cache, tag = SNAP.parent / "target-words.txt", SNAP.parent / "target-words.stamp"
+    if cache.exists() and tag.exists() and tag.read_text(encoding="utf-8").strip() == stamp:
+        return set(cache.read_text(encoding="utf-8").split("\n"))
+    ident = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+    words: set[str] = set()
+    for dirpath, dirs, files in os.walk(SNAP):
+        for name in list(dirs) + files:
+            words.update(ident.findall(name))
+            p = Path(dirpath) / name
+            if name in files and p.stat().st_size <= 6_000_000:
+                try:
+                    words.update(ident.findall(p.read_text(encoding="utf-8", errors="ignore")))
+                except OSError:
+                    pass
+    cache.write_text("\n".join(sorted(words)), encoding="utf-8")
+    tag.write_text(stamp + "\n", encoding="utf-8")
+    return words
+
+
+WORDS = _target_words()
 FILES, DIRS = site_dev.target_tree()
 PRESETS = json.loads((SNAP / "CMakePresets.json").read_text(encoding="utf-8"))
 PRESET_NAMES = {p["name"] for k in ("configurePresets", "buildPresets", "testPresets", "workflowPresets") for p in PRESETS.get(k, [])}
@@ -82,7 +109,12 @@ def check(rel: str) -> tuple[list[str], list[str]]:
                     if not any(pat.match(f) for f in FILES):
                         errors.append(f"path pattern matches nothing at TARGET: {tok}")
                 elif base not in FILES and base not in DIRS:
-                    errors.append(f"path absent at TARGET: {tok}")
+                    # a file the page itself says is gone (a deleted plan cited for its recorded history) is not a
+                    # claim that it exists at TARGET
+                    gone = re.search(re.escape(tok) + r"[^.]{0,160}?(?:no longer in the tree|left the tree|deleted before"
+                                     r" this snapshot|is in Git history|removed from the tree)", " ".join(prose.split()))
+                    if not gone:
+                        errors.append(f"path absent at TARGET: {tok}")
     for m in re.finditer(r"(?:cmake\s+--preset|--build\s+--preset|ctest\s+--preset|--workflow\s+--preset)\s+([A-Za-z0-9_.-]+)", prose):
         if m.group(1) not in PRESET_NAMES:
             errors.append(f"preset does not exist at TARGET: {m.group(1)}")

@@ -9,7 +9,7 @@ scope instead, and a block with #include and main() as it stands.  A kitchen-sin
 local sharp-runtime checkout.  Only diagnostics that point at a wrong API are kept (no such member, type or overload, wrong arity or conversion); "not declared" is
 expected for a fragment and is dropped.  What survives is a lead, not a verdict: a fragment whose context is unknown to the scaffold reports its own missing context.
 
-Environment: CNA_TARGET_TREE (default /rv/tmp/libcna-v2/cna-target), SHARP_RUNTIME (default ../sharp-runtime), EASY_GL (../easy-gl), META_GL (../meta-gl).
+Environment: CNA_TARGET_TREE (default ~/.cache/libcna-com/cna-target, made by extract_cna_trees.sh), SHARP_RUNTIME (default ../sharp-runtime), EASY_GL (../easy-gl), META_GL (../meta-gl).
 Limits: sibling checkouts are the local ones, not a pinned revision; a block that uses a member of a variable whose type the scaffold does not know is not checked.
 """
 
@@ -27,7 +27,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-TARGET = Path(os.environ.get("CNA_TARGET_TREE", "/rv/tmp/libcna-v2/cna-target"))
+TARGET = Path(os.environ.get("CNA_TARGET_TREE") or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "libcna-com" / "cna-target")
 SHARP = Path(os.environ.get("SHARP_RUNTIME", ROOT.parent / "sharp-runtime"))
 EASY = Path(os.environ.get("EASY_GL", ROOT.parent / "easy-gl"))
 META = Path(os.environ.get("META_GL", ROOT.parent / "meta-gl"))

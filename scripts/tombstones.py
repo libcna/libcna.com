@@ -33,6 +33,52 @@ TOMBSTONES: dict[str, dict] = {
         "links": [("docs/rendering-backends.html", "Graphics renderers: every current renderer"),
                   ("deep-dives/platforms/web-build-and-main-loop.html", "Web builds and the browser main loop")],
     },
+    "deep-dives/renderers/direct3d11-and-12-resources.html": {
+        "title": "Direct3D on Windows",
+        "message": "The page that used to be at this address is no longer part of the documentation. In current CNA a "
+                   "Windows build renders through <code>DIRECTX9</code>, or through <code>SDL_GPU</code> on SDL&rsquo;s "
+                   "Direct3D 12 GPU driver.",
+        "links": [("deep-dives/renderers/direct3d-presentation-and-state.html", "Direct3D 9 presentation and state"),
+                  ("docs/rendering-backends.html#windows-directx", "Graphics renderers: Windows")],
+    },
+    "deep-dives/renderers/sdl-renderer-2d-contract.html": {
+        "title": "2D rendering",
+        "message": "The page that used to be at this address is no longer part of the documentation. In current CNA every "
+                   "renderer that produces pixels draws 2D through <code>SpriteBatch</code>.",
+        "links": [("docs/spritebatch.html", "SpriteBatch"),
+                  ("deep-dives/graphics/spritebatch-sorting-and-batching.html", "SpriteBatch sorting and batching")],
+    },
+    "deep-dives/renderers/vulkan-deferred-state-and-descriptors.html": {
+        "title": "Native GPU rendering",
+        "message": "The page that used to be at this address is no longer part of the documentation. In current CNA native "
+                   "GPU rendering goes through the <code>SDL_GPU</code> renderer, on SDL&rsquo;s Vulkan, Direct3D 12 or "
+                   "Metal GPU driver.",
+        "links": [("deep-dives/renderers/sdl-gpu-pipeline-state-and-draw-order.html", "SDL_GPU shader intake, pipeline keys and draw order"),
+                  ("docs/rendering-backends.html", "Graphics renderers: every current renderer")],
+    },
+    "deep-dives/renderers/vulkan-presentation-and-readback.html": {
+        "title": "Presentation and back-buffer readback",
+        "message": "The page that used to be at this address is no longer part of the documentation. Presentation and "
+                   "back-buffer readback for the current renderers are described on the pages below.",
+        "links": [("deep-dives/renderers/presentation-and-backbuffer-readback.html", "Presentation and back-buffer readback"),
+                  ("deep-dives/renderers/sdl-gpu-resources-and-frame-recovery.html", "SDL_GPU resources and frame recovery")],
+    },
+    "development/internals/graphics/vulkan.html": {
+        "title": "SDL_GPU renderer internals",
+        "message": "The page that used to be at this address is no longer part of the documentation. In current CNA native "
+                   "GPU rendering goes through the <code>SDL_GPU</code> renderer, on SDL&rsquo;s Vulkan, Direct3D 12 or "
+                   "Metal GPU driver.",
+        "links": [("development/internals/graphics/sdl-gpu.html", "SDL_GPU renderer internals"),
+                  ("development/internals/graphics/backends.html", "Graphics backends: the renderer family map")],
+    },
+    "docs/tutorials/85-vulkan-backend.html": {
+        "title": "Choosing a renderer",
+        "message": "The tutorial that used to be at this address is no longer part of the series. In current CNA native GPU "
+                   "rendering goes through the <code>SDL_GPU</code> renderer, on SDL&rsquo;s Vulkan, Direct3D 12 or Metal "
+                   "GPU driver.",
+        "links": [("docs/tutorials/72-backend-selection.html", "Tutorial 72: Choosing a Renderer"),
+                  ("docs/rendering-backends.html", "Graphics renderers: every current renderer")],
+    },
     "development/internals/platforms/x11.html": {
         "title": "X11 through SDL3",
         "message": "The page that used to be at this address is no longer part of the documentation. CNA reaches X11 "

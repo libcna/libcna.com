@@ -17,15 +17,20 @@ commit in cnahead, which need no extracted tree; otherwise ~/.cache/libcna-com/c
 (created by scripts/extract_cna_trees.sh). The scan therefore runs wherever the CNA clone is present.
 
 Public content = every tracked/untracked file outside audit/, scripts/ and plan.md.
-Ordinary English words that double as identities (Magnum, Wicked, Glide, Sokol, Diligent, Canvas) are only
-flagged in identity-like spellings (all caps, CMake option form, or module-directory form); the HTML <canvas>
-element a browser build draws into is not an identity.
+Ordinary English words that double as identities (Magnum, Wicked, Glide, Sokol, Diligent, Canvas) and the names of
+graphics APIs that other projects still drive (Vulkan, Metal) are only flagged in identity-like spellings (all caps,
+CMake option form, module-directory form, or a CamelCase class prefix such as VulkanRenderer or MetalCompiledEffect); the
+HTML <canvas> element a browser build draws into is not an identity, and neither is the Vulkan or Metal API that SDL_GPU,
+FNA3D or wgpu-native select underneath a current CNA renderer.
 
 Retired identities also have prose names that the identity spelling does not cover ("the Canvas renderer",
-"Direct3D 12 backend", "WebGL 1", "OpenGL ES 2", "Direct3D 9/11/12"). Those are flagged when they are presented as a
-CNA renderer: followed by renderer/backend/identity/family, listed as a sibling of current renderers, or joined to
-Direct3D 11 as one renderer list. SDL_GPU's Direct3D 12 *driver*, meta-gl's GLES 2.0 entry points and WebGL 1/2
-context flags are other projects' facts and stay legal.
+"Direct3D 12 backend", "WebGL 1", "OpenGL ES 2", "Direct3D 9/11/12", "the Vulkan renderer", "Metal backend",
+"Direct3D 11 renderer", "SDL_Renderer"). Those are flagged when they are presented as a CNA renderer: followed by
+renderer/backend/identity/family, listed as a sibling of current renderers, or joined to Direct3D 9 as one renderer list.
+SDL_GPU's Vulkan, Direct3D 12 and Metal *backends* (named as SDL's), FNA3D's Direct3D 11 driver, wgpu-native's Vulkan
+backend, meta-gl's GLES 2.0 entry points and WebGL 1/2 context flags are other projects' facts and stay legal: a list
+owned by SDL, FNA3D, wgpu-native, DXVK or vkd3d ("SDL's Vulkan, Direct3D 12 and Metal backends", "FNA3D selects SDL_GPU,
+Direct3D 11 or OpenGL") is not a list of CNA renderers.
 
 The line patterns above see a name and its immediate neighbour only, so a prose name inside a longer list slipped
 through ("DirectX 9, DirectX 11 and DirectX 12 report loss", "(EasyGL, WebGPU, SDL_GPU, DirectX 11 and DirectX 12)",
@@ -68,7 +73,9 @@ BASE_TREE = Path(os.environ.get("CNA_BASE_TREE") or _CACHE / "cna-base")      # 
 TARGET_TREE = Path(os.environ.get("CNA_TARGET_TREE") or _CACHE / "cna-target")  # CNA at the commit in cnahead
 CNA_REPO = Path(os.environ.get("CNA_REPO") or ROOT.parent / "cna")
 BASE_SHA = "1bb2145d99ed572dd4eb15009c34e2e5f410fcf0"  # tag v0.1.0-alpha.1 (same constant as extract_cna_trees.sh)
-WORDS = {"MAGNUM", "WICKED", "SOKOL", "DILIGENT", "GLIDE", "IGL", "CANVAS"}
+WORDS = {"MAGNUM", "WICKED", "SOKOL", "DILIGENT", "GLIDE", "IGL", "CANVAS", "VULKAN", "METAL"}
+# weak identities whose renderer classes carried the API name as a CamelCase prefix
+CAMEL_WEAK = {"VULKAN": "Vulkan", "METAL": "Metal"}
 # prose names of retired identities whose CMake spelling the strong pattern cannot see; each is checked only if the
 # identity is in the derived retired set, so a name that is (re)admitted stops being flagged without editing this file
 PROSE = {
@@ -76,9 +83,16 @@ PROSE = {
     "DIRECTX12": r"(?:Direct3D|DirectX|D3D)[ -]?12|DX12",
     "WEBGL1": r"WebGL[ -]?1(?:\.0)?",
     "OPENGLES2": r"OpenGL[ -]?ES[ -]?2(?:\.0)?|GLES[ -]?2(?:\.0)?",
+    "VULKAN": r"Vulkan",
+    "METAL": r"Metal",
+    "DIRECTX11": r"(?:Direct3D|DirectX|D3D)[ -]?11|DX11",
+    "SDL_RENDERER": r"SDL[_ ]Renderer",
 }
 _GAP = r"(?:\s|&nbsp;|<[^>]+>|\))*"
-_CURRENT = r"(?:WebGL[ -]?2|WebGPU|SDL_Renderer|SDL_GPU|Software|Headless|Stub|Metal|Vulkan|EasyGL|FNA3D|OpenGL[ -]?ES[ -]?3|OpenGL[ -]?3\.?3)"
+# the list a name stands in ends in a non-renderer noun ("SDL_GPU, Direct3D 11 or OpenGL driver", "WebGL 1/2 context"): the
+# names are another project's drivers or APIs, not CNA renderers
+_OWNED_TAIL = r"[^.;<]{0,40}?\b(?:element|API|APIs|context|surface|canvas|drivers?|devices?)\b"
+_CURRENT = r"(?:WebGL[ -]?2|WebGPU|SDL_GPU|Software|Headless|Stub|EasyGL|FNA3D|OpenGL[ -]?ES[ -]?3|OpenGL[ -]?3\.?3|Direct3D[ -]?9|DirectX[ -]?9)"
 SKIP_DIRS = {"audit", "scripts", ".git", ".idea"}
 SKIP_FILES = {"plan.md"}
 TEXT_SUFFIX = {".html", ".json", ".xml", ".js", ".css", ".txt", ".md", ".svg", ""}
@@ -156,8 +170,8 @@ def prose_pattern(retired: set[str]) -> re.Pattern[str] | None:
     return re.compile(
         r"(?<![A-Za-z0-9_])" + nm + r"(?![A-Za-z0-9_])" + _GAP + r"(?:/" + _GAP + r"(?:WebGL[ -]?2|2)" + _GAP + r")?" + role  # "Canvas renderer", "WebGL 1/2 profiles"
         + r"|(?:Direct3D|DirectX|D3D|DIRECTX)[ -]?(?:9[ ,/]+)?11" + _GAP + r"(?:/|,|and|&amp;)" + _GAP + r"12\b"               # "Direct3D 9/11/12", "Direct3D 11 and 12"
-        + r"|\b" + _CURRENT + r"(?:</code>)?" + _GAP + r"(?:,|and|or)" + _GAP + r"(?:<code>)?" + nm + r"(?![A-Za-z0-9_])(?!" + _GAP + r"(?:element|API|context|surface|canvas|drivers?|devices?))"
-        + r"|(?<![A-Za-z0-9_])" + nm + r"(?:</code>)?" + _GAP + r"(?:,|and|or)" + _GAP + r"(?:<code>)?" + _CURRENT + r"\b(?!" + _GAP + r"(?:drivers?|devices?|context))")
+        + r"|\b" + _CURRENT + r"(?:</code>)?" + _GAP + r"(?:,|and|or)" + _GAP + r"(?:<code>)?" + nm + r"(?![A-Za-z0-9_])(?!" + _OWNED_TAIL + r")"
+        + r"|(?<![A-Za-z0-9_])" + nm + r"(?:</code>)?" + _GAP + r"(?:,|and|or)" + _GAP + r"(?:<code>)?" + _CURRENT + r"\b(?!" + _OWNED_TAIL + r")")
 
 
 # ---------------------------------------------------------------------------------------------
@@ -167,8 +181,8 @@ BLOCK = "¶"
 BLOCK_TAGS = ["p", "li", "td", "th", "dd", "dt", "h1", "h2", "h3", "h4", "h5", "h6", "caption", "figcaption", "pre",
               "tr", "br", "div", "section", "article", "blockquote", "summary", "title", "option", "label"]
 # current CNA renderers whose names are not also the name of a graphics API another project implements
-CURRENT_CNA_ONLY = (r"EasyGL|SDL[_ ]GPU|SDL[_ ]Renderer|FNA3D|Software|Headless|Stub|OPENGLES3|OPENGL33|WEBGL2|VULKAN|WEBGPU|"
-                    r"METAL|SDL_RENDERER|DIRECTX9|DIRECTX11|HEADLESS|SOFTWARE|STUB")
+CURRENT_CNA_ONLY = (r"EasyGL|SDL[_ ]GPU|FNA3D|Software|Headless|Stub|OPENGLES3|OPENGL33|WEBGL2|WEBGPU|"
+                    r"DIRECTX9|SDL_GPU|HEADLESS|SOFTWARE|STUB")
 # names that can be a CNA renderer or a graphics API (or another project's driver), so they only extend a list
 API_LIKE = (r"(?:Direct3D|DirectX|D3D)[ -]?\d+(?:\s*/\s*\d+)*|DX\d+|Vulkan|Metal|WebGPU|WebGL[ -]?\d(?:\.\d)?|WebGL|"
             r"OpenGL(?:[ -]?ES)?[ -]?\d(?:\.\d)?|OpenGL(?:[ -]?ES)?|GLES[ -]?\d(?:\.\d)?|Canvas(?:2D)?")
@@ -187,7 +201,15 @@ ROLE_HEADS = {"renderer", "renderers", "backend", "backends", "identity", "ident
 ROLE_CONTEXT = re.compile(r"\b(?:renderers?|backends?|identit(?:y|ies)|famil(?:y|ies)|registers?|registered|registrations?)\b", re.I)
 CNA_CLAIM = re.compile(r"\bCNA(?:['\u2019]s)?\b[^.;]{0,60}\b(?:accepts?|supports?|offers?|exposes?|ships?|includes?|provides?|implements?|targets?|"
                        r"(?:renders?|draws?|presents?)\s+(?:through|with|via|using|on))\b")
-SDL_OWNED = re.compile(r"\bSDL(?:3|_gpu|_GPU)?\s*['\u2019]s\s+(?:own\s+)?(?:GPU\s+API\s*['\u2019]s\s+)?$")
+# the list belongs to another project ("SDL's Vulkan, Direct3D 12 and Metal backends", "wgpu-native's Vulkan backend")
+SDL_OWNED = re.compile(r"\b(?:SDL(?:3|_gpu|_GPU)?|FNA3D|wgpu(?:-native)?|Dawn|DXVK|vkd3d(?:-proton)?|MoltenVK|ANGLE|Mesa|Godot|bgfx)\s*['\u2019]s\s+"
+                       r"(?:own\s+|internal\s+|native\s+)?(?:GPU\s+API\s*['\u2019]s\s+)?$")
+# an abstraction's internal choice ("FNA3D selects SDL_GPU, Direct3D 11 or OpenGL", "SDL picks Vulkan, Direct3D 12 or Metal
+# underneath", "SDL_GPU on its Metal backend"): the list names what the abstraction drives, not CNA renderers
+INTERNAL_CHOICE = re.compile(r"\b(?:SDL(?:3|_gpu|_GPU| GPU)?|FNA3D|wgpu(?:-native)?|Dawn|DXVK|vkd3d(?:-proton)?|MoltenVK|ANGLE)\b[^.;]{0,50}?"
+                             r"\b(?:selects?|picks?|chooses?|uses?|drives?|runs?\s+(?:on|over)|translates?\s+(?:to|into)|maps?\s+(?:to|onto)|"
+                             r"on\s+(?:its|their|the)|through\s+(?:its|their)|over\s+(?:its|their)|via\s+(?:its|their)|underneath|internally|"
+                             r"with\s+(?:its|their)|backends?:?)\b[^.;]{0,40}?$", re.I)
 CELL_ROLE_HEADER = re.compile(r"\b(?:famil(?:y|ies)|renderers?|identit(?:y|ies)|backends?)\b", re.I)
 CELL_NON_RENDERER_HEADER = re.compile(r"\b(?:drivers?|API|devices?|librar(?:y|ies)|hosts?|platforms?|SDKs?)\b", re.I)
 # "Direct3D 12 is one of the renderer families", "... are CNA's renderers": the list is the subject of a role predicate
@@ -258,7 +280,7 @@ def judge_list(block: str, retired_rx: re.Pattern[str], weak: bool = False) -> l
         if head in NON_RENDERER_HEADS:
             continue
         before = _clause_before(block, run.start())
-        if SDL_OWNED.search(before):
+        if SDL_OWNED.search(before) or INTERNAL_CHOICE.search(before):
             continue
         if head in ROLE_HEADS:
             out.append((f"retired renderer named with the role noun '{head}'", excerpt, text))
@@ -364,14 +386,26 @@ def line_hits(text: str, retired: set[str]) -> list[tuple[int, str]]:
     # also the CamelCase enum spellings of the strong set, e.g. OpenGLES1 / DirectX7 / Blend2D / NanoVg
     weak_rx = re.compile(r"(?<![A-Za-z0-9_])(" + "|".join(map(re.escape, weak)) + r")(?![A-Za-z0-9_])") if weak else None
     prose_rx = prose_pattern(retired)
-    weak_form = re.compile(r"CNA_RENDERER_(" + "|".join(map(re.escape, weak)) + r")\b|renderers/(" + "|".join(x.lower() for x in weak) + r")\b") if weak else None
+    # CMake option forms (CNA_RENDERER_METAL, CNA_METAL_COMPILED_EFFECTS) and the module directory (renderers/metal)
+    weak_form = re.compile(r"(?:\b|(?<=-D))CNA_(?:RENDERER_)?(" + "|".join(map(re.escape, weak)) + r")(?:_[A-Z0-9_]+)?\b|renderers/(" + "|".join(x.lower() for x in weak)
+                           + r")\b") if weak else None
+    # CamelCase class prefixes of the API-named identities (VulkanRenderer, MetalCompiledEffect); Apple's MetalKit/MetalFX are frameworks
+    camel = [CAMEL_WEAK[w] for w in weak if w in CAMEL_WEAK]
+    weak_camel = re.compile(r"(?<![A-Za-z0-9_])(" + "|".join(camel) + r")(?=[A-Z][a-z])(?!Kit\b|FX\b)") if camel else None
+    # the CMake option and define forms of the strong set too (CNA_DIRECTX11_COMPILED_EFFECTS, CNA_RENDERER_SDL_RENDERER), whose
+    # underscores hide the name from the word-bounded strong pattern; both forms also match after a -D prefix
+    strong_form = re.compile(r"(?:\b|(?<=-D))CNA_(?:RENDERER_(?:PRESENT_)?)?(" + "|".join(map(re.escape, strong)) + r")(?:_[A-Z0-9_]+)?\b") if strong else None
     out = []
     for number, line in enumerate(text.splitlines(), 1):
         m = strong_rx.search(line)
+        if m is None and strong_form is not None:
+            m = strong_form.search(line)
         if m is None and weak_rx is not None:
             m = weak_rx.search(line) if re.search(r"[A-Z]{4,}", line) else None
             if m is None and weak_form:
                 m = weak_form.search(line)
+            if m is None and weak_camel:
+                m = weak_camel.search(line)
         if m is None and prose_rx is not None:
             m = prose_rx.search(line)
         if m:

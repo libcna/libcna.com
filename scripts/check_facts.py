@@ -41,6 +41,13 @@ phrasing none of the patterns knows, is not checked.
 The final review (of 56a5ff4) found two registry counts no rule read: "the public renderer identities are a curated set of 18"
 (the count after its noun) and "18 CNA_RENDERER_<X> switches" in a configure-order diagram, where the .cmake names on the lines
 above had also excused it as a quotation. Both shapes now fail, and only a quotation mark excuses the switch count.
+The c6dec91f update (phase 6) changed three derivations. The maturity and category switches are read from
+GraphicsRendererMaturity.hpp / GraphicsRendererCategory.hpp, falling back to the older GraphicsBackend* names for an earlier
+pin. The format-classifier families are now the families whose code overrides ClassifySurfaceFormatEXT /
+ClassifyRenderTargetFormatEXT (families_overriding), outside examples and tests: the plain text search it replaces also counted
+a family that only mentioned the method in a comment, which inflated the render-target count at c6dec91f. And the previous
+snapshot's values (c1c316b9) joined the stale needles; the renderer counts, the C ABI 0.46.0 and the 24-job figure are
+excused when their clause attributes them to the 0.1.0 release, which still had them.
 scripts/test_validators.py feeds the reviewers' exact stale sentences through these rules.
 """
 
@@ -114,8 +121,12 @@ def derive_from_cna(sha: str) -> dict:
         raise AttributeError("GraphicsRendererType does not enumerate exactly the public identities")
 
     def classification(kind: str) -> dict[str, str]:
-        """identity -> GraphicsBackendMaturity / GraphicsBackendCategory value, read from the get<kind>() switch"""
-        src = _git("show", f"{sha}:modules/core/include/CNA/{kind}.hpp")
+        """identity -> GraphicsRenderer<kind> value, read from the getGraphicsRenderer<kind>() switch. CNA renamed the
+        GraphicsBackend<kind> headers to GraphicsRenderer<kind> on 2026-10-17 (ABI 0.49.0); an older commit has the old name."""
+        try:
+            kind, src = f"GraphicsRenderer{kind}", _git("show", f"{sha}:modules/core/include/CNA/GraphicsRenderer{kind}.hpp")
+        except subprocess.CalledProcessError:
+            kind, src = f"GraphicsBackend{kind}", _git("show", f"{sha}:modules/core/include/CNA/GraphicsBackend{kind}.hpp")
         body = src[src.index(f"get{kind}(GraphicsRendererType type)"):]
         out, pending = {}, []
         for m in re.finditer(rf"case GraphicsRendererType::(\w+):|return {kind}::(\w+);", body[:body.index("\n    }\n")]):
@@ -127,7 +138,7 @@ def derive_from_cna(sha: str) -> dict:
         if sorted(out) != sorted(public):
             raise AttributeError(f"get{kind}() does not classify exactly the public identities")
         return out
-    category = classification("GraphicsBackendCategory")
+    category = classification("Category")
     web = {i for i, c in category.items() if c == "Web"}                   # "Only available in a browser/Emscripten build"
     direct3d = {i for i in public if family_of[i].startswith("directx")}   # the registry's DirectX* namespaces
     # the identities the unbound-texture (null-texture) expectations are pinned for: the test's own renderer gate
@@ -139,8 +150,15 @@ def derive_from_cna(sha: str) -> dict:
     optioned = {by_key[key(o)] for o in re.findall(r"option\(CNA_([A-Z0-9_]+)_COMPILED_EFFECTS\b", selection) if key(o) in by_key}
     always = families_defining("SupportsCompiledEffects() const override { return true; }") - optioned
     compiled = optioned | always
+    def families_overriding(method: str) -> set[str]:
+        """families whose renderer sources define `method` (an out-of-line `Class::method(` definition or an in-class
+        `method(...) const override`), ignoring comments, examples and tests: a plain text search counted a family whose
+        only mention was a comment (DIRECTX9 at c6dec91f) or a test that calls the inherited method (FNA3D)."""
+        rx = rf"(::{method}\(|{method}\([^)]*\)[[:space:]]*const[[:space:]]*override)"
+        hits = _git("grep", "-lE", rx, sha, "--", "modules/renderers", ":!modules/renderers/*/examples", ":!modules/renderers/*/tests").splitlines()
+        return {p.split(":", 1)[1].split("/")[2] for p in hits} & families
     # format verdicts: families that override the Texture2D / render-target classifier; every other family defers (Color only)
-    tex_cls, rt_cls = families_defining("ClassifySurfaceFormatEXT"), families_defining("ClassifyRenderTargetFormatEXT")
+    tex_cls, rt_cls = families_overriding("ClassifySurfaceFormatEXT"), families_overriding("ClassifyRenderTargetFormatEXT")
     examples = [p for p in tree if not p.startswith("third_party/") and re.search(r"(^|/)examples/.*\.cpp$", p)]
     return {"renderer_identities": len(public), "implementation_families": len(families),
             "platform_implementations": len(platforms), "audio_implementations": len(audio_ids),
@@ -154,7 +172,7 @@ def derive_from_cna(sha: str) -> dict:
             "compiled_effect_default_refusing_identities": len(public) - identities_of(always),
             "renderer_enumerators": len(enumerators), "renderer_last_ordinal": len(enumerators) - 1,
             "renderer_ordinals": {e: i for i, e in enumerate(enumerators)},
-            "renderer_maturity": dict(sorted(Counter(classification("GraphicsBackendMaturity").values()).items())),
+            "renderer_maturity": dict(sorted(Counter(classification("Maturity").values()).items())),
             "renderer_category": dict(sorted(Counter(category.values()).items())),
             "direct3d_identities": len(direct3d), "web_only_identities": len(web), "non_web_gl_profiles": len(gl - web),
             "unbound_texture_identities": len(unbound), "unbound_texture_families": len({family_of[i] for i in unbound}),
@@ -308,6 +326,9 @@ METRIC_RULES: list[tuple[str, str, int, str]] = [
 ]
 _MACRO_RULE = next(r[1] for r in METRIC_RULES if r[0] == "cpp_test_files_with_macros")
 # the number belongs to an earlier revision, in its own clause, before it
+# a clause that attributes a value to the 0.1.0 release (or its tag) rather than to the documented snapshot
+RELEASE_010 = re.compile(r"\b0\.1\.0 release|\brelease (?:itself |still )?(?:carried|had|shipped)|\bv0\.1\.0\b|\bAt the release\b", re.I)
+
 HISTORY = re.compile(r"alpha\.1|b0e97bb1|009d40f5|d6e9ff05|1bb2145d|\bearlier\b|\bprevious(?:ly)?\b|\bbefore\b|\bwas\b|\bwere\b|"
                      r"\bhad\b|\bfrom\b|historical|\bresearch\b|audited (?:commit|revision)|\bused to\b|\b(?:back|until|by) then\b|\bthen-current\b|\bonce\b|"
                      r"\bremoved\b|\brestored\b|\bretired\b|\bnarrowed\b|\bshipped\b|\btagged\b", re.I)
@@ -610,7 +631,7 @@ CLASS_COUNT = re.compile(r"(?<![\w.-])" + _NUM_CS + r"\s+(?:(?:public|renderer|o
                          r"(?:(?:are|is)\s+)?(?:(?:declared|classified)\s+)?(?:as\s+)?(?P<c>" + _CLASS + r")\b(?=\s*(?:[,;.:)(]|$|and\b|or\b|identit|renderers?\b|backends?\b))")
 # "Production: eight identities"
 CLASS_COUNT_REV = re.compile(r"(?<![\w-])(?P<c>" + _CLASS + r")\s*(?::|=|\u2013|\u2014)\s*" + _NUM_CS + r"\s+(?:public\s+|renderer\s+)*(?:identities|renderers|backends)\b")
-CLASS_CTX = re.compile(r"maturit|categor|GraphicsBackend|declare|classif|identit|renderer", re.I)
+CLASS_CTX = re.compile(r"maturit|categor|GraphicsRenderer(?:Maturity|Category)|GraphicsBackend|declare|classif|identit|renderer", re.I)
 ORDINAL_CTX = re.compile(r"\bordinals?\b|\benumerators?\b|GraphicsRendererType", re.I)
 MATURITY_NAMES = {"Production", "Supported", "Experimental", "Historical", "Deprecated"}
 # an earlier revision named in the clause; narrower than HISTORY, whose "from" would excuse "from SdlRenderer (0) to Fna3d (17)"
@@ -820,8 +841,9 @@ def page_claim_findings(page: str, raw: str, values: dict) -> list[tuple[str, st
     for block in visible_blocks(raw, cell_headers=True):
         out += [(msg, msg) for msg in mapping_wording_findings(block)]
         column = re.match(r"\[\[(.*?)\]\] ", block)
-        if column and HISTORY.search(column.group(1)):
-            continue                                    # a cell in a column about an earlier revision ("Alpha.1")
+        if column and (HISTORY.search(column.group(1)) or RELEASE_010.search(column.group(1))
+                       or re.fullmatch(r"\s*(?:v?0\.1\.0)\s*", column.group(1))):
+            continue                                    # a cell in a column about an earlier revision ("Alpha.1", "0.1.0 release")
         # an archive page and the tours of archived bindings describe an earlier revision as a whole
         if not page.startswith("historical/") and page not in ARCHIVED_BINDING_TOURS:
             out += metric_findings(block, values)
@@ -833,6 +855,52 @@ def public_pages() -> list[str]:
     return [p.relative_to(ROOT).as_posix() for p in sorted(ROOT.rglob("*.html"))
             if not (SKIP_PARTS & set(p.relative_to(ROOT).parts)) and p.relative_to(ROOT).as_posix() not in TOMBSTONES]
 
+
+# stale numbers from earlier audits must not appear as current claims
+STALE_NEEDLES = [("50 renderer identities", "alpha.1 renderer count"), ("46 implementation families", "alpha.1 family count"),
+         ("8,263 static", "alpha.1 test definitions"), ("21 workflow files", "alpha.1 workflow count"),
+         # superseded values of the previous snapshot (009d40f5)
+         ("25 renderer identities", "009d40f5 renderer count"), ("25 public renderer", "009d40f5 renderer count"),
+         ("21 implementation families", "009d40f5 family count"), ("12,610", "009d40f5 test definitions"),
+         ("2,877", "009d40f5 commit count"), ("87 / 153", "009d40f5-era sample count"), ("87 of 153", "009d40f5-era sample count"),
+         ("ABI 0.29.0", "009d40f5 C ABI"), ("ABI (0.29.0", "009d40f5 C ABI"), ("4,055", "009d40f5 C route count"),
+         ("20 workflow files", "009d40f5 workflow count"), ("20 CI workflow", "009d40f5 workflow count"),
+         ("seven host integrations", "009d40f5 platform count"), ("7 platform implementations", "009d40f5 platform count"),
+         # superseded values of the previous snapshot (b0e97bb1)
+         ("18 renderer identities", "b0e97bb1 renderer count"), ("18 public renderer", "b0e97bb1 renderer count"),
+         ("18 identities", "b0e97bb1 renderer count"), ("14 implementation families", "b0e97bb1 family count"),
+         ("12,021", "b0e97bb1 test definitions"), ("852 C++ test", "b0e97bb1 test files"), ("852 test", "b0e97bb1 test files"),
+         ("3,333 commits", "b0e97bb1 commit count"), ("6 platform implementations", "b0e97bb1 platform count"),
+         ("six platform implementations", "b0e97bb1 platform count"), ("Six platform implementations", "b0e97bb1 platform count"),
+         ("ABI 0.44.0", "b0e97bb1 C ABI"), ("ABI (0.44.0", "b0e97bb1 C ABI"), ("26 jobs", "b0e97bb1 CI job count"),
+         # superseded values of the previous snapshot (c1c316b9); the 0.1.0 release (22 commits later) still had the
+         # renderer counts, the C ABI and the job count, so a clause that attributes them to that release is history
+         ("14 renderer identities", "c1c316b9 renderer count", RELEASE_010),
+         ("14 public renderer", "c1c316b9 renderer count", RELEASE_010),
+         ("14 public identities", "c1c316b9 renderer count", RELEASE_010),
+         ("14 identities", "c1c316b9 renderer count", RELEASE_010),
+         ("12 implementation families", "c1c316b9 family count", RELEASE_010),
+         ("11,380", "c1c316b9 test definitions"), ("813 C++ test", "c1c316b9 test files"), ("813 test", "c1c316b9 test files"),
+         ("3,687 commits", "c1c316b9 commit count"),
+         ("ABI 0.46.0", "c1c316b9 C ABI", RELEASE_010), ("ABI (0.46.0", "c1c316b9 C ABI", RELEASE_010),
+         ("24 jobs", "c1c316b9 CI job count", RELEASE_010)]
+
+
+def stale_needle_findings(body: str, skip: set[str] = frozenset()) -> list[tuple[str, str, str]]:
+    """(needle, what, context) for each superseded value in STALE_NEEDLES that a page states without attributing it to an
+    earlier revision (or, for the values the 0.1.0 release still had, to that release) near it."""
+    out = []
+    for needle, what, *release_excuse in STALE_NEEDLES:
+        if what in skip:
+            continue
+        for m in re.finditer(re.escape(needle), body):
+            ctx = body[max(0, m.start() - 90): m.end() + 60]
+            if re.search(r"alpha\.1|earlier|previous|BASE|was |had |historical|\(BASE", ctx, re.I):
+                continue
+            if release_excuse and release_excuse[0].search(ctx):
+                continue
+            out.append((needle, what, ctx))
+    return out
 
 def main() -> int:
     F["xna_runtime_members_n"] = n(F["xna_runtime_members"])
@@ -859,35 +927,13 @@ def main() -> int:
         else:
             print(f"FAIL {what}: /{rx}/ not found in {page}"); bad += 1
     # stale numbers from the alpha.1 audit must not appear as current claims
-    stale = [("50 renderer identities", "alpha.1 renderer count"), ("46 implementation families", "alpha.1 family count"),
-             ("8,263 static", "alpha.1 test definitions"), ("21 workflow files", "alpha.1 workflow count"),
-             # superseded values of the previous snapshot (009d40f5)
-             ("25 renderer identities", "009d40f5 renderer count"), ("25 public renderer", "009d40f5 renderer count"),
-             ("21 implementation families", "009d40f5 family count"), ("12,610", "009d40f5 test definitions"),
-             ("2,877", "009d40f5 commit count"), ("87 / 153", "009d40f5-era sample count"), ("87 of 153", "009d40f5-era sample count"),
-             ("ABI 0.29.0", "009d40f5 C ABI"), ("ABI (0.29.0", "009d40f5 C ABI"), ("4,055", "009d40f5 C route count"),
-             ("20 workflow files", "009d40f5 workflow count"), ("20 CI workflow", "009d40f5 workflow count"),
-             ("seven host integrations", "009d40f5 platform count"), ("7 platform implementations", "009d40f5 platform count"),
-             # superseded values of the previous snapshot (b0e97bb1)
-             ("18 renderer identities", "b0e97bb1 renderer count"), ("18 public renderer", "b0e97bb1 renderer count"),
-             ("18 identities", "b0e97bb1 renderer count"), ("14 implementation families", "b0e97bb1 family count"),
-             ("12,021", "b0e97bb1 test definitions"), ("852 C++ test", "b0e97bb1 test files"), ("852 test", "b0e97bb1 test files"),
-             ("3,333 commits", "b0e97bb1 commit count"), ("6 platform implementations", "b0e97bb1 platform count"),
-             ("six platform implementations", "b0e97bb1 platform count"), ("Six platform implementations", "b0e97bb1 platform count"),
-             ("ABI 0.44.0", "b0e97bb1 C ABI"), ("ABI (0.44.0", "b0e97bb1 C ABI"), ("26 jobs", "b0e97bb1 CI job count")]
     for page in [p.relative_to(ROOT).as_posix() for p in ROOT.rglob("*.html") if not ({"audit", "scripts", "build-probe", ".git", "known-issues"} & set(p.relative_to(ROOT).parts))]:  # known-issues pages quote stale numbers of CNA's own documents on purpose
         if page == "docs/releases.html":
             continue  # release history compares alpha.1 with the snapshot on purpose
         body = cache.get(page) or text(page)
         archived_tour = page in ARCHIVED_BINDING_TOURS  # a source tour of an archived binding at its final revision
-        for needle, what in stale:
-            if archived_tour and what == "009d40f5 C route count":
-                continue
-            for m in re.finditer(re.escape(needle), body):
-                ctx = body[max(0, m.start() - 90): m.end() + 60]
-                if re.search(r"alpha\.1|earlier|previous|BASE|was |had |historical|\(BASE", ctx, re.I):
-                    continue
-                print(f"STALE? {page}: '{needle}' ({what}) \u2026 {ctx.strip()[:150]}"); bad += 1
+        for needle, what, ctx in stale_needle_findings(body, skip={"009d40f5 C route count"} if archived_tour else set()):
+            print(f"STALE? {page}: '{needle}' ({what}) \u2026 {ctx.strip()[:150]}"); bad += 1
     # every public page, Known Issues included: whole-registry phrasings of the source-derived numbers
     values = metric_values()
     for page in public_pages():

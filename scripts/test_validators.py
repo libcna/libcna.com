@@ -37,6 +37,7 @@ METRIC_REJECT_THIRD_REVIEW; the corrected sentences and the same counts attribut
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 
@@ -62,6 +63,12 @@ def platform_problems(html: str) -> list[str]:
     for line in html.splitlines():
         out += [why for rx, why in RP.patterns(RETIRED_P) if rx.search(line)]
     return out
+
+
+def stale_problems(html: str) -> list[str]:
+    from bs4 import BeautifulSoup
+    body = re.sub(r"\s+", " ", BeautifulSoup(html, "html.parser").get_text(" "))
+    return [f"stale {what}: {needle}" for needle, what, _ctx in CF.stale_needle_findings(body)]
 
 
 def metric_problems(html: str) -> list[str]:
@@ -307,14 +314,9 @@ METRIC_REJECT_SECOND_REVIEW = [
     "<p>Compiled effects work everywhere except on 11 identities.</p>",
 ]
 METRIC_ALLOW = [
-    "<p>The source tree has 813 C++ test files and 11,380 statically discoverable GoogleTest-family definitions (781 files contain at least one; alpha.1 had 568 and 8,263).</p>",
     "<p>Since alpha.1 the set has been deliberately curated from 50 identities over 46 implementation families to 14 over 12.</p>",
     "<p>The previous snapshot, b0e97bb1, had 18 public identities over 14 implementation families and 852 C++ test source files.</p>",
-    "<li>The 14-identity, 12-family registry in cmake/RendererIdentities.cmake is strong structural evidence.</li>",
-    "<p>Compiled-effect support is 11 of the 14 identities in 9 implementation families.</p>",
-    "<p>A default configure reports CompiledEffects false on 13 of the 14 identities.</p>",
     "<p>Storage has 14 statically discoverable GoogleTest-family definitions (alpha.1: five).</p>",
-    "<p>one renderer's oracle result says nothing about the other 13 identities</p>",
     '<p>Quote the gate as committed: "Not ready, one criterion unmet: 631 public symbols are still unmapped".</p>',
     "<p>631 planned public C++ declarations do not yet have C mappings.</p>",
     "<table><tr><th>Area</th><th>Alpha.1</th><th>Snapshot</th></tr><tr><td>Renderers</td><td>50 public identities over 46 implementation families</td><td>14 over 12</td></tr></table>",
@@ -323,34 +325,45 @@ METRIC_ALLOW = [
     "<td>Vulkan (MSAA clamp only) and two of the three EasyGL identities, OPENGLES3 and WEBGL2 (render-target format: Color only).</td>",
     "<td>One EasyGL identity on one host, not all renderer families.</td>",
     "<p>The EasyGL family (3) serves OPENGLES3, OPENGL33 and WEBGL2.</p>",
-    "<li><code>Effect(GraphicsDevice&amp;, bytes)</code> is still refused wherever the active renderer has no compiled-effect runtime. The three identities that "
-    "cannot have one (SDL_RENDERER, HEADLESS and STUB) always refuse it; in a default configuration 13 of the 14 identities refuse it, all but FNA3D, "
-    "because every compiled-effect build option defaults to OFF. Only the first set is a renderer limit: the other ten identities can run compiled "
+    "<li><code>Effect(GraphicsDevice&amp;, bytes)</code> is still refused wherever the active renderer has no compiled-effect runtime. The two identities that "
+    "cannot have one (HEADLESS and STUB) always refuse it; in a default configuration 9 of the 10 identities refuse it, all but FNA3D, "
+    "because every compiled-effect build option defaults to OFF. Only the first set is a renderer limit: the other seven identities can run compiled "
     "effects once their option is turned on.</li>",
-    "<p>Named refusals: compiled effects on 3 of the 14 identities, 3D calls on the 2D-only renderer.</p>",
-    "<p>Eleven of the 14 identities run compiled effects (SDL_RENDERER, HEADLESS and STUB do not).</p>",
-    "<p>FNA3D always, and 10 more renderer identities behind default-OFF CNA_*_COMPILED_EFFECTS options.</p>",
-    "<p>A default configure reports compiled effects as supported on FNA3D only (unsupported on 13 of 14 identities).</p>",
-    "<p>A default configure reports the CompiledEffects capability true on FNA3D only; the other 13 identities report false.</p>",
-    "<p>FNA3D always provides it; eight other renderer families offer it through opt-in build options.</p>",
-    "<p>Compiled effects run on nine renderer families (11 identities); the EasyGL option covers its three identities.</p>",
-    "<p>14 public renderer identities in 12 implementation families, capabilities, compiled effects and verification.</p>",
-    "<li>eight renderer families (ten of the 14 identities) classify the broader public texture formats themselves, while the other four identities "
-    "(DIRECTX9, SDL_RENDERER, HEADLESS and STUB) have no classifier and accept only <code>SurfaceFormat::Color</code> for a public Texture2D.</li>",
-    "<p>Seven families classify render-target formats themselves; the other five identities accept only Color for render targets.</p>",
-    "<td>Standalone <code>*_test.cpp</code> programs registered beside each module (781 across the tree)</td>",
-    "<p>That is why four shipped renderers are Color-only for textures, and five for render targets.</p>",
-    "<td>Demos and standalone pixel or contract programs: 879 <code>.cpp</code> files in all (878 under modules/&lt;name&gt;/examples/ plus the loose "
-    "demo), 781 of them named <code>*_test.cpp</code>. That 781 is a different set from the 781 test files with a GoogleTest macro.</td>",
-    "<p>The source tree has 813 C++ test source files; 781 files contain at least one counted macro, and 781 standalone pixel programs sit under examples/.</p>",
-    "<p>A green single-renderer run describes the selected family, not the other 11 families.</p>",
-    "<p>One shipped renderer is 2D-only (SDL_RENDERER), and two produce no pixels at all (HEADLESS and STUB).</p>",
-    "<p>The other 11 renderer identities share the same C surface but are not in the matrix at all.</p>",
-    "<p>32 parity fixtures are registered for four renderer families; parity fixtures cover four families.</p>",
+    "<li>six renderer families (eight of the 10 identities) classify the broader public texture formats themselves, while the other two identities "
+    "(HEADLESS and STUB) have no classifier and accept only <code>SurfaceFormat::Color</code> for a public Texture2D.</li>",
+    "<p>That is why two shipped renderers are Color-only for textures, and four for render targets.</p>",
+    "<td>Demos and standalone pixel or contract programs: 694 <code>.cpp</code> files in all (693 under modules/&lt;name&gt;/examples/ plus the loose "
+    "demo), 598 of them named <code>*_test.cpp</code>. That 598 is a different set from the 855 test files with a GoogleTest macro.</td>",
+    "<p>No shipped renderer is 2D-only, and two produce no pixels at all (HEADLESS and STUB).</p>",
     "<p>CNA&rsquo;s own release gate says &ldquo;Not ready&rdquo;, because 631 in-scope public C++ declarations still lack C mappings.</p>",
-    "<td>631 planned public C++ declarations remain without C mappings; 3,210 C routes are declared and exported.</td>",
+    "<td>625 planned public C++ declarations remain without C mappings; 3,212 C routes are declared and exported.</td>",
     '<div class="callout callout--note dev-evidence"><p><strong>Evidence basis:</strong> source-verified at the stated evidence commit. Claims on this page were '
-    'checked by reading the CNA source at commit <code>b0e97bb1</code>; nothing was built.</p></div>',
+    'checked by reading the CNA source at commit <code>b0e97bb1</code>; nothing was built.</p></div>',    '<p>The source tree has 898 C++ test files and 11,898 statically discoverable GoogleTest-family definitions (855 files contain at least one; alpha.1 had 568 and 8,263).</p>',
+    '<li>The 10-identity, 8-family registry in cmake/RendererIdentities.cmake is strong structural evidence.</li>',
+    '<p>Compiled-effect support is 8 of the 10 identities in 6 implementation families.</p>',
+    '<p>A default configure reports CompiledEffects false on 9 of the 10 identities.</p>',
+    '<p>Storage has 70 statically discoverable GoogleTest-family definitions (alpha.1: five).</p>',
+    "<p>one renderer's oracle result says nothing about the other 9 identities</p>",
+    '<p>Named refusals: compiled effects on 2 of the 10 identities.</p>',
+    '<p>Eight of the 10 identities run compiled effects (HEADLESS and STUB do not).</p>',
+    '<p>FNA3D always, and 7 more renderer identities behind default-OFF CNA_*_COMPILED_EFFECTS options.</p>',
+    '<p>A default configure reports compiled effects as supported on FNA3D only (unsupported on 9 of 10 identities).</p>',
+    '<p>A default configure reports the CompiledEffects capability true on FNA3D only; the other 9 identities report false.</p>',
+    '<p>FNA3D always provides it; five other renderer families offer it through opt-in build options.</p>',
+    '<p>Compiled effects run on six renderer families (8 identities); the EasyGL option covers its three identities.</p>',
+    '<p>10 public renderer identities in 8 implementation families, capabilities, compiled effects and verification.</p>',
+    '<p>Four families classify render-target formats themselves; the other four identities accept only Color for render targets.</p>',
+    '<td>Standalone <code>*_test.cpp</code> programs registered beside each module (598 across the tree)</td>',
+    '<p>The source tree has 898 C++ test source files; 855 files contain at least one counted macro, and 598 standalone pixel programs sit under examples/.</p>',
+    '<p>A green single-renderer run describes the selected family, not the other 7 families.</p>',
+    '<p>The other 7 renderer identities share the same C surface but are not in the matrix at all.</p>',
+    '<p>32 parity fixtures are registered for three renderer families; parity fixtures cover three families.</p>',
+    '<p>The previous snapshot, c1c316b9, had 14 public identities over 12 implementation families and 813 C++ test files.</p>',
+    '<p>The 0.1.0 release still had 14 renderer identities and C ABI 0.46.0; both changed afterwards.</p>',
+    '<table><tr><th>Area</th><th>0.1.0 release</th><th>This snapshot</th></tr><tr><td>Renderers</td><td>14 public identities over 12 families</td><td>10 public identities over 8 families</td></tr></table>',
+    '<table><tr><th>Area</th><th>Alpha.1</th><th>0.1.0</th></tr><tr><td>Renderers</td><td>50 public identities over 46 implementation families</td><td>A curated set of 14 identities over 12 families</td></tr></table>',
+    '<div class="callout callout--note dev-evidence"><p><strong>Evidence basis:</strong> source-verified at the stated evidence commit. Claims on this page were checked by reading the CNA source at commit <code>c1c316b9</code>; nothing was built.</p></div>',
+
 ]
 
 # development/internals/graphics/selection.html at 56a5ff4, verbatim up to the stale line: the .cmake names above it excused the count as a quotation
@@ -409,7 +422,7 @@ METRIC_REJECT_THIRD_REVIEW = [
     "<p>GraphicsRendererType ordinals run from 0 to 17.</p>",
     "<p>CNA's GraphicsRendererType enumerates 18 identities.</p>",
     "<p>Production: eight identities.</p>",
-    "<p>CNA classifies three identities as TranslationLayer.</p>",
+    "<p>CNA classifies four identities as TranslationLayer.</p>",
     "<p>Besides FNA3D, eleven identities need an opt-in option for compiled effects.</p>",
     "<p>The unbound-texture test skips on the other eight identities.</p>",
     "<p>SurfaceFormat::Color is the only texture format on eleven renderers.</p>",
@@ -419,61 +432,105 @@ METRIC_REJECT_THIRD_REVIEW = [
 ]
 METRIC_ALLOW_THIRD_REVIEW = [
     # the corrected sentences of the pages above
-    "<p><code>GraphicsRendererType</code> is dense: 14 enumerators from <code>SdlRenderer</code> (0) to <code>Fna3d</code> (13).</p>",
-    "<p>GraphicsRendererType ends at ordinal 13; SdlRenderer is therefore ordinal 0 in C++ but 1 in C.</p>",
-    "<p>Maturity: six identities are <code>Production</code> (<code>SDL_RENDERER</code>, the two non-web EasyGL profiles <code>OPENGLES3</code> and <code>OPENGL33</code>, "
-    "<code>VULKAN</code>, and the two Direct3D identities <code>DIRECTX9</code> and <code>DIRECTX11</code>); three are <code>Experimental</code> (<code>WEBGPU</code>, "
-    "<code>SOFTWARE</code> and <code>FNA3D</code>); the remaining five are <code>Supported</code> (<code>WEBGL2</code>, <code>HEADLESS</code>, <code>STUB</code>, "
-    "<code>SDL_GPU</code> and <code>METAL</code>); <code>Historical</code> and <code>Deprecated</code> are unused.</p>",
+    "<p><code>GraphicsRendererType</code> is dense: 10 enumerators from <code>OpenGLES3</code> (0) to <code>Fna3d</code> (9).</p>",
+    "<p>GraphicsRendererType ends at ordinal 9; OpenGLES3 is therefore ordinal 0 in C++ but 3 in C.</p>",
+    "<p>Maturity: three identities are <code>Production</code> (the two non-web EasyGL profiles <code>OPENGLES3</code> and <code>OPENGL33</code>, "
+    "and the one Direct3D identity, <code>DIRECTX9</code>); two are <code>Experimental</code> (<code>SOFTWARE</code> and <code>FNA3D</code>); "
+    "the remaining five are <code>Supported</code> (<code>WEBGL2</code>, <code>WEBGPU</code>, <code>HEADLESS</code>, <code>STUB</code> and "
+    "<code>SDL_GPU</code>); <code>Historical</code> and <code>Deprecated</code> are unused.</p>",
     "<p>Category: <code>HEADLESS</code> and <code>STUB</code> are <code>Diagnostic</code>, <code>SOFTWARE</code> is <code>Software</code>, the one browser-only identity, "
-    "<code>WEBGL2</code>, is <code>Web</code>, four identities (<code>SDL_RENDERER</code>, <code>WEBGPU</code>, <code>SDL_GPU</code> and <code>FNA3D</code>) are "
-    "<code>TranslationLayer</code>, and the remaining six (<code>OPENGLES3</code>, <code>OPENGL33</code>, <code>VULKAN</code>, <code>DIRECTX9</code>, "
-    "<code>DIRECTX11</code> and <code>METAL</code>) are <code>Native</code>.</p>",
-    "<p>CNA itself declares a maturity for each of the 14 identities in code (six <em>Production</em>, five <em>Supported</em>, three <em>Experimental</em>).</p>",
-    "<p>the two Direct3D identities (<code>DIRECTX9</code> and <code>DIRECTX11</code>) require a Windows target; the browser-only <code>WEBGL2</code> requires Emscripten; "
+    "<code>WEBGL2</code>, is <code>Web</code>, three identities (<code>WEBGPU</code>, <code>SDL_GPU</code> and <code>FNA3D</code>) are "
+    "<code>TranslationLayer</code>, and the remaining three (<code>OPENGLES3</code>, <code>OPENGL33</code> and <code>DIRECTX9</code>) are <code>Native</code>.</p>",
+    "<p>CNA itself declares a maturity for each of the 10 identities in code (three <em>Production</em>, five <em>Supported</em>, two <em>Experimental</em>).</p>",
+    "<p>the one Direct3D identity (<code>DIRECTX9</code>) requires a Windows target; the browser-only <code>WEBGL2</code> requires Emscripten; "
     "the two native GL-profile identities (<code>OPENGLES3</code> and <code>OPENGL33</code>) refuse Emscripten.</p>",
-    "<p>seven rasterizing renderers (Vulkan, Software, WebGPU, SDL_GPU, Metal and the two Direct3D renderers, DIRECTX9 and DIRECTX11) do not translate a VertexDeclaration.</p>",
+    "<p>four rasterizing renderers (Software, WebGPU, SDL_GPU and the one Direct3D renderer, DIRECTX9) do not translate a VertexDeclaration.</p>",
     "<p>Only one Direct3D renderer, DIRECTX9, runs Microsoft's recompiled stock effects; two native GL-profile identities accept them too.</p>",
-    "<td>Already-compiled XNA/FNA effects can be retained when the active renderer exposes <code>CompiledEffects</code> (11 renderer identities in nine implementation "
-    "families: <code>FNA3D</code> always, the other ten identities only with their family's opt-in option, eight options in all).</td>",
-    "<p>Eleven renderer identities in nine implementation families implement it &mdash; <code>FNA3D</code> always, the other ten identities in eight families behind "
+    "<td>Already-compiled XNA/FNA effects can be retained when the active renderer exposes <code>CompiledEffects</code> (8 renderer identities in six implementation "
+    "families: <code>FNA3D</code> always, the other seven identities only with their family's opt-in option, five options in all).</td>",
+    "<p>Eight renderer identities in six implementation families implement it &mdash; <code>FNA3D</code> always, the other seven identities in five families behind "
     "opt-in <code>CNA_*_COMPILED_EFFECTS</code> build options &mdash; and it is a large piece of work.</p>",
-    "<td>the byte constructor works where <code>CompiledEffects</code> is true: FNA3D always, eight more families (ten identities) behind default-OFF options</td>",
-    "<li>A game that loads compiled XNA/FNA Effect Framework bytecode needs FNA3D or a build of one of the other ten capable identities with its family's opt-in "
-    "option on (eight options, route three).</li>",
-    "<li>The separate <code>Effect(device, effectCode)</code> compatibility path accepts XNA/FNA Effect Framework bytecode only on the 11 capable renderer identities.</li>",
-    "<p>Eleven renderer identities across nine implementation families can support compiled effects.</p>",
-    "<p>Ten capable identities are provided by eight optioned implementation families, plus FNA3D.</p>",
-    "<p>Thirteen identities refuse compiled effects in the default configuration.</p>",
-    "<p>Three identities can never support compiled effects.</p>",
-    "<p>Three renderers cannot consume compiled effects.</p>",
+    "<td>the byte constructor works where <code>CompiledEffects</code> is true: FNA3D always, five more families (seven identities) behind default-OFF options</td>",
+    "<li>A game that loads compiled XNA/FNA Effect Framework bytecode needs FNA3D or a build of one of the other seven capable identities with its family's opt-in "
+    "option on (five options, route three).</li>",
+    "<li>The separate <code>Effect(device, effectCode)</code> compatibility path accepts XNA/FNA Effect Framework bytecode only on the 8 capable renderer identities.</li>",
+    "<p>Eight renderer identities across six implementation families can support compiled effects.</p>",
+    "<p>Seven capable identities are provided by five optioned implementation families, plus FNA3D.</p>",
+    "<p>Nine identities refuse compiled effects in the default configuration.</p>",
+    "<p>Two identities can never support compiled effects.</p>",
+    "<p>Two renderers cannot consume compiled effects.</p>",
     "<p>-DCNA_EASYGL_COMPILED_EFFECTS=ON (default OFF); one option enables all three identities.</p>",
-    "<td>No oracle-corpus number recorded. Unbound-texture expectations cover eight renderer identities across seven implementation families; parity fixtures cover four families.</td>",
-    "<p>The unbound-texture gate spans seven implementation families.</p>",
+    "<td>No oracle-corpus number recorded. Unbound-texture expectations cover five renderer identities across four implementation families; parity fixtures cover three families.</td>",
+    "<p>The unbound-texture gate spans four implementation families.</p>",
     "<p>Three public backends share EasyGL.</p>",
     "<p>EasyGL is shared by three identities.</p>",
-    "<p>Eight renderer families classify the broader texture formats. The remaining four accept Color only.</p>",
-    "<p>The remaining four accept Color only.</p>",
-    "<p>Seven families classify render-target formats themselves; the remaining five accept only Color for render targets.</p>",
-    "<p>781 test files named *_test.cpp sit under examples/; 879 .cpp files sit under examples/ directories.</p>",
-    "<p>The compiled-effect path is optioned on eight families (ten identities).</p>",
-    "<p>The unbound-texture test skips on the other six identities.</p>",
-    "<p>SurfaceFormat::Color is the only texture format on four renderers.</p>",
-    "<p>Two identities, HEADLESS and STUB, are Diagnostic; of the six Native identities, two are EasyGL profiles.</p>",
-    "<p>The Direct3D pair, DIRECTX9 and DIRECTX11, needs Windows.</p>",
-    "<td>A renderer name outside the 14, through <code>CNA_GRAPHICS_RENDERER</code> or a member of <code>CNA_GRAPHICS_RENDERERS</code></td>",
+    "<p>Six renderer families classify the broader texture formats. The remaining two accept Color only.</p>",
+    "<p>The remaining two accept Color only.</p>",
+    "<p>Four families classify render-target formats themselves; the remaining four accept only Color for render targets.</p>",
+    "<p>598 test files named *_test.cpp sit under examples/; 694 .cpp files sit under examples/ directories.</p>",
+    "<p>The compiled-effect path is optioned on five families (seven identities).</p>",
+    "<p>The unbound-texture test skips on the other five identities.</p>",
+    "<p>SurfaceFormat::Color is the only texture format on two renderers.</p>",
+    "<p>Two identities, HEADLESS and STUB, are Diagnostic; of the three Native identities, two are EasyGL profiles.</p>",
+    "<p>The one Direct3D identity, DIRECTX9, needs Windows.</p>",
+    "<td>A renderer name outside the 10, through <code>CNA_GRAPHICS_RENDERER</code> or a member of <code>CNA_GRAPHICS_RENDERERS</code></td>",
     # the corrected final-review sentences, and the old count attributed to the snapshot that had it
-    "<td>The public renderer identities are a curated set of 14, with fixed C ABI values that are never reassigned; a name outside the set is refused at configure time.</td>",
-    SELECTION_DIAGRAM.format(n=14),
-    "<p>At b0e97bb1 the public renderer identities were a curated set of 18; at c1c316b9 they are 14.</p>",
+    "<td>The public renderer identities are a curated set of 10, with fixed C ABI values that are never reassigned; a name outside the set is refused at configure time.</td>",
+    SELECTION_DIAGRAM.format(n=10),
+    "<p>At c1c316b9 the public renderer identities were a curated set of 14; at c6dec91f they are 10.</p>",
     "<p>At b0e97bb1, RendererSelection.cmake read 18 CNA_RENDERER_&lt;X&gt; switches, one per public identity of that snapshot.</p>",
+]
+
+# Phase 6 (c1c316b9 -> c6dec91f): the sentences that were current at c1c316b9 must now fail, and VULKAN, DIRECTX11, METAL
+# and SDL_RENDERER joined the retired renderers, so naming them as CNA renderers fails while the API names of SDL's, FNA3D's
+# and wgpu-native's own drivers still pass.
+METRIC_REJECT_PHASE6 = [
+    '<p>The source tree has 813 C++ test files and 11,380 statically discoverable GoogleTest-family definitions (781 files contain at least one; alpha.1 had 568 and 8,263).</p>',
+    '<li>The 14-identity, 12-family registry in cmake/RendererIdentities.cmake is strong structural evidence.</li>',
+    '<p>Compiled-effect support is 11 of the 14 identities in 9 implementation families.</p>',
+    '<p>A default configure reports CompiledEffects false on 13 of the 14 identities.</p>',
+    "<p>one renderer's oracle result says nothing about the other 13 identities</p>",
+    '<p>Named refusals: compiled effects on 3 of the 14 identities, 3D calls on the 2D-only renderer.</p>',
+    '<p>Eleven of the 14 identities run compiled effects (SDL_RENDERER, HEADLESS and STUB do not).</p>',
+    '<p>FNA3D always, and 10 more renderer identities behind default-OFF CNA_*_COMPILED_EFFECTS options.</p>',
+    '<p>A default configure reports compiled effects as supported on FNA3D only (unsupported on 13 of 14 identities).</p>',
+    '<p>A default configure reports the CompiledEffects capability true on FNA3D only; the other 13 identities report false.</p>',
+    '<p>FNA3D always provides it; eight other renderer families offer it through opt-in build options.</p>',
+    '<p>Compiled effects run on nine renderer families (11 identities); the EasyGL option covers its three identities.</p>',
+    '<p>14 public renderer identities in 12 implementation families, capabilities, compiled effects and verification.</p>',
+    '<p>Seven families classify render-target formats themselves; the other five identities accept only Color for render targets.</p>',
+    '<td>Standalone <code>*_test.cpp</code> programs registered beside each module (781 across the tree)</td>',
+    '<p>The source tree has 813 C++ test source files; 781 files contain at least one counted macro, and 781 standalone pixel programs sit under examples/.</p>',
+    '<p>A green single-renderer run describes the selected family, not the other 11 families.</p>',
+    '<p>The other 11 renderer identities share the same C surface but are not in the matrix at all.</p>',
+    '<p>32 parity fixtures are registered for four renderer families; parity fixtures cover four families.</p>',
+    "<p>CNA exposes 14 renderer identities across 12 implementation families.</p>",
+    "<p>Its experimental C ABI is at ABI 0.46.0.</p>",
+    "<p>The snapshot has 18 workflow files (24 jobs).</p>",
+]
+RENDERER_REJECT_PHASE6 = [
+    "<p>CNA's Vulkan renderer takes SPIR-V words rather than GLSL text.</p>",
+    "<p>The Metal backend shades PBR on macOS and iOS.</p>",
+    "<p>Custom HLSL runs on the Direct3D 11 renderer.</p>",
+    "<p>Renderers that report instancing: EasyGL, SDL_GPU, Vulkan and WebGPU.</p>",
+    "<p>The 2D-only SDL_RENDERER clips to any non-empty scissor rectangle.</p>",
+    "<table><tr><th>Renderer</th><th>Notes</th></tr><tr><td><code>SDL_GPU</code></td><td>modern path</td></tr><tr><td><code>VULKAN</code></td><td>native</td></tr></table>",
+    "<pre><code>cmake -S . -B build -DCNA_GRAPHICS_RENDERER=METAL</code></pre>",
+    "<p>Compiled effects need -DCNA_DIRECTX11_COMPILED_EFFECTS=ON on that renderer.</p>",
+]
+RENDERER_ALLOW_PHASE6 = [
+    "<p>SDL_GPU runs on SDL&rsquo;s Vulkan, Direct3D 12 or Metal GPU driver.</p>",
+    "<p>FNA3D chooses its SDL_GPU, Direct3D 11 or OpenGL driver at run time.</p>",
+    "<p>On macOS WEBGPU, whose wgpu-native library drives Metal there, is another choice.</p>",
+    "<p>On Linux SDL_GPU needs a Vulkan loader and driver ICD at run time.</p>",
+    "<p>The default on Windows is SDL_GPU, on SDL&rsquo;s Direct3D 12 GPU driver.</p>",
 ]
 
 # the ledger gate: a concept whose token survives must still fail when its cited section carries a rejected claim
 STALE_SECTION_HTML = ("<h2 id='device-loss'>Device loss</h2><p><code>createRenderer()</code> hands every family a <code>deviceEventCallback</code>. "
                       "At this snapshot five families call it: DirectX 9, DirectX 11 and DirectX 12 report loss and reset.</p>")
 CURRENT_SECTION_HTML = ("<h2 id='device-loss'>Device loss</h2><p><code>createRenderer()</code> hands every family a <code>deviceEventCallback</code>. "
-                        "At this snapshot four families call it: DirectX 9 and DirectX 11 report loss and reset.</p>")
+                        "At this snapshot three families call it: DirectX 9 reports loss and reset.</p>")
 
 
 def ledger_result(section_html: str, concept: dict) -> list[str]:
@@ -490,6 +547,58 @@ def ledger_result(section_html: str, concept: dict) -> list[str]:
 
     errs, _a, _r = AA.check_concept("fixture", concept, section_fn, claims_fn)
     return errs
+
+
+def late_reclassification_problems() -> list[str]:
+    """The c6dec91f re-verification reclassified a functional gap into a bug class that already held entries the audit had
+    added; allocated in the ordinary order it would have renumbered every added bug.  scripts/known_issues.py therefore takes
+    "late": true reclassifications after "added".  The fixture runs apply_adversarial on a three-entry patch held in memory
+    and checks the ids: the ordinary reclassification first, then the added entry, then the late one (no id moves)."""
+    import known_issues as K
+
+    class _Patch:                                      # stands in for ISS / "patches-adversarial.json"; nothing is read or written
+        def __truediv__(self, _name):
+            return self
+
+        def exists(self):
+            return True
+    adv = {"reclassified": {"CNA-GAP-001": {"class": "bug", "late": True}, "CNA-PLAT-001": {"class": "bug"}},
+           "added": [{"id": "NEW-T-01", "class": "bug", "cand_ids": []}]}
+    issues = [{"id": "CNA-GAP-001", "class": "functional-gap", "severity": "n/a"},
+              {"id": "CNA-PLAT-001", "class": "platform-limitation", "severity": "n/a"}]
+    counters = {"bug": 10, "functional-gap": 1, "platform-limitation": 1, "verification-gap": 0}
+    saved = K.ISS, K.load
+    K.ISS, K.load = _Patch(), (lambda _path: adv)
+    try:
+        _issues, _disp, trail, rc = K.apply_adversarial(issues, [], counters)
+    finally:
+        K.ISS, K.load = saved
+    got = {**trail.get("reclassified", {}), **trail.get("added", {})}
+    want = {"CNA-PLAT-001": "CNA-BUG-011", "NEW-T-01": "CNA-BUG-012", "CNA-GAP-001": "CNA-BUG-013"}
+    return [] if rc == 0 and got == want else [f"late reclassification allocated {got} (rc {rc}), expected {want}"]
+
+
+def superseded_replacement_problems(variant: str) -> list[str]:
+    """bible_ledger.py: a SUPERSEDED concept whose old wording left the page is anchored by replacement_tokens (the
+    superseding statement), checked against the destination page like tokens.  The fixture takes a real recorded concept
+    of that shape and checks it as recorded ("as-is"), without any token ("none": still an error) and with a replacement
+    token that is not on the page ("absent": still an error).  Only that concept's errors count."""
+    import copy
+    import bible_ledger as BL
+    units = {u["id"]: u for u in BL.record_units(BL.load_units())}
+    for uid, rec in BL.load_records().items():
+        for i, c in enumerate(rec.get("concepts") or []):
+            if (c.get("disposition") == "SUPERSEDED" and c.get("replacement_tokens") and not c.get("tokens")
+                    and not c.get("no_tokens_reason") and c.get("destinations") and uid in units):
+                rec = copy.deepcopy(rec)
+                c = rec["concepts"][i]
+                if variant == "none":
+                    c["replacement_tokens"] = []
+                elif variant == "absent":
+                    c["replacement_tokens"] = ["a phrase no page of this site carries 7f3e"]
+                errs, _w = BL.check_record(uid, rec, units[uid], False)
+                return [e for e in errs if e.startswith(f"{uid}/{c.get('id')}:")]
+    return ["no SUPERSEDED concept anchored by replacement_tokens found in the records"] if variant == "as-is" else []
 
 
 def main() -> int:
@@ -522,7 +631,7 @@ def main() -> int:
     tokenless = {"id": "fixture", "disposition": "SUPERSEDED", "destinations": ["fixture.html#device-loss"], "tokens": []}
     expect("ledger", "tokenless SUPERSEDED without replacement or review", ledger_result(CURRENT_SECTION_HTML, tokenless), True)
     expect("ledger", "tokenless SUPERSEDED with replacement tokens",
-           ledger_result(CURRENT_SECTION_HTML, {**tokenless, "replacement_tokens": ["four families call it"]}), False)
+           ledger_result(CURRENT_SECTION_HTML, {**tokenless, "replacement_tokens": ["three families call it"]}), False)
     expect("ledger", "tokenless SUPERSEDED with a stale replacement token",
            ledger_result(CURRENT_SECTION_HTML, {**tokenless, "replacement_tokens": ["five families call it"]}), True)
     # the written-review escape: any non-empty result/reason used to pass; now it needs a classification, a reason and a checkable pointer
@@ -551,11 +660,24 @@ def main() -> int:
         expect("metric (third review)", f, metric_problems(f), True)
     for f in METRIC_ALLOW_THIRD_REVIEW:
         expect("metric (third review)", f, metric_problems(f) + renderer_problems(f), False)
+    for f in METRIC_REJECT_PHASE6:
+        expect("metric (phase 6)", f, metric_problems(f) + stale_problems(f), True)
+    for f in RENDERER_REJECT_PHASE6:
+        expect("retired-renderer (phase 6)", f, renderer_problems(f), True)
+    for f in RENDERER_ALLOW_PHASE6:
+        expect("retired-renderer (phase 6)", f, renderer_problems(f), False)
+    # known_issues.py: a "late" reclassification takes its id after every added entry, so no added id moves
+    expect("known-issues ids", "late reclassification after added entries", late_reclassification_problems(), False)
+    # bible_ledger.py: replacement_tokens anchor a SUPERSEDED concept; without them, or with one off the page, it fails
+    expect("bible ledger", "SUPERSEDED concept anchored by replacement_tokens", superseded_replacement_problems("as-is"), False)
+    expect("bible ledger", "SUPERSEDED concept with neither tokens nor replacement_tokens", superseded_replacement_problems("none"), True)
+    expect("bible ledger", "SUPERSEDED concept whose replacement token is not on the page", superseded_replacement_problems("absent"), True)
 
-    total = (len(RENDERER_REJECT) + len(RENDERER_ALLOW) + len(PLATFORM_REJECT) + len(PLATFORM_ALLOW)
+    total = (1 + len(RENDERER_REJECT) + len(RENDERER_ALLOW) + len(PLATFORM_REJECT) + len(PLATFORM_ALLOW)
              + len(METRIC_REJECT) + len(METRIC_ALLOW) + 5 + len(reviews)
              + len(RENDERER_REJECT_SECOND_REVIEW) + len(PLATFORM_REJECT_SECOND_REVIEW) + len(METRIC_REJECT_SECOND_REVIEW)
-             + len(RENDERER_REJECT_THIRD_REVIEW) + len(METRIC_REJECT_THIRD_REVIEW) + len(METRIC_ALLOW_THIRD_REVIEW))
+             + len(RENDERER_REJECT_THIRD_REVIEW) + len(METRIC_REJECT_THIRD_REVIEW) + len(METRIC_ALLOW_THIRD_REVIEW)
+             + len(METRIC_REJECT_PHASE6) + len(RENDERER_REJECT_PHASE6) + len(RENDERER_ALLOW_PHASE6) + 3)
     print(f"validator fixtures: {total} run; {failures} failed")
     return 1 if failures else 0
 

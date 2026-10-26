@@ -106,7 +106,6 @@ GUIDES = {
 }
 FAMILY_GUIDES = {
     "easygl": "development/internals/graphics/easygl.html",
-    "vulkan": "development/internals/graphics/vulkan.html",
     "sdl-gpu": "development/internals/graphics/sdl-gpu.html",
     "software": "development/internals/graphics/software.html",
     "headless": "development/internals/graphics/headless.html",

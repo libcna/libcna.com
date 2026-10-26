@@ -28,7 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 DEV = Path(os.environ.get("DEVELOPER_REPO", ROOT.parent / "developer.libcna.com"))
 CNA = Path(os.environ.get("CNA_REPO", ROOT.parent / "cna"))
-SNAP = Path(os.environ.get("CNA_TARGET_TREE", "/rv/tmp/libcna-v2/cna-target"))
+SNAP = Path(os.environ.get("CNA_TARGET_TREE") or Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "libcna-com" / "cna-target")
 WORDS = SNAP.parent / "target-words.txt"
 TARGET = (ROOT / "cnahead").read_text().strip()
 DEV_PIN = (DEV / "cnahead").read_text().strip()

@@ -22,7 +22,7 @@
   "description": "Audio system in the CNA development snapshot: SoundEffect, SoundEffectInstance, DynamicSoundEffectInstance, MediaPlayer, Song, Microphone, the XACT runtime and the three CNA_AUDIO_PLATFORM implementations (SDL3, NULL, ALSA).",
   "url": "https://libcna.com/docs/audio.html",
   "datePublished": "2026-06-27",
-  "dateModified": "2026-10-09",
+  "dateModified": "2026-10-25",
   "author": {
     "@type": "Organization",
     "name": "libcna",
@@ -78,6 +78,7 @@
             <ul class="docs-nav-list">
         <li><a href="getting-started.html" class="docs-nav-link">Getting Started</a></li>
         <li><a href="building.html" class="docs-nav-link">Building</a></li>
+        <li><a href="link-size.html" class="docs-nav-link">Link Boundaries &amp; Size</a></li>
         <li><a href="releases.html" class="docs-nav-link">Releases &amp; Versioning</a></li>
         <li><a href="platforms.html" class="docs-nav-link">Platforms</a></li>
         <li><a href="native-platforms.html" class="docs-nav-link">Windows, X11 and Wayland</a></li>
@@ -148,7 +149,7 @@
 
       <div class="callout callout--info">
         <span class="callout-icon">&#9432;</span>
-        <p><strong>Implementation status:</strong> <code>SoundEffect</code>, <code>SoundEffectInstance</code>, <code>DynamicSoundEffectInstance</code>, <code>MediaPlayer</code>, and <code>Song</code> have real playback paths whenever the audio implementation provides a mixer &mdash; that is <code>SDL3</code> (the default) and, in this snapshot, the new native Linux <code>ALSA</code> implementation. XACT is <strong>a real parser and player, not a facade</strong>: CNA parses XGS/XWB/XSB data, applies FACT's volume formula and RPC curves, and implements the named boundaries below. 3D audio uses FAudio's Doppler calculation and F3DAudio attenuation. This snapshot has 38 audio test source files with 765 static GoogleTest-family definitions (the site's static count method); the executed subset depends on the chosen build. Honest partials are listed in <a href="#tier-2-xact">Tier 2</a>.</p>
+        <p><strong>Implementation status:</strong> <code>SoundEffect</code>, <code>SoundEffectInstance</code>, <code>DynamicSoundEffectInstance</code>, <code>MediaPlayer</code>, and <code>Song</code> have real playback paths whenever the audio implementation provides a mixer &mdash; that is <code>SDL3</code> (the default) and, in this snapshot, the new native Linux <code>ALSA</code> implementation. XACT is <strong>a real parser and player, not a facade</strong>: CNA parses XGS/XWB/XSB data, applies FACT's volume formula and RPC curves, and implements the named boundaries below. 3D audio uses FAudio's Doppler calculation and F3DAudio attenuation. This snapshot has 41 audio test source files with 793 static GoogleTest-family definitions (the site's static count method); the executed subset depends on the chosen build. Honest partials are listed in <a href="#tier-2-xact">Tier 2</a>.</p>
       </div>
 
       <h2 id="overview">Overview</h2>
@@ -171,7 +172,7 @@
             <tr><th scope="row">Playback device</th><td><code>Sdl3AudioDevice</code></td><td><code>NullAudioDevice</code> (paced thread that discards samples)</td><td><code>AlsaAudioDevice</code>: <code>libasound.so.2</code> loaded at run time, roughly 10 ms periods, four buffered</td></tr>
             <tr><th scope="row">Defines <code>SOUND_ENABLED</code></th><td><strong>Yes</strong></td><td>No</td><td><strong>Yes</strong></td></tr>
             <tr><th scope="row">Mixer engine</th><td>SDL3_mixer (<code>MIX_Track</code> model)</td><td>none</td><td>CNA's own <code>CnaMixer</code> (linear-interpolation resampler, same track and callback semantics)</td></tr>
-            <tr><th scope="row"><code>SoundEffect</code> construction and <code>Duration</code></th><td>Yes</td><td>Yes for effects built from a raw PCM buffer (including <code>.xnb</code> and <code>.cnb</code> content); an effect built from a path or <code>FromStream</code> carries no audio and reports a zero <code>Duration</code></td><td>Yes</td></tr>
+            <tr><th scope="row"><code>SoundEffect</code> construction and <code>Duration</code></th><td>Yes</td><td>Yes for effects built from a raw PCM buffer (including <code>.xnb</code> and <code>.cnb</code> content) and from XNA&rsquo;s <code>FromStream(Stream&amp;)</code>; an effect built from a path or the CNAEXT <code>FromStream(std::istream&amp;)</code> carries no audio and reports a zero <code>Duration</code></td><td>Yes</td></tr>
             <tr><th scope="row"><code>SoundEffect.Play()</code> / <code>SoundEffectInstance</code> (volume, pitch, pan, loop, pause)</th><td>Yes</td><td><code>Play()</code> returns <code>false</code>; no mixing</td><td>Yes</td></tr>
             <tr><th scope="row"><code>DynamicSoundEffectInstance</code></th><td>Yes</td><td>Same</td><td>Yes</td></tr>
             <tr><th scope="row"><code>MediaPlayer</code> / <code>Song</code></th><td>Yes</td><td>Same</td><td>Yes (a <code>Song</code> is decoded as it plays)</td></tr>
@@ -243,8 +244,8 @@ cmake -S . -B build-headless \
             <tr><td><code>Play()</code></td><td>Fire-and-forget one-shot playback at default volume, pitch, and pan; returns <code>false</code> if the sound could not start (the effect is disposed, there is no native audio as under <code>NULL</code>, or the mixer track could not be created, bound or played); <code>Play()</code> itself enforces no instance limit</td></tr>
             <tr><td><code>Play(volume, pitch, pan)</code></td><td>One-shot playback with explicit volume (0.0&ndash;1.0), pitch (&minus;1.0&ndash;1.0), and pan (&minus;1.0&ndash;1.0)</td></tr>
             <tr><td><code>CreateInstance()</code></td><td>Returns a <code>SoundEffectInstance</code> by value for controlled playback</td></tr>
-            <tr><td><code>static FromStream(stream)</code></td><td>Loads a <code>SoundEffect</code> from an open stream (WAV data); returns a heap pointer the caller owns</td></tr>
-            <tr><td><code>getDurationProperty()</code></td><td>Total length of the audio clip as a <code>TimeSpan</code> (reported on every audio implementation for effects built from a raw PCM buffer, including <code>.xnb</code> and <code>.cnb</code> content; under <code>NULL</code> an effect built from a path or <code>FromStream</code> carries no audio and reports zero)</td></tr>
+            <tr><td><code>static FromStream(stream)</code></td><td>Two overloads, each returning a heap pointer the caller owns. XNA&rsquo;s <code>FromStream(System::IO::Stream&amp;)</code> parses a RIFF wave itself, as XNA does: 8- or 16-bit PCM, mono or stereo, 8,000&ndash;48,000&nbsp;Hz, with a <code>smpl</code> or <code>wsmp</code> chunk setting the loop region; it closes the stream after a successful parse and throws XNA&rsquo;s exceptions (<code>ArgumentNullException</code> for an empty stream, <code>ArgumentException</code> for an unsupported format, <code>InvalidOperationException</code> for a malformed header, <code>EndOfStreamException</code> for a truncated one). The CNAEXT <code>FromStream(std::istream&amp;)</code> accepts any file the mixer decodes.</td></tr>
+            <tr><td><code>getDurationProperty()</code></td><td>Total length of the audio clip as a <code>TimeSpan</code> (reported on every audio implementation for effects built from a raw PCM buffer, including <code>.xnb</code> and <code>.cnb</code> content, and from XNA&rsquo;s <code>FromStream(Stream&amp;)</code>; under <code>NULL</code> an effect built from a path or the <code>std::istream</code> overload carries no audio and reports zero)</td></tr>
             <tr><td><code>getNameProperty()</code></td><td>Asset name set by <code>ContentManager</code> at load time</td></tr>
           </tbody>
         </table>
@@ -268,12 +269,12 @@ boom.Play();</code></pre>
             <tr><td><code>Volume</code></td><td><code>float</code> — 0.0&ndash;1.0</td><td>Playback amplitude; 1.0 is full volume</td></tr>
             <tr><td><code>Pitch</code></td><td><code>float</code> — &minus;1.0&ndash;1.0</td><td>Pitch shift in octaves; 0.0 is unmodified</td></tr>
             <tr><td><code>Pan</code></td><td><code>float</code> — &minus;1.0&ndash;1.0</td><td>Stereo pan; &minus;1.0 is full left, 1.0 is full right</td></tr>
-            <tr><td><code>IsLooped</code></td><td><code>bool</code></td><td>When true the clip loops until <code>Stop()</code> is called; cannot be changed once playback has started</td></tr>
+            <tr><td><code>IsLooped</code></td><td><code>bool</code></td><td>When true the clip loops until <code>Stop()</code> is called; setting it once playback has started throws <code>InvalidOperationException</code>, as in XNA</td></tr>
             <tr><td><code>State</code></td><td><code>SoundState</code></td><td>Current state: <code>Playing</code>, <code>Paused</code>, or <code>Stopped</code></td></tr>
             <tr><td><code>Play()</code></td><td>&mdash;</td><td>Starts or resumes playback</td></tr>
             <tr><td><code>Pause()</code></td><td>&mdash;</td><td>Pauses playback, retaining position</td></tr>
             <tr><td><code>Resume()</code></td><td>&mdash;</td><td>Resumes from the paused position</td></tr>
-            <tr><td><code>Stop()</code></td><td>&mdash;</td><td>Stops playback and rewinds to the beginning</td></tr>
+            <tr><td><code>Stop()</code>, <code>Stop(immediate)</code></td><td>&mdash;</td><td>Stops playback and rewinds to the beginning. <code>Stop(false)</code> exits the loop instead: the current pass finishes and the sound plays on to its end, including the part after an authored loop region, as FNA&rsquo;s <code>ExitLoop</code> does (CNA tests this on SDL3_mixer; the ALSA mixer path is not run by that test)</td></tr>
             <tr><td><code>Apply3D(...)</code></td><td>&mdash;</td><td>Positions the instance in 3D; see <a href="#audio-3d">3D positional audio</a></td></tr>
           </tbody>
         </table>
@@ -385,7 +386,8 @@ auto jumpSfx = content.Load&lt;SoundEffect&gt;("audio/jump");
 // Load a music track (OGG recommended for large files)
 auto bgMusic = content.Load&lt;Song&gt;("music/level1");
 
-// Alternatively, load a SoundEffect from a raw stream
+// Alternatively, load a SoundEffect from a raw stream (CNAEXT std::istream overload;
+// XNA's FromStream(System::IO::Stream&amp;) takes a Sharp Runtime stream instead)
 std::ifstream file("assets/custom.wav", std::ios::binary);
 std::unique_ptr&lt;SoundEffect&gt; custom(SoundEffect::FromStream(file));</code></pre>
       <p>A standalone <code>ContentManager</code> (outside a <code>Game</code>) is constructed with a service provider and a root directory: <code>ContentManager(System::IServiceProvider*, const std::string&amp; rootDirectory)</code>. A <code>SoundEffect</code> loaded through the manager is never cached &mdash; each <code>Load</code> call returns its own independently owned instance, because the type is move-only.</p>
@@ -425,7 +427,7 @@ std::unique_ptr&lt;SoundEffect&gt; custom(SoundEffect::FromStream(file));</code>
           </tbody>
         </table>
       </div>
-      <p>The old &ldquo;exactly one listener&rdquo; limit is gone: multi-listener calls no longer throw <code>NotSupportedException</code>. What CNA cannot reproduce is XACT's own multi-listener DSP, so the dominant-listener rule is an approximation &mdash; it is deliberately not &ldquo;use <code>listeners[0]</code>&rdquo;, and moving a second, closer listener changes the result. Two more behaviours follow XNA: the effective Doppler scale is the emitter's <code>DopplerScale</code> multiplied by the global <code>SoundEffect</code> one (a stationary sound is not pitch-shifted), and an instance's mode is fixed while it plays &mdash; before its first <code>Play()</code> you can still switch between <code>Apply3D</code> and <code>setPanProperty</code>, but on a playing instance calling <code>Apply3D</code> on a pan-mode instance, or <code>setPanProperty</code> on a 3D one, throws <code>InvalidOperationException</code>. <code>Stop()</code> makes the instance re-aimable.</p>
+      <p>The old &ldquo;exactly one listener&rdquo; limit is gone: multi-listener calls no longer throw <code>NotSupportedException</code>. What CNA cannot reproduce is XACT's own multi-listener DSP, so the dominant-listener rule is an approximation &mdash; it is deliberately not &ldquo;use <code>listeners[0]</code>&rdquo;, and moving a second, closer listener changes the result. Two more behaviours follow XNA: the effective Doppler scale is the emitter's <code>DopplerScale</code> multiplied by the global <code>SoundEffect</code> one (a stationary sound is not pitch-shifted), and an instance's mode is fixed while it plays &mdash; before its first <code>Play()</code> you can still switch between <code>Apply3D</code> and <code>setPanProperty</code>, but on a playing instance calling <code>Apply3D</code> on a pan-mode instance, or <code>setPanProperty</code> on a 3D one, throws <code>InvalidOperationException</code>; a refused <code>setPanProperty</code> leaves the pan value unchanged. <code>Stop()</code> makes the instance re-aimable.</p>
 
       <h2 id="tier-2-xact">Tier 2 — XACT (AudioEngine/SoundBank/WaveBank/Cue)</h2>
 
@@ -513,7 +515,7 @@ std::unique_ptr&lt;SoundEffect&gt; custom(SoundEffect::FromStream(file));</code>
 <li><a href="../known-issues/bugs/cna-bug-147.html">CNA-BUG-147: SoundBank::PlayCue destroys a fire-and-forget cue that is still playing five minutes after it started</a> &mdash; SweepFireAndForget, run by every AudioEngine::Update and every PlayCue, removes still-playing or paused fire-and-forget cues older than kFireAndForgetSafetyNet (5 minutes), which stops long or looping cues such as music </li>
 <li><a href="../known-issues/bugs/cna-bug-148.html">CNA-BUG-148: DynamicSoundEffectInstance::SubmitFloatBufferEXT accepts empty and non-frame-aligned float buffers</a> &mdash; SubmitBuffer now refuses partial frames as XNA does, but SubmitFloatBufferEXT still queues an empty buffer or a sample count that is not a whole number of channel frames, which SDL3 audio then drops and CNA&#x27;s ALSA mixer </li>
 <li><a href="../known-issues/bugs/cna-bug-149.html">CNA-BUG-149: Microphone::Start reports Started even when the capture device could not be opened</a> &mdash; Start swallows every exception from opening the device and ignores an unusable negotiated format, then sets State to Started; XNA&#x27;s Start surfaces the native error as an exception.</li>
-<li><a href="../known-issues/bugs/cna-bug-222.html">CNA-BUG-222: Audio comments describe behaviour the code does not have: SoundEffect::Play&#x27;s instance limit, FireAndForgetPanState freeing, the is3D_ latch and SoundEffectReader&#x27;s WAV route</a> &mdash; SoundEffect.hpp promises that Play returns false at an instance limit CNA does not implement, and three internal comments in the audio and content modules contradict the code next to them.</li>
+<li><a href="../known-issues/bugs/cna-bug-222.html">CNA-BUG-222: Audio comments describe behaviour the code does not have: SoundEffect::Play&#x27;s instance limit, FireAndForgetPanState freeing and SoundEffectReader&#x27;s WAV route</a> &mdash; SoundEffect.hpp promises that Play returns false at an instance limit CNA does not implement, and two internal comments in the audio and content modules contradict the code next to them.</li>
 <li><a href="../known-issues/bugs/cna-bug-276.html">CNA-BUG-276: SoundEffect::Play(volume, pitch, pan) clamps pitch, does not check volume and returns false when disposed, where XNA 4.0 throws</a> &mdash; XNA 4.0&#x27;s SoundEffect.Play(float, float, float) throws ObjectDisposedException when disposed and ArgumentOutOfRangeException for volume or pitch out of range; CNA returns false when disposed, clamps pitch and passes volu</li>
 <li><a href="../known-issues/gaps/cna-gap-045.html">CNA-GAP-045: XACT features FAudio never finished are unimplemented: QUEUE and REPLACE_QUIETEST limits, band-pass track filters, reverb sends and DSP-preset RPCs</a> &mdash; CNA reproduces FAudio&#x27;s shipped behaviour: QUEUE and REPLACE_QUIETEST evict the oldest cue, a cue-level limit picks its victim from the whole bank, band-pass filters cannot be decoded, and reverb and DSP-preset RPC targe</li>
 <li><a href="../known-issues/gaps/cna-gap-046.html">CNA-GAP-046: CNA has no sound-instance limit: InstancePlayLimitException is declared but never thrown</a> &mdash; XNA throws InstancePlayLimitException when too many sound instances play and SoundEffect.Play returns false for it; CNA declares the type but no code path raises it.</li>
@@ -548,7 +550,7 @@ std::unique_ptr&lt;SoundEffect&gt; custom(SoundEffect::FromStream(file));</code>
     <div class="footer-top">
       <div class="footer-brand">
         <div class="footer-brand-name">CNA</div>
-        <p>Documentation snapshot for CNA commit c1c316b9 (9 October 2026), a post-alpha.1 development snapshot. CNA exposes 14 renderer identities across 12 implementation families; APIs may change before 1.0.</p>
+        <p>Documentation snapshot for CNA commit c6dec91f (24 October 2026), a development snapshot 812 commits after the 0.1.0 release. CNA exposes 10 renderer identities across 8 implementation families; APIs may change before 1.0.</p>
       </div>
       <div class="footer-col">
         <h4>Project</h4>
@@ -587,7 +589,7 @@ std::unique_ptr&lt;SoundEffect&gt; custom(SoundEffect::FromStream(file));</code>
     <div class="footer-bottom">
       <p>CNA is not affiliated with or endorsed by Microsoft Corporation. XNA is a trademark of Microsoft. Licensed under the Microsoft Public License (Ms-PL).</p>
       <div class="footer-links">
-        <a href="https://github.com/libcna/cna/blob/c1c316b9c7a846ce8002809c151fcd1af14942c9/LICENSE" target="_blank" rel="noopener">License</a>
+        <a href="https://github.com/libcna/cna/blob/c6dec91fbf3ef5440f60e5329e4a4758b2d80c22/LICENSE" target="_blank" rel="noopener">License</a>
         <a href="../contact.html">Contact</a>
       </div>
     </div>

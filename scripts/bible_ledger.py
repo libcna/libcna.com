@@ -220,9 +220,13 @@ def check_record(uid: str, rec: dict, unit: dict, final: bool) -> tuple[list[str
             errs.append(f"{where}: target.result must be one of {sorted(TARGET_RESULTS)}")
         if d in NEEDS_DEST and dests and ok_dest:
             toks = c.get("tokens") or []
+            # a SUPERSEDED concept whose old wording is gone is anchored by the superseding statement instead
+            # (adversarial_audit.py checks replacement_tokens inside the cited section; here they must be on the page)
+            if not toks and d == "SUPERSEDED":
+                toks = c.get("replacement_tokens") or []
             if not toks and not c.get("no_tokens_reason"):
-                errs.append(f"{where}: {d} needs 'tokens' (identifiers/phrases that must occur in the destination) "
-                            f"or a 'no_tokens_reason'")
+                errs.append(f"{where}: {d} needs 'tokens' (identifiers/phrases that must occur in the destination), "
+                            f"{'replacement_tokens, ' if d == 'SUPERSEDED' else ''}or a 'no_tokens_reason'")
             blob = " ".join(page_text(split_dest(x)[0]) for x in dests)
             missing = [t for t in toks if t not in blob]
             if missing:

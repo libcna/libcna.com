@@ -40,8 +40,8 @@ DEEP_GROUPS: list[dict] = [
      "intro": "The renderer-independent graphics layer: GraphicsDevice, SpriteBatch, textures and render targets, state objects, stock effects, shaders, "
               "vertex streams and the capability model."},
     {"key": "renderers", "label": "Renderers",
-     "intro": "The renderer contract, identity and selection, and the families that implement it: OpenGL profiles, modern GPU APIs, Direct3D, "
-              "software and portable 2D, browser renderers and the diagnostic renderers."},
+     "intro": "The renderer contract, identity and selection, and the families that implement it: the OpenGL profiles, SDL_GPU and WebGPU, "
+              "Direct3D 9, FNA3D, the CPU rasterizer, the browser renderers and the diagnostic renderers."},
     {"key": "content", "label": "Content",
      "intro": "How content reaches a running game: ContentManager resolution, the XNB container and its type readers, CNB and CNJ, the build-time Content Pipeline "
               "and how hostile or malformed content is handled."},
