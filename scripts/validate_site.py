@@ -13,6 +13,7 @@ from urllib.parse import unquote, urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from tombstones import TOMBSTONES  # noqa: E402
+import prism_scripts  # noqa: E402
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -134,6 +135,9 @@ def main() -> int:
         for prop in ("og:title", "og:description"):
             if not parser.og.get(prop):
                 errors.append(f"Missing {prop}: {rel}")
+        # Prism components after the grammars they extend (a component loaded too early throws and highlights nothing)
+        for problem in prism_scripts.problems(path.read_text(encoding="utf-8")):
+            errors.append(f"Prism script order {rel}: {problem}")
 
     try:
         import html5lib

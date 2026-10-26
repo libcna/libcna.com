@@ -44,10 +44,17 @@ Internal record (not published; `audit/` is excluded by `_config.yml`). The main
   element removed in a later update must be dispositioned in every phase file whose baseline holds it, not only the
   newest (Phase 6 added 24 / 37 / 162 / 565 / 594 entries to phases 1–5). Likewise `apply_page_fixes.py check` needs a
   `superseded_by` on each earlier fix whose text an update rewrote.
-- *Phase 6, pre-existing and not fixed:* every page loads `prism-cpp.min.js` and `prism-glsl.min.js` without
-  `prism-c.min.js` (the file exists in `js/prism/`; `scripts/site_nav.py` writes the list), so both throw
-  `TypeError: Cannot set properties of undefined` at load and C++/GLSL blocks are not highlighted. Fix: add
-  `prism-c.min` before `prism-cpp.min` in `site_nav.py`, then `site_nav.py sync`.
+- *Phase 6 follow-up (2026-10-26), fixed:* 682 pages loaded `prism-cpp.min.js` and `prism-glsl.min.js` without
+  `prism-c.min.js`, which both extend (`docs/releases.html` loaded it after `prism-cpp`), so both threw
+  `TypeError: Cannot set properties of undefined` at load and no C++ or GLSL block was highlighted; `docs/releases.html`
+  also lacked `prism-bash` for its shell blocks. The footer scripts are baked into each hand-written page, and
+  `site_nav.py sync` rewrites only the docs sidebars, so changing `footer_block()` alone reaches only the pages that
+  generators write whole (Known Issues entries, hubs, the five reference pages, tombstones). `scripts/prism_scripts.py`
+  reads each component's dependencies from its own `extend("…")` calls; `fix` inserted the missing scripts in place
+  on 683 pages (same tag form, prefix and separator; idempotent), and `validate_site.py` now fails on a component
+  loaded before what it extends, without the core, twice, or missing for a `language-…` block. Fixtures in
+  `test_validators.py`. Checked in headless Chrome: no console error on any of the 687 pages, and every C++ (1,072),
+  GLSL (49) and C (7) block highlighted.
 - Low-contrast warnings on inherited Phase-1/2 elements remain known presentation debt; deliberately not touched.
 
 ## Owner decision pending (do not decide in code or public prose)

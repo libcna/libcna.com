@@ -309,7 +309,8 @@ and screenshot-reviewed.
 * **Optional external checks skipped.** `developer_ledger.py check` (no `../developer.libcna.com`) and the Bible
   inclusion graph of `adversarial_audit.py` (no `../bible.libcna.com`); both are optional stages of `validate_all.sh`.
 * **Pre-existing, unrelated:** the Prism script order bug recorded in `audit/maintenance-handoff.md` (C++ and GLSL
-  blocks are not highlighted; it predates this update and was left for the owner).
+  blocks were not highlighted; it predates this update). *Fixed in a follow-up on 2026-10-26* (`scripts/prism_scripts.py`,
+  a check in `validate_site.py`; see the handoff note).
 
 ## 13. Commits (local, on `develop`; nothing pushed)
 

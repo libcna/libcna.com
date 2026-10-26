@@ -601,6 +601,63 @@ def superseded_replacement_problems(variant: str) -> list[str]:
     return ["no SUPERSEDED concept anchored by replacement_tokens found in the records"] if variant == "as-is" else []
 
 
+def _prism_page(*names: str, sep: str = "\n", mode: str = "defer", lang: str = "") -> str:
+    tags = sep.join(f'<script src="../js/prism/{n}.min.js" {mode}></script>' for n in names)
+    block = f'<pre><code class="language-{lang}">x</code></pre>' if lang else "<p>x</p>"
+    return f"<html><body>{block}\n{tags}\n</body></html>"
+
+
+# prism_scripts.py: a component runs after the grammar it extends (prism-cpp and prism-glsl extend prism-c)
+PRISM_REJECT = [
+    _prism_page("prism", "prism-cpp", "prism-glsl", "prism-json", "prism-bash", "prism-cmake"),   # the footer before the fix
+    _prism_page("prism", "prism-cpp", "prism-c"),                                                 # docs/releases.html before the fix
+    _prism_page("prism-c", "prism", "prism-cpp"),                                                 # a component before the core
+    _prism_page("prism-c", "prism-cpp"),                                                          # components without the core
+    _prism_page("prism", "prism-c", "prism-c", "prism-cpp"),                                      # loaded twice
+    _prism_page("prism", "prism-glsl"),                                                           # glsl needs c as well
+    _prism_page("prism", "prism-c", "prism-cpp", lang="bash"),                                    # docs/releases.html: no bash component
+]
+PRISM_ALLOW = [
+    _prism_page("prism", "prism-c", "prism-cpp", "prism-glsl", "prism-json", "prism-bash", "prism-cmake"),
+    _prism_page("prism", "prism-c", "prism-cpp", "prism-cmake", "prism-bash"),
+    _prism_page("prism", "prism-bash"),
+    _prism_page("prism", "prism-c", "prism-cpp", sep=""),
+    _prism_page("prism", "prism-c", "prism-cpp", lang="cpp"),
+    _prism_page("prism", "prism-bash", lang="text"),                                             # no component exists for it
+    _prism_page("prism", "prism-bash", lang="javascript"),                                       # in the core bundle
+    "<html><body><p>no code on this page</p></body></html>",
+]
+
+
+def prism_repair_problems() -> list[str]:
+    """prism_scripts.py fix: the rejected pages come back clean, with the tag form, prefix and separator kept, a correct
+    page is returned unchanged, a second run changes nothing, and a run split by other markup is refused, not guessed."""
+    import prism_scripts as PS
+    out: list[str] = []
+    for page in PRISM_REJECT:
+        fixed, err = PS.repair(page)
+        if err or PS.problems(fixed):
+            out.append(f"repair left problems ({err or PS.problems(fixed)[:1]}) for {page[30:120]!r}")
+        elif PS.repair(fixed) != (fixed, None):
+            out.append(f"repair is not idempotent for {page[30:120]!r}")
+    want = _prism_page("prism", "prism-c", "prism-cpp", "prism-glsl", "prism-json", "prism-bash", "prism-cmake")
+    if PS.repair(PRISM_REJECT[0])[0] != want:
+        out.append("the footer run was not rebuilt as prism, prism-c, prism-cpp, ... in the page's own tag form")
+    one_line = _prism_page("prism", "prism-cpp", sep="")
+    if PS.repair(one_line)[0] != _prism_page("prism", "prism-c", "prism-cpp", sep=""):
+        out.append("repair did not keep a run written on one line")
+    for page in PRISM_ALLOW:
+        if PS.repair(page) != (page, None):
+            out.append(f"repair changed a correct page {page[30:120]!r}")
+    with_bash = PS.repair(_prism_page("prism", "prism-c", "prism-cpp", lang="bash"))[0]
+    if with_bash != _prism_page("prism", "prism-c", "prism-cpp", "prism-bash", lang="bash"):
+        out.append("repair did not append the component a code block names")
+    split = _prism_page("prism").replace("</body>", '<p>other</p>\n<script src="../js/prism/prism-cpp.min.js" defer></script>\n</body>')
+    if PS.repair(split)[1] is None:
+        out.append("repair rewrote a Prism run that other markup splits")
+    return out
+
+
 def main() -> int:
     failures = 0
 
@@ -668,6 +725,11 @@ def main() -> int:
         expect("retired-renderer (phase 6)", f, renderer_problems(f), False)
     # known_issues.py: a "late" reclassification takes its id after every added entry, so no added id moves
     expect("known-issues ids", "late reclassification after added entries", late_reclassification_problems(), False)
+    for f in PRISM_REJECT:
+        expect("prism order", f, __import__("prism_scripts").problems(f), True)
+    for f in PRISM_ALLOW:
+        expect("prism order", f, __import__("prism_scripts").problems(f), False)
+    expect("prism order", "repair of the rejected pages", prism_repair_problems(), False)
     # bible_ledger.py: replacement_tokens anchor a SUPERSEDED concept; without them, or with one off the page, it fails
     expect("bible ledger", "SUPERSEDED concept anchored by replacement_tokens", superseded_replacement_problems("as-is"), False)
     expect("bible ledger", "SUPERSEDED concept with neither tokens nor replacement_tokens", superseded_replacement_problems("none"), True)
@@ -677,7 +739,8 @@ def main() -> int:
              + len(METRIC_REJECT) + len(METRIC_ALLOW) + 5 + len(reviews)
              + len(RENDERER_REJECT_SECOND_REVIEW) + len(PLATFORM_REJECT_SECOND_REVIEW) + len(METRIC_REJECT_SECOND_REVIEW)
              + len(RENDERER_REJECT_THIRD_REVIEW) + len(METRIC_REJECT_THIRD_REVIEW) + len(METRIC_ALLOW_THIRD_REVIEW)
-             + len(METRIC_REJECT_PHASE6) + len(RENDERER_REJECT_PHASE6) + len(RENDERER_ALLOW_PHASE6) + 3)
+             + len(METRIC_REJECT_PHASE6) + len(RENDERER_REJECT_PHASE6) + len(RENDERER_ALLOW_PHASE6) + 3
+             + len(PRISM_REJECT) + len(PRISM_ALLOW) + 1)
     print(f"validator fixtures: {total} run; {failures} failed")
     return 1 if failures else 0
 

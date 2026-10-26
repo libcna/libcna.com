@@ -184,7 +184,8 @@ def nav_block(root_prefix: str, active: str) -> str:
 def footer_block(root_prefix: str, docs_prefix: str, tutorial: bool) -> str:
     scripts = ["js/main.js"]
     tail = "".join(f'<script src="{root_prefix}{s}"></script>\n' for s in scripts)
-    for s in ("prism.min", "prism-cpp.min", "prism-glsl.min", "prism-json.min", "prism-bash.min", "prism-cmake.min"):
+    # prism-cpp and prism-glsl extend the C grammar, so prism-c runs before them (scripts/prism_scripts.py checks every page)
+    for s in ("prism.min", "prism-c.min", "prism-cpp.min", "prism-glsl.min", "prism-json.min", "prism-bash.min", "prism-cmake.min"):
         tail += f'<script src="{root_prefix}js/prism/{s}.js" defer></script>\n'
     if tutorial:
         tail += f'<script src="{root_prefix}js/tutorial-progress.js"></script>\n'
