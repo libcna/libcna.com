@@ -7,8 +7,9 @@ Policy
     reachable from TARGET.  A moving ref (next, develop, master, HEAD) in a deep page is an error.
   * every other page: links pinned to TARGET are validated the same way; links pinned to another 40-hex commit are
     reported; moving refs are counted (Phase-1 pages use them for user-facing "browse the repo" links).
-  * links into pinned binding repositories (cna-cs, cna-java, cna-python, ...) at a 40-hex commit are validated against
-    the local sibling checkout when present (path must exist at that commit).
+  * links into pinned binding repositories (cna-cs, cna-java, cna-python, ...) and into CNA's FNA3D and MojoShader forks
+    (libcna/FNA3D, libcna/mojoshader) at a 40-hex commit are validated against the local sibling checkout when present
+    (path must exist at that commit).
 
 Reads Git objects only; never writes to any repository.  Exit status 1 on any error.
 """
@@ -25,6 +26,7 @@ from urllib.parse import unquote
 ROOT = Path(__file__).resolve().parent.parent
 CNA = ROOT.parent / "cna"
 TARGET = (ROOT / "cnahead").read_text().strip()
+FORK_REPOS = {"FNA3D", "mojoshader"}   # libcna/FNA3D and libcna/mojoshader: the forks the FNA3D renderer is built from
 LINK = re.compile(r'href="(https://github\.com/libcna/([A-Za-z0-9._-]+)/(blob|tree|commit)/([^/"#]+)(?:/([^"#]*))?)(#[^"]*)?"')
 
 
@@ -73,7 +75,8 @@ def main() -> int:
                     stats["cna links on a moving ref (other pages)" if not deep else "cna moving-ref links in deep pages"] += 1
                     if deep:
                         errors.append(f"{rel}: deep page links CNA at a moving ref '{ref}': {sub}")
-            elif repo.startswith("cna-") and pinned and kind == "blob":
+            # pinned links into binding repositories and, since 3b43bd86, into CNA's FNA3D and MojoShader forks
+            elif (repo.startswith("cna-") or repo in FORK_REPOS) and pinned and kind == "blob":
                 key = (repo, ref, sub)
                 if key not in ext_ok:
                     local = ROOT.parent / repo
@@ -81,7 +84,7 @@ def main() -> int:
                         ext_ok[key] = True
                     else:
                         ext_ok[key] = git(local, "cat-file", "-e", f"{ref}:{sub}", check=False).returncode == 0
-                stats["pinned binding-repository links"] += 1
+                stats["pinned binding-repository and fork links"] += 1
                 if not ext_ok[key]:
                     errors.append(f"{rel}: {repo}@{ref[:8]} has no {sub}")
     for k, v in sorted(stats.items()):

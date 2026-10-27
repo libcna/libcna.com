@@ -36,7 +36,7 @@ DISPO = ISS / "dispositions.json"
 PUBLIC = ROOT / "data" / "known-issues.json"
 TARGET = (ROOT / "cnahead").read_text(encoding="utf-8").strip()
 TARGET_SHORT = TARGET[:8]
-TODAY = "2026-10-25"
+TODAY = "2026-10-27"
 
 CLASSES = {
     "bug": {"group": "bugs", "prefix": "CNA-BUG", "label": "Bug"},
@@ -250,6 +250,10 @@ def cmd_check(args: argparse.Namespace) -> int:
 # first) and renumber every one of them.  Such a reclassification carries "late": true: it is allocated after every "added" entry instead, so
 # it takes the next id of its class and no existing id moves.  Late reclassifications are allocated in key order among themselves, after the
 # ordinary ones and after "added"; "retired_reclassified" retires a late one the same way.  Never flip "late" on an existing reclassification.
+# A late reclassification may also carry "after_added": "<temp id>": it is then allocated right after that "added" element instead of after
+# all of them, so "added" can grow again without moving its id.  Set it to the last "added" element that existed when the reclassification
+# was first allocated (its id then stays exactly what it was); later "added" entries of the same class take the ids after it.  The 3b43bd86
+# update anchored CNA-GAP-010 (published as CNA-BUG-280) after NEW-PIN3-03 so that a new bug could be added as CNA-BUG-281.
 # "repin" moves the snapshot wording of the published text to a new pin after every entry was re-verified there.  It is one step or a LIST of
 # steps applied in order, one per pin move (009d40f5 -> b0e97bb1, then b0e97bb1 -> c1c316b9, ...); every step reads the text the previous step
 # left.  In each step every "replace" pair is applied first, then every remaining occurrence of "from" in the published text fields becomes "to",
@@ -359,6 +363,14 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
     if unknown:
         print(f"patches-adversarial.json: retired_added names no added entry: {sorted(unknown)}")
         return issues, disp, trail, 1
+    anchored: dict[str, list] = {}                    # temp id of an added element -> late reclassifications allocated right after it
+    added_ids = {e["id"] for e in adv.get("added") or []}
+    for iid, spec in late:
+        if spec.get("after_added"):
+            if spec["after_added"] not in added_ids:
+                print(f"patches-adversarial.json: reclassified {iid}: after_added names no added entry: {spec['after_added']!r}")
+                return issues, disp, trail, 1
+            anchored.setdefault(spec["after_added"], []).append((iid, spec))
     for k, e in enumerate(adv.get("added") or []):
         e = dict(e)
         cls = e["class"]
@@ -378,6 +390,9 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
                         d["adversarial_retired_entry"] = new
                         d["published_as"] = None
             trail["retired"][new] = {"key": tmp, "classification": spec["classification"], "evidence": spec["evidence"]}
+            for iid, lspec in anchored.get(tmp, []):     # an anchor that is itself retired still fixes the position
+                if not reclassify(iid, lspec, late_entries[iid]):
+                    return issues, disp, trail, 1
             continue
         e["temp_id"], e["id"] = tmp, new
         for cid in e.get("cand_ids") or []:
@@ -388,7 +403,12 @@ def apply_adversarial(issues: list[dict], disp: list[dict], counters: dict[str, 
                     d["evidence"] = "Restored by the independent adversarial audit (earlier dismissal: " + d.get("evidence", "")[:200] + ")"
         by[new] = e
         trail["added"][tmp] = new
+        for iid, spec in anchored.get(tmp, []):         # "after_added": right after its anchor, so later added entries do not move it
+            if not reclassify(iid, spec, late_entries[iid]):
+                return issues, disp, trail, 1
     for iid, spec in late:                             # "late": true -- after every added entry, so no added id moves
+        if spec.get("after_added"):
+            continue
         if not reclassify(iid, spec, late_entries[iid]):
             return issues, disp, trail, 1
     # text written before the final ids were known refers to entries as {{issue:NEW-AUDIT-nn}} (an added entry) or {{issue:CNA-XXX-nnn}} (an id that was folded or reclassified);

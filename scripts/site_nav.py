@@ -41,7 +41,7 @@ SNAPSHOT_SHA, SNAPSHOT_SHORT, FOOTER_SNAPSHOT = _snapshot_constants()
 ROOT = Path(__file__).resolve().parent.parent
 DOCS = ROOT / "docs"
 SITE = "https://libcna.com"
-TODAY = "2026-10-25"
+TODAY = "2026-10-27"
 
 # (file, sidebar label) in display order
 SIDEBAR: list[tuple[str, str]] = [

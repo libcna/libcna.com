@@ -3,7 +3,7 @@
 
 The diagram replaces the alpha.1-era Mermaid image, which showed a retired renderer, the old
 CNA_GRAPHICS_BACKEND name and an SDL-only platform layer.  Every label is a fact from the fact
-sheets for CNA c6dec91f (10 renderer identities in 8 families, 3 platform implementations, 3 audio
+sheets for CNA 3b43bd86 (10 renderer identities in 8 families, 3 platform implementations, 3 audio
 implementations, four independent selection axes).
 
     make_architecture_diagram.py [--png]
@@ -75,7 +75,7 @@ def top(b):
 
 def build() -> str:
     out.append(f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}" role="img" '
-               f'aria-labelledby="t d"><title id="t">CNA architecture at snapshot c6dec91f</title>'
+               f'aria-labelledby="t d"><title id="t">CNA architecture at snapshot 3b43bd86</title>'
                f'<desc id="d">The game calls the XNA-shaped Framework API; GraphicsDevice asks the renderer selection for one of 10 renderer '
                f'identities behind IGraphicsRenderer; a platform implementation and an audio implementation, chosen independently, '
                f'sit on the target operating system.</desc>')
@@ -124,7 +124,7 @@ def build() -> str:
               "#f3e5f5", "#9b6bb0", 14, "bold")
     path_arrow(f"M{gd[0] + gd[2] / 2} {gd[1] + gd[3]} C {gd[0] + gd[2] / 2} 440, 900 440, 900 470")
     ir = box(500, 578, 800, 66, ["IGraphicsRenderer  (pure virtual) + RendererDescriptor",
-                                  "17 GraphicsCapability members · RendererCapabilityProfile: 31 features, 8 limits, per-format usage"],
+                                  "17 GraphicsCapability members · RendererCapabilityProfile: 33 features, 8 limits, per-format usage"],
              "#f3e5f5", "#9b6bb0", 14, "bold")
     arrow(900, 536, 900, 578)
 
@@ -176,7 +176,7 @@ def build() -> str:
     arrow(1600, 1086, 1600, 1150, "#b0bcc5", "5 4")
     text(900, 1256, "Four independent axes: target operating system · platform implementation · graphics renderer · audio implementation.", 14, "normal", "#52606d")
     text(900, 1280, "A name outside the 10 renderer identities is a CMake configure error; nothing falls back silently.", 14, "normal", "#52606d")
-    text(900, 1310, "CNA snapshot c6dec91f (24 October 2026, branch next, after the 0.1.0 release)  ·  libcna.com", 13, "normal", "#7b8794")
+    text(900, 1310, "CNA snapshot 3b43bd86 (27 October 2026, branch next, after the 0.1.0 release)  ·  libcna.com", 13, "normal", "#7b8794")
     out.append("</svg>")
     return "\n".join(out) + "\n"
 

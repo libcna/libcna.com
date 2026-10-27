@@ -48,6 +48,12 @@ ClassifyRenderTargetFormatEXT (families_overriding), outside examples and tests:
 a family that only mentioned the method in a comment, which inflated the render-target count at c6dec91f. And the previous
 snapshot's values (c1c316b9) joined the stale needles; the renderer counts, the C ABI 0.46.0 and the 24-job figure are
 excused when their clause attributes them to the 0.1.0 release, which still had them.
+The 3b43bd86 update (phase 7) derives four more values from the CNA Git objects: the RendererFeature identities (the enumerators
+of RendererCapabilityProfile.hpp other than Count), the integer constants of the recorded C ABI baseline, the C ABI release gate's
+inventory line in docs/c-api/COVERAGE.md (symbols / implemented / partial / planned / not applicable), and the avatar catalog
+revision (CATALOG_REVISION in tools/avatar_builder/generate_avatar_catalog.py: the catalog itself moved into the
+cna-avatar-assets submodule, which CNA's Git objects do not contain, while the generator that writes it stays in CNA). The
+c6dec91f values joined the stale needles.
 scripts/test_validators.py feeds the reviewers' exact stale sentences through these rules.
 """
 
@@ -160,6 +166,19 @@ def derive_from_cna(sha: str) -> dict:
     # format verdicts: families that override the Texture2D / render-target classifier; every other family defers (Color only)
     tex_cls, rt_cls = families_overriding("ClassifySurfaceFormatEXT"), families_overriding("ClassifyRenderTargetFormatEXT")
     examples = [p for p in tree if not p.startswith("third_party/") and re.search(r"(^|/)examples/.*\.cpp$", p)]
+    # RendererFeature identities (Count is not one), the recorded C ABI baseline's integer constants, the release gate's
+    # generated inventory line, and the avatar catalog revision its generator writes (the catalog is a submodule since 3b43bd86)
+    profile = _git("show", f"{sha}:modules/graphics/include/CNA/RendererCapabilityProfile.hpp")
+    feature_body = re.sub(r"/\*.*?\*/|//[^\n]*", "", re.search(r"enum class RendererFeature\s*:\s*[\w:]+\s*\{(.*?)\};", profile, re.S).group(1), flags=re.S)
+    features = [e.split("=")[0].strip() for e in feature_body.split(",") if e.strip() and e.split("=")[0].strip() != "Count"]
+    baseline = json.loads(_git("show", f"{sha}:tools/c-api/abi_baseline.json"))
+    coverage_line = re.search(r"Snapshot: \*\*(\d+) headers\*\*, \*\*(\d+) symbols\*\*, \*\*(\d+) implemented\*\*, \*\*(\d+) partial\*\*, "
+                              r"\*\*(\d+) planned\*\*, \*\*(\d+) not applicable\*\*\. Explicitly excluded headers: \*\*(\d+)\*\*",
+                              _git("show", f"{sha}:docs/c-api/COVERAGE.md"))
+    coverage = dict(zip(("headers", "symbols", "implemented", "partial", "planned", "not_applicable", "excluded_headers"),
+                        (int(x) for x in coverage_line.groups())))
+    generator = _git("show", f"{sha}:tools/avatar_builder/generate_avatar_catalog.py")
+    avatar_revision = int(re.search(r"^CATALOG_REVISION = (\d+)", generator, re.M).group(1))
     return {"renderer_identities": len(public), "implementation_families": len(families),
             "platform_implementations": len(platforms), "audio_implementations": len(audio_ids),
             "gl_profiles": len(gl), "cpp_test_source_files": len(tests), "cpp_test_files_with_macros": len(per_file),
@@ -179,7 +198,9 @@ def derive_from_cna(sha: str) -> dict:
             "format_classifying_families": len(tex_cls), "format_classifying_identities": identities_of(tex_cls),
             "rt_format_classifying_families": len(rt_cls), "rt_format_classifying_identities": identities_of(rt_cls),
             "standalone_pixel_programs": sum(1 for p in examples if p.endswith("_test.cpp")),
-            "example_cpp_files": len(examples), "module_example_cpp_files": sum(1 for p in examples if p.startswith("modules/"))}
+            "example_cpp_files": len(examples), "module_example_cpp_files": sum(1 for p in examples if p.startswith("modules/")),
+            "renderer_feature_ids": len(features), "c_api_integer_constants": len(baseline["integers"]),
+            "c_api_coverage": coverage, "avatar_catalog_revision": avatar_revision}
 
 
 def source_cross_check(sha: str) -> int:
@@ -807,6 +828,12 @@ CHECKS = [
     ("docs/cna-net.html", r"<<c_abi_version_rx>>", "CNA.NET page: ABI version"),
     ("docs/c-api.html", r"\b<<c_api_routes_n>>\b", "C API page: route count"),
     ("docs/releases.html", r"<<sha_short>>", "releases page names the snapshot"),
+    ("docs/rendering-backends.html", r"\b<<renderer_feature_ids>> RendererFeature ids", "renderer page: RendererFeature ids"),
+    ("docs/c-api.html", r"\b<<c_api_planned_n>> planned", "C API page: release-gate planned declarations"),
+    ("docs/c-api.html", r"\b<<c_api_symbols_n>> symbols", "C API page: release-gate inventory size"),
+    ("docs/c-api.html", r"\b<<c_api_integer_constants_n>> integer constants", "C API page: ABI baseline integer constants"),
+    ("docs/gamer-services.html", r"v3 revision <<avatar_catalog_revision>>\b", "Gamer Services page: avatar catalog revision"),
+    ("docs/releases.html", r"\(revision <<avatar_catalog_revision>>\)", "releases page: avatar catalog revision"),
 ]
 
 
@@ -883,7 +910,17 @@ STALE_NEEDLES = [("50 renderer identities", "alpha.1 renderer count"), ("46 impl
          ("11,380", "c1c316b9 test definitions"), ("813 C++ test", "c1c316b9 test files"), ("813 test", "c1c316b9 test files"),
          ("3,687 commits", "c1c316b9 commit count"),
          ("ABI 0.46.0", "c1c316b9 C ABI", RELEASE_010), ("ABI (0.46.0", "c1c316b9 C ABI", RELEASE_010),
-         ("24 jobs", "c1c316b9 CI job count", RELEASE_010)]
+         ("24 jobs", "c1c316b9 CI job count", RELEASE_010),
+         # superseded values of the previous snapshot (c6dec91f)
+         ("11,898", "c6dec91f test definitions"), ("898 C++ test", "c6dec91f test files"), ("898 test", "c6dec91f test files"),
+         ("898 CNA-owned", "c6dec91f test files"), ("812 commits after", "c6dec91f commit count"),
+         ("4,521 commits", "c6dec91f commit count since alpha.1"), ("625 planned", "c6dec91f C ABI gate"),
+         ("625 in-scope", "c6dec91f C ABI gate"), ("625 public C++", "c6dec91f C ABI gate"), ("8,125 symbols", "c6dec91f C ABI gate"),
+         ("31 RendererFeature", "c6dec91f renderer features"), ("reports 31 features", "c6dec91f renderer features"),
+         ("(31 features", "c6dec91f renderer features"), ("31 named features", "c6dec91f renderer features"),
+         ("the 31 features", "c6dec91f renderer features"), ("of the 31 features", "c6dec91f renderer features"), ("31 features, 8 limits", "c6dec91f renderer features"),
+         ("1,476 integer constants", "c6dec91f ABI baseline"), ("catalog v3 revision 4", "c6dec91f avatar catalog revision"),
+         ("only built-in catalog (revision 4)", "c6dec91f avatar catalog revision")]
 
 
 def stale_needle_findings(body: str, skip: set[str] = frozenset()) -> list[tuple[str, str, str]]:
@@ -895,7 +932,9 @@ def stale_needle_findings(body: str, skip: set[str] = frozenset()) -> list[tuple
             continue
         for m in re.finditer(re.escape(needle), body):
             ctx = body[max(0, m.start() - 90): m.end() + 60]
-            if re.search(r"alpha\.1|earlier|previous|BASE|was |had |historical|\(BASE", ctx, re.I):
+            # "BASE" is the Phase-1 audit's name for the alpha.1 baseline, so it is matched in capitals only: case-insensitively it
+            # also matched "baseline" and "based", which excused any stale value written next to "the recorded ABI baseline"
+            if re.search(r"alpha\.1|earlier|previous|was |had |historical", ctx, re.I) or re.search(r"\bBASE\b", ctx):
                 continue
             if release_excuse and release_excuse[0].search(ctx):
                 continue
@@ -916,6 +955,9 @@ def main() -> int:
     F["static_test_definitions_n"] = n(F["static_test_definitions"])
     F["c_api_routes_n"] = n(F["c_api_routes"])
     F["c_abi_version_rx"] = F["c_abi_version"]
+    F["c_api_planned_n"] = n(F["c_api_coverage"]["planned"])
+    F["c_api_symbols_n"] = n(F["c_api_coverage"]["symbols"])
+    F["c_api_integer_constants_n"] = n(F["c_api_integer_constants"])
     cache: dict[str, str] = {}
     for page, pattern, what in CHECKS:
         if not (ROOT / page).exists():

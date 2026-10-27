@@ -15,7 +15,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from inventory_presentation import ROOT, extract_page  # noqa: E402
 
-CNA_TARGET = "c6dec91fbf3ef5440f60e5329e4a4758b2d80c22"
+CNA_TARGET = "3b43bd8687ed46523d873f9bec4b32bd8481dcb5"
 SPEEDY_BLUPI_URL = "https://speedyblupi.com/SpeedyBlupi2013/"
 BASELINE = ROOT / "audit" / "data" / "phase1-baseline-inventory.json"
 PAGE_RENAMES = {"demos.html": "play.html"}

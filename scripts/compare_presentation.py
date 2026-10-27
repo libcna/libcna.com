@@ -39,6 +39,11 @@ Phase 6 (the c6dec91f snapshot update) does the same against the inventory of bc
     compare_presentation.py --phase6 [--report audit/phase6-presentation-comparison.md]
         baseline    audit/data/phase6-baseline-inventory.json
         dispositions audit/data/phase6-dispositions.json
+
+Phase 7 (the 3b43bd86 snapshot update) does the same against the inventory of 9c6d76e, taken before any edit:
+    compare_presentation.py --phase7 [--report audit/phase7-presentation-comparison.md]
+        baseline    audit/data/phase7-baseline-inventory.json
+        dispositions audit/data/phase7-dispositions.json
 """
 
 from __future__ import annotations
@@ -66,6 +71,8 @@ PHASE5_BASELINE = ROOT / "audit" / "data" / "phase5-baseline-inventory.json"
 PHASE5_DISPOSITIONS = ROOT / "audit" / "data" / "phase5-dispositions.json"
 PHASE6_BASELINE = ROOT / "audit" / "data" / "phase6-baseline-inventory.json"
 PHASE6_DISPOSITIONS = ROOT / "audit" / "data" / "phase6-dispositions.json"
+PHASE7_BASELINE = ROOT / "audit" / "data" / "phase7-baseline-inventory.json"
+PHASE7_DISPOSITIONS = ROOT / "audit" / "data" / "phase7-dispositions.json"
 # fraction of the baseline size below which a block / page counts as shrunk
 BLOCK_KEEP = 0.5
 PAGE_KEEP = 0.6
@@ -255,14 +262,18 @@ def main() -> int:
                     help="compare against the pre-update 7f0dbaa inventory with the strict 10%% shrink guard")
     ap.add_argument("--phase6", action="store_true",
                     help="compare against the pre-update bca024b inventory with the strict 10%% shrink guard")
+    ap.add_argument("--phase7", action="store_true",
+                    help="compare against the pre-update 9c6d76e inventory with the strict 10%% shrink guard")
     args = ap.parse_args()
 
     # every baseline taken while cnahead was 009d40f5 (or later b0e97bb1) pinned CNA source links to it; a later pin move
     # re-pins them to the current cnahead, which is the same link and not a presentation loss
     for old_pin in ("009d40f5dd085c4e674d3479675fac84b12b3e0a", "b0e97bb1bb876f9b3edd6f4ff1ef3067908ae8ac",
-                    "c1c316b9c7a846ce8002809c151fcd1af14942c9"):
+                    "c1c316b9c7a846ce8002809c151fcd1af14942c9", "c6dec91fbf3ef5440f60e5329e4a4758b2d80c22"):
         PIN_MAP[old_pin] = (ROOT / "cnahead").read_text().strip()
-    if args.phase6:
+    if args.phase7:
+        baseline_path, disp_path = PHASE7_BASELINE, PHASE7_DISPOSITIONS
+    elif args.phase6:
         baseline_path, disp_path = PHASE6_BASELINE, PHASE6_DISPOSITIONS
     elif args.phase5:
         baseline_path, disp_path = PHASE5_BASELINE, PHASE5_DISPOSITIONS
@@ -274,7 +285,7 @@ def main() -> int:
         baseline_path, disp_path = PHASE2_BASELINE, PHASE2_DISPOSITIONS
     else:
         baseline_path, disp_path = BASELINE, DISPOSITIONS
-    if args.phase2 or args.phase3 or args.phase4 or args.phase5 or args.phase6:
+    if args.phase2 or args.phase3 or args.phase4 or args.phase5 or args.phase6 or args.phase7:
         BLOCK_KEEP = PAGE_KEEP = 0.9
     baseline_doc = json.loads(baseline_path.read_text(encoding="utf-8"))
     base = baseline_doc["pages"]
@@ -305,8 +316,8 @@ def main() -> int:
                 break
         (explained if loss.disposition else unexplained).append(loss)
 
-    phase = "Phase-6" if args.phase6 else "Phase-5" if args.phase5 else "Phase-4" if args.phase4 else "Phase-3" if args.phase3 else ("Phase-2" if args.phase2 else "Phase-1")
-    if not (args.phase2 or args.phase3 or args.phase4 or args.phase5 or args.phase6):
+    phase = "Phase-7" if args.phase7 else "Phase-6" if args.phase6 else "Phase-5" if args.phase5 else "Phase-4" if args.phase4 else "Phase-3" if args.phase3 else ("Phase-2" if args.phase2 else "Phase-1")
+    if not (args.phase2 or args.phase3 or args.phase4 or args.phase5 or args.phase6 or args.phase7):
         baseline_label = "be35902"
     lines = [f"# {phase} presentation comparison (baseline `{baseline_label}` vs working tree)", "",
              f"- baseline pages compared: {len(base) if not args.page else len(args.page)}",

@@ -19,7 +19,7 @@ from tombstones import TOMBSTONES  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SITE = "https://libcna.com"
-UPDATED = "2026-10-25"  # Phase 6: snapshot c6dec91f; every page re-audited (footer, facts, metadata) against the new pin
+UPDATED = "2026-10-27"  # Phase 7: snapshot 3b43bd86; every footer moved and every page swept against the c6dec91f..3b43bd86 interval (audit/3b43bd86-phase7-delta.md)
 EXCLUDED = {
     "404.html",
     "search.html",

@@ -55,6 +55,7 @@ run python3 scripts/compare_presentation.py --phase3 --quiet
 run python3 scripts/compare_presentation.py --phase4 --quiet
 run python3 scripts/compare_presentation.py --phase5 --quiet
 run python3 scripts/compare_presentation.py --phase6 --quiet
+run python3 scripts/compare_presentation.py --phase7 --quiet
 if [ "${PHASE3_FINAL:-0}" = "1" ]; then
   run python3 scripts/bible_ledger.py check --final
 fi

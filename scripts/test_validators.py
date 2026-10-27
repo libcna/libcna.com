@@ -332,13 +332,13 @@ METRIC_ALLOW = [
     "<li>six renderer families (eight of the 10 identities) classify the broader public texture formats themselves, while the other two identities "
     "(HEADLESS and STUB) have no classifier and accept only <code>SurfaceFormat::Color</code> for a public Texture2D.</li>",
     "<p>That is why two shipped renderers are Color-only for textures, and four for render targets.</p>",
-    "<td>Demos and standalone pixel or contract programs: 694 <code>.cpp</code> files in all (693 under modules/&lt;name&gt;/examples/ plus the loose "
-    "demo), 598 of them named <code>*_test.cpp</code>. That 598 is a different set from the 855 test files with a GoogleTest macro.</td>",
+    "<td>Demos and standalone pixel or contract programs: 695 <code>.cpp</code> files in all (694 under modules/&lt;name&gt;/examples/ plus the loose "
+    "demo), 599 of them named <code>*_test.cpp</code>. That 599 is a different set from the 857 test files with a GoogleTest macro.</td>",
     "<p>No shipped renderer is 2D-only, and two produce no pixels at all (HEADLESS and STUB).</p>",
     "<p>CNA&rsquo;s own release gate says &ldquo;Not ready&rdquo;, because 631 in-scope public C++ declarations still lack C mappings.</p>",
     "<td>625 planned public C++ declarations remain without C mappings; 3,212 C routes are declared and exported.</td>",
     '<div class="callout callout--note dev-evidence"><p><strong>Evidence basis:</strong> source-verified at the stated evidence commit. Claims on this page were '
-    'checked by reading the CNA source at commit <code>b0e97bb1</code>; nothing was built.</p></div>',    '<p>The source tree has 898 C++ test files and 11,898 statically discoverable GoogleTest-family definitions (855 files contain at least one; alpha.1 had 568 and 8,263).</p>',
+    'checked by reading the CNA source at commit <code>b0e97bb1</code>; nothing was built.</p></div>',    '<p>The source tree has 900 C++ test files and 11,927 statically discoverable GoogleTest-family definitions (857 files contain at least one; alpha.1 had 568 and 8,263).</p>',
     '<li>The 10-identity, 8-family registry in cmake/RendererIdentities.cmake is strong structural evidence.</li>',
     '<p>Compiled-effect support is 8 of the 10 identities in 6 implementation families.</p>',
     '<p>A default configure reports CompiledEffects false on 9 of the 10 identities.</p>',
@@ -353,8 +353,8 @@ METRIC_ALLOW = [
     '<p>Compiled effects run on six renderer families (8 identities); the EasyGL option covers its three identities.</p>',
     '<p>10 public renderer identities in 8 implementation families, capabilities, compiled effects and verification.</p>',
     '<p>Four families classify render-target formats themselves; the other four identities accept only Color for render targets.</p>',
-    '<td>Standalone <code>*_test.cpp</code> programs registered beside each module (598 across the tree)</td>',
-    '<p>The source tree has 898 C++ test source files; 855 files contain at least one counted macro, and 598 standalone pixel programs sit under examples/.</p>',
+    '<td>Standalone <code>*_test.cpp</code> programs registered beside each module (599 across the tree)</td>',
+    '<p>The source tree has 900 C++ test source files; 857 files contain at least one counted macro, and 599 standalone pixel programs sit under examples/.</p>',
     '<p>A green single-renderer run describes the selected family, not the other 7 families.</p>',
     '<p>The other 7 renderer identities share the same C surface but are not in the matrix at all.</p>',
     '<p>32 parity fixtures are registered for three renderer families; parity fixtures cover three families.</p>',
@@ -467,7 +467,7 @@ METRIC_ALLOW_THIRD_REVIEW = [
     "<p>Six renderer families classify the broader texture formats. The remaining two accept Color only.</p>",
     "<p>The remaining two accept Color only.</p>",
     "<p>Four families classify render-target formats themselves; the remaining four accept only Color for render targets.</p>",
-    "<p>598 test files named *_test.cpp sit under examples/; 694 .cpp files sit under examples/ directories.</p>",
+    "<p>599 test files named *_test.cpp sit under examples/; 695 .cpp files sit under examples/ directories.</p>",
     "<p>The compiled-effect path is optioned on five families (seven identities).</p>",
     "<p>The unbound-texture test skips on the other five identities.</p>",
     "<p>SurfaceFormat::Color is the only texture format on two renderers.</p>",
@@ -526,6 +526,34 @@ RENDERER_ALLOW_PHASE6 = [
     "<p>The default on Windows is SDL_GPU, on SDL&rsquo;s Direct3D 12 GPU driver.</p>",
 ]
 
+# Phase 7 (c6dec91f -> 3b43bd86): the sentences that were current at c6dec91f must now fail -- through the metric rules
+# (test files, files with a macro, *_test.cpp programs, examples) or the c6dec91f stale needles (definitions, commit distances, the
+# C ABI release-gate inventory, RendererFeature ids, ABI baseline constants, the avatar catalog revision) -- while the same
+# values attributed to c6dec91f, and the current ones, pass.
+METRIC_REJECT_PHASE7 = [
+    "<td>Demos and standalone pixel or contract programs: 694 <code>.cpp</code> files in all (693 under modules/&lt;name&gt;/examples/ plus the loose "
+    "demo), 598 of them named <code>*_test.cpp</code>. That 598 is a different set from the 855 test files with a GoogleTest macro.</td>",
+    '<p>The source tree has 898 C++ test files and 11,898 statically discoverable GoogleTest-family definitions (855 files contain at least one; alpha.1 had 568 and 8,263).</p>',
+    '<td>Standalone <code>*_test.cpp</code> programs registered beside each module (598 across the tree)</td>',
+    '<p>The source tree has 898 C++ test source files; 855 files contain at least one counted macro, and 598 standalone pixel programs sit under examples/.</p>',
+    "<p>598 test files named *_test.cpp sit under examples/; 694 .cpp files sit under examples/ directories.</p>",
+    "<p>This snapshot is a development snapshot 812 commits after the 0.1.0 release.</p>",
+    "<p>The release gate reads Not ready: 625 planned public C++ declarations still lack C mappings.</p>",
+    "<p>The coverage inventory records 8,125 symbols: 7,033 implemented, 15 partial.</p>",
+    "<p>The finer API reports 31 RendererFeature ids with a four-state answer.</p>",
+    "<p>GetRendererCapabilityProfileEXT() builds a RendererCapabilityProfile (31 features, 8 limits, 27 per-format usage entries) on first use.</p>",
+    "<p>Ask the device for its renderer capability profile: 31 named features, 8 numeric limits and a readable report.</p>",
+    "<p>The recorded baseline holds 196 struct layouts and 1,476 integer constants.</p>",
+    "<p>The shipped avatar catalog is catalog v3 revision 4, compiled into its own library.</p>",
+]
+METRIC_ALLOW_PHASE7 = [
+    "<p>The source tree has 900 C++ test source files; 857 files contain at least one counted macro, and 599 standalone pixel programs sit under examples/.</p>",
+    "<p>The release gate reads Not ready: 633 planned public C++ declarations still lack C mappings (the previous snapshot had 625 planned).</p>",
+    "<p>The finer API reports 33 RendererFeature ids; the previous snapshot reported 31 RendererFeature ids.</p>",
+    "<p>The shipped catalog is v3 revision 5; the earlier catalog v3 revision 4 refined the faces.</p>",
+    "<p>The previous snapshot, c6dec91f, was 812 commits after the 0.1.0 release and had 11,898 definitions.</p>",
+]
+
 # the ledger gate: a concept whose token survives must still fail when its cited section carries a rejected claim
 STALE_SECTION_HTML = ("<h2 id='device-loss'>Device loss</h2><p><code>createRenderer()</code> hands every family a <code>deviceEventCallback</code>. "
                       "At this snapshot five families call it: DirectX 9, DirectX 11 and DirectX 12 report loss and reset.</p>")
@@ -576,6 +604,46 @@ def late_reclassification_problems() -> list[str]:
     got = {**trail.get("reclassified", {}), **trail.get("added", {})}
     want = {"CNA-PLAT-001": "CNA-BUG-011", "NEW-T-01": "CNA-BUG-012", "CNA-GAP-001": "CNA-BUG-013"}
     return [] if rc == 0 and got == want else [f"late reclassification allocated {got} (rc {rc}), expected {want}"]
+
+
+def anchored_late_reclassification_problems() -> list[str]:
+    """The 3b43bd86 update needed to publish a new bug while CNA-GAP-010's late reclassification (CNA-BUG-280) sat after every
+    added entry: appending one would have taken 280 and pushed the published entry to 281.  A late reclassification may
+    therefore name the added element it follows ("after_added").  The fixture anchors the late one after the first added bug
+    and appends a second added bug: the anchored id must stay where it was, the new bug must take the next one, and an
+    anchor naming no added element must fail."""
+    import known_issues as K
+
+    class _Patch:
+        def __truediv__(self, _name):
+            return self
+
+        def exists(self):
+            return True
+    out = []
+    for name, adv, want, ok in [
+        ("anchored", {"reclassified": {"CNA-GAP-001": {"class": "bug", "late": True, "after_added": "NEW-T-01"}},
+                      "added": [{"id": "NEW-T-01", "class": "bug", "cand_ids": []}, {"id": "NEW-T-02", "class": "bug", "cand_ids": []}]},
+         {"NEW-T-01": "CNA-BUG-011", "CNA-GAP-001": "CNA-BUG-012", "NEW-T-02": "CNA-BUG-013"}, True),
+        ("unanchored (unchanged behaviour)", {"reclassified": {"CNA-GAP-001": {"class": "bug", "late": True}},
+                      "added": [{"id": "NEW-T-01", "class": "bug", "cand_ids": []}, {"id": "NEW-T-02", "class": "bug", "cand_ids": []}]},
+         {"NEW-T-01": "CNA-BUG-011", "NEW-T-02": "CNA-BUG-012", "CNA-GAP-001": "CNA-BUG-013"}, True),
+        ("anchor naming no added entry", {"reclassified": {"CNA-GAP-001": {"class": "bug", "late": True, "after_added": "NEW-T-09"}},
+                      "added": [{"id": "NEW-T-01", "class": "bug", "cand_ids": []}]}, None, False)]:
+        issues = [{"id": "CNA-GAP-001", "class": "functional-gap", "severity": "n/a"}]
+        counters = {"bug": 10, "functional-gap": 1, "platform-limitation": 0, "verification-gap": 0}
+        saved = K.ISS, K.load
+        K.ISS, K.load = _Patch(), (lambda _path, adv=adv: adv)
+        try:
+            _issues, _disp, trail, rc = K.apply_adversarial(issues, [], counters)
+        finally:
+            K.ISS, K.load = saved
+        got = {**trail.get("reclassified", {}), **trail.get("added", {})}
+        if ok and (rc != 0 or got != want):
+            out.append(f"{name}: allocated {got} (rc {rc}), expected {want}")
+        if not ok and rc == 0:
+            out.append(f"{name}: accepted, expected a refusal")
+    return out
 
 
 def superseded_replacement_problems(variant: str) -> list[str]:
@@ -723,8 +791,13 @@ def main() -> int:
         expect("retired-renderer (phase 6)", f, renderer_problems(f), True)
     for f in RENDERER_ALLOW_PHASE6:
         expect("retired-renderer (phase 6)", f, renderer_problems(f), False)
+    for f in METRIC_REJECT_PHASE7:
+        expect("metric (phase 7)", f, metric_problems(f) + stale_problems(f), True)
+    for f in METRIC_ALLOW_PHASE7:
+        expect("metric (phase 7)", f, metric_problems(f) + stale_problems(f), False)
     # known_issues.py: a "late" reclassification takes its id after every added entry, so no added id moves
     expect("known-issues ids", "late reclassification after added entries", late_reclassification_problems(), False)
+    expect("known-issues ids", "late reclassification anchored after a named added entry", anchored_late_reclassification_problems(), False)
     for f in PRISM_REJECT:
         expect("prism order", f, __import__("prism_scripts").problems(f), True)
     for f in PRISM_ALLOW:
@@ -740,6 +813,7 @@ def main() -> int:
              + len(RENDERER_REJECT_SECOND_REVIEW) + len(PLATFORM_REJECT_SECOND_REVIEW) + len(METRIC_REJECT_SECOND_REVIEW)
              + len(RENDERER_REJECT_THIRD_REVIEW) + len(METRIC_REJECT_THIRD_REVIEW) + len(METRIC_ALLOW_THIRD_REVIEW)
              + len(METRIC_REJECT_PHASE6) + len(RENDERER_REJECT_PHASE6) + len(RENDERER_ALLOW_PHASE6) + 3
+             + len(METRIC_REJECT_PHASE7) + len(METRIC_ALLOW_PHASE7) + 1
              + len(PRISM_REJECT) + len(PRISM_ALLOW) + 1)
     print(f"validator fixtures: {total} run; {failures} failed")
     return 1 if failures else 0
