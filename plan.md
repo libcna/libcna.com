@@ -1,5 +1,29 @@
 # libcna.com — CNA accuracy audit and website refresh
 
+## Phase 7 (2026-10-27): pin move to CNA 3b43bd86 — forks, avatar submodule, the Immediate/upload fix, an incremental update
+
+**Pinned by `cnahead`:** `3b43bd8687ed46523d873f9bec4b32bd8481dcb5` (branch `next`, 2026-10-27; 136 commits after `c6dec91f`, all first-parent;
+948 after the `v0.1.0` release, 4,657 after `v0.1.0-alpha.1`; version string `0.1.0`, C ABI `0.50.0`).
+**Ledger:** `audit/3b43bd86-phase7-delta.md` · **Fact sheets:** `audit/data/facts/3b43bd86/` (00 editorial guide, R1 facts and changes,
+R2 Deep Dives, R4 Development, R5 Known Issues, `worklist.json` — the per-page evidence intersection) · **Canonical numbers:**
+`data/current-facts.json` · **Preservation:** `audit/data/phase7-baseline-inventory.json` (from `9c6d76e`, the Prism fix) and
+`audit/data/phase7-dispositions.json`, checked by `compare_presentation.py --phase7`.
+An incremental update: every page was swept for the interval's topics and for the CNA files it cites that changed; a page whose cited
+files were byte-identical and that named none of those topics kept its evidence with the new commit, every other page was read
+against the diff first. Reflected: FNA3D and MojoShader built from CNA's forks (libcna/FNA3D `10f650b9d0f6`, libcna/mojoshader
+`03b686fe1a33`; the configure-time patch series is gone; source pin and drift checks), SDL `86296ac8` with five platform-specific
+patches, ENet unmodified upstream master `5a9c537f`, the vendored-source check, the avatar catalog v3 **revision 5** as the
+`cna-avatar-assets` submodule (configure fails without it while Gamer Services is on), SDL_GPU/WEBGPU upload ordering (Immediate
+SpriteBatch per draw), SDL_GPU cube faces in MRT sets and all-or-none MultiSampleMask, `RendererFeature` 33 (MultiSampleMask,
+RenderTargetReadback) at unchanged ABI 0.50.0, XNA pixel centres on multisampled targets, XNA's `PresentationParameters` defaults,
+SPIR-V bytes in `cna_shader_effect_create`, content-pipeline nested names / XmlSerializer / BuildAndLoadAsset, and the relocation of
+CNA's `misc/` and retired `plans/` documents. Validators: `check_facts.py` derives RendererFeature ids, ABI integer constants, the
+release-gate inventory and the avatar catalog revision, gained the `c6dec91f` stale needles, and matches the Phase-1 `BASE` excuse in
+capitals only; `known_issues.py` lets a late reclassification be anchored after a named added entry (`after_added`);
+`check_source_links.py` validates links into the forks; `compare_presentation.py --phase7`.
+Known Issues: 248 published (4 retired, 4 added — CNA-PLAT-019, CNA-GAP-075, CNA-GAP-076, CNA-BUG-281 — 6 narrowed incl. CNA-BUG-280,
+now FNA3D's SDL_GPU driver only; no published id moved).
+
 ## Phase 6 (2026-10-25): pin move to CNA c6dec91f — after the 0.1.0 release, four more renderers retired, link-size work
 
 **Pinned by `cnahead`:** `c6dec91fbf3ef5440f60e5329e4a4758b2d80c22` (branch `next`, 2026-10-24; 834 commits after `c1c316b9`, 812 after the

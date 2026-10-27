@@ -56,6 +56,27 @@ Internal record (not published; `audit/` is excluded by `_config.yml`). The main
   `test_validators.py`. Checked in headless Chrome: no console error on any of the 687 pages, and every C++ (1,072),
   GLSL (49) and C (7) block highlighted.
 - Low-contrast warnings on inherited Phase-1/2 elements remain known presentation debt; deliberately not touched.
+- *Phase 7 (2026-10-27, pin `3b43bd86`):* the evidence intersection the update procedure asks for ("pages that cite a changed
+  file") was scripted for this move and its output kept: `audit/data/facts/3b43bd86/worklist.json` lists, per page with an evidence
+  callout, the cited CNA files that changed in a way that can matter (code, docs, header doc comments), the cited files whose change
+  only reworded a comment, and the interval's topics found in the page text. "carry" pages (nothing cited changed, no topic) moved
+  their callout mechanically; every "review" page was read first; an unread page keeps the old commit and says "at the stated
+  evidence commit". The script is `scripts/evidence_worklist.py --old <previous cnahead> --topics <file>` (the topic list used
+  for this move is `audit/data/facts/3b43bd86/topics.txt`); the kept `worklist.json` was produced before any page was edited, so a
+  rerun now differs wherever a page was rewritten.
+- *Phase 7:* `known_issues.py` gained `"after_added"` for a `late` reclassification. Without it a late reclassification sits after
+  every `added` entry, so adding any entry of its class renumbers it (CNA-GAP-010 → CNA-BUG-280 blocked new bugs until this). Anchor a
+  late reclassification after the last added element that existed when it was first allocated; check with `merge` that every
+  published id is unchanged before adding anything.
+- *Phase 7:* `known_issues.py build` also rewrites the Deep Dives hub pages (`deep-dives/**/index.html`, through
+  `site_deep.cmd_hubs`). Do not run it while someone else is editing those hubs.
+- *Phase 7:* the stale-needle excuse in `check_facts.py` matched "BASE" case-insensitively, so any sentence containing "baseline"
+  or "based" excused a stale value; it now matches the Phase-1 token `BASE` in capitals only. `check_source_links.py` validates
+  pinned blob links into libcna/FNA3D and libcna/mojoshader (the forks) against `../FNA3D` and `../mojoshader` when present.
+- *Phase 7, CNA-side drift noticed (CNA is read-only here):* `README.md` "Initialise Submodules" still lists four submodules (the
+  avatar catalog is the fifth since `56d5d8202`); `cmake/DependencyVersions.cmake` still accepts sharp-runtime 0.1.0 although the
+  snapshot needs sharp-runtime `next` at `f990d074` or later (CNA-BUG-279); `plans/plan_xnb.md` keeps "Nothing here is implemented
+  yet" under a banner that calls every phase complete (CNA-BUG-228).
 
 ## Owner decision pending (do not decide in code or public prose)
 
